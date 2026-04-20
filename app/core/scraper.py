@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import shutil
 import tempfile
 import time
@@ -23,6 +24,7 @@ except ImportError:  # pragma: no cover
 
 CANONICAL_X_ACCOUNT_HANDLE = "22cmProgrammer"
 CANONICAL_X_LIKES_URL = f"https://x.com/{CANONICAL_X_ACCOUNT_HANDLE}/likes"
+logger = logging.getLogger(__name__)
 
 
 def ensure_playwright_available() -> None:
@@ -64,6 +66,13 @@ def clone_profile_for_playwright(config: CrawlConfig) -> tuple[Path, tempfile.Te
         return ignored
 
     shutil.copytree(source_profile_dir, target_profile_dir, dirs_exist_ok=True, ignore=ignore_transient_files)
+    logger.info(
+        "Cloned Chrome profile for Playwright.",
+        extra={
+            "source_profile_dir": str(source_profile_dir),
+            "target_profile_dir": str(target_profile_dir),
+        },
+    )
     return target_user_data_dir, temp_dir
 
 
@@ -153,6 +162,14 @@ def launch_context(playwright, config: CrawlConfig, state: TaskState):
         error_text = str(exc)
         if "ProcessSingleton" in error_text or "SingletonLock" in error_text:
             state.append_event("Chrome profile is busy. Cloning the selected profile into a temporary workspace.")
+            logger.warning(
+                "Chrome profile busy, falling back to temporary clone.",
+                extra={
+                    "chrome_user_data_dir": str(user_data_dir),
+                    "chrome_profile_directory": config.chrome_profile_directory,
+                    "playwright_error": error_text,
+                },
+            )
             temp_user_data_dir, temp_profile_dir = clone_profile_for_playwright(config)
             try:
                 context = do_launch(temp_user_data_dir)
@@ -181,6 +198,15 @@ def launch_context(playwright, config: CrawlConfig, state: TaskState):
 def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str, list[str]]:
     """Open X likes and return the account handle plus all discovered tweet URLs."""
     ensure_playwright_available()
+    logger.info(
+        "Collecting liked tweet URLs.",
+        extra={
+            "likes_url": CANONICAL_X_LIKES_URL,
+            "headless": config.headless,
+            "max_scroll_rounds": config.max_scroll_rounds,
+            "stale_round_limit": config.stale_round_limit,
+        },
+    )
 
     with sync_playwright() as playwright:
         with launch_context(playwright, config, state) as context:
@@ -196,6 +222,12 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
 
             state.update(account_name=account_handle)
             state.append_event(f"Ready to collect likes for @{account_handle}.")
+            logger.info(
+                "Likes page ready.",
+                extra={
+                    "account_handle": account_handle,
+                },
+            )
 
             seen_urls: set[str] = set()
             stale_rounds = 0
@@ -216,6 +248,15 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
                 state.append_event(
                     f"Scroll round {round_index + 1}: discovered {after_count} unique liked tweet URLs."
                 )
+                logger.info(
+                    "Scroll round completed.",
+                    extra={
+                        "scroll_round": round_index + 1,
+                        "discovered_tweets": after_count,
+                        "newly_discovered_tweets": after_count - before_count,
+                        "stale_rounds": stale_rounds,
+                    },
+                )
 
                 if after_count == before_count:
                     stale_rounds += 1
@@ -232,4 +273,11 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
             if not ordered_urls:
                 raise RuntimeError("No liked tweet URLs were found. The likes timeline may be empty or blocked.")
 
+            logger.info(
+                "Collected liked tweet URLs.",
+                extra={
+                    "account_handle": account_handle,
+                    "discovered_tweets": len(ordered_urls),
+                },
+            )
             return account_handle, ordered_urls

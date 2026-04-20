@@ -8,6 +8,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_STORE_ROOT = PROJECT_ROOT / "local_store"
+LOGS_ROOT = PROJECT_ROOT / "logs"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8666
 DEFAULT_CHROME_USER_DATA_DIR = Path.home() / "Library/Application Support/Google/Chrome"

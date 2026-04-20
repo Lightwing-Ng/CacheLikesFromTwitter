@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from threading import Thread
+from uuid import uuid4
 
 from .config import CrawlConfig, LOCAL_STORE_ROOT
-from .downloader import download_tweet_media
+from .downloader import LocalTweetCacheIndex, download_tweet_media
+from .logging_setup import reset_job_id, set_job_id
 from .scraper import collect_liked_tweet_urls
 from .state import TaskState
+
+logger = logging.getLogger(__name__)
 
 
 class CacheLikesService:
@@ -34,11 +39,38 @@ class CacheLikesService:
 
     def _run(self, config: CrawlConfig) -> None:
         """Execute the full job pipeline."""
+        job_id = uuid4().hex[:12]
+        token = set_job_id(job_id)
         try:
+            logger.info(
+                "Cache job started.",
+                extra={
+                    "job_id": job_id,
+                    "chrome_profile_directory": config.chrome_profile_directory,
+                    "chrome_user_data_dir": str(config.chrome_user_data_dir),
+                    "headless": config.headless,
+                    "max_media_items": config.max_media_items,
+                    "max_scroll_rounds": config.max_scroll_rounds,
+                    "scroll_pause_seconds": config.scroll_pause_seconds,
+                    "stale_round_limit": config.stale_round_limit,
+                },
+            )
             account_handle, tweet_urls = collect_liked_tweet_urls(config, self._state)
             account_name = config.sanitized_account_name(account_handle)
             output_dir = LOCAL_STORE_ROOT / account_name
             archive_path = output_dir / ".downloaded_archive.txt"
+            cache_index = LocalTweetCacheIndex.build(output_dir)
+            logger.info(
+                "Likes collection completed.",
+                extra={
+                    "job_id": job_id,
+                    "account_handle": account_handle,
+                    "account_name": account_name,
+                    "discovered_tweets": len(tweet_urls),
+                    "output_dir": str(output_dir),
+                    "archive_path": str(archive_path),
+                },
+            )
 
             self._state.update(output_dir=str(output_dir), phase="downloading", discovered_tweets=len(tweet_urls))
             self._state.append_event(
@@ -56,10 +88,29 @@ class CacheLikesService:
                     self._state.append_event(
                         f"Reached the temporary test cap of {config.max_media_items} media files."
                     )
+                    logger.info(
+                        "Download cap reached before processing next tweet.",
+                        extra={
+                            "job_id": job_id,
+                            "processed_tweets": index - 1,
+                            "downloaded_media_count": downloaded_media,
+                            "download_cap": config.max_media_items,
+                        },
+                    )
                     break
 
                 self._state.append_event(f"Processing liked tweet {index}/{len(tweet_urls)}")
                 try:
+                    logger.info(
+                        "Processing liked tweet.",
+                        extra={
+                            "job_id": job_id,
+                            "tweet_url": tweet_url,
+                            "tweet_index": index,
+                            "tweet_total": len(tweet_urls),
+                            "remaining_media_items": remaining_media_items,
+                        },
+                    )
                     result = download_tweet_media(
                         tweet_url,
                         output_dir,
@@ -67,14 +118,43 @@ class CacheLikesService:
                         config,
                         self._state,
                         remaining_media_items=remaining_media_items,
+                        cache_index=cache_index,
                     )
                     if result.skipped:
                         skipped += 1
+                        logger.info(
+                            "Tweet skipped.",
+                            extra={
+                                "job_id": job_id,
+                                "tweet_url": tweet_url,
+                                "tweet_index": index,
+                                "skipped_tweets": skipped,
+                            },
+                        )
                     else:
                         downloaded_media += result.downloaded_media_count
+                        logger.info(
+                            "Tweet download completed.",
+                            extra={
+                                "job_id": job_id,
+                                "tweet_url": tweet_url,
+                                "tweet_index": index,
+                                "downloaded_media_count": result.downloaded_media_count,
+                                "downloaded_media_total": downloaded_media,
+                            },
+                        )
                 except Exception as exc:  # pragma: no cover
                     failed += 1
                     self._state.append_event(str(exc))
+                    logger.exception(
+                        "Tweet download failed.",
+                        extra={
+                            "job_id": job_id,
+                            "tweet_url": tweet_url,
+                            "tweet_index": index,
+                            "failed_tweets": failed,
+                        },
+                    )
 
                 self._state.update(
                     downloaded_tweets=downloaded_media,
@@ -86,5 +166,25 @@ class CacheLikesService:
                 f"Finished. Discovered {len(tweet_urls)} liked tweets, downloaded {downloaded_media} media files, "
                 f"skipped {skipped}, failed {failed}."
             )
+            logger.info(
+                "Cache job finished successfully.",
+                extra={
+                    "job_id": job_id,
+                    "discovered_tweets": len(tweet_urls),
+                    "downloaded_media_total": downloaded_media,
+                    "skipped_tweets": skipped,
+                    "failed_tweets": failed,
+                    "output_dir": str(output_dir),
+                },
+            )
         except Exception as exc:  # pragma: no cover
             self._state.finish_error(str(exc))
+            logger.exception(
+                "Cache job failed.",
+                extra={
+                    "job_id": job_id,
+                    "error": str(exc),
+                },
+            )
+        finally:
+            reset_job_id(token)

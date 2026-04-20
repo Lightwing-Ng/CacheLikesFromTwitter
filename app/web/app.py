@@ -11,6 +11,7 @@ from app.core.config import (
     DEFAULT_PORT,
     CrawlConfig,
 )
+from app.core.logging_setup import configure_logging, get_log_file_path
 from app.core.service import CacheLikesService
 from app.core.state import TaskState
 from app.core.version import APP_VERSION
@@ -18,6 +19,7 @@ from app.core.version import APP_VERSION
 
 def create_app() -> Flask:
     """Build and configure the Flask app."""
+    configure_logging(APP_VERSION)
     app = Flask(
         __name__,
         template_folder=str(Path(__file__).resolve().parent / "templates"),
@@ -64,6 +66,7 @@ def create_app() -> Flask:
             version=APP_VERSION,
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,
+            log_file_path=str(get_log_file_path()),
         )
 
     @app.get("/settings")
@@ -76,6 +79,7 @@ def create_app() -> Flask:
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,
             saved_config=saved_config,
+            log_file_path=str(get_log_file_path()),
         )
 
     @app.post("/start")
