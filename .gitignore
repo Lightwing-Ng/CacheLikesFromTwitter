@@ -1,0 +1,6 @@
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+local_store/*
+!local_store/.gitkeep

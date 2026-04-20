@@ -1,0 +1,468 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CacheLikesFromTwitter</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+{% set current_phase = snapshot.phase or "idle" %}
+<main class="page">
+    <div class="ambient ambient-left" aria-hidden="true"></div>
+    <div class="ambient ambient-right" aria-hidden="true"></div>
+
+    <div class="notice-floating notice-floating-banner notice-floating-banner-global" id="status_banner">
+        <div class="notice-floating-copy">
+            <p class="notice-floating-label">Task status</p>
+            <p class="notice-floating-title" id="banner_message">{{ snapshot.message }}</p>
+        </div>
+        <span class="status-chip status-{{ current_phase }}" id="banner_phase">{{ current_phase }}</span>
+        <button
+            type="button"
+            class="notice-floating-dismiss"
+            id="status_banner_dismiss"
+            aria-label="Dismiss status banner"
+        >
+            x
+        </button>
+    </div>
+
+    <div class="app-shell is-sidebar-open" id="app_shell">
+        <button
+            type="button"
+            class="sidebar-toggle"
+            id="sidebar_toggle"
+            aria-label="Toggle sidebar"
+            aria-expanded="true"
+        >
+            <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
+        </button>
+
+        <button
+            type="button"
+            class="sidebar-backdrop"
+            id="sidebar_backdrop"
+            aria-label="Close sidebar"
+            aria-hidden="true"
+            tabindex="-1"
+            hidden
+        ></button>
+
+        <aside class="panel sidebar" id="app_sidebar">
+            <section class="sidebar-section anchor-section" id="settings">
+                <div class="section-heading">
+                    <div>
+                        <p class="section-kicker">Control plane</p>
+                        <h2>Run task</h2>
+                    </div>
+                    <span class="status-chip status-{{ current_phase }}" id="phase_chip">{{ current_phase }}</span>
+                </div>
+                <form action="{{ url_for('start') }}" method="post" class="sidebar-form" id="config_form">
+                    <label class="field">
+                        <span>Chrome user data dir</span>
+                        <input type="text" name="chrome_user_data_dir" value="{{ default_chrome_user_data_dir }}">
+                    </label>
+                    <label class="field">
+                        <span>Chrome profile directory</span>
+                        <input type="text" name="chrome_profile_directory" value="{{ default_chrome_profile_directory }}">
+                    </label>
+                    <label class="field">
+                        <span>Account name override</span>
+                        <input type="text" name="account_name_override" placeholder="Optional folder name override">
+                    </label>
+                    <div class="field-grid">
+                        <label class="field">
+                            <span>Max scroll rounds</span>
+                            <input type="number" name="max_scroll_rounds" min="1" value="200">
+                        </label>
+                        <label class="field">
+                            <span>Scroll pause seconds</span>
+                            <input type="number" name="scroll_pause_seconds" min="0.2" step="0.1" value="1.2">
+                        </label>
+                    </div>
+                    <label class="field">
+                        <span>Stale round limit</span>
+                        <input type="number" name="stale_round_limit" min="1" value="8">
+                    </label>
+                    <label class="field field-switch">
+                        <span>Browser mode</span>
+                        <span class="switch-row">
+                            <span class="switch-label">Run browser in headless mode</span>
+                            <span class="ios-switch-shell">
+                                <input type="checkbox" name="headless">
+                                <span class="ios-switch-slider" aria-hidden="true"></span>
+                            </span>
+                        </span>
+                    </label>
+                    <button type="submit" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled{% endif %}>
+                        Start caching
+                    </button>
+                </form>
+            </section>
+
+        </aside>
+
+        <section class="panel chart-panel workspace" id="workspace_panel">
+            <div class="workspace-header workspace-mobile-summary-shell">
+                <article class="report-card workspace-summary-card workspace-article-card anchor-section" id="overview">
+                    <div class="report-heading-row">
+                        <div>
+                            <p class="workspace-kicker">Live snapshot</p>
+                            <h2>Execution overview</h2>
+                        </div>
+                        <a
+                            href="http://{{ default_host }}:{{ default_port }}/api/status"
+                            class="ghost-link"
+                            target="_blank"
+                            rel="noreferrer"
+                        >
+                            Open JSON
+                        </a>
+                    </div>
+                    <div class="metric-grid">
+                        <article class="metric-card">
+                            <span class="metric-label">Account</span>
+                            <strong id="account_name">{{ snapshot.account_name or "-" }}</strong>
+                        </article>
+                        <article class="metric-card">
+                            <span class="metric-label">Discovered</span>
+                            <strong id="discovered_tweets">{{ snapshot.discovered_tweets }}</strong>
+                        </article>
+                        <article class="metric-card">
+                            <span class="metric-label">Downloaded</span>
+                            <strong id="downloaded_tweets">{{ snapshot.downloaded_tweets }}</strong>
+                        </article>
+                        <article class="metric-card">
+                            <span class="metric-label">Skipped</span>
+                            <strong id="skipped_tweets">{{ snapshot.skipped_tweets }}</strong>
+                        </article>
+                        <article class="metric-card">
+                            <span class="metric-label">Failed</span>
+                            <strong id="failed_tweets">{{ snapshot.failed_tweets }}</strong>
+                        </article>
+                        <article class="metric-card">
+                            <span class="metric-label">Phase</span>
+                            <strong id="phase_value">{{ current_phase }}</strong>
+                        </article>
+                    </div>
+                </article>
+
+                <section class="workspace-grid workspace-content-card">
+                    <article class="report-card workspace-article-card anchor-section" id="download">
+                        <div class="report-heading-row">
+                            <div>
+                                <p class="workspace-kicker">Status</p>
+                                <h2>Current progress</h2>
+                            </div>
+                        </div>
+                        <p class="status-copy" id="message">{{ snapshot.message }}</p>
+                        <dl class="summary-list">
+                            <div class="summary-row">
+                                <dt>Started</dt>
+                                <dd id="started_at">{{ snapshot.started_at or "-" }}</dd>
+                            </div>
+                            <div class="summary-row">
+                                <dt>Finished</dt>
+                                <dd id="finished_at">{{ snapshot.finished_at or "-" }}</dd>
+                            </div>
+                            <div class="summary-row">
+                                <dt>Output dir</dt>
+                                <dd id="output_dir">{{ snapshot.output_dir or "-" }}</dd>
+                            </div>
+                            <div class="summary-row">
+                                <dt>Polling</dt>
+                                <dd>Every 3 seconds</dd>
+                            </div>
+                        </dl>
+                    </article>
+
+                    <article class="report-card workspace-article-card support-card">
+                        <div class="report-heading-row">
+                            <div>
+                                <p class="workspace-kicker">Workflow</p>
+                                <h2>Operating notes</h2>
+                            </div>
+                        </div>
+                        <ul class="support-list">
+                            <li>Keep the selected Chrome profile signed in before starting a run.</li>
+                            <li>Use the JSON endpoint for raw state inspection or external automation.</li>
+                            <li>Downloads are grouped under the resolved account directory in local storage.</li>
+                        </ul>
+                    </article>
+
+                    <article class="report-card workspace-article-card log-card anchor-section" id="activity">
+                        <div class="report-heading-row">
+                            <div>
+                                <p class="workspace-kicker">Events</p>
+                                <h2>Recent log stream</h2>
+                            </div>
+                        </div>
+                        <div class="events-table-shell">
+                            <div class="events-table-scroll">
+                                <table class="events-table" aria-label="Recent events table">
+                                    <thead>
+                                        <tr>
+                                            <th scope="col" class="events-col-index">#</th>
+                                            <th scope="col">Event</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recent_events_body"></tbody>
+                                </table>
+                            </div>
+                            <div class="events-pagination">
+                                <button type="button" class="events-page-button" id="recent_events_prev" aria-label="Previous page">Prev</button>
+                                <span class="events-page-indicator" id="recent_events_page">1 / 1</span>
+                                <button type="button" class="events-page-button" id="recent_events_next" aria-label="Next page">Next</button>
+                            </div>
+                        </div>
+                    </article>
+                </section>
+            </div>
+        </section>
+    </div>
+
+    <nav class="sidebar-dock" aria-label="Workspace sections">
+        <a href="#download" class="sidebar-dock-item is-active" data-section-link="download" aria-label="Downloads">
+            <span class="icon dock-icon dock-icon-download" aria-hidden="true"></span>
+        </a>
+        <a href="#settings" class="sidebar-dock-item" data-section-link="settings" aria-label="Settings">
+            <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>
+        </a>
+    </nav>
+</main>
+
+<script>
+    const appShell = document.getElementById("app_shell");
+    const sidebarToggle = document.getElementById("sidebar_toggle");
+    const sidebarBackdrop = document.getElementById("sidebar_backdrop");
+    const phaseChip = document.getElementById("phase_chip");
+    const bannerPhase = document.getElementById("banner_phase");
+    const bannerMessage = document.getElementById("banner_message");
+    const statusBanner = document.getElementById("status_banner");
+    const statusBannerDismiss = document.getElementById("status_banner_dismiss");
+    const phaseValue = document.getElementById("phase_value");
+    const startButton = document.getElementById("start_button");
+    const recentEventsBody = document.getElementById("recent_events_body");
+    const recentEventsPrev = document.getElementById("recent_events_prev");
+    const recentEventsNext = document.getElementById("recent_events_next");
+    const recentEventsPage = document.getElementById("recent_events_page");
+    const sectionLinks = Array.from(document.querySelectorAll("[data-section-link]"));
+    const shellMobileQuery = window.matchMedia("(max-width: 900px)");
+    const statusBannerStorageKey = "cachelikes:status-banner-dismissed";
+    const recentEventsPageSize = 12;
+    let recentEvents = {{ snapshot.recent_events | tojson }};
+    let recentEventsCurrentPage = 1;
+
+    function setStatusBannerVisible(isVisible, options = {}) {
+        const { persist = true } = options;
+
+        statusBanner.hidden = !isVisible;
+        statusBanner.setAttribute("aria-hidden", String(!isVisible));
+
+        if (persist) {
+            try {
+                window.sessionStorage.setItem(statusBannerStorageKey, String(!isVisible));
+            } catch (_error) {
+            }
+        }
+    }
+
+    function setSidebarOpen(isOpen, options = {}) {
+        const { persist = true } = options;
+
+        appShell.classList.toggle("is-sidebar-open", isOpen);
+        appShell.classList.toggle("is-sidebar-collapsed", !isOpen);
+        sidebarToggle.setAttribute("aria-expanded", String(isOpen));
+        sidebarBackdrop.hidden = !shellMobileQuery.matches || !isOpen;
+
+        if (persist) {
+            try {
+                window.sessionStorage.setItem("cachelikes:sidebar-open", String(isOpen));
+            } catch (_error) {
+            }
+        }
+    }
+
+    try {
+        const storedSidebarState = window.sessionStorage.getItem("cachelikes:sidebar-open");
+        if (storedSidebarState === "false") {
+            setSidebarOpen(false, { persist: false });
+        }
+    } catch (_error) {
+    }
+
+    try {
+        const storedBannerState = window.sessionStorage.getItem(statusBannerStorageKey);
+        if (storedBannerState === "true") {
+            setStatusBannerVisible(false, { persist: false });
+        }
+    } catch (_error) {
+    }
+
+    sidebarToggle.addEventListener("click", () => {
+        setSidebarOpen(!appShell.classList.contains("is-sidebar-open"));
+    });
+
+    sidebarBackdrop.addEventListener("click", () => {
+        setSidebarOpen(false);
+    });
+
+    statusBannerDismiss.addEventListener("click", () => {
+        setStatusBannerVisible(false);
+    });
+
+    shellMobileQuery.addEventListener("change", () => {
+        setSidebarOpen(appShell.classList.contains("is-sidebar-open"), { persist: false });
+    });
+
+    function setPhaseState(phase) {
+        phaseChip.textContent = phase;
+        phaseChip.className = `status-chip status-${phase}`;
+        bannerPhase.textContent = phase;
+        bannerPhase.className = `status-chip status-${phase}`;
+        phaseValue.textContent = phase;
+    }
+
+    function getRecentEventsTotalPages() {
+        return Math.max(1, Math.ceil(recentEvents.length / recentEventsPageSize));
+    }
+
+    function renderRecentEventsPage() {
+        if (!recentEventsBody || !recentEventsPage || !recentEventsPrev || !recentEventsNext) {
+            return;
+        }
+
+        const totalPages = getRecentEventsTotalPages();
+        recentEventsCurrentPage = Math.min(Math.max(recentEventsCurrentPage, 1), totalPages);
+
+        const pageStartIndex = (recentEventsCurrentPage - 1) * recentEventsPageSize;
+        const pageItems = recentEvents.slice(pageStartIndex, pageStartIndex + recentEventsPageSize);
+
+        recentEventsBody.innerHTML = "";
+
+        if (pageItems.length === 0) {
+            const row = document.createElement("tr");
+            const indexCell = document.createElement("td");
+            const messageCell = document.createElement("td");
+
+            indexCell.textContent = "-";
+            indexCell.className = "events-empty-index";
+            messageCell.textContent = "No recent events.";
+            messageCell.className = "events-empty-message";
+
+            row.append(indexCell, messageCell);
+            recentEventsBody.appendChild(row);
+        } else {
+            pageItems.forEach((eventText, index) => {
+                const row = document.createElement("tr");
+                const indexCell = document.createElement("td");
+                const messageCell = document.createElement("td");
+
+                indexCell.textContent = String(pageStartIndex + index + 1);
+                messageCell.textContent = eventText;
+
+                row.append(indexCell, messageCell);
+                recentEventsBody.appendChild(row);
+            });
+        }
+
+        recentEventsPage.textContent = `${recentEventsCurrentPage} / ${totalPages}`;
+        recentEventsPrev.disabled = recentEventsCurrentPage <= 1;
+        recentEventsNext.disabled = recentEventsCurrentPage >= totalPages;
+    }
+
+    function setRecentEvents(events) {
+        const normalizedEvents = Array.isArray(events) ? events : [];
+        recentEvents = normalizedEvents.filter((eventText) => eventText && String(eventText).trim().length > 0);
+
+        const totalPages = getRecentEventsTotalPages();
+        recentEventsCurrentPage = totalPages;
+        renderRecentEventsPage();
+    }
+
+    function normalizeDockSection(activeId) {
+        if (activeId === "settings") {
+            return "settings";
+        }
+
+        if (["overview", "download", "activity"].includes(activeId)) {
+            return "download";
+        }
+
+        return activeId;
+    }
+
+    function updateSectionLinkState(activeId) {
+        const normalizedActiveId = normalizeDockSection(activeId);
+        sectionLinks.forEach((link) => {
+            link.classList.toggle("is-active", link.dataset.sectionLink === normalizedActiveId);
+        });
+    }
+
+    const settingsDockLink = document.querySelector('[data-section-link="settings"]');
+    if (settingsDockLink) {
+        settingsDockLink.addEventListener("click", () => {
+            setSidebarOpen(true);
+        });
+    }
+
+    if (recentEventsPrev && recentEventsNext) {
+        recentEventsPrev.addEventListener("click", () => {
+            recentEventsCurrentPage -= 1;
+            renderRecentEventsPage();
+        });
+
+        recentEventsNext.addEventListener("click", () => {
+            recentEventsCurrentPage += 1;
+            renderRecentEventsPage();
+        });
+    }
+
+    const observedSections = Array.from(document.querySelectorAll(".anchor-section"));
+    if ("IntersectionObserver" in window) {
+        const sectionObserver = new IntersectionObserver(
+            (entries) => {
+                const visibleEntry = entries
+                    .filter((entry) => entry.isIntersecting)
+                    .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+
+                if (visibleEntry) {
+                    updateSectionLinkState(visibleEntry.target.id);
+                }
+            },
+            {
+                rootMargin: "-10% 0px -55% 0px",
+                threshold: [0.2, 0.4, 0.6],
+            },
+        );
+
+        observedSections.forEach((section) => sectionObserver.observe(section));
+    }
+
+    async function refreshStatus() {
+        const response = await fetch("{{ url_for('api_status') }}", { cache: "no-store" });
+        const data = await response.json();
+
+        document.getElementById("account_name").textContent = data.account_name || "-";
+        document.getElementById("discovered_tweets").textContent = data.discovered_tweets;
+        document.getElementById("downloaded_tweets").textContent = data.downloaded_tweets;
+        document.getElementById("skipped_tweets").textContent = data.skipped_tweets;
+        document.getElementById("failed_tweets").textContent = data.failed_tweets;
+        document.getElementById("output_dir").textContent = data.output_dir || "-";
+        document.getElementById("message").textContent = data.message;
+        document.getElementById("started_at").textContent = data.started_at || "-";
+        document.getElementById("finished_at").textContent = data.finished_at || "-";
+        setRecentEvents(data.recent_events || []);
+
+        bannerMessage.textContent = data.message;
+        setPhaseState(data.phase);
+        startButton.disabled = Boolean(data.running);
+    }
+
+    setRecentEvents(recentEvents);
+    refreshStatus();
+    window.setInterval(refreshStatus, 3000);
+</script>
+</body>
+</html>
