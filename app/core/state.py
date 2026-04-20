@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from threading import Lock
 from typing import Any
 
@@ -15,7 +15,7 @@ DEFAULT_OUTPUT_DIR_TEMPLATE = str(LOCAL_STORE_ROOT / "{用户名}")
 
 def utc_now() -> str:
     """Return an ISO formatted UTC timestamp."""
-    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 @dataclass(slots=True)

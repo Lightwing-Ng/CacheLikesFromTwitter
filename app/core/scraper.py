@@ -21,6 +21,10 @@ except ImportError:  # pragma: no cover
     PlaywrightError = Exception
 
 
+CANONICAL_X_ACCOUNT_HANDLE = "22cmProgrammer"
+CANONICAL_X_LIKES_URL = f"https://x.com/{CANONICAL_X_ACCOUNT_HANDLE}/likes"
+
+
 def ensure_playwright_available() -> None:
     """Raise a clear error when Playwright is not installed."""
     if sync_playwright is None:
@@ -91,6 +95,40 @@ def detect_account_handle(page) -> str:
     raise RuntimeError("Could not detect the current X account handle from Chrome.")
 
 
+def wait_for_likes_page_ready(page) -> None:
+    """Wait until the likes page looks usable or fail with a clear auth message."""
+    ready_selectors = [
+        "article",
+        '[data-testid="emptyState"]',
+        '[data-testid="primaryColumn"]',
+        'a[href="/home"]',
+        'a[data-testid="AppTabBar_Home_Link"]',
+    ]
+    auth_markers = [
+        "Sign in",
+        "Log in",
+        "登录",
+        "注册",
+    ]
+
+    deadline = time.time() + 30
+    while time.time() < deadline:
+        if any(page.locator(selector).count() for selector in ready_selectors):
+            page.wait_for_timeout(1_500)
+            return
+
+        body_text = page.locator("body").inner_text(timeout=5_000)
+        if any(marker in body_text for marker in auth_markers):
+            raise RuntimeError(
+                "X did not appear logged in. Confirm the selected Chrome profile is signed in to X, "
+                "and if Chrome is open, close its regular windows before retrying."
+            )
+
+        page.wait_for_timeout(1_000)
+
+    raise RuntimeError("X likes page did not finish loading in time.")
+
+
 def launch_context(playwright, config: CrawlConfig, state: TaskState):
     """Launch Chromium with the user's Chrome profile directory."""
     user_data_dir = Path(config.chrome_user_data_dir).expanduser()
@@ -105,6 +143,7 @@ def launch_context(playwright, config: CrawlConfig, state: TaskState):
             channel="chrome",
             headless=config.headless,
             args=[f"--profile-directory={config.chrome_profile_directory}"],
+            ignore_default_args=["--use-mock-keychain", "--password-store=basic"],
             viewport={"width": 1440, "height": 1200},
         )
 
@@ -146,25 +185,17 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
     with sync_playwright() as playwright:
         with launch_context(playwright, config, state) as context:
             page = context.pages[0] if context.pages else context.new_page()
-            state.append_event("Opening X home page with the local Chrome profile.")
-            page.goto("https://x.com/home", wait_until="domcontentloaded", timeout=120_000)
+            state.append_event(f"Opening canonical likes page {CANONICAL_X_LIKES_URL}.")
+            page.goto(CANONICAL_X_LIKES_URL, wait_until="domcontentloaded", timeout=120_000)
+            wait_for_likes_page_ready(page)
 
             try:
-                page.wait_for_selector('a[data-testid="SideNav_NewTweet_Button"]', timeout=30_000)
-            except PlaywrightTimeoutError as exc:
-                raise RuntimeError(
-                    "X did not appear logged in. Please confirm the selected Chrome profile is already signed in."
-                ) from exc
+                account_handle = detect_account_handle(page)
+            except RuntimeError:
+                account_handle = CANONICAL_X_ACCOUNT_HANDLE
 
-            account_handle = detect_account_handle(page)
-            likes_url = f"https://x.com/{account_handle}/likes"
             state.update(account_name=account_handle)
-            state.append_event(f"Detected account @{account_handle}. Opening likes page.")
-            page.goto(likes_url, wait_until="domcontentloaded", timeout=120_000)
-            try:
-                page.wait_for_selector('article, [data-testid="emptyState"]', timeout=30_000)
-            except PlaywrightTimeoutError:
-                page.wait_for_timeout(3_000)
+            state.append_event(f"Ready to collect likes for @{account_handle}.")
 
             seen_urls: set[str] = set()
             stale_rounds = 0

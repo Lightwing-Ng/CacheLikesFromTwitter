@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CacheLikesFromTwitter Settings</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+{% set current_phase = snapshot.phase or "idle" %}
+<main class="page">
+    <div class="app-shell is-sidebar-open">
+        <aside class="panel sidebar" id="settings_sidebar">
+            <section class="sidebar-section anchor-section" id="settings">
+                <div class="section-heading">
+                    <div>
+                        <p class="section-kicker">Control plane</p>
+                        <h2>Settings</h2>
+                    </div>
+                    <span class="status-chip status-{{ current_phase }}">{{ current_phase }}</span>
+                </div>
+                <a href="{{ url_for('index') }}" class="ghost-link">Back to download page</a>
+            </section>
+        </aside>
+
+        <section class="panel chart-panel workspace" id="settings_workspace">
+            <div class="workspace-header">
+                <article class="report-card workspace-summary-card workspace-article-card">
+                    <div class="report-heading-row">
+                        <div>
+                            <p class="workspace-kicker">Settings</p>
+                            <h2>Configuration center</h2>
+                        </div>
+                    </div>
+                    <p class="status-copy">
+                        Save your crawler configuration here. Then return to the download page and start caching with one click.
+                    </p>
+                    <form action="{{ url_for('save_settings') }}" method="post" class="sidebar-form" id="settings_form">
+                        <label class="field">
+                            <span>Chrome user data dir</span>
+                            <input type="text" name="chrome_user_data_dir" value="{{ saved_config.chrome_user_data_dir }}">
+                        </label>
+                        <label class="field">
+                            <span>Chrome profile directory</span>
+                            <input type="text" name="chrome_profile_directory" value="{{ saved_config.chrome_profile_directory }}">
+                        </label>
+                        <label class="field">
+                            <span>Account name override</span>
+                            <input type="text" name="account_name_override" value="{{ saved_config.account_name_override }}" placeholder="Optional folder name override">
+                        </label>
+                        <div class="field-grid">
+                            <label class="field">
+                                <span>Max media files</span>
+                                <input type="number" name="max_media_items" min="1" value="{{ saved_config.max_media_items }}">
+                            </label>
+                            <label class="field">
+                                <span>Max scroll rounds</span>
+                                <input type="number" name="max_scroll_rounds" min="1" value="{{ saved_config.max_scroll_rounds }}">
+                            </label>
+                            <label class="field">
+                                <span>Scroll pause seconds</span>
+                                <input type="number" name="scroll_pause_seconds" min="0.2" step="0.1" value="{{ saved_config.scroll_pause_seconds }}">
+                            </label>
+                        </div>
+                        <label class="field">
+                            <span>Stale round limit</span>
+                            <input type="number" name="stale_round_limit" min="1" value="{{ saved_config.stale_round_limit }}">
+                        </label>
+                        <label class="field field-switch">
+                            <span>Browser mode</span>
+                            <span class="switch-row">
+                                <span class="switch-label">Run browser in headless mode</span>
+                                <span class="ios-switch-shell">
+                                    <input type="checkbox" name="headless" {% if saved_config.headless %}checked{% endif %}>
+                                    <span class="ios-switch-slider" aria-hidden="true"></span>
+                                </span>
+                            </span>
+                        </label>
+                        <button type="submit" class="primary-button sidebar-action-button">Save settings</button>
+                    </form>
+                </article>
+            </div>
+        </section>
+    </div>
+
+    <nav class="sidebar-dock" aria-label="Workspace sections">
+        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="download" aria-label="Downloads">
+            <span class="icon dock-icon dock-icon-download" aria-hidden="true"></span>
+        </a>
+        <a href="{{ url_for('settings') }}" class="sidebar-dock-item is-active" data-section-link="settings" aria-label="Settings">
+            <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>
+        </a>
+    </nav>
+</main>
+</body>
+</html>

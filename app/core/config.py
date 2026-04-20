@@ -19,6 +19,7 @@ class CrawlConfig:
     """Runtime configuration for a single cache job."""
 
     headless: bool = False
+    max_media_items: int = 10
     max_scroll_rounds: int = 200
     scroll_pause_seconds: float = 1.2
     stale_round_limit: int = 8

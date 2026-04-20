@@ -5,10 +5,22 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from .config import CrawlConfig
 from .state import TaskState
+
+
+MEDIA_MARKER_PREFIX = "__CACHELIKES_MEDIA__:"
+
+
+@dataclass(slots=True)
+class DownloadResult:
+    """Capture the outcome for a single tweet download."""
+
+    downloaded_media_count: int = 0
+    skipped: bool = False
 
 
 def resolve_yt_dlp_command() -> list[str]:
@@ -51,7 +63,8 @@ def download_tweet_media(
     archive_path: Path,
     config: CrawlConfig,
     state: TaskState,
-) -> bool:
+    remaining_media_items: int | None = None,
+) -> DownloadResult:
     """Download media for one tweet URL."""
     yt_dlp_command = ensure_yt_dlp_available()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -70,13 +83,22 @@ def download_tweet_media(
         "--no-progress",
         "--restrict-filenames",
         "--no-overwrites",
-        tweet_url,
+        "--print",
+        f"after_move:{MEDIA_MARKER_PREFIX}%(filepath)s",
     ]
+    if remaining_media_items is not None:
+        command.extend(["--max-downloads", str(max(1, remaining_media_items))])
+    command.append(tweet_url)
 
     result = subprocess.run(command, capture_output=True, text=True, check=False)
     if result.returncode == 0:
+        downloaded_media_count = sum(
+            1 for line in (result.stdout or "").splitlines() if line.startswith(MEDIA_MARKER_PREFIX)
+        )
+        if downloaded_media_count == 0:
+            downloaded_media_count = 1
         state.append_event(f"Downloaded media for {tweet_url}")
-        return True
+        return DownloadResult(downloaded_media_count=downloaded_media_count)
 
     stderr = (result.stderr or "").strip()
     stdout = (result.stdout or "").strip()
@@ -84,6 +106,6 @@ def download_tweet_media(
 
     if "has already been recorded in the archive" in combined:
         state.append_event(f"Skipped already archived tweet {tweet_url}")
-        return False
+        return DownloadResult(skipped=True)
 
     raise RuntimeError(f"yt-dlp failed for {tweet_url}: {combined}")

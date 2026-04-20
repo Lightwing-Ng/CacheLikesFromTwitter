@@ -42,33 +42,48 @@ class CacheLikesService:
 
             self._state.update(output_dir=str(output_dir), phase="downloading", discovered_tweets=len(tweet_urls))
             self._state.append_event(
-                f"Starting media download for {len(tweet_urls)} liked tweets into {output_dir}."
+                f"Starting media download for up to {config.max_media_items} files from "
+                f"{len(tweet_urls)} liked tweets into {output_dir}."
             )
 
-            downloaded = 0
+            downloaded_media = 0
             skipped = 0
             failed = 0
 
             for index, tweet_url in enumerate(tweet_urls, start=1):
+                remaining_media_items = config.max_media_items - downloaded_media
+                if remaining_media_items <= 0:
+                    self._state.append_event(
+                        f"Reached the temporary test cap of {config.max_media_items} media files."
+                    )
+                    break
+
                 self._state.append_event(f"Processing liked tweet {index}/{len(tweet_urls)}")
                 try:
-                    was_downloaded = download_tweet_media(tweet_url, output_dir, archive_path, self._state)
-                    if was_downloaded:
-                        downloaded += 1
-                    else:
+                    result = download_tweet_media(
+                        tweet_url,
+                        output_dir,
+                        archive_path,
+                        config,
+                        self._state,
+                        remaining_media_items=remaining_media_items,
+                    )
+                    if result.skipped:
                         skipped += 1
+                    else:
+                        downloaded_media += result.downloaded_media_count
                 except Exception as exc:  # pragma: no cover
                     failed += 1
                     self._state.append_event(str(exc))
 
                 self._state.update(
-                    downloaded_tweets=downloaded,
+                    downloaded_tweets=downloaded_media,
                     skipped_tweets=skipped,
                     failed_tweets=failed,
                 )
 
             self._state.finish_success(
-                f"Finished. Discovered {len(tweet_urls)} liked tweets, downloaded {downloaded}, "
+                f"Finished. Discovered {len(tweet_urls)} liked tweets, downloaded {downloaded_media} media files, "
                 f"skipped {skipped}, failed {failed}."
             )
         except Exception as exc:  # pragma: no cover

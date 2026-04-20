@@ -50,55 +50,20 @@
         ></button>
 
         <aside class="panel sidebar" id="app_sidebar">
-            <section class="sidebar-section anchor-section" id="settings">
+            <section class="sidebar-section">
                 <div class="section-heading">
                     <div>
-                        <p class="section-kicker">Control plane</p>
-                        <h2>Run task</h2>
+                        <p class="section-kicker">Download</p>
+                        <h2>Quick start</h2>
                     </div>
                     <span class="status-chip status-{{ current_phase }}" id="phase_chip">{{ current_phase }}</span>
                 </div>
-                <form action="{{ url_for('start') }}" method="post" class="sidebar-form" id="config_form">
-                    <label class="field">
-                        <span>Chrome user data dir</span>
-                        <input type="text" name="chrome_user_data_dir" value="{{ default_chrome_user_data_dir }}">
-                    </label>
-                    <label class="field">
-                        <span>Chrome profile directory</span>
-                        <input type="text" name="chrome_profile_directory" value="{{ default_chrome_profile_directory }}">
-                    </label>
-                    <label class="field">
-                        <span>Account name override</span>
-                        <input type="text" name="account_name_override" placeholder="Optional folder name override">
-                    </label>
-                    <div class="field-grid">
-                        <label class="field">
-                            <span>Max scroll rounds</span>
-                            <input type="number" name="max_scroll_rounds" min="1" value="200">
-                        </label>
-                        <label class="field">
-                            <span>Scroll pause seconds</span>
-                            <input type="number" name="scroll_pause_seconds" min="0.2" step="0.1" value="1.2">
-                        </label>
-                    </div>
-                    <label class="field">
-                        <span>Stale round limit</span>
-                        <input type="number" name="stale_round_limit" min="1" value="8">
-                    </label>
-                    <label class="field field-switch">
-                        <span>Browser mode</span>
-                        <span class="switch-row">
-                            <span class="switch-label">Run browser in headless mode</span>
-                            <span class="ios-switch-shell">
-                                <input type="checkbox" name="headless">
-                                <span class="ios-switch-slider" aria-hidden="true"></span>
-                            </span>
-                        </span>
-                    </label>
+                <form action="{{ url_for('start') }}" method="post" class="sidebar-form">
                     <button type="submit" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled{% endif %}>
                         Start caching
                     </button>
                 </form>
+                <a href="{{ url_for('settings') }}" class="ghost-link">Open settings page</a>
             </section>
 
         </aside>
@@ -127,19 +92,19 @@
                         </article>
                         <article class="metric-card">
                             <span class="metric-label">Discovered</span>
-                            <strong id="discovered_tweets">{{ snapshot.discovered_tweets }}</strong>
+                            <strong id="discovered_tweets">{{ "{:,}".format(snapshot.discovered_tweets) }}</strong>
                         </article>
                         <article class="metric-card">
                             <span class="metric-label">Downloaded</span>
-                            <strong id="downloaded_tweets">{{ snapshot.downloaded_tweets }}</strong>
+                            <strong id="downloaded_tweets">{{ "{:,}".format(snapshot.downloaded_tweets) }}</strong>
                         </article>
                         <article class="metric-card">
                             <span class="metric-label">Skipped</span>
-                            <strong id="skipped_tweets">{{ snapshot.skipped_tweets }}</strong>
+                            <strong id="skipped_tweets">{{ "{:,}".format(snapshot.skipped_tweets) }}</strong>
                         </article>
                         <article class="metric-card">
                             <span class="metric-label">Failed</span>
-                            <strong id="failed_tweets">{{ snapshot.failed_tweets }}</strong>
+                            <strong id="failed_tweets">{{ "{:,}".format(snapshot.failed_tweets) }}</strong>
                         </article>
                         <article class="metric-card">
                             <span class="metric-label">Phase</span>
@@ -177,20 +142,6 @@
                         </dl>
                     </article>
 
-                    <article class="report-card workspace-article-card support-card">
-                        <div class="report-heading-row">
-                            <div>
-                                <p class="workspace-kicker">Workflow</p>
-                                <h2>Operating notes</h2>
-                            </div>
-                        </div>
-                        <ul class="support-list">
-                            <li>Keep the selected Chrome profile signed in before starting a run.</li>
-                            <li>Use the JSON endpoint for raw state inspection or external automation.</li>
-                            <li>Downloads are grouped under the resolved account directory in local storage.</li>
-                        </ul>
-                    </article>
-
                     <article class="report-card workspace-article-card log-card anchor-section" id="activity">
                         <div class="report-heading-row">
                             <div>
@@ -226,7 +177,7 @@
         <a href="#download" class="sidebar-dock-item is-active" data-section-link="download" aria-label="Downloads">
             <span class="icon dock-icon dock-icon-download" aria-hidden="true"></span>
         </a>
-        <a href="#settings" class="sidebar-dock-item" data-section-link="settings" aria-label="Settings">
+        <a href="{{ url_for('settings') }}" class="sidebar-dock-item" data-section-link="settings" aria-label="Settings">
             <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>
         </a>
     </nav>
@@ -440,15 +391,24 @@
         observedSections.forEach((section) => sectionObserver.observe(section));
     }
 
+    const numberFormatter = new Intl.NumberFormat("en-US");
+    function formatMetricNumber(value) {
+        const parsed = Number(value);
+        if (!Number.isFinite(parsed)) {
+            return "0";
+        }
+        return numberFormatter.format(parsed);
+    }
+
     async function refreshStatus() {
         const response = await fetch("{{ url_for('api_status') }}", { cache: "no-store" });
         const data = await response.json();
 
         document.getElementById("account_name").textContent = data.account_name || "-";
-        document.getElementById("discovered_tweets").textContent = data.discovered_tweets;
-        document.getElementById("downloaded_tweets").textContent = data.downloaded_tweets;
-        document.getElementById("skipped_tweets").textContent = data.skipped_tweets;
-        document.getElementById("failed_tweets").textContent = data.failed_tweets;
+        document.getElementById("discovered_tweets").textContent = formatMetricNumber(data.discovered_tweets);
+        document.getElementById("downloaded_tweets").textContent = formatMetricNumber(data.downloaded_tweets);
+        document.getElementById("skipped_tweets").textContent = formatMetricNumber(data.skipped_tweets);
+        document.getElementById("failed_tweets").textContent = formatMetricNumber(data.failed_tweets);
         document.getElementById("output_dir").textContent = data.output_dir || "-";
         document.getElementById("message").textContent = data.message;
         document.getElementById("started_at").textContent = data.started_at || "-";

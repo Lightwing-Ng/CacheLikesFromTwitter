@@ -7,8 +7,6 @@ from pathlib import Path
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from app.core.config import (
-    DEFAULT_CHROME_PROFILE_DIRECTORY,
-    DEFAULT_CHROME_USER_DATA_DIR,
     DEFAULT_HOST,
     DEFAULT_PORT,
     CrawlConfig,
@@ -28,6 +26,34 @@ def create_app() -> Flask:
 
     state = TaskState(version=APP_VERSION)
     service = CacheLikesService(state)
+    saved_config = CrawlConfig()
+
+    def parse_form_config(base: CrawlConfig | None = None) -> CrawlConfig:
+        source = base or CrawlConfig()
+        return CrawlConfig(
+            headless=request.form.get("headless") == "on",
+            max_media_items=int(
+                request.form.get("max_media_items", str(source.max_media_items)) or source.max_media_items
+            ),
+            max_scroll_rounds=int(
+                request.form.get("max_scroll_rounds", str(source.max_scroll_rounds)) or source.max_scroll_rounds
+            ),
+            scroll_pause_seconds=float(
+                request.form.get("scroll_pause_seconds", str(source.scroll_pause_seconds))
+                or source.scroll_pause_seconds
+            ),
+            stale_round_limit=int(
+                request.form.get("stale_round_limit", str(source.stale_round_limit)) or source.stale_round_limit
+            ),
+            chrome_user_data_dir=Path(
+                request.form.get("chrome_user_data_dir", str(source.chrome_user_data_dir)).strip()
+            ).expanduser(),
+            chrome_profile_directory=request.form.get(
+                "chrome_profile_directory", source.chrome_profile_directory
+            ).strip()
+            or source.chrome_profile_directory,
+            account_name_override=request.form.get("account_name_override", source.account_name_override).strip(),
+        )
 
     @app.get("/")
     def index():
@@ -38,31 +64,34 @@ def create_app() -> Flask:
             version=APP_VERSION,
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,
-            default_chrome_user_data_dir=str(DEFAULT_CHROME_USER_DATA_DIR),
-            default_chrome_profile_directory=DEFAULT_CHROME_PROFILE_DIRECTORY,
+        )
+
+    @app.get("/settings")
+    def settings():
+        snapshot = state.snapshot()
+        return render_template(
+            "settings.html",
+            snapshot=snapshot,
+            version=APP_VERSION,
+            default_host=DEFAULT_HOST,
+            default_port=DEFAULT_PORT,
+            saved_config=saved_config,
         )
 
     @app.post("/start")
     def start():
-        config = CrawlConfig(
-            headless=request.form.get("headless") == "on",
-            max_scroll_rounds=int(request.form.get("max_scroll_rounds", "200") or 200),
-            scroll_pause_seconds=float(request.form.get("scroll_pause_seconds", "1.2") or 1.2),
-            stale_round_limit=int(request.form.get("stale_round_limit", "8") or 8),
-            chrome_user_data_dir=Path(
-                request.form.get("chrome_user_data_dir", str(DEFAULT_CHROME_USER_DATA_DIR)).strip()
-            ).expanduser(),
-            chrome_profile_directory=request.form.get(
-                "chrome_profile_directory", DEFAULT_CHROME_PROFILE_DIRECTORY
-            ).strip()
-            or DEFAULT_CHROME_PROFILE_DIRECTORY,
-            account_name_override=request.form.get("account_name_override", "").strip(),
-        )
+        config = saved_config
         try:
             service.start(config)
         except RuntimeError as exc:
             state.finish_error(str(exc))
         return redirect(url_for("index"))
+
+    @app.post("/settings")
+    def save_settings():
+        nonlocal saved_config
+        saved_config = parse_form_config(saved_config)
+        return redirect(url_for("settings"))
 
     @app.get("/api/status")
     def api_status():
