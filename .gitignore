@@ -1,5 +1,6 @@
 .DS_Store
 .venv/
+.idea/
 __pycache__/
 .pytest_cache/
 local_store/*
