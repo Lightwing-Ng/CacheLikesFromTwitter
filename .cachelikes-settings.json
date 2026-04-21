@@ -1,0 +1,10 @@
+{
+  "account_name_override": "",
+  "chrome_profile_directory": "Default",
+  "chrome_user_data_dir": "/Users/lightwing/Library/Application Support/Google/Chrome",
+  "headless": false,
+  "max_media_items": 100000,
+  "max_scroll_rounds": 200000,
+  "scroll_pause_seconds": 1.8,
+  "stale_round_limit": 8
+}

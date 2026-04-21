@@ -61,6 +61,34 @@ class CacheLikesServiceTests(unittest.TestCase):
         self.assertEqual(snapshot["downloaded_tweets"], 10)
         self.assertIn("downloaded 10 media files", snapshot["message"])
 
+    def test_request_stop_returns_false_when_idle(self) -> None:
+        state = TaskState(version="test")
+        service = CacheLikesService(state)
+
+        self.assertFalse(service.request_stop())
+
+    def test_run_stops_when_emergency_stop_is_requested(self) -> None:
+        state = TaskState(version="test")
+        service = CacheLikesService(state)
+        config = CrawlConfig(max_media_items=10)
+        tweet_urls = [f"https://x.com/demo/status/{index}" for index in range(1, 4)]
+
+        def fake_download(*_args, **_kwargs):
+            service._stop_requested.set()
+            return DownloadResult(downloaded_media_count=1)
+
+        with patch(
+            "app.core.service.collect_liked_tweet_urls",
+            return_value=("demo_account", tweet_urls),
+        ), patch("app.core.service.download_tweet_media", side_effect=fake_download) as mock_download:
+            service._run(config)
+
+        self.assertEqual(mock_download.call_count, 1)
+        snapshot = state.snapshot()
+        self.assertEqual(snapshot["phase"], "stopped")
+        self.assertEqual(snapshot["downloaded_tweets"], 1)
+        self.assertIn("Emergency stop completed", snapshot["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

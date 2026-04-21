@@ -10,6 +10,8 @@ from app.core.config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
     CrawlConfig,
+    load_saved_config,
+    save_config,
 )
 from app.core.logging_setup import configure_logging, get_log_file_path
 from app.core.service import CacheLikesService
@@ -28,7 +30,7 @@ def create_app() -> Flask:
 
     state = TaskState(version=APP_VERSION)
     service = CacheLikesService(state)
-    saved_config = CrawlConfig()
+    saved_config = load_saved_config()
 
     def parse_form_config(base: CrawlConfig | None = None) -> CrawlConfig:
         source = base or CrawlConfig()
@@ -91,10 +93,16 @@ def create_app() -> Flask:
             state.finish_error(str(exc))
         return redirect(url_for("index"))
 
+    @app.post("/stop")
+    def stop():
+        service.request_stop()
+        return redirect(url_for("index"))
+
     @app.post("/settings")
     def save_settings():
         nonlocal saved_config
         saved_config = parse_form_config(saved_config)
+        save_config(saved_config)
         return redirect(url_for("settings"))
 
     @app.get("/api/status")

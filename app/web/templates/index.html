@@ -63,7 +63,11 @@
                         Start caching
                     </button>
                 </form>
-                <a href="{{ url_for('settings') }}" class="ghost-link">Open settings page</a>
+                <form action="{{ url_for('stop') }}" method="post" class="sidebar-form">
+                    <button type="submit" class="danger-button sidebar-action-button" id="stop_button" {% if not snapshot.running %}disabled{% endif %}>
+                        Emergency stop
+                    </button>
+                </form>
             </section>
 
         </aside>
@@ -76,14 +80,6 @@
                             <p class="workspace-kicker">Live snapshot</p>
                             <h2>Execution overview</h2>
                         </div>
-                        <a
-                            href="http://{{ default_host }}:{{ default_port }}/api/status"
-                            class="ghost-link"
-                            target="_blank"
-                            rel="noreferrer"
-                        >
-                            Open JSON
-                        </a>
                     </div>
                     <div class="metric-grid">
                         <article class="metric-card">
@@ -91,57 +87,83 @@
                             <strong id="account_name">{{ snapshot.account_name or "-" }}</strong>
                         </article>
                         <article class="metric-card">
-                            <span class="metric-label">Discovered</span>
+                            <span class="metric-label">Posts discovered</span>
                             <strong id="discovered_tweets">{{ "{:,}".format(snapshot.discovered_tweets) }}</strong>
                         </article>
                         <article class="metric-card">
-                            <span class="metric-label">Downloaded</span>
-                            <strong id="downloaded_tweets">{{ "{:,}".format(snapshot.downloaded_tweets) }}</strong>
+                            <span class="metric-label">Posts</span>
+                            <strong id="downloaded_posts">{{ "{:,}".format(snapshot.downloaded_posts) }}</strong>
+                        </article>
+                        <article class="metric-card">
+                            <span class="metric-label">Images</span>
+                            <strong id="downloaded_images">{{ "{:,}".format(snapshot.downloaded_images) }}</strong>
+                        </article>
+                        <article class="metric-card">
+                            <span class="metric-label">Videos</span>
+                            <strong id="downloaded_videos">{{ "{:,}".format(snapshot.downloaded_videos) }}</strong>
                         </article>
                         <article class="metric-card">
                             <span class="metric-label">Skipped</span>
                             <strong id="skipped_tweets">{{ "{:,}".format(snapshot.skipped_tweets) }}</strong>
                         </article>
                         <article class="metric-card">
-                            <span class="metric-label">Failed</span>
-                            <strong id="failed_tweets">{{ "{:,}".format(snapshot.failed_tweets) }}</strong>
-                        </article>
-                        <article class="metric-card">
                             <span class="metric-label">Phase</span>
                             <strong id="phase_value">{{ current_phase }}</strong>
                         </article>
                     </div>
+                    <div class="report-heading-row">
+                        <div>
+                            <p class="workspace-kicker">Status</p>
+                            <h2>Current progress</h2>
+                        </div>
+                        <div
+                            class="status-progress is-indeterminate"
+                            id="status_progress"
+                            role="progressbar"
+                            aria-label="Download progress"
+                            aria-valuemin="0"
+                            aria-valuemax="100"
+                            aria-valuenow="0"
+                        >
+                            <span class="status-progress-fill" id="status_progress_fill"></span>
+                        </div>
+                    </div>
+                    <p class="status-copy" id="message">{{ snapshot.message }}</p>
+                    <div class="progress-metric-grid" aria-label="Cached media progress">
+                        <article class="progress-metric-card">
+                            <span class="progress-metric-label">Cached posts</span>
+                            <strong id="progress_downloaded_posts">{{ "{:,}".format(snapshot.downloaded_posts) }}</strong>
+                        </article>
+                        <article class="progress-metric-card">
+                            <span class="progress-metric-label">Cached images</span>
+                            <strong id="progress_downloaded_images">{{ "{:,}".format(snapshot.downloaded_images) }}</strong>
+                        </article>
+                        <article class="progress-metric-card">
+                            <span class="progress-metric-label">Cached videos</span>
+                            <strong id="progress_downloaded_videos">{{ "{:,}".format(snapshot.downloaded_videos) }}</strong>
+                        </article>
+                    </div>
+                    <dl class="summary-list">
+                        <div class="summary-row">
+                            <dt>Started</dt>
+                            <dd id="started_at">{{ snapshot.started_at or "-" }}</dd>
+                        </div>
+                        <div class="summary-row">
+                            <dt>Finished</dt>
+                            <dd id="finished_at">{{ snapshot.finished_at or "-" }}</dd>
+                        </div>
+                        <div class="summary-row">
+                            <dt>Output dir</dt>
+                            <dd id="output_dir">{{ snapshot.output_dir or "-" }}</dd>
+                        </div>
+                        <div class="summary-row">
+                            <dt>Polling</dt>
+                            <dd>Every 3 seconds</dd>
+                        </div>
+                    </dl>
                 </article>
 
                 <section class="workspace-grid workspace-content-card">
-                    <article class="report-card workspace-article-card anchor-section" id="download">
-                        <div class="report-heading-row">
-                            <div>
-                                <p class="workspace-kicker">Status</p>
-                                <h2>Current progress</h2>
-                            </div>
-                        </div>
-                        <p class="status-copy" id="message">{{ snapshot.message }}</p>
-                        <dl class="summary-list">
-                            <div class="summary-row">
-                                <dt>Started</dt>
-                                <dd id="started_at">{{ snapshot.started_at or "-" }}</dd>
-                            </div>
-                            <div class="summary-row">
-                                <dt>Finished</dt>
-                                <dd id="finished_at">{{ snapshot.finished_at or "-" }}</dd>
-                            </div>
-                            <div class="summary-row">
-                                <dt>Output dir</dt>
-                                <dd id="output_dir">{{ snapshot.output_dir or "-" }}</dd>
-                            </div>
-                            <div class="summary-row">
-                                <dt>Polling</dt>
-                                <dd>Every 3 seconds</dd>
-                            </div>
-                        </dl>
-                    </article>
-
                     <article class="report-card workspace-article-card log-card anchor-section" id="activity">
                         <div class="report-heading-row">
                             <div>
@@ -174,7 +196,7 @@
     </div>
 
     <nav class="sidebar-dock" aria-label="Workspace sections">
-        <a href="#download" class="sidebar-dock-item is-active" data-section-link="download" aria-label="Downloads">
+        <a href="#overview" class="sidebar-dock-item is-active" data-section-link="download" aria-label="Downloads">
             <span class="icon dock-icon dock-icon-download" aria-hidden="true"></span>
         </a>
         <a href="{{ url_for('settings') }}" class="sidebar-dock-item" data-section-link="settings" aria-label="Settings">
@@ -194,6 +216,9 @@
     const statusBannerDismiss = document.getElementById("status_banner_dismiss");
     const phaseValue = document.getElementById("phase_value");
     const startButton = document.getElementById("start_button");
+    const stopButton = document.getElementById("stop_button");
+    const statusProgress = document.getElementById("status_progress");
+    const statusProgressFill = document.getElementById("status_progress_fill");
     const recentEventsBody = document.getElementById("recent_events_body");
     const recentEventsPrev = document.getElementById("recent_events_prev");
     const recentEventsNext = document.getElementById("recent_events_next");
@@ -400,15 +425,46 @@
         return numberFormatter.format(parsed);
     }
 
+    function updateProgressBar(data) {
+        if (!statusProgress || !statusProgressFill) {
+            return;
+        }
+
+        const discovered = Number(data.discovered_tweets) || 0;
+        const processed = (Number(data.downloaded_posts) || 0) + (Number(data.skipped_tweets) || 0) + (Number(data.failed_tweets) || 0);
+        let progressPercent = 0;
+        let isIndeterminate = false;
+
+        if (data.phase === "collecting" || data.phase === "starting" || data.phase === "stopping") {
+            isIndeterminate = true;
+        } else if (data.phase === "downloading") {
+            const total = Math.max(discovered, processed, 1);
+            progressPercent = Math.round((processed / total) * 100);
+        } else if (["finished", "completed", "success", "stopped"].includes(data.phase)) {
+            progressPercent = 100;
+        } else if (data.phase === "failed") {
+            const total = Math.max(discovered, processed, 1);
+            progressPercent = Math.round((processed / total) * 100);
+        }
+
+        statusProgress.classList.toggle("is-indeterminate", isIndeterminate);
+        statusProgressFill.style.width = `${Math.min(Math.max(progressPercent, 0), 100)}%`;
+        statusProgress.setAttribute("aria-valuenow", String(Math.min(Math.max(progressPercent, 0), 100)));
+    }
+
     async function refreshStatus() {
         const response = await fetch("{{ url_for('api_status') }}", { cache: "no-store" });
         const data = await response.json();
 
         document.getElementById("account_name").textContent = data.account_name || "-";
         document.getElementById("discovered_tweets").textContent = formatMetricNumber(data.discovered_tweets);
-        document.getElementById("downloaded_tweets").textContent = formatMetricNumber(data.downloaded_tweets);
+        document.getElementById("downloaded_posts").textContent = formatMetricNumber(data.downloaded_posts);
+        document.getElementById("downloaded_images").textContent = formatMetricNumber(data.downloaded_images);
+        document.getElementById("downloaded_videos").textContent = formatMetricNumber(data.downloaded_videos);
+        document.getElementById("progress_downloaded_posts").textContent = formatMetricNumber(data.downloaded_posts);
+        document.getElementById("progress_downloaded_images").textContent = formatMetricNumber(data.downloaded_images);
+        document.getElementById("progress_downloaded_videos").textContent = formatMetricNumber(data.downloaded_videos);
         document.getElementById("skipped_tweets").textContent = formatMetricNumber(data.skipped_tweets);
-        document.getElementById("failed_tweets").textContent = formatMetricNumber(data.failed_tweets);
         document.getElementById("output_dir").textContent = data.output_dir || "-";
         document.getElementById("message").textContent = data.message;
         document.getElementById("started_at").textContent = data.started_at || "-";
@@ -417,7 +473,9 @@
 
         bannerMessage.textContent = data.message;
         setPhaseState(data.phase);
+        updateProgressBar(data);
         startButton.disabled = Boolean(data.running);
+        stopButton.disabled = !Boolean(data.running);
     }
 
     setRecentEvents(recentEvents);

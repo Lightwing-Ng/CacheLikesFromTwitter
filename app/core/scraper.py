@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 import shutil
 import tempfile
 import time
@@ -24,6 +25,7 @@ except ImportError:  # pragma: no cover
 
 CANONICAL_X_ACCOUNT_HANDLE = "22cmProgrammer"
 CANONICAL_X_LIKES_URL = f"https://x.com/{CANONICAL_X_ACCOUNT_HANDLE}/likes"
+STATUS_URL_PATTERN = re.compile(r"^https://x\.com/([^/]+)/status/(\d+)")
 logger = logging.getLogger(__name__)
 
 
@@ -138,6 +140,29 @@ def wait_for_likes_page_ready(page) -> None:
     raise RuntimeError("X likes page did not finish loading in time.")
 
 
+def normalize_status_url(url: str) -> str:
+    """Collapse tweet detail links to a canonical X status URL."""
+    candidate = (url or "").strip()
+    if not candidate:
+        return ""
+
+    candidate = candidate.split("?", 1)[0].rstrip("/")
+    if candidate.startswith("http://"):
+        candidate = "https://" + candidate[len("http://") :]
+    candidate = candidate.replace("https://twitter.com/", "https://x.com/")
+    candidate = candidate.replace("https://www.x.com/", "https://x.com/")
+    candidate = candidate.replace("https://www.twitter.com/", "https://x.com/")
+    candidate = candidate.replace("https://mobile.x.com/", "https://x.com/")
+    candidate = candidate.replace("https://mobile.twitter.com/", "https://x.com/")
+
+    match = STATUS_URL_PATTERN.match(candidate)
+    if not match:
+        return ""
+
+    handle, status_id = match.groups()
+    return f"https://x.com/{handle}/status/{status_id}"
+
+
 def launch_context(playwright, config: CrawlConfig, state: TaskState):
     """Launch Chromium with the user's Chrome profile directory."""
     user_data_dir = Path(config.chrome_user_data_dir).expanduser()
@@ -236,12 +261,13 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
                 links = page.locator('article a[href*="/status/"]').evaluate_all(
                     """(elements) => elements
                     .map((element) => element.href)
-                    .filter((href) => href && href.includes("/status/"))
-                    .map((href) => href.split("?")[0])"""
+                    .filter((href) => href && href.includes("/status/"))"""
                 )
 
                 before_count = len(seen_urls)
-                seen_urls.update(links)
+                seen_urls.update(
+                    normalized_url for normalized_url in (normalize_status_url(link) for link in links) if normalized_url
+                )
                 after_count = len(seen_urls)
 
                 state.update(discovered_tweets=after_count, phase="collecting")

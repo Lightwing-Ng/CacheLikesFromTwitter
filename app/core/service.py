@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from threading import Thread
+from threading import Event, Thread
 from uuid import uuid4
 
 from .config import CrawlConfig, LOCAL_STORE_ROOT
@@ -22,6 +22,7 @@ class CacheLikesService:
     def __init__(self, state: TaskState) -> None:
         self._state = state
         self._worker: Thread | None = None
+        self._stop_requested = Event()
 
     def is_running(self) -> bool:
         """Return whether a job is active."""
@@ -33,9 +34,22 @@ class CacheLikesService:
         if self.is_running():
             raise RuntimeError("A cache job is already running.")
 
+        self._stop_requested.clear()
         self._state.reset_for_run()
         self._worker = Thread(target=self._run, args=(config,), daemon=True)
         self._worker.start()
+
+    def request_stop(self) -> bool:
+        """Request cooperative stop for the active job."""
+        if not self.is_running():
+            return False
+        self._stop_requested.set()
+        self._state.update(phase="stopping")
+        self._state.append_event("Emergency stop requested. Waiting for current task to stop.")
+        return True
+
+    def _is_stop_requested(self) -> bool:
+        return self._stop_requested.is_set()
 
     def _run(self, config: CrawlConfig) -> None:
         """Execute the full job pipeline."""
@@ -55,6 +69,10 @@ class CacheLikesService:
                     "stale_round_limit": config.stale_round_limit,
                 },
             )
+            if self._is_stop_requested():
+                self._state.finish_stopped("Job stopped before collection started.")
+                return
+
             account_handle, tweet_urls = collect_liked_tweet_urls(config, self._state)
             account_name = config.sanitized_account_name(account_handle)
             output_dir = LOCAL_STORE_ROOT / account_name
@@ -79,10 +97,33 @@ class CacheLikesService:
             )
 
             downloaded_media = 0
+            downloaded_posts = 0
+            downloaded_images = 0
+            downloaded_videos = 0
             skipped = 0
             failed = 0
 
             for index, tweet_url in enumerate(tweet_urls, start=1):
+                if self._is_stop_requested():
+                    self._state.finish_stopped(
+                        f"Emergency stop completed. Downloaded {downloaded_posts} posts, {downloaded_images} images, "
+                        f"{downloaded_videos} videos ({downloaded_media} media files), "
+                        f"skipped {skipped}, failed {failed}."
+                    )
+                    logger.info(
+                        "Cache job stopped by operator.",
+                        extra={
+                            "job_id": job_id,
+                            "downloaded_media_total": downloaded_media,
+                            "downloaded_posts_total": downloaded_posts,
+                            "downloaded_images_total": downloaded_images,
+                            "downloaded_videos_total": downloaded_videos,
+                            "skipped_tweets": skipped,
+                            "failed_tweets": failed,
+                        },
+                    )
+                    return
+
                 remaining_media_items = config.max_media_items - downloaded_media
                 if remaining_media_items <= 0:
                     self._state.append_event(
@@ -132,7 +173,15 @@ class CacheLikesService:
                             },
                         )
                     else:
+                        downloaded_post_increment = (
+                            result.downloaded_post_count
+                            if result.downloaded_post_count > 0
+                            else (1 if result.downloaded_media_count > 0 else 0)
+                        )
                         downloaded_media += result.downloaded_media_count
+                        downloaded_posts += downloaded_post_increment
+                        downloaded_images += result.downloaded_image_count
+                        downloaded_videos += result.downloaded_video_count
                         logger.info(
                             "Tweet download completed.",
                             extra={
@@ -141,6 +190,10 @@ class CacheLikesService:
                                 "tweet_index": index,
                                 "downloaded_media_count": result.downloaded_media_count,
                                 "downloaded_media_total": downloaded_media,
+                                "downloaded_post_increment": downloaded_post_increment,
+                                "downloaded_posts_total": downloaded_posts,
+                                "downloaded_images_total": downloaded_images,
+                                "downloaded_videos_total": downloaded_videos,
                             },
                         )
                 except Exception as exc:  # pragma: no cover
@@ -158,12 +211,16 @@ class CacheLikesService:
 
                 self._state.update(
                     downloaded_tweets=downloaded_media,
+                    downloaded_posts=downloaded_posts,
+                    downloaded_images=downloaded_images,
+                    downloaded_videos=downloaded_videos,
                     skipped_tweets=skipped,
                     failed_tweets=failed,
                 )
 
             self._state.finish_success(
-                f"Finished. Discovered {len(tweet_urls)} liked tweets, downloaded {downloaded_media} media files, "
+                f"Finished. Discovered {len(tweet_urls)} posts, downloaded {downloaded_media} media files "
+                f"across {downloaded_posts} posts ({downloaded_images} images, {downloaded_videos} videos), "
                 f"skipped {skipped}, failed {failed}."
             )
             logger.info(
@@ -172,6 +229,9 @@ class CacheLikesService:
                     "job_id": job_id,
                     "discovered_tweets": len(tweet_urls),
                     "downloaded_media_total": downloaded_media,
+                    "downloaded_posts_total": downloaded_posts,
+                    "downloaded_images_total": downloaded_images,
+                    "downloaded_videos_total": downloaded_videos,
                     "skipped_tweets": skipped,
                     "failed_tweets": failed,
                     "output_dir": str(output_dir),
