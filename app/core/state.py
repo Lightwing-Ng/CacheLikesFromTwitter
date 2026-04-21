@@ -1,11 +1,13 @@
 """Shared task state for the web UI and worker."""
 
+# Code version: v1.2.0-codex.1
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 
 from .cache_catalog import summarize_local_store_root
 from .config import LOCAL_STORE_ROOT
@@ -79,9 +81,9 @@ class TaskSnapshot:
 class TaskState:
     """Thread-safe state container."""
 
-    def __init__(self, version: str) -> None:
+    def __init__(self, version: str, snapshot_factory: Callable[[str], TaskSnapshot] | None = None) -> None:
         self._lock = Lock()
-        self._snapshot = build_initial_snapshot(version)
+        self._snapshot = snapshot_factory(version) if snapshot_factory is not None else build_initial_snapshot(version)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:

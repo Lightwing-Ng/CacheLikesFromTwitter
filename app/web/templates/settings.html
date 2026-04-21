@@ -1,3 +1,4 @@
+<!-- Code version: v1.1.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -83,8 +84,11 @@
     </div>
 
     <nav class="sidebar-dock" aria-label="Workspace sections">
-        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="download" aria-label="Downloads">
-            <span class="icon dock-icon dock-icon-download" aria-hidden="true"></span>
+        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="x" aria-label="X">
+            <span class="icon dock-icon dock-icon-x" aria-hidden="true"></span>
+        </a>
+        <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" aria-label="Grok">
+            <span class="icon dock-icon dock-icon-grok" aria-hidden="true"></span>
         </a>
         <a href="{{ url_for('settings') }}" class="sidebar-dock-item is-active" data-section-link="settings" aria-label="Settings">
             <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>

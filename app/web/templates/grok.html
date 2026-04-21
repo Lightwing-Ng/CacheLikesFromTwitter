@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CacheLikesFromTwitter</title>
+    <title>CacheLikesFromTwitter Grok</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -55,16 +55,16 @@
                 <div class="section-heading">
                     <div>
                         <p class="section-kicker">Download</p>
-                        <h2>Quick start</h2>
+                        <h2>Grok sync</h2>
                     </div>
                     <span class="status-chip status-{{ current_phase }}" id="phase_chip">{{ current_phase }}</span>
                 </div>
-                <form action="{{ url_for('start') }}" method="post" class="sidebar-form">
+                <form action="{{ url_for('start_grok') }}" method="post" class="sidebar-form">
                     <button type="submit" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled{% endif %}>
-                        Start caching
+                        Start sync
                     </button>
                 </form>
-                <form action="{{ url_for('stop') }}" method="post" class="sidebar-form">
+                <form action="{{ url_for('stop_grok') }}" method="post" class="sidebar-form">
                     <button type="submit" class="danger-button sidebar-action-button" id="stop_button" {% if not snapshot.running %}disabled{% endif %}>
                         Emergency stop
                     </button>
@@ -79,20 +79,20 @@
                     <div class="report-heading-row">
                         <div>
                             <p class="workspace-kicker">Live snapshot</p>
-                            <h2>Execution overview</h2>
+                            <h2>Grok library overview</h2>
                         </div>
                     </div>
                     <div class="metric-grid">
                         <article class="metric-card">
-                            <span class="metric-label">Account</span>
-                            <strong id="account_name">{{ snapshot.account_name or "-" }}</strong>
+                            <span class="metric-label">Workspace</span>
+                            <strong id="account_name">{{ snapshot.account_name or "Grok" }}</strong>
                         </article>
                         <article class="metric-card">
-                            <span class="metric-label">Posts discovered</span>
+                            <span class="metric-label">Assets discovered</span>
                             <strong id="discovered_tweets">{{ "{:,}".format(snapshot.discovered_tweets) }}</strong>
                         </article>
                         <article class="metric-card">
-                            <span class="metric-label">Posts</span>
+                            <span class="metric-label">Assets cached</span>
                             <strong id="downloaded_posts">{{ "{:,}".format(snapshot.downloaded_posts) }}</strong>
                         </article>
                         <article class="metric-card">
@@ -121,7 +121,7 @@
                             class="status-progress is-indeterminate"
                             id="status_progress"
                             role="progressbar"
-                            aria-label="Download progress"
+                            aria-label="Grok sync progress"
                             aria-valuemin="0"
                             aria-valuemax="100"
                             aria-valuenow="0"
@@ -130,9 +130,18 @@
                         </div>
                     </div>
                     <p class="status-copy" id="message">{{ snapshot.message }}</p>
-                    <div class="progress-metric-grid" aria-label="Cached media progress">
+                    <div class="notice-floating notice-floating-banner notice-inline-banner grok-warning-banner" role="note" aria-label="Grok sync notice">
+                        <div class="notice-floating-copy">
+                            <p class="notice-floating-label">Forced workaround</p>
+                            <p class="notice-floating-title">
+                                Grok is unusually slow. This sync will keep scrolling and may open extra Grok tabs so discovery can continue while local download workers stay busy.
+                            </p>
+                        </div>
+                        <span class="status-chip status-collecting">Site-limited</span>
+                    </div>
+                    <div class="progress-metric-grid" aria-label="Cached Grok media progress">
                         <article class="progress-metric-card">
-                            <span class="progress-metric-label">Cached posts</span>
+                            <span class="progress-metric-label">Cached assets</span>
                             <strong id="progress_downloaded_posts">{{ "{:,}".format(snapshot.downloaded_posts) }}</strong>
                         </article>
                         <article class="progress-metric-card">
@@ -197,10 +206,10 @@
     </div>
 
     <nav class="sidebar-dock" aria-label="Workspace sections">
-        <a href="#overview" class="sidebar-dock-item is-active" data-section-link="x" aria-label="X">
+        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="x" aria-label="X">
             <span class="icon dock-icon dock-icon-x" aria-hidden="true"></span>
         </a>
-        <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" aria-label="Grok">
+        <a href="#overview" class="sidebar-dock-item is-active" data-section-link="grok" aria-label="Grok">
             <span class="icon dock-icon dock-icon-grok" aria-hidden="true"></span>
         </a>
         <a href="{{ url_for('settings') }}" class="sidebar-dock-item" data-section-link="settings" aria-label="Settings">
@@ -229,7 +238,7 @@
     const recentEventsPage = document.getElementById("recent_events_page");
     const sectionLinks = Array.from(document.querySelectorAll("[data-section-link]"));
     const shellMobileQuery = window.matchMedia("(max-width: 900px)");
-    const statusBannerStorageKey = "cachelikes:status-banner-dismissed";
+    const statusBannerStorageKey = "cachelikes:grok-status-banner-dismissed";
     const recentEventsPageSize = 12;
     let recentEvents = {{ snapshot.recent_events | tojson }};
     let recentEventsCurrentPage = 1;
@@ -258,14 +267,14 @@
 
         if (persist) {
             try {
-                window.sessionStorage.setItem("cachelikes:sidebar-open", String(isOpen));
+                window.sessionStorage.setItem("cachelikes:grok-sidebar-open", String(isOpen));
             } catch (_error) {
             }
         }
     }
 
     try {
-        const storedSidebarState = window.sessionStorage.getItem("cachelikes:sidebar-open");
+        const storedSidebarState = window.sessionStorage.getItem("cachelikes:grok-sidebar-open");
         if (storedSidebarState === "false") {
             setSidebarOpen(false, { persist: false });
         }
@@ -366,8 +375,8 @@
             return "settings";
         }
 
-        if (["overview", "download", "activity"].includes(activeId)) {
-            return "x";
+        if (["overview", "grok", "activity"].includes(activeId)) {
+            return "grok";
         }
 
         return activeId;
@@ -435,20 +444,20 @@
         }
 
         const discovered = Number(data.discovered_tweets) || 0;
-        const processed = (Number(data.downloaded_posts) || 0) + (Number(data.skipped_tweets) || 0) + (Number(data.failed_tweets) || 0);
+        const cached = Number(data.downloaded_posts) || 0;
+        const skipped = Number(data.skipped_tweets) || 0;
+        const total = Math.max(discovered, cached + skipped, 1);
         let progressPercent = 0;
         let isIndeterminate = false;
 
         if (data.phase === "collecting" || data.phase === "starting" || data.phase === "stopping") {
             isIndeterminate = true;
         } else if (data.phase === "downloading") {
-            const total = Math.max(discovered, processed, 1);
-            progressPercent = Math.round((processed / total) * 100);
+            progressPercent = Math.round(((cached + skipped) / total) * 100);
         } else if (["finished", "completed", "success", "stopped"].includes(data.phase)) {
             progressPercent = 100;
         } else if (data.phase === "failed") {
-            const total = Math.max(discovered, processed, 1);
-            progressPercent = Math.round((processed / total) * 100);
+            progressPercent = Math.round(((cached + skipped) / total) * 100);
         }
 
         statusProgress.classList.toggle("is-indeterminate", isIndeterminate);
@@ -457,10 +466,10 @@
     }
 
     async function refreshStatus() {
-        const response = await fetch("{{ url_for('api_status') }}", { cache: "no-store" });
+        const response = await fetch("{{ url_for('api_grok_status') }}", { cache: "no-store" });
         const data = await response.json();
 
-        document.getElementById("account_name").textContent = data.account_name || "-";
+        document.getElementById("account_name").textContent = data.account_name || "Grok";
         document.getElementById("discovered_tweets").textContent = formatMetricNumber(data.discovered_tweets);
         document.getElementById("downloaded_posts").textContent = formatMetricNumber(data.downloaded_posts);
         document.getElementById("downloaded_images").textContent = formatMetricNumber(data.downloaded_images);

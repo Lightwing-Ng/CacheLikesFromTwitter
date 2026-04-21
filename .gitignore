@@ -8,3 +8,5 @@ local_store/*
 logs/*
 !logs/.gitkeep
 grok/
+grok_local/
+tests/
