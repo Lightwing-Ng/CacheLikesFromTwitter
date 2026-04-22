@@ -1,5 +1,6 @@
 .DS_Store
 .venv/
+.cachelikes-settings.json
 .idea/*
 __pycache__/
 .pytest_cache/
@@ -10,3 +11,4 @@ logs/*
 grok/
 grok_local/
 tests/
+tools/

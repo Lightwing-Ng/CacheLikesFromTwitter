@@ -45,7 +45,7 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Keep commits logically grouped and easy to review.
 
 ## 8) Host Runtime and Local Tooling
-- Treat `https://x.com/22cmProgrammer/likes` as the canonical entry page for this project.
+- Treat the authenticated likes page for the currently signed-in X account as the canonical entry page for this project.
 - Assume Chrome on the host machine is already authenticated for that page.
 - Do not rework, replace, or repeatedly troubleshoot login unless the user explicitly asks for login-related changes.
 - Assume future user sessions will also start from that already logged-in page.

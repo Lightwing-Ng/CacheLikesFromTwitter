@@ -1,4 +1,4 @@
-<!-- Code version: v1.1.0-codex.1 -->
+<!-- Code version: v1.4.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter Settings</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script defer src="{{ url_for('static', filename='numeric-input-format.js') }}"></script>
 </head>
 <body>
 {% set current_phase = snapshot.phase or "idle" %}
@@ -25,7 +26,7 @@
 
         <section class="panel chart-panel workspace" id="settings_workspace">
             <div class="workspace-header">
-                <article class="report-card workspace-summary-card workspace-article-card">
+                <div class="report-card workspace-summary-card workspace-article-card">
                     <div class="report-heading-row">
                         <div>
                             <p class="workspace-kicker">Settings</p>
@@ -48,23 +49,27 @@
                             <span>Account name override</span>
                             <input type="text" name="account_name_override" value="{{ saved_config.account_name_override }}" placeholder="Optional folder name override">
                         </label>
-                        <div class="field-grid">
-                            <label class="field">
+                        <div class="field-grid compact-config-grid">
+                            <label class="field compact-config-field">
+                                <span>Download workers</span>
+                                <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="download_workers" value="{{ saved_config.download_workers }}">
+                            </label>
+                            <label class="field compact-config-field">
                                 <span>Max media files</span>
-                                <input type="number" name="max_media_items" min="1" value="{{ saved_config.max_media_items }}">
+                                <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="max_media_items" value="{{ saved_config.max_media_items }}">
                             </label>
-                            <label class="field">
+                            <label class="field compact-config-field">
                                 <span>Max scroll rounds</span>
-                                <input type="number" name="max_scroll_rounds" min="1" value="{{ saved_config.max_scroll_rounds }}">
+                                <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="max_scroll_rounds" value="{{ saved_config.max_scroll_rounds }}">
                             </label>
-                            <label class="field">
+                            <label class="field compact-config-field">
                                 <span>Scroll pause seconds</span>
-                                <input type="number" name="scroll_pause_seconds" min="0.2" step="0.1" value="{{ saved_config.scroll_pause_seconds }}">
+                                <input type="text" inputmode="decimal" class="formatted-number-input" data-number-format="decimal" name="scroll_pause_seconds" value="{{ saved_config.scroll_pause_seconds }}">
                             </label>
                         </div>
-                        <label class="field">
+                        <label class="field compact-config-field">
                             <span>Stale round limit</span>
-                            <input type="number" name="stale_round_limit" min="1" value="{{ saved_config.stale_round_limit }}">
+                            <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="stale_round_limit" value="{{ saved_config.stale_round_limit }}">
                         </label>
                         <label class="field field-switch">
                             <span>Browser mode</span>
@@ -78,7 +83,7 @@
                         </label>
                         <button type="submit" class="primary-button sidebar-action-button">Save settings</button>
                     </form>
-                </article>
+                </div>
             </div>
         </section>
     </div>

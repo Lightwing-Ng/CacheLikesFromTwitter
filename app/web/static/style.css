@@ -1,4 +1,4 @@
-/* Code version: v2.2.1-codex.1 */
+/* Code version: v2.5.0-gpt5.4.1 */
 :root {
     color-scheme: light;
     --color-scheme: light;
@@ -9,7 +9,7 @@
     --theme-muted: #5d7289;
     --theme-accent-primary: #0f6bdc;
     --theme-accent-secondary: #ff2f92;
-    --theme-accent-positive: #0d8f63;
+    --theme-accent-positive: #2fff9c;
     --theme-accent-caution: #c96d1a;
     --theme-accent-negative: #cf4b5e;
     --theme-shadow: 0 18px 44px rgba(15, 31, 53, 0.14);
@@ -31,8 +31,8 @@
     --theme-warning: #c96d1a;
     --theme-warning-text: #8a4b10;
     --theme-warning-translucent: rgba(201, 109, 26, 0.18);
-    --theme-success: #0d8f63;
-    --theme-success-strong: #0b6c4b;
+    --theme-success: #2fff9c;
+    --theme-success-strong: #2fff9c;
 
     --bg: var(--theme-background);
     --panel: var(--theme-panel);
@@ -115,6 +115,7 @@
     --workspace-metric-card-radius: var(--radius-panel);
     --app-shell-gap: 14px;
     --viewport-block-size: 100vh;
+    --sidebar-motion-duration: 500ms;
 
     --color-white-adaptive: var(--theme-color-white-adaptive);
     --glass-surface-background-soft: var(--theme-glass-surface-background-soft);
@@ -330,7 +331,7 @@ button {
     width: 100%;
     height: 100%;
     min-height: 0;
-    transition: grid-template-columns 560ms var(--motion-emphasized);
+    transition: grid-template-columns var(--sidebar-motion-duration) var(--motion-emphasized);
 }
 
 .sidebar {
@@ -351,9 +352,9 @@ button {
     margin-left: 0;
     opacity: 1;
     transform: none;
-    will-change: margin-left, opacity;
+    will-change: margin-left, opacity, transform;
     transform-origin: left center;
-    transition: margin-left 560ms var(--motion-emphasized), opacity 420ms var(--motion-standard), transform 560ms var(--motion-emphasized);
+    transition: margin-left var(--sidebar-motion-duration) var(--motion-emphasized), opacity var(--sidebar-motion-duration) var(--motion-standard), transform var(--sidebar-motion-duration) var(--motion-bouncy);
 }
 
 .panel.sidebar::before {
@@ -405,7 +406,7 @@ button {
     left: var(--sidebar-toggle-left);
     z-index: var(--layer-fixed-dock);
     transform: translate3d(var(--sidebar-toggle-x), 0, 0);
-    transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), color 160ms var(--motion-standard), transform 460ms var(--motion-press);
+    transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), color 160ms var(--motion-standard), transform var(--sidebar-motion-duration) var(--motion-bouncy);
 }
 
 .sidebar-toggle:hover,
@@ -452,18 +453,23 @@ button {
     pointer-events: none;
 }
 
-.app-shell.is-sidebar-collapsed .sidebar-toggle {
-    transition-duration: 620ms;
-    transition-delay: 70ms;
-    transition-timing-function: var(--motion-reveal);
+.workspace-mobile-summary-shell {
+    transform-origin: left center;
 }
 
-.app-shell.is-sidebar-open .sidebar {
-    transition-delay: 40ms;
+.app-shell.is-sidebar-animating .workspace-mobile-summary-shell {
+    animation-duration: var(--sidebar-motion-duration);
+    animation-fill-mode: both;
+    animation-timing-function: var(--motion-bouncy);
+    will-change: transform;
 }
 
-.app-shell.is-sidebar-open .sidebar-toggle {
-    transition-delay: 0ms;
+.app-shell.is-sidebar-opening .workspace-mobile-summary-shell {
+    animation-name: workspaceSidebarRubberOpen;
+}
+
+.app-shell.is-sidebar-closing .workspace-mobile-summary-shell {
+    animation-name: workspaceSidebarRubberClose;
 }
 
 .hero,
@@ -563,6 +569,301 @@ h2 {
     gap: 10px;
 }
 
+.browser-session-panel {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 12px;
+    overflow: visible;
+}
+
+.browser-session-panel-label {
+    margin: 0;
+    font-size: var(--font-form-label);
+    color: var(--text);
+    font-weight: var(--font-weight-bold);
+}
+
+.browser-session-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+    align-items: end;
+    position: relative;
+}
+
+.trade-strategy-combobox.browser-session-combobox {
+    min-width: 0;
+    width: 100%;
+}
+
+.trade-strategy-select,
+.form-select {
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 12px;
+    border-radius: var(--radius-control);
+    border: var(--control-liquid-border);
+    background: var(--control-liquid-background);
+    box-shadow: var(--control-liquid-shadow);
+    backdrop-filter: var(--control-liquid-blur);
+    -webkit-backdrop-filter: var(--control-liquid-blur);
+    color: var(--text);
+    font-size: var(--font-form-control);
+    transition: background 220ms var(--motion-standard), box-shadow 220ms var(--motion-standard), border-color 220ms var(--motion-standard), transform 160ms var(--motion-standard);
+}
+
+.trade-strategy-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    text-align: left;
+}
+
+.trade-strategy-select:hover,
+.trade-strategy-select:focus,
+.trade-strategy-select:focus-visible,
+.form-select:hover,
+.form-select:focus,
+.form-select:focus-visible {
+    background: var(--control-liquid-background-hover);
+    box-shadow: var(--control-liquid-shadow-focus);
+    outline: none;
+}
+
+.trade-strategy-trigger[aria-expanded="true"] {
+    background: var(--control-liquid-background-hover);
+    box-shadow: var(--control-liquid-shadow-focus);
+}
+
+.browser-session-trigger {
+    min-height: 52px;
+}
+
+.browser-session-trigger-leading {
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+}
+
+.trade-strategy-trigger-label.browser-session-trigger-label {
+    display: inline-flex;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-ui-lg);
+    font-weight: var(--font-weight-semibold);
+}
+
+.browser-picker-selected-icon-shell {
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--theme-color-white-adaptive) 72%, transparent);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 100%, transparent);
+}
+
+.browser-picker-option-icon {
+    width: 22px;
+    height: 22px;
+    object-fit: contain;
+    display: block;
+    flex: 0 0 22px;
+}
+
+.browser-picker-trigger-chevron {
+    width: auto;
+    height: auto;
+    flex: 0 0 auto;
+    color: var(--muted);
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    line-height: 1;
+    transition: transform 180ms var(--motion-standard);
+}
+
+.browser-picker-trigger-chevron::before {
+    content: "\25BE";
+    display: block;
+}
+
+.browser-session-panel.is-browser-menu-open .browser-picker-trigger-chevron {
+    transform: rotate(180deg);
+}
+
+.trade-strategy-dropdown {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    right: 0;
+    padding: 10px;
+    border-radius: var(--radius-soft);
+    background: var(--glass-popover-background);
+    box-shadow: var(--glass-popover-shadow), 0 12px 24px var(--theme-shadow-ambient);
+    backdrop-filter: var(--glass-popover-blur);
+    -webkit-backdrop-filter: var(--glass-popover-blur);
+    border: 1px solid var(--theme-glass-highlight);
+    z-index: var(--layer-inline-overlay);
+    max-height: min(320px, 48vh);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: var(--theme-muted-translucent) transparent;
+}
+
+.backtest-shared-select-dropdown.browser-session-dropdown {
+    position: absolute;
+    color: var(--text);
+    background: color-mix(in srgb, var(--theme-background) 84%, var(--color-white-adaptive) 16%);
+    border: 1px solid color-mix(in srgb, var(--theme-text) 12%, transparent);
+    box-shadow: 0 24px 48px var(--theme-shadow-ambient), 0 8px 18px color-mix(in srgb, var(--theme-shadow-ambient) 72%, transparent);
+    backdrop-filter: saturate(180%) blur(28px);
+    -webkit-backdrop-filter: saturate(180%) blur(28px);
+    isolation: isolate;
+    z-index: var(--layer-global-popover);
+    display: none;
+}
+
+.backtest-shared-select-dropdown.browser-session-dropdown::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: linear-gradient(180deg, color-mix(in srgb, var(--color-white-adaptive) 14%, transparent) 0%, transparent 100%);
+    pointer-events: none;
+}
+
+.backtest-shared-select-dropdown.browser-session-dropdown > * {
+    position: relative;
+    z-index: 1;
+}
+
+.browser-session-panel.is-browser-menu-open .browser-session-dropdown {
+    display: grid;
+    gap: 4px;
+}
+
+.trade-strategy-dropdown::-webkit-scrollbar {
+    width: 8px;
+}
+
+.trade-strategy-dropdown::-webkit-scrollbar-track {
+    background: transparent;
+    margin: 4px 0;
+}
+
+.trade-strategy-dropdown::-webkit-scrollbar-thumb {
+    background: var(--theme-muted-translucent);
+    border-radius: var(--radius-pill);
+}
+
+.trade-strategy-dropdown-option {
+    width: 100%;
+    min-height: 44px;
+    padding: 9px 10px;
+    border: 0;
+    border-radius: var(--radius-soft);
+    background: transparent;
+    color: var(--text);
+    display: grid;
+    grid-template-columns: 16px 22px minmax(0, 1fr);
+    column-gap: 8px;
+    align-items: center;
+    text-align: left;
+    font-size: var(--font-form-label);
+    line-height: 1.2;
+    font-weight: var(--font-weight-regular);
+    transition: background 140ms var(--motion-standard), box-shadow 140ms var(--motion-standard);
+}
+
+.trade-strategy-dropdown-option:hover,
+.trade-strategy-dropdown-option:focus-visible {
+    background: var(--control-liquid-background-hover);
+    outline: none;
+}
+
+.trade-strategy-dropdown-option.is-active,
+.trade-strategy-dropdown-option.is-selected {
+    background: color-mix(in srgb, var(--control-liquid-background-hover) 82%, var(--accent-surface-soft));
+    box-shadow: inset 0 0 0 1px var(--theme-glass-highlight);
+}
+
+.trade-strategy-dropdown-check {
+    width: 16px;
+    height: 16px;
+    background-color: var(--theme-success-strong);
+    mask: url("/static/images/checkmark.circle.fill.green.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/checkmark.circle.fill.green.svg") center/contain no-repeat;
+    opacity: 0;
+}
+
+.trade-strategy-dropdown-option.is-selected .trade-strategy-dropdown-check {
+    opacity: 1;
+}
+
+.trade-strategy-dropdown-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.browser-session-status-card {
+    padding: 12px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--glass-surface-background-strong) 92%, transparent);
+    border: 1px solid color-mix(in srgb, var(--theme-color-white-adaptive) 34%, transparent);
+    box-shadow: 0 14px 28px rgba(15, 31, 53, 0.08), inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 92%, transparent);
+    display: grid;
+    gap: 6px;
+}
+
+.browser-session-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.browser-session-status-copy {
+    min-width: 0;
+    display: grid;
+    gap: 4px;
+}
+
+.browser-session-status-account {
+    font-size: var(--font-ui-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text);
+    line-height: 1.3;
+    word-break: break-word;
+}
+
+.browser-session-status-checkmark {
+    width: 22px;
+    height: 22px;
+    flex: 0 0 22px;
+    background-color: var(--theme-success-strong);
+    mask: url("/static/images/checkmark.circle.fill.green.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/checkmark.circle.fill.green.svg") center/contain no-repeat;
+}
+
+.browser-session-panel.is-browser-ready .browser-session-status-card {
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--theme-success) 6%, var(--glass-surface-background-strong));
+}
+
+.browser-session-panel.is-browser-status-loading .browser-session-status-card {
+    opacity: 0.84;
+}
+
 .sidebar-section > .sidebar-form + .sidebar-form {
     padding-top: 10px;
 }
@@ -587,6 +888,14 @@ h2 {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 10px;
+}
+
+.compact-config-grid {
+    gap: 6px;
+}
+
+.compact-config-field {
+    gap: 4px;
 }
 
 input[type="text"],
@@ -624,6 +933,17 @@ input[type="number"]::-webkit-outer-spin-button,
 input[type="number"]::-webkit-inner-spin-button {
     -webkit-appearance: none;
     margin: 0;
+}
+
+.formatted-number-input {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.01em;
+}
+
+.compact-config-field input {
+    padding: 4px 10px;
+    min-height: 32px;
 }
 
 .switch-row {
@@ -744,6 +1064,50 @@ input[type="number"]::-webkit-inner-spin-button {
     align-items: center;
     justify-content: center;
     white-space: nowrap;
+}
+
+.sidebar-action-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+}
+
+.sidebar-action-row .sidebar-form {
+    margin: 0;
+}
+
+.sidebar-form-stop {
+    justify-self: start;
+}
+
+.sidebar-form-start {
+    justify-self: end;
+}
+
+.sidebar-action-row .sidebar-action-button {
+    margin-left: 0;
+    margin-right: 0;
+}
+
+.stop-button {
+    background: transparent;
+    border: 1px solid transparent;
+    color: var(--theme-error-strong);
+}
+
+.stop-button:hover,
+.stop-button:focus-visible {
+    background: color-mix(in srgb, var(--theme-error-strong) 10%, rgba(255, 255, 255, 0.64));
+    border-color: color-mix(in srgb, var(--theme-error-strong) 42%, transparent);
+}
+
+.stop-button:disabled {
+    color: color-mix(in srgb, var(--theme-error-strong) 30%, var(--muted));
+    border-color: transparent;
+    background: transparent;
+    opacity: 0;
+    pointer-events: none;
 }
 
 .status-chip {
@@ -927,13 +1291,8 @@ input[type="number"]::-webkit-inner-spin-button {
     width: 0%;
     height: 100%;
     border-radius: inherit;
-    background: linear-gradient(
-        90deg,
-        color-mix(in srgb, var(--theme-success-strong) 92%, #ffffff) 0%,
-        var(--theme-success) 60%,
-        color-mix(in srgb, var(--theme-success) 70%, #ffffff) 100%
-    );
-    box-shadow: 0 0 10px color-mix(in srgb, var(--theme-success) 28%, transparent);
+    background: var(--theme-success-strong);
+    box-shadow: 0 0 10px color-mix(in srgb, var(--theme-success-strong) 28%, transparent);
     transition: width 280ms var(--motion-inertial);
 }
 
@@ -1024,7 +1383,8 @@ input[type="number"]::-webkit-inner-spin-button {
 
 .metric-card:nth-child(2) strong,
 .metric-card:nth-child(3) strong,
-.metric-card:nth-child(4) strong {
+.metric-card:nth-child(4) strong,
+.metric-card-accent strong {
     background: linear-gradient(135deg, var(--accent) 0%, var(--accent-secondary) 100%);
     -webkit-background-clip: text;
     background-clip: text;
@@ -1480,15 +1840,14 @@ a.ghost-link[href$="/settings"] {
     opacity: 0;
     pointer-events: none;
     transform: translateX(-50%) scale(0.95);
-    transition: opacity 420ms var(--motion-standard), transform 560ms var(--motion-emphasized);
+    transition: opacity var(--sidebar-motion-duration) var(--motion-standard), transform var(--sidebar-motion-duration) var(--motion-emphasized);
 }
 
 .app-shell.is-sidebar-open ~ .sidebar-dock {
     opacity: 1;
     pointer-events: auto;
     transform: translateX(-50%) scale(1);
-    transition: opacity 420ms var(--motion-standard), transform 560ms var(--motion-emphasized);
-    transition-delay: 40ms;
+    transition: opacity var(--sidebar-motion-duration) var(--motion-standard), transform var(--sidebar-motion-duration) var(--motion-emphasized);
 }
 
 .anchor-section {
@@ -1516,6 +1875,50 @@ a.ghost-link[href$="/settings"] {
         opacity: 1;
         transform: translate3d(0, 0, 0) scale(1);
         filter: saturate(1) blur(0);
+    }
+}
+
+@keyframes workspaceSidebarRubberOpen {
+    0% {
+        transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+    }
+
+    32% {
+        transform: translate3d(12px, 0, 0) scale3d(0.984, 1.024, 1);
+    }
+
+    56% {
+        transform: translate3d(-5px, 0, 0) scale3d(1.01, 0.992, 1);
+    }
+
+    76% {
+        transform: translate3d(2px, 0, 0) scale3d(0.997, 1.004, 1);
+    }
+
+    100% {
+        transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+    }
+}
+
+@keyframes workspaceSidebarRubberClose {
+    0% {
+        transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+    }
+
+    32% {
+        transform: translate3d(-12px, 0, 0) scale3d(0.984, 1.024, 1);
+    }
+
+    56% {
+        transform: translate3d(5px, 0, 0) scale3d(1.01, 0.992, 1);
+    }
+
+    76% {
+        transform: translate3d(-2px, 0, 0) scale3d(0.997, 1.004, 1);
+    }
+
+    100% {
+        transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
     }
 }
 

@@ -1,7 +1,10 @@
 """Orchestration service for the cache job."""
 
+# Code version: v1.3.0-codex.1
+
 from __future__ import annotations
 
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import logging
 from pathlib import Path
 from threading import Event, Thread
@@ -63,6 +66,7 @@ class CacheLikesService:
                     "chrome_profile_directory": config.chrome_profile_directory,
                     "chrome_user_data_dir": str(config.chrome_user_data_dir),
                     "headless": config.headless,
+                    "download_workers": config.download_workers,
                     "max_media_items": config.max_media_items,
                     "max_scroll_rounds": config.max_scroll_rounds,
                     "scroll_pause_seconds": config.scroll_pause_seconds,
@@ -74,9 +78,9 @@ class CacheLikesService:
                 return
 
             account_handle, tweet_urls = collect_liked_tweet_urls(config, self._state)
+            tweet_urls = list(dict.fromkeys(tweet_urls))
             account_name = config.sanitized_account_name(account_handle)
             output_dir = LOCAL_STORE_ROOT / account_name
-            archive_path = output_dir / ".downloaded_archive.txt"
             cache_index = LocalTweetCacheIndex.build(output_dir)
             logger.info(
                 "Likes collection completed.",
@@ -86,15 +90,18 @@ class CacheLikesService:
                     "account_name": account_name,
                     "discovered_tweets": len(tweet_urls),
                     "output_dir": str(output_dir),
-                    "archive_path": str(archive_path),
                 },
             )
 
             self._state.update(output_dir=str(output_dir), phase="downloading", discovered_tweets=len(tweet_urls))
             self._state.append_event(
-                f"Starting media download for up to {config.max_media_items} files from "
+                f"Starting media download with {config.download_workers} worker(s) for up to {config.max_media_items} files from "
                 f"{len(tweet_urls)} liked tweets into {output_dir}."
             )
+            if config.download_workers > 1:
+                self._state.append_event(
+                    "Parallel mode is enabled. The media cap is treated as a soft ceiling so one tweet is never partially cached."
+                )
 
             downloaded_media = 0
             downloaded_posts = 0
@@ -102,113 +109,13 @@ class CacheLikesService:
             downloaded_videos = 0
             skipped = 0
             failed = 0
+            futures: dict[Future[DownloadResult], tuple[int, str]] = {}
+            next_index = 0
+            stop_requested = False
+            cap_announced = False
+            stop_wait_announced = False
 
-            for index, tweet_url in enumerate(tweet_urls, start=1):
-                if self._is_stop_requested():
-                    self._state.finish_stopped(
-                        f"Emergency stop completed. Downloaded {downloaded_posts} posts, {downloaded_images} images, "
-                        f"{downloaded_videos} videos ({downloaded_media} media files), "
-                        f"skipped {skipped}, failed {failed}."
-                    )
-                    logger.info(
-                        "Cache job stopped by operator.",
-                        extra={
-                            "job_id": job_id,
-                            "downloaded_media_total": downloaded_media,
-                            "downloaded_posts_total": downloaded_posts,
-                            "downloaded_images_total": downloaded_images,
-                            "downloaded_videos_total": downloaded_videos,
-                            "skipped_tweets": skipped,
-                            "failed_tweets": failed,
-                        },
-                    )
-                    return
-
-                remaining_media_items = config.max_media_items - downloaded_media
-                if remaining_media_items <= 0:
-                    self._state.append_event(
-                        f"Reached the temporary test cap of {config.max_media_items} media files."
-                    )
-                    logger.info(
-                        "Download cap reached before processing next tweet.",
-                        extra={
-                            "job_id": job_id,
-                            "processed_tweets": index - 1,
-                            "downloaded_media_count": downloaded_media,
-                            "download_cap": config.max_media_items,
-                        },
-                    )
-                    break
-
-                self._state.append_event(f"Processing liked tweet {index}/{len(tweet_urls)}")
-                try:
-                    logger.info(
-                        "Processing liked tweet.",
-                        extra={
-                            "job_id": job_id,
-                            "tweet_url": tweet_url,
-                            "tweet_index": index,
-                            "tweet_total": len(tweet_urls),
-                            "remaining_media_items": remaining_media_items,
-                        },
-                    )
-                    result = download_tweet_media(
-                        tweet_url,
-                        output_dir,
-                        archive_path,
-                        config,
-                        self._state,
-                        remaining_media_items=remaining_media_items,
-                        cache_index=cache_index,
-                    )
-                    if result.skipped:
-                        skipped += 1
-                        logger.info(
-                            "Tweet skipped.",
-                            extra={
-                                "job_id": job_id,
-                                "tweet_url": tweet_url,
-                                "tweet_index": index,
-                                "skipped_tweets": skipped,
-                            },
-                        )
-                    else:
-                        downloaded_post_increment = (
-                            result.downloaded_post_count
-                            if result.downloaded_post_count > 0
-                            else (1 if result.downloaded_media_count > 0 else 0)
-                        )
-                        downloaded_media += result.downloaded_media_count
-                        downloaded_posts += downloaded_post_increment
-                        downloaded_images += result.downloaded_image_count
-                        downloaded_videos += result.downloaded_video_count
-                        logger.info(
-                            "Tweet download completed.",
-                            extra={
-                                "job_id": job_id,
-                                "tweet_url": tweet_url,
-                                "tweet_index": index,
-                                "downloaded_media_count": result.downloaded_media_count,
-                                "downloaded_media_total": downloaded_media,
-                                "downloaded_post_increment": downloaded_post_increment,
-                                "downloaded_posts_total": downloaded_posts,
-                                "downloaded_images_total": downloaded_images,
-                                "downloaded_videos_total": downloaded_videos,
-                            },
-                        )
-                except Exception as exc:  # pragma: no cover
-                    failed += 1
-                    self._state.append_event(str(exc))
-                    logger.exception(
-                        "Tweet download failed.",
-                        extra={
-                            "job_id": job_id,
-                            "tweet_url": tweet_url,
-                            "tweet_index": index,
-                            "failed_tweets": failed,
-                        },
-                    )
-
+            def update_progress_snapshot() -> None:
                 self._state.update(
                     downloaded_tweets=downloaded_media,
                     downloaded_posts=downloaded_posts,
@@ -217,6 +124,140 @@ class CacheLikesService:
                     skipped_tweets=skipped,
                     failed_tweets=failed,
                 )
+
+            with ThreadPoolExecutor(max_workers=max(1, config.download_workers), thread_name_prefix="x-download") as executor:
+                while next_index < len(tweet_urls) or futures:
+                    if self._is_stop_requested():
+                        stop_requested = True
+                        if not stop_wait_announced:
+                            self._state.append_event(
+                                "Stop requested. No new tweets will be queued. Waiting for active download workers to finish."
+                            )
+                            stop_wait_announced = True
+
+                    if not stop_requested:
+                        while next_index < len(tweet_urls) and len(futures) < max(1, config.download_workers):
+                            remaining_media_items = config.max_media_items - downloaded_media
+                            if config.download_workers > 1:
+                                remaining_media_items -= len(futures)
+
+                            if remaining_media_items <= 0:
+                                if not cap_announced:
+                                    self._state.append_event(
+                                        f"Reached the temporary test cap of about {config.max_media_items} media files."
+                                    )
+                                    cap_announced = True
+                                break
+
+                            tweet_index = next_index + 1
+                            tweet_url = tweet_urls[next_index]
+                            next_index += 1
+
+                            worker_media_budget = remaining_media_items if config.download_workers == 1 else None
+                            self._state.append_event(f"Queued liked tweet {tweet_index}/{len(tweet_urls)}")
+                            logger.info(
+                                "Queued liked tweet for download.",
+                                extra={
+                                    "job_id": job_id,
+                                    "tweet_url": tweet_url,
+                                    "tweet_index": tweet_index,
+                                    "tweet_total": len(tweet_urls),
+                                    "remaining_media_items": worker_media_budget,
+                                    "active_workers": len(futures),
+                                },
+                            )
+                            futures[
+                                executor.submit(
+                                    download_tweet_media,
+                                    tweet_url,
+                                    output_dir,
+                                    config,
+                                    self._state,
+                                    remaining_media_items=worker_media_budget,
+                                    cache_index=cache_index,
+                                )
+                            ] = (tweet_index, tweet_url)
+
+                    if not futures:
+                        break
+
+                    done, _pending = wait(set(futures), return_when=FIRST_COMPLETED)
+                    for future in done:
+                        index, tweet_url = futures.pop(future)
+                        try:
+                            result = future.result()
+                            if result.skipped:
+                                skipped += 1
+                                logger.info(
+                                    "Tweet skipped.",
+                                    extra={
+                                        "job_id": job_id,
+                                        "tweet_url": tweet_url,
+                                        "tweet_index": index,
+                                        "skipped_tweets": skipped,
+                                    },
+                                )
+                            else:
+                                downloaded_post_increment = (
+                                    result.downloaded_post_count
+                                    if result.downloaded_post_count > 0
+                                    else (1 if result.downloaded_media_count > 0 else 0)
+                                )
+                                downloaded_media += result.downloaded_media_count
+                                downloaded_posts += downloaded_post_increment
+                                downloaded_images += result.downloaded_image_count
+                                downloaded_videos += result.downloaded_video_count
+                                logger.info(
+                                    "Tweet download completed.",
+                                    extra={
+                                        "job_id": job_id,
+                                        "tweet_url": tweet_url,
+                                        "tweet_index": index,
+                                        "downloaded_media_count": result.downloaded_media_count,
+                                        "downloaded_media_total": downloaded_media,
+                                        "downloaded_post_increment": downloaded_post_increment,
+                                        "downloaded_posts_total": downloaded_posts,
+                                        "downloaded_images_total": downloaded_images,
+                                        "downloaded_videos_total": downloaded_videos,
+                                    },
+                                )
+                        except Exception as exc:  # pragma: no cover
+                            failed += 1
+                            self._state.append_event(str(exc))
+                            logger.exception(
+                                "Tweet download failed.",
+                                extra={
+                                    "job_id": job_id,
+                                    "tweet_url": tweet_url,
+                                    "tweet_index": index,
+                                    "failed_tweets": failed,
+                                },
+                            )
+
+                        update_progress_snapshot()
+
+                    if cap_announced and not futures:
+                        break
+
+            if stop_requested:
+                self._state.finish_stopped(
+                    f"Emergency stop completed. Downloaded {downloaded_posts} posts, {downloaded_images} images, "
+                    f"{downloaded_videos} videos ({downloaded_media} media files), "
+                    f"skipped {skipped}, failed {failed}."
+                )
+                logger.info(
+                    "Cache job stopped by operator.",
+                    extra={
+                        "job_id": job_id,
+                        "downloaded_media_total": downloaded_media,
+                        "downloaded_posts_total": downloaded_posts,
+                        "downloaded_images_total": downloaded_images,
+                        "downloaded_videos_total": downloaded_videos,
+                        "skipped_tweets": skipped,
+                        "failed_tweets": failed,
+                    },
+                )
+                return
 
             self._state.finish_success(
                 f"Finished. Discovered {len(tweet_urls)} posts, downloaded {downloaded_media} media files "

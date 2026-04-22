@@ -1,4 +1,4 @@
-<!-- Code version: v1.1.0-codex.1 -->
+<!-- Code version: v1.5.0-gpt5.4.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter Grok</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script defer src="{{ url_for('static', filename='browser-session-picker.js') }}"></script>
 </head>
 <body>
 {% set current_phase = snapshot.phase or "idle" %}
@@ -55,18 +56,84 @@
                 <div class="section-heading">
                     <div>
                         <p class="section-kicker">Download</p>
-                        <h2>Grok sync</h2>
+                        <h2>Grok</h2>
                     </div>
                     <span class="status-chip status-{{ current_phase }}" id="phase_chip">{{ current_phase }}</span>
                 </div>
-                <form action="{{ url_for('start_grok') }}" method="post" class="sidebar-form">
-                    <button type="submit" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled{% endif %}>
-                        Start sync
-                    </button>
+                <div
+                    class="browser-session-panel"
+                    data-browser-session-panel
+                    data-platform="grok"
+                    data-selection-storage-key="cachelikes:browser-selection:grok"
+                >
+                    <p class="browser-session-panel-label">Browser</p>
+                    <div class="trade-strategy-row browser-session-row">
+                        <div class="trade-strategy-combobox browser-session-combobox">
+                        <button
+                            type="button"
+                            class="trade-strategy-select form-select trade-strategy-trigger browser-session-trigger"
+                            data-role="browser-picker-trigger"
+                            aria-haspopup="listbox"
+                            aria-expanded="false"
+                        >
+                            <span class="browser-session-trigger-leading">
+                                <span class="browser-picker-selected-icon-shell" data-role="browser-picker-selected-icon-shell" hidden>
+                                    <img class="browser-picker-option-icon" data-role="browser-picker-selected-icon" alt="">
+                                </span>
+                                <span class="trade-strategy-trigger-label browser-session-trigger-label" data-role="browser-picker-selected-label">Select browser</span>
+                            </span>
+                            <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                        </button>
+                        <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown" data-role="browser-picker-menu" role="listbox">
+                            {% for browser in browser_options %}
+                            <button
+                                type="button"
+                                class="trade-strategy-dropdown-option browser-picker-option"
+                                data-browser-option="{{ browser.id }}"
+                                data-browser-label="{{ browser.label }}"
+                                data-browser-icon="{{ url_for('static', filename=browser.icon_filename) }}"
+                                role="option"
+                                aria-selected="false"
+                            >
+                                <span class="trade-strategy-dropdown-check browser-session-option-check" aria-hidden="true"></span>
+                                <img class="browser-picker-option-icon" src="{{ url_for('static', filename=browser.icon_filename) }}" alt="{{ browser.label }} icon">
+                                <span class="trade-strategy-dropdown-text browser-session-option-text">{{ browser.label }}</span>
+                            </button>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    </div>
+                    <div class="browser-session-status-card" data-role="browser-session-status" hidden>
+                        <div class="browser-session-status-row">
+                            <div class="browser-session-status-copy">
+                                <strong class="browser-session-status-account" data-role="browser-session-account">No signed-in account detected</strong>
+                            </div>
+                            <span class="browser-session-status-checkmark" data-role="browser-session-checkmark" aria-label="Ready to download" hidden></span>
+                        </div>
+                    </div>
+                </div>
+                <form action="{{ url_for('start_grok') }}" method="post" class="sidebar-form" id="start_form_grok">
                 </form>
-                <form action="{{ url_for('stop_grok') }}" method="post" class="sidebar-form">
-                    <button type="submit" class="danger-button sidebar-action-button" id="stop_button" {% if not snapshot.running %}disabled{% endif %}>
-                        Emergency stop
+                <div class="sidebar-action-row">
+                    <form action="{{ url_for('stop_grok') }}" method="post" class="sidebar-form sidebar-form-stop">
+                        <button type="submit" class="danger-button stop-button sidebar-action-button" id="stop_button" {% if not snapshot.running %}disabled{% endif %}>
+                            Stop
+                        </button>
+                    </form>
+                    <div class="sidebar-form sidebar-form-start">
+                        <button type="submit" form="start_form_grok" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled{% endif %}>
+                            Start sync
+                        </button>
+                    </div>
+                </div>
+                <form
+                    action="{{ url_for('reset_grok') }}"
+                    method="post"
+                    class="sidebar-form"
+                    onsubmit="return window.confirm('Reset Grok state? This will delete all cached Grok media, manifests, queue files, and resumable partial downloads.')"
+                >
+                    <button type="submit" class="danger-button sidebar-action-button" id="reset_button" {% if snapshot.running %}disabled{% endif %}>
+                        Reset Grok State
                     </button>
                 </form>
             </section>
@@ -75,7 +142,7 @@
 
         <section class="panel chart-panel workspace" id="workspace_panel">
             <div class="workspace-header workspace-mobile-summary-shell">
-                <article class="report-card workspace-summary-card workspace-article-card anchor-section" id="overview">
+                <div class="report-card workspace-summary-card workspace-article-card anchor-section" id="overview">
                     <div class="report-heading-row">
                         <div>
                             <p class="workspace-kicker">Live snapshot</p>
@@ -83,34 +150,30 @@
                         </div>
                     </div>
                     <div class="metric-grid">
-                        <article class="metric-card">
-                            <span class="metric-label">Workspace</span>
-                            <strong id="account_name">{{ snapshot.account_name or "Grok" }}</strong>
-                        </article>
-                        <article class="metric-card">
+                        <div class="metric-card metric-card-accent">
                             <span class="metric-label">Assets discovered</span>
                             <strong id="discovered_tweets">{{ "{:,}".format(snapshot.discovered_tweets) }}</strong>
-                        </article>
-                        <article class="metric-card">
+                        </div>
+                        <div class="metric-card metric-card-accent">
                             <span class="metric-label">Assets cached</span>
                             <strong id="downloaded_posts">{{ "{:,}".format(snapshot.downloaded_posts) }}</strong>
-                        </article>
-                        <article class="metric-card">
+                        </div>
+                        <div class="metric-card metric-card-accent">
                             <span class="metric-label">Images</span>
                             <strong id="downloaded_images">{{ "{:,}".format(snapshot.downloaded_images) }}</strong>
-                        </article>
-                        <article class="metric-card">
+                        </div>
+                        <div class="metric-card">
                             <span class="metric-label">Videos</span>
                             <strong id="downloaded_videos">{{ "{:,}".format(snapshot.downloaded_videos) }}</strong>
-                        </article>
-                        <article class="metric-card">
+                        </div>
+                        <div class="metric-card">
                             <span class="metric-label">Skipped</span>
                             <strong id="skipped_tweets">{{ "{:,}".format(snapshot.skipped_tweets) }}</strong>
-                        </article>
-                        <article class="metric-card">
+                        </div>
+                        <div class="metric-card">
                             <span class="metric-label">Phase</span>
                             <strong id="phase_value">{{ current_phase }}</strong>
-                        </article>
+                        </div>
                     </div>
                     <div class="report-heading-row">
                         <div>
@@ -140,18 +203,18 @@
                         <span class="status-chip status-collecting">Site-limited</span>
                     </div>
                     <div class="progress-metric-grid" aria-label="Cached Grok media progress">
-                        <article class="progress-metric-card">
+                        <div class="progress-metric-card">
                             <span class="progress-metric-label">Cached assets</span>
                             <strong id="progress_downloaded_posts">{{ "{:,}".format(snapshot.downloaded_posts) }}</strong>
-                        </article>
-                        <article class="progress-metric-card">
+                        </div>
+                        <div class="progress-metric-card">
                             <span class="progress-metric-label">Cached images</span>
                             <strong id="progress_downloaded_images">{{ "{:,}".format(snapshot.downloaded_images) }}</strong>
-                        </article>
-                        <article class="progress-metric-card">
+                        </div>
+                        <div class="progress-metric-card">
                             <span class="progress-metric-label">Cached videos</span>
                             <strong id="progress_downloaded_videos">{{ "{:,}".format(snapshot.downloaded_videos) }}</strong>
-                        </article>
+                        </div>
                     </div>
                     <dl class="summary-list">
                         <div class="summary-row">
@@ -171,10 +234,10 @@
                             <dd>Every 3 seconds</dd>
                         </div>
                     </dl>
-                </article>
+                </div>
 
                 <section class="workspace-grid workspace-content-card">
-                    <article class="report-card workspace-article-card log-card anchor-section" id="activity">
+                    <div class="report-card workspace-article-card log-card anchor-section" id="activity">
                         <div class="report-heading-row">
                             <div>
                                 <p class="workspace-kicker">Events</p>
@@ -199,7 +262,7 @@
                                 <button type="button" class="events-page-button" id="recent_events_next" aria-label="Next page">Next</button>
                             </div>
                         </div>
-                    </article>
+                    </div>
                 </section>
             </div>
         </section>
@@ -239,9 +302,11 @@
     const sectionLinks = Array.from(document.querySelectorAll("[data-section-link]"));
     const shellMobileQuery = window.matchMedia("(max-width: 900px)");
     const statusBannerStorageKey = "cachelikes:grok-status-banner-dismissed";
+    const sidebarMotionDurationMs = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 500;
     const recentEventsPageSize = 12;
     let recentEvents = {{ snapshot.recent_events | tojson }};
     let recentEventsCurrentPage = 1;
+    let sidebarMotionResetTimer = 0;
 
     function setStatusBannerVisible(isVisible, options = {}) {
         const { persist = true } = options;
@@ -257,13 +322,38 @@
         }
     }
 
+    function setSidebarMotionState(direction) {
+        if (sidebarMotionResetTimer) {
+            window.clearTimeout(sidebarMotionResetTimer);
+            sidebarMotionResetTimer = 0;
+        }
+
+        appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
+        void appShell.offsetWidth;
+
+        if (!direction) {
+            return;
+        }
+
+        appShell.classList.add("is-sidebar-animating", direction === "opening" ? "is-sidebar-opening" : "is-sidebar-closing");
+        sidebarMotionResetTimer = window.setTimeout(() => {
+            appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
+            sidebarMotionResetTimer = 0;
+        }, sidebarMotionDurationMs);
+    }
+
     function setSidebarOpen(isOpen, options = {}) {
-        const { persist = true } = options;
+        const { persist = true, animate = false } = options;
+        const wasOpen = appShell.classList.contains("is-sidebar-open");
 
         appShell.classList.toggle("is-sidebar-open", isOpen);
         appShell.classList.toggle("is-sidebar-collapsed", !isOpen);
         sidebarToggle.setAttribute("aria-expanded", String(isOpen));
         sidebarBackdrop.hidden = !shellMobileQuery.matches || !isOpen;
+
+        if (animate && wasOpen !== isOpen) {
+            setSidebarMotionState(isOpen ? "opening" : "closing");
+        }
 
         if (persist) {
             try {
@@ -290,7 +380,7 @@
     }
 
     sidebarToggle.addEventListener("click", () => {
-        setSidebarOpen(!appShell.classList.contains("is-sidebar-open"));
+        setSidebarOpen(!appShell.classList.contains("is-sidebar-open"), { animate: true });
     });
 
     sidebarBackdrop.addEventListener("click", () => {
@@ -469,7 +559,6 @@
         const response = await fetch("{{ url_for('api_grok_status') }}", { cache: "no-store" });
         const data = await response.json();
 
-        document.getElementById("account_name").textContent = data.account_name || "Grok";
         document.getElementById("discovered_tweets").textContent = formatMetricNumber(data.discovered_tweets);
         document.getElementById("downloaded_posts").textContent = formatMetricNumber(data.downloaded_posts);
         document.getElementById("downloaded_images").textContent = formatMetricNumber(data.downloaded_images);

@@ -1,10 +1,13 @@
 """Persistent local cache catalog backed by Parquet."""
 
+# Code version: v1.3.0-codex.1
+
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
+from threading import RLock
 
 try:
     import pyarrow as pa
@@ -132,6 +135,8 @@ class LocalTweetCacheIndex:
     directories_by_url: dict[str, set[Path]] = field(default_factory=dict)
     media_counts_by_directory: dict[Path, tuple[int, int]] = field(default_factory=dict)
     dirty: bool = False
+    _lock: RLock = field(default_factory=RLock, init=False, repr=False)
+    _inflight_keys: set[str] = field(default_factory=set, init=False, repr=False)
 
     @classmethod
     def build(cls, output_dir: Path) -> LocalTweetCacheIndex:
@@ -149,77 +154,90 @@ class LocalTweetCacheIndex:
 
     def register(self, tweet_url: str, tweet_dir: Path | None = None) -> None:
         """Remember a tweet URL and optionally persist its cached directory."""
-        canonical_url = canonicalize_tweet_url(tweet_url)
-        status_id = extract_status_id(tweet_url)
-        if canonical_url:
-            self.directories_by_url.setdefault(canonical_url, set())
-        if status_id:
-            self.directories_by_status_id.setdefault(status_id, set())
+        with self._lock:
+            canonical_url = canonicalize_tweet_url(tweet_url)
+            status_id = extract_status_id(tweet_url)
+            if canonical_url:
+                self.directories_by_url.setdefault(canonical_url, set())
+            if status_id:
+                self.directories_by_status_id.setdefault(status_id, set())
 
-        if tweet_dir is None:
-            return
+            if tweet_dir is None:
+                return
 
-        is_cached, image_count, video_count = summarize_cached_tweet_dir(tweet_dir)
-        if not is_cached:
-            return
+            is_cached, image_count, video_count = summarize_cached_tweet_dir(tweet_dir)
+            if not is_cached:
+                return
 
-        self._remember_directory(tweet_dir, image_count, video_count)
-        self._remember_url(tweet_url, tweet_dir)
-        self.flush()
+            self._remember_directory(tweet_dir, image_count, video_count)
+            self._remember_url(tweet_url, tweet_dir)
+            self.flush()
 
     def contains_complete_cache(self, tweet_url: str) -> bool:
         """Return whether the given tweet already has reusable local media."""
-        return any(tweet_dir_has_cached_media(tweet_dir) for tweet_dir in self.lookup_directories(tweet_url))
+        with self._lock:
+            return self._contains_complete_cache_unlocked(tweet_url)
+
+    def claim(self, tweet_url: str) -> bool:
+        """Claim one tweet URL for active processing inside the current process."""
+        claim_keys = self._claim_keys(tweet_url)
+        with self._lock:
+            if self._contains_complete_cache_unlocked(tweet_url):
+                return False
+            if any(key in self._inflight_keys for key in claim_keys):
+                return False
+            self._inflight_keys.update(claim_keys)
+            return True
+
+    def release_claim(self, tweet_url: str) -> None:
+        """Release one in-flight claim after the worker finishes."""
+        claim_keys = self._claim_keys(tweet_url)
+        with self._lock:
+            self._inflight_keys.difference_update(claim_keys)
 
     def lookup_directories(self, tweet_url: str) -> set[Path]:
         """Return directories associated with a tweet URL or status ID."""
-        directories: set[Path] = set()
-        canonical_url = canonicalize_tweet_url(tweet_url)
-        if canonical_url:
-            directories.update(self.directories_by_url.get(canonical_url, set()))
-
-        status_id = extract_status_id(tweet_url)
-        if status_id:
-            directories.update(self.directories_by_status_id.get(status_id, set()))
-
-        return directories
+        with self._lock:
+            return set(self._lookup_directories_unlocked(tweet_url))
 
     def summarize(self) -> tuple[int, int, int]:
         """Return cached posts, images, and videos for the indexed output directory."""
-        downloaded_posts = len(self.media_counts_by_directory)
-        downloaded_images = sum(image_count for image_count, _video_count in self.media_counts_by_directory.values())
-        downloaded_videos = sum(video_count for _image_count, video_count in self.media_counts_by_directory.values())
-        return downloaded_posts, downloaded_images, downloaded_videos
+        with self._lock:
+            downloaded_posts = len(self.media_counts_by_directory)
+            downloaded_images = sum(image_count for image_count, _video_count in self.media_counts_by_directory.values())
+            downloaded_videos = sum(video_count for _image_count, video_count in self.media_counts_by_directory.values())
+            return downloaded_posts, downloaded_images, downloaded_videos
 
     def flush(self) -> None:
         """Persist the current catalog to Parquet when available."""
-        if not self.dirty or pa is None or pq is None:
-            return
+        with self._lock:
+            if not self.dirty or pa is None or pq is None:
+                return
 
-        rows: list[dict[str, object]] = []
-        for tweet_dir in sorted(self.media_counts_by_directory, key=lambda path: str(path)):
-            image_count, video_count = self.media_counts_by_directory[tweet_dir]
-            canonical_urls = sorted(
-                url for url, directories in self.directories_by_url.items() if tweet_dir in directories
-            )
-            status_ids = sorted(
-                status_id for status_id, directories in self.directories_by_status_id.items() if tweet_dir in directories
-            )
-            rows.append(
-                {
-                    "schema_version": CATALOG_SCHEMA_VERSION,
-                    "relative_tweet_dir": str(tweet_dir.relative_to(self.output_dir)),
-                    "canonical_urls_json": json.dumps(canonical_urls, sort_keys=True),
-                    "status_ids_json": json.dumps(status_ids, sort_keys=True),
-                    "image_count": image_count,
-                    "video_count": video_count,
-                }
-            )
+            rows: list[dict[str, object]] = []
+            for tweet_dir in sorted(self.media_counts_by_directory, key=lambda path: str(path)):
+                image_count, video_count = self.media_counts_by_directory[tweet_dir]
+                canonical_urls = sorted(
+                    url for url, directories in self.directories_by_url.items() if tweet_dir in directories
+                )
+                status_ids = sorted(
+                    status_id for status_id, directories in self.directories_by_status_id.items() if tweet_dir in directories
+                )
+                rows.append(
+                    {
+                        "schema_version": CATALOG_SCHEMA_VERSION,
+                        "relative_tweet_dir": str(tweet_dir.relative_to(self.output_dir)),
+                        "canonical_urls_json": json.dumps(canonical_urls, sort_keys=True),
+                        "status_ids_json": json.dumps(status_ids, sort_keys=True),
+                        "image_count": image_count,
+                        "video_count": video_count,
+                    }
+                )
 
-        self.output_dir.mkdir(parents=True, exist_ok=True)
-        table = pa.Table.from_pylist(rows)
-        pq.write_table(table, self.catalog_path)
-        self.dirty = False
+            self.output_dir.mkdir(parents=True, exist_ok=True)
+            table = pa.Table.from_pylist(rows)
+            pq.write_table(table, self.catalog_path)
+            self.dirty = False
 
     def _load_parquet_catalog(self) -> bool:
         """Try to load an existing Parquet catalog."""
@@ -286,6 +304,33 @@ class LocalTweetCacheIndex:
             self.directories_by_url.setdefault(canonical_url, set()).add(tweet_dir)
         if status_id:
             self.directories_by_status_id.setdefault(status_id, set()).add(tweet_dir)
+
+    def _lookup_directories_unlocked(self, tweet_url: str) -> set[Path]:
+        directories: set[Path] = set()
+        canonical_url = canonicalize_tweet_url(tweet_url)
+        if canonical_url:
+            directories.update(self.directories_by_url.get(canonical_url, set()))
+
+        status_id = extract_status_id(tweet_url)
+        if status_id:
+            directories.update(self.directories_by_status_id.get(status_id, set()))
+
+        return directories
+
+    def _contains_complete_cache_unlocked(self, tweet_url: str) -> bool:
+        return any(tweet_dir_has_cached_media(tweet_dir) for tweet_dir in self._lookup_directories_unlocked(tweet_url))
+
+    def _claim_keys(self, tweet_url: str) -> tuple[str, ...]:
+        canonical_url = canonicalize_tweet_url(tweet_url)
+        status_id = extract_status_id(tweet_url)
+        keys = []
+        if canonical_url:
+            keys.append(f"url:{canonical_url}")
+        if status_id:
+            keys.append(f"status:{status_id}")
+        if not keys:
+            keys.append(f"raw:{tweet_url.strip()}")
+        return tuple(keys)
 
 
 def summarize_local_store_root(local_store_root: Path) -> list[AccountCacheSummary]:

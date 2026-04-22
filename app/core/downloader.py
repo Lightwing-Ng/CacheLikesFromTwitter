@@ -1,8 +1,9 @@
 """Download media from tweet URLs with yt-dlp."""
 
+# Code version: v1.3.0-codex.1
+
 from __future__ import annotations
 
-import json
 import logging
 import shutil
 import subprocess
@@ -222,7 +223,6 @@ def run_yt_dlp_with_retries(command: list[str], tweet_url: str) -> subprocess.Co
 def download_tweet_media(
     tweet_url: str,
     output_dir: Path,
-    archive_path: Path,
     config: CrawlConfig,
     state: TaskState,
     remaining_media_items: int | None = None,
@@ -231,83 +231,93 @@ def download_tweet_media(
     """Download media for one tweet URL."""
     output_dir.mkdir(parents=True, exist_ok=True)
     local_cache = cache_index or LocalTweetCacheIndex.build(output_dir)
-    if local_cache.contains_complete_cache(tweet_url):
-        state.append_event(f"Skipped cached tweet {tweet_url}")
+    if not local_cache.claim(tweet_url):
+        state.append_event(f"Skipped cached or in-flight tweet {tweet_url}")
         logger.info(
-            "Skipped tweet because complete local cache already exists.",
+            "Skipped tweet because a complete local cache exists or another worker already claimed it.",
             extra={
                 "tweet_url": tweet_url,
                 "output_dir": str(output_dir),
             },
         )
         return DownloadResult(skipped=True)
-    yt_dlp_command = ensure_yt_dlp_available()
 
-    command = yt_dlp_command + [
-        "--cookies-from-browser",
-        build_cookies_from_browser_arg(config),
-        "--download-archive",
-        str(archive_path),
-        "--output",
-        str(output_dir / "%(uploader_id|unknown_uploader)s" / "%(id)s" / "%(id)s.%(ext)s"),
-        "--output",
-        "infojson:" + str(output_dir / "%(uploader_id|unknown_uploader)s" / "%(id)s" / "%(id)s"),
-        "--write-info-json",
-        "--write-thumbnail",
-        "--no-progress",
-        "--restrict-filenames",
-        "--no-overwrites",
-        "--print",
-        f"after_move:{MEDIA_MARKER_PREFIX}%(filepath)s",
-    ]
-    if remaining_media_items is not None:
-        command.extend(["--max-downloads", str(max(1, remaining_media_items))])
-    command.append(tweet_url)
+    try:
+        yt_dlp_command = ensure_yt_dlp_available()
 
-    logger.info(
-        "Invoking yt-dlp for tweet media download.",
-        extra={
-            "tweet_url": tweet_url,
-            "output_dir": str(output_dir),
-            "archive_path": str(archive_path),
-            "remaining_media_items": remaining_media_items,
-            "yt_dlp_command": yt_dlp_command,
-        },
-    )
-    result = run_yt_dlp_with_retries(command, tweet_url)
-    stdout = result.stdout or ""
-    stderr = result.stderr or ""
-    combined = "\n".join(part for part in (stdout.strip(), stderr.strip()) if part).strip()
-    downloaded_paths = parse_downloaded_paths(stdout)
+        command = yt_dlp_command + [
+            "--cookies-from-browser",
+            build_cookies_from_browser_arg(config),
+            "--output",
+            str(output_dir / "%(uploader_id|unknown_uploader)s" / "%(id)s" / "%(id)s.%(ext)s"),
+            "--output",
+            "infojson:" + str(output_dir / "%(uploader_id|unknown_uploader)s" / "%(id)s" / "%(id)s"),
+            "--write-info-json",
+            "--write-thumbnail",
+            "--no-progress",
+            "--restrict-filenames",
+            "--no-overwrites",
+            "--print",
+            f"after_move:{MEDIA_MARKER_PREFIX}%(filepath)s",
+        ]
+        if remaining_media_items is not None:
+            command.extend(["--max-downloads", str(max(1, remaining_media_items))])
+        command.append(tweet_url)
 
-    if result.returncode == 0:
-        if downloaded_paths:
-            image_count, video_count = count_downloaded_media_types(downloaded_paths)
-            for downloaded_path in downloaded_paths:
-                local_cache.register(tweet_url, downloaded_path.parent)
-            state.append_event(f"Downloaded media for {tweet_url}")
-            logger.info(
-                "yt-dlp downloaded media successfully.",
-                extra={
-                    "tweet_url": tweet_url,
-                    "downloaded_media_count": len(downloaded_paths),
-                    "downloaded_image_count": image_count,
-                    "downloaded_video_count": video_count,
-                    "downloaded_paths": [str(path) for path in downloaded_paths],
-                },
-            )
-            return DownloadResult(
-                downloaded_media_count=len(downloaded_paths),
-                downloaded_post_count=1,
-                downloaded_image_count=image_count,
-                downloaded_video_count=video_count,
-            )
+        logger.info(
+            "Invoking yt-dlp for tweet media download.",
+            extra={
+                "tweet_url": tweet_url,
+                "output_dir": str(output_dir),
+                "remaining_media_items": remaining_media_items,
+                "yt_dlp_command": yt_dlp_command,
+            },
+        )
+        result = run_yt_dlp_with_retries(command, tweet_url)
+        stdout = result.stdout or ""
+        stderr = result.stderr or ""
+        combined = "\n".join(part for part in (stdout.strip(), stderr.strip()) if part).strip()
+        downloaded_paths = parse_downloaded_paths(stdout)
 
-        if is_successful_skip_output(combined) or local_cache.contains_complete_cache(tweet_url):
-            local_cache.register(tweet_url)
-            state.append_event(f"Skipped already cached tweet {tweet_url}")
-            logger.info(
-                "yt-dlp reported a cache hit or no-op success.",
+        if result.returncode == 0:
+            if downloaded_paths:
+                image_count, video_count = count_downloaded_media_types(downloaded_paths)
+                for downloaded_path in downloaded_paths:
+                    local_cache.register(tweet_url, downloaded_path.parent)
+                state.append_event(f"Downloaded media for {tweet_url}")
+                logger.info(
+                    "yt-dlp downloaded media successfully.",
+                    extra={
+                        "tweet_url": tweet_url,
+                        "downloaded_media_count": len(downloaded_paths),
+                        "downloaded_image_count": image_count,
+                        "downloaded_video_count": video_count,
+                        "downloaded_paths": [str(path) for path in downloaded_paths],
+                    },
+                )
+                return DownloadResult(
+                    downloaded_media_count=len(downloaded_paths),
+                    downloaded_post_count=1,
+                    downloaded_image_count=image_count,
+                    downloaded_video_count=video_count,
+                )
+
+            if is_successful_skip_output(combined) or local_cache.contains_complete_cache(tweet_url):
+                local_cache.register(tweet_url)
+                state.append_event(f"Skipped already cached tweet {tweet_url}")
+                logger.info(
+                    "yt-dlp reported a cache hit or no-op success.",
+                    extra={
+                        "tweet_url": tweet_url,
+                        "returncode": result.returncode,
+                        "command_output_excerpt": combined[:2_000],
+                    },
+                )
+                return DownloadResult(skipped=True)
+
+            state.append_event(f"No new media files were produced for {tweet_url}")
+            logger.warning(
+                "yt-dlp succeeded but produced no new media files.",
                 extra={
                     "tweet_url": tweet_url,
                     "returncode": result.returncode,
@@ -316,103 +326,94 @@ def download_tweet_media(
             )
             return DownloadResult(skipped=True)
 
-        state.append_event(f"No new media files were produced for {tweet_url}")
-        logger.warning(
-            "yt-dlp succeeded but produced no new media files.",
+        if is_existing_file_conflict(combined) and local_cache.contains_complete_cache(tweet_url):
+            local_cache.register(tweet_url)
+            state.append_event(f"Skipped existing local conflict for {tweet_url}")
+            logger.warning(
+                "Downgraded local file conflict to skip because cache is already complete.",
+                extra={
+                    "tweet_url": tweet_url,
+                    "returncode": result.returncode,
+                    "command_output_excerpt": combined[:2_000],
+                },
+            )
+            return DownloadResult(skipped=True)
+
+        if is_missing_media_skip_output(combined):
+            local_cache.register(tweet_url)
+            state.append_event(f"Skipped tweet with no downloadable media {tweet_url}")
+            logger.info(
+                "Downgraded missing media response to skip.",
+                extra={
+                    "tweet_url": tweet_url,
+                    "returncode": result.returncode,
+                    "command_output_excerpt": combined[:2_000],
+                },
+            )
+            return DownloadResult(skipped=True)
+
+        if is_unsupported_external_url_skip_output(combined):
+            local_cache.register(tweet_url)
+            state.append_event(f"Skipped unsupported external media target for {tweet_url}")
+            logger.info(
+                "Downgraded unsupported external URL response to skip.",
+                extra={
+                    "tweet_url": tweet_url,
+                    "returncode": result.returncode,
+                    "command_output_excerpt": combined[:2_000],
+                },
+            )
+            return DownloadResult(skipped=True)
+
+        if is_not_found_skip_output(combined):
+            local_cache.register(tweet_url)
+            state.append_event(f"Skipped unavailable tweet target for {tweet_url}")
+            logger.info(
+                "Downgraded missing remote tweet target to skip.",
+                extra={
+                    "tweet_url": tweet_url,
+                    "returncode": result.returncode,
+                    "command_output_excerpt": combined[:2_000],
+                },
+            )
+            return DownloadResult(skipped=True)
+
+        if is_suspended_skip_output(combined):
+            local_cache.register(tweet_url)
+            state.append_event(f"Skipped suspended tweet target for {tweet_url}")
+            logger.info(
+                "Downgraded suspended tweet target to skip.",
+                extra={
+                    "tweet_url": tweet_url,
+                    "returncode": result.returncode,
+                    "command_output_excerpt": combined[:2_000],
+                },
+            )
+            return DownloadResult(skipped=True)
+
+        if is_transient_retryable_output(combined):
+            local_cache.register(tweet_url)
+            state.append_event(f"Skipped transient network failure after retries for {tweet_url}")
+            logger.warning(
+                "Downgraded transient yt-dlp failure to skip after retry budget was exhausted.",
+                extra={
+                    "tweet_url": tweet_url,
+                    "returncode": result.returncode,
+                    "command_output_excerpt": combined[:2_000],
+                    "retry_attempts": DOWNLOAD_RETRY_ATTEMPTS,
+                },
+            )
+            return DownloadResult(skipped=True)
+
+        logger.error(
+            "yt-dlp failed for tweet media download.",
             extra={
                 "tweet_url": tweet_url,
                 "returncode": result.returncode,
-                "command_output_excerpt": combined[:2_000],
+                "stdout_excerpt": stdout[:2_000],
+                "stderr_excerpt": stderr[:2_000],
             },
         )
-        return DownloadResult(skipped=True)
-
-    if is_existing_file_conflict(combined) and local_cache.contains_complete_cache(tweet_url):
-        local_cache.register(tweet_url)
-        state.append_event(f"Skipped existing local conflict for {tweet_url}")
-        logger.warning(
-            "Downgraded local file conflict to skip because cache is already complete.",
-            extra={
-                "tweet_url": tweet_url,
-                "returncode": result.returncode,
-                "command_output_excerpt": combined[:2_000],
-            },
-        )
-        return DownloadResult(skipped=True)
-
-    if is_missing_media_skip_output(combined):
-        local_cache.register(tweet_url)
-        state.append_event(f"Skipped tweet with no downloadable media {tweet_url}")
-        logger.info(
-            "Downgraded missing media response to skip.",
-            extra={
-                "tweet_url": tweet_url,
-                "returncode": result.returncode,
-                "command_output_excerpt": combined[:2_000],
-            },
-        )
-        return DownloadResult(skipped=True)
-
-    if is_unsupported_external_url_skip_output(combined):
-        local_cache.register(tweet_url)
-        state.append_event(f"Skipped unsupported external media target for {tweet_url}")
-        logger.info(
-            "Downgraded unsupported external URL response to skip.",
-            extra={
-                "tweet_url": tweet_url,
-                "returncode": result.returncode,
-                "command_output_excerpt": combined[:2_000],
-            },
-        )
-        return DownloadResult(skipped=True)
-
-    if is_not_found_skip_output(combined):
-        local_cache.register(tweet_url)
-        state.append_event(f"Skipped unavailable tweet target for {tweet_url}")
-        logger.info(
-            "Downgraded missing remote tweet target to skip.",
-            extra={
-                "tweet_url": tweet_url,
-                "returncode": result.returncode,
-                "command_output_excerpt": combined[:2_000],
-            },
-        )
-        return DownloadResult(skipped=True)
-
-    if is_suspended_skip_output(combined):
-        local_cache.register(tweet_url)
-        state.append_event(f"Skipped suspended tweet target for {tweet_url}")
-        logger.info(
-            "Downgraded suspended tweet target to skip.",
-            extra={
-                "tweet_url": tweet_url,
-                "returncode": result.returncode,
-                "command_output_excerpt": combined[:2_000],
-            },
-        )
-        return DownloadResult(skipped=True)
-
-    if is_transient_retryable_output(combined):
-        local_cache.register(tweet_url)
-        state.append_event(f"Skipped transient network failure after retries for {tweet_url}")
-        logger.warning(
-            "Downgraded transient yt-dlp failure to skip after retry budget was exhausted.",
-            extra={
-                "tweet_url": tweet_url,
-                "returncode": result.returncode,
-                "command_output_excerpt": combined[:2_000],
-                "retry_attempts": DOWNLOAD_RETRY_ATTEMPTS,
-            },
-        )
-        return DownloadResult(skipped=True)
-
-    logger.error(
-        "yt-dlp failed for tweet media download.",
-        extra={
-            "tweet_url": tweet_url,
-            "returncode": result.returncode,
-            "stdout_excerpt": stdout[:2_000],
-            "stderr_excerpt": stderr[:2_000],
-        },
-    )
-    raise RuntimeError(f"yt-dlp failed for {tweet_url}: {combined}")
+        raise RuntimeError(f"yt-dlp failed for {tweet_url}: {combined}")
+    finally:
+        local_cache.release_claim(tweet_url)

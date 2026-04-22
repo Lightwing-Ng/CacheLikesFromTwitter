@@ -1,5 +1,7 @@
 """Collect liked tweet URLs from the logged-in X account."""
 
+# Code version: v1.0.0-codex.1
+
 from __future__ import annotations
 
 import contextlib
@@ -23,10 +25,17 @@ except ImportError:  # pragma: no cover
     PlaywrightError = Exception
 
 
-CANONICAL_X_ACCOUNT_HANDLE = "22cmProgrammer"
-CANONICAL_X_LIKES_URL = f"https://x.com/{CANONICAL_X_ACCOUNT_HANDLE}/likes"
+X_HOME_URL = "https://x.com/home"
 STATUS_URL_PATTERN = re.compile(r"^https://x\.com/([^/]+)/status/(\d+)")
 logger = logging.getLogger(__name__)
+
+
+def build_x_likes_url(account_handle: str) -> str:
+    """Return the likes timeline URL for one X account handle."""
+    cleaned_handle = (account_handle or "").strip().lstrip("@")
+    if not cleaned_handle:
+        raise RuntimeError("Could not build an X likes URL without a detected account handle.")
+    return f"https://x.com/{cleaned_handle}/likes"
 
 
 def ensure_playwright_available() -> None:
@@ -226,7 +235,7 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
     logger.info(
         "Collecting liked tweet URLs.",
         extra={
-            "likes_url": CANONICAL_X_LIKES_URL,
+            "entry_url": X_HOME_URL,
             "headless": config.headless,
             "max_scroll_rounds": config.max_scroll_rounds,
             "stale_round_limit": config.stale_round_limit,
@@ -236,14 +245,14 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
     with sync_playwright() as playwright:
         with launch_context(playwright, config, state) as context:
             page = context.pages[0] if context.pages else context.new_page()
-            state.append_event(f"Opening canonical likes page {CANONICAL_X_LIKES_URL}.")
-            page.goto(CANONICAL_X_LIKES_URL, wait_until="domcontentloaded", timeout=120_000)
+            state.append_event(f"Opening X home {X_HOME_URL}.")
+            page.goto(X_HOME_URL, wait_until="domcontentloaded", timeout=120_000)
             wait_for_likes_page_ready(page)
-
-            try:
-                account_handle = detect_account_handle(page)
-            except RuntimeError:
-                account_handle = CANONICAL_X_ACCOUNT_HANDLE
+            account_handle = detect_account_handle(page)
+            likes_url = build_x_likes_url(account_handle)
+            state.append_event(f"Opening likes page {likes_url}.")
+            page.goto(likes_url, wait_until="domcontentloaded", timeout=120_000)
+            wait_for_likes_page_ready(page)
 
             state.update(account_name=account_handle)
             state.append_event(f"Ready to collect likes for @{account_handle}.")
@@ -251,6 +260,7 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
                 "Likes page ready.",
                 extra={
                     "account_handle": account_handle,
+                    "likes_url": likes_url,
                 },
             )
 

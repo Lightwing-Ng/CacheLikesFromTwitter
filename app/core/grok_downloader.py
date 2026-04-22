@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.6.1-codex.1
+# Code version: v1.7.1-codex.1
 
 from __future__ import annotations
 
@@ -119,6 +119,16 @@ class GrokSyncResult:
     cached_images: int = 0
     cached_videos: int = 0
     stopped: bool = False
+
+
+@dataclass(slots=True)
+class GrokResetResult:
+    """Describe what was removed by a Grok local-state reset."""
+
+    removed_media_files: int = 0
+    removed_state_files: int = 0
+    removed_partial_files: int = 0
+    removed_partial_dirs: int = 0
 
 
 @dataclass(slots=True)
@@ -512,7 +522,18 @@ def build_candidate_from_versions_payload(
 
 def resolve_candidate_from_versions(context, fallback_candidate: GrokMediaCandidate) -> GrokMediaCandidate:
     """Fetch the versions payload and upgrade a thumbnail candidate to the original asset."""
-    response = context.request.get(build_versions_url(fallback_candidate.asset_id), timeout=DOWNLOAD_TIMEOUT_MS)
+    try:
+        response = context.request.get(build_versions_url(fallback_candidate.asset_id), timeout=DOWNLOAD_TIMEOUT_MS)
+    except PlaywrightError as exc:
+        logger.warning(
+            "Falling back to list candidate because the versions endpoint request aborted.",
+            extra={
+                "asset_id": fallback_candidate.asset_id,
+                "versions_url": build_versions_url(fallback_candidate.asset_id),
+                "error": str(exc),
+            },
+        )
+        return fallback_candidate
     if not response.ok:
         logger.warning(
             "Falling back to list candidate because the versions endpoint failed.",
@@ -1243,13 +1264,27 @@ def apply_preserved_file_timestamp(file_path: Path, timestamp_value: str) -> Non
         return
 
     local_timestamp = parsed.astimezone().strftime("%m/%d/%Y %H:%M:%S")
-    with contextlib.suppress(Exception):
-        subprocess.run(
-            [set_file_path, "-d", local_timestamp, str(file_path)],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+    for flag in ("-d", "-m"):
+        try:
+            completed = subprocess.run(
+                [set_file_path, flag, local_timestamp, str(file_path)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except OSError:
+            continue
+        if completed.returncode != 0:
+            logger.warning(
+                "SetFile timestamp update failed.",
+                extra={
+                    "file_path": str(file_path),
+                    "timestamp": local_timestamp,
+                    "flag": flag,
+                    "stderr": (completed.stderr or "").strip(),
+                },
+            )
 
 
 def compare_seen_at(left: str, right: str) -> int:
@@ -1384,7 +1419,36 @@ class GrokDownloadManifest:
                 if entry.status == "completed" and entry.relative_path:
                     completed_path = self.target_dir / entry.relative_path
                     if validate_media_file(completed_path, entry.media_kind, expected_bytes=entry.content_bytes):
+                        content_sha256 = entry.content_sha256 or compute_file_sha256(completed_path)
+                        content_bytes = entry.content_bytes or completed_path.stat().st_size
+                        catalog.register_download(
+                            candidate=GrokMediaCandidate(
+                                source_url=entry.source_url,
+                                asset_id=entry.asset_id,
+                                asset_name=entry.asset_name,
+                                media_kind=entry.media_kind,
+                                identity=entry.identity,
+                                created_at=entry.created_at,
+                            ),
+                            relative_path=entry.relative_path,
+                            content_sha256=content_sha256,
+                            content_bytes=content_bytes,
+                            seen_at=entry.created_at,
+                        )
+                        entry.content_sha256 = content_sha256
+                        entry.content_bytes = content_bytes
+                        entry.updated_at = utc_now()
+                        self.entries_by_identity[identity] = entry
+                        self.dirty = True
                         continue
+                    entry.status = "pending"
+                    entry.relative_path = ""
+                    entry.content_sha256 = ""
+                    entry.content_bytes = 0
+                    entry.updated_at = utc_now()
+                    self.entries_by_identity[identity] = entry
+                    self.dirty = True
+                    continue
 
                 if entry.status == "in_progress":
                     entry.status = "pending"
@@ -1661,6 +1725,13 @@ class GrokWorkQueue:
                     continue
 
                 if entry.status in {"submitted", "download_failed"}:
+                    entry.status = "ready" if candidate_is_downloadable(self._entry_to_candidate(entry)) else "discovered"
+                    entry.updated_at = utc_now()
+                    self.entries_by_asset_id[asset_id] = entry
+                    self.dirty = True
+                    continue
+
+                if entry.status == "completed":
                     entry.status = "ready" if candidate_is_downloadable(self._entry_to_candidate(entry)) else "discovered"
                     entry.updated_at = utc_now()
                     self.entries_by_asset_id[asset_id] = entry
@@ -1995,6 +2066,107 @@ def build_grok_initial_snapshot(version: str, target_dir: Path = GROK_TARGET_DIR
         f"{cached_images} images, {cached_videos} videos."
     )
     return snapshot
+
+
+def reset_grok_state(target_dir: Path = GROK_TARGET_DIR) -> GrokResetResult:
+    """Delete cached Grok media plus resumable local state for a full resync."""
+    result = GrokResetResult()
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    state_paths = [
+        target_dir / GROK_CATALOG_FILENAME,
+        target_dir / GROK_DOWNLOAD_MANIFEST_FILENAME,
+        target_dir / GROK_WORK_QUEUE_FILENAME,
+    ]
+    for state_path in state_paths:
+        if not state_path.exists():
+            continue
+        if state_path.is_file():
+            state_path.unlink()
+            result.removed_state_files += 1
+
+    partial_dir = target_dir / TEMP_DOWNLOAD_DIRNAME
+    if partial_dir.exists() and partial_dir.is_dir():
+        for partial_path in partial_dir.rglob("*"):
+            if partial_path.is_file():
+                result.removed_partial_files += 1
+        shutil.rmtree(partial_dir, ignore_errors=False)
+        result.removed_partial_dirs += 1
+
+    for file_path in target_dir.iterdir():
+        if not file_path.is_file():
+            continue
+        if file_path.name.startswith("."):
+            continue
+        file_path.unlink()
+        result.removed_media_files += 1
+
+    return result
+
+
+def backfill_grok_file_timestamps(
+    target_dir: Path,
+    catalog: GrokMediaCatalog,
+    manifest: GrokDownloadManifest,
+) -> int:
+    """Backfill creation and modification timestamps for previously cached media."""
+    fixed_count = 0
+    timestamp_by_relative_path: dict[str, str] = {}
+    for entry in catalog.snapshot_entries():
+        if entry.relative_path:
+            timestamp_by_relative_path[entry.relative_path] = entry.first_seen_at or derive_seen_at_from_filename(entry.relative_path)
+
+    for entry in manifest.entries_by_identity.values():
+        if entry.status != "completed" or not entry.relative_path:
+            continue
+        timestamp_by_relative_path.setdefault(
+            entry.relative_path,
+            entry.created_at or derive_seen_at_from_filename(entry.relative_path),
+        )
+
+    for relative_path, timestamp_value in sorted(timestamp_by_relative_path.items()):
+        file_path = target_dir / relative_path
+        if not file_path.exists():
+            continue
+        if not timestamp_value:
+            timestamp_value = derive_seen_at_from_filename(file_path.name)
+        if not timestamp_value:
+            continue
+
+        before_creation = ""
+        try:
+            completed = subprocess.run(
+                ["mdls", "-raw", "-name", "kMDItemFSCreationDate", str(file_path)],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            if completed.returncode == 0:
+                before_creation = (completed.stdout or "").strip()
+        except OSError:
+            before_creation = ""
+
+        apply_preserved_file_timestamp(file_path, timestamp_value)
+
+        after_creation = before_creation
+        try:
+            completed = subprocess.run(
+                ["mdls", "-raw", "-name", "kMDItemFSCreationDate", str(file_path)],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+            if completed.returncode == 0:
+                after_creation = (completed.stdout or "").strip()
+        except OSError:
+            after_creation = before_creation
+
+        if before_creation != after_creation:
+            fixed_count += 1
+
+    return fixed_count
 
 
 def entry_needs_remote_image_upgrade(
@@ -2550,6 +2722,7 @@ def sync_grok_media(
     catalog = GrokMediaCatalog.build(target_dir)
     manifest = GrokDownloadManifest.build(target_dir, catalog)
     work_queue = GrokWorkQueue.build(target_dir, catalog)
+    backfilled_timestamps = backfill_grok_file_timestamps(target_dir, catalog, manifest)
     cached_count, cached_images, cached_videos = catalog.summarize()
     state.update(
         account_name="Grok",
@@ -2562,6 +2735,10 @@ def sync_grok_media(
     state.append_event(
         f"Prepared Grok catalog with {cached_count} cached assets ({cached_images} images, {cached_videos} videos)."
     )
+    if backfilled_timestamps > 0:
+        state.append_event(
+            f"Backfilled created-time metadata on {backfilled_timestamps} cached Grok files for Apple Photos import ordering."
+        )
     state.append_event(
         f"Loaded Grok work queue with {work_queue.total_count()} tracked asset IDs for streaming discovery and download."
     )

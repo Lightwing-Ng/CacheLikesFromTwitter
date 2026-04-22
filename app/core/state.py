@@ -1,6 +1,6 @@
 """Shared task state for the web UI and worker."""
 
-# Code version: v1.2.0-codex.1
+# Code version: v1.2.1-codex.1
 
 from __future__ import annotations
 
@@ -88,6 +88,11 @@ class TaskState:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return asdict(self._snapshot)
+
+    def replace_snapshot(self, snapshot: TaskSnapshot) -> None:
+        """Replace the entire snapshot atomically."""
+        with self._lock:
+            self._snapshot = snapshot
 
     def reset_for_run(self) -> None:
         with self._lock:
