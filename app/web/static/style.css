@@ -1,4 +1,4 @@
-/* Code version: v2.5.0-gpt5.4.1 */
+/* Code version: v2.5.1-gpt5.5.1 */
 :root {
     color-scheme: light;
     --color-scheme: light;
@@ -1839,7 +1839,7 @@ a.ghost-link[href$="/settings"] {
 .app-shell.is-sidebar-collapsed ~ .sidebar-dock {
     opacity: 0;
     pointer-events: none;
-    transform: translateX(-50%) scale(0.95);
+    transform: translateX(calc(-50% - var(--sidebar-width))) scale(0.95);
     transition: opacity var(--sidebar-motion-duration) var(--motion-standard), transform var(--sidebar-motion-duration) var(--motion-emphasized);
 }
 
@@ -1933,7 +1933,7 @@ a.ghost-link[href$="/settings"] {
     }
 }
 
-@media (max-width: 900px) {
+@media (max-width: 720px) {
     .page {
         overflow: visible;
     }
@@ -2044,7 +2044,7 @@ a.ghost-link[href$="/settings"] {
     }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 560px) {
     .page {
         padding: 8px;
     }
