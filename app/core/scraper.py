@@ -1,16 +1,19 @@
 """Collect liked tweet URLs from the logged-in X account."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.1.0-codex.1
 
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import re
 import shutil
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import parse_qs, urlencode, urlparse
 
 from .config import CrawlConfig
 from .state import TaskState
@@ -27,7 +30,33 @@ except ImportError:  # pragma: no cover
 
 X_HOME_URL = "https://x.com/home"
 STATUS_URL_PATTERN = re.compile(r"^https://x\.com/([^/]+)/status/(\d+)")
+INTERNAL_STATUS_URL_PATTERN = re.compile(r"^https://x\.com/(?:i|i/web)/status/(\d+)")
+LIKES_REQUEST_MARKER = "/Likes?"
+LIKES_REQUEST_TIMEOUT_SECONDS = 15
+LIKES_API_RETRY_ATTEMPTS = 3
+LIKES_API_RETRY_DELAY_SECONDS = 1.0
+LIKES_API_HEADER_NAMES = {
+    "authorization",
+    "content-type",
+    "dnt",
+    "x-client-transaction-id",
+    "x-csrf-token",
+    "x-twitter-active-user",
+    "x-twitter-auth-type",
+    "x-twitter-client-language",
+}
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class LikesTimelineRequestTemplate:
+    """Persist the request metadata needed to fetch more likes timeline pages."""
+
+    api_url_base: str
+    headers: dict[str, str]
+    variables: dict[str, object]
+    features: str
+    field_toggles: str
 
 
 def build_x_likes_url(account_handle: str) -> str:
@@ -165,11 +194,337 @@ def normalize_status_url(url: str) -> str:
     candidate = candidate.replace("https://mobile.twitter.com/", "https://x.com/")
 
     match = STATUS_URL_PATTERN.match(candidate)
-    if not match:
+    if match:
+        handle, status_id = match.groups()
+        return f"https://x.com/{handle}/status/{status_id}"
+
+    internal_match = INTERNAL_STATUS_URL_PATTERN.match(candidate)
+    if internal_match:
+        return f"https://x.com/i/status/{internal_match.group(1)}"
+
+    return ""
+
+
+def extract_status_url_from_likes_entry(entry: dict[str, object]) -> str:
+    """Build a canonical status URL from one likes timeline entry payload."""
+    content = entry.get("content")
+    if not isinstance(content, dict) or content.get("__typename") != "TimelineTimelineItem":
         return ""
 
-    handle, status_id = match.groups()
-    return f"https://x.com/{handle}/status/{status_id}"
+    item_content = content.get("itemContent")
+    if not isinstance(item_content, dict) or item_content.get("__typename") != "TimelineTweet":
+        return ""
+
+    tweet_result = item_content.get("tweet_results")
+    if not isinstance(tweet_result, dict):
+        return ""
+
+    result = tweet_result.get("result")
+    if not isinstance(result, dict):
+        return ""
+
+    if result.get("__typename") == "TweetWithVisibilityResults":
+        nested_tweet = result.get("tweet")
+        if isinstance(nested_tweet, dict):
+            result = nested_tweet
+        else:
+            return ""
+
+    legacy = result.get("legacy")
+    if not isinstance(legacy, dict):
+        return ""
+
+    status_id = str(result.get("rest_id") or legacy.get("id_str") or legacy.get("conversation_id_str") or "").strip()
+    if not status_id:
+        return ""
+
+    core = result.get("core")
+    if not isinstance(core, dict):
+        return f"https://x.com/i/status/{status_id}"
+
+    user_results = core.get("user_results")
+    if not isinstance(user_results, dict):
+        return f"https://x.com/i/status/{status_id}"
+
+    user_result = user_results.get("result")
+    if not isinstance(user_result, dict):
+        return f"https://x.com/i/status/{status_id}"
+
+    user_legacy = user_result.get("legacy")
+    screen_name = ""
+    if isinstance(user_legacy, dict):
+        screen_name = str(user_legacy.get("screen_name") or "").strip()
+    if not screen_name:
+        user_core = user_result.get("core")
+        if isinstance(user_core, dict):
+            screen_name = str(user_core.get("screen_name") or "").strip()
+    if not screen_name:
+        return f"https://x.com/i/status/{status_id}"
+
+    return f"https://x.com/{screen_name}/status/{status_id}"
+
+
+def parse_likes_timeline_page(payload: dict[str, object]) -> tuple[list[str], str]:
+    """Extract canonical status URLs plus the next bottom cursor from one likes response."""
+    instructions = (
+        payload.get("data", {})
+        .get("user", {})
+        .get("result", {})
+        .get("timeline", {})
+        .get("timeline", {})
+        .get("instructions", [])
+    )
+    if not isinstance(instructions, list):
+        return [], ""
+
+    discovered_urls: list[str] = []
+    bottom_cursor = ""
+
+    for instruction in instructions:
+        if not isinstance(instruction, dict):
+            continue
+        entries = instruction.get("entries")
+        if not isinstance(entries, list):
+            continue
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            content = entry.get("content")
+            if isinstance(content, dict) and content.get("__typename") == "TimelineTimelineCursor":
+                if content.get("cursorType") == "Bottom":
+                    bottom_cursor = str(content.get("value") or "").strip()
+                continue
+
+            status_url = extract_status_url_from_likes_entry(entry)
+            if status_url:
+                discovered_urls.append(status_url)
+
+    return discovered_urls, bottom_cursor
+
+
+def build_likes_request_template(response, likes_url: str) -> LikesTimelineRequestTemplate:
+    """Capture the authenticated request metadata for subsequent likes timeline pages."""
+    parsed_url = urlparse(response.url)
+    query_params = parse_qs(parsed_url.query)
+
+    raw_variables = query_params.get("variables", [])
+    raw_features = query_params.get("features", [])
+    if not raw_variables or not raw_features:
+        raise RuntimeError("X likes timeline request did not expose the expected pagination metadata.")
+
+    request_headers = response.request.headers
+    headers = {
+        key: value
+        for key, value in request_headers.items()
+        if key.lower() in LIKES_API_HEADER_NAMES
+    }
+    headers["referer"] = likes_url
+
+    return LikesTimelineRequestTemplate(
+        api_url_base=f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}",
+        headers=headers,
+        variables=json.loads(raw_variables[0]),
+        features=raw_features[0],
+        field_toggles=query_params.get("fieldToggles", ["{}"])[0],
+    )
+
+
+def fetch_likes_timeline_page(page, template: LikesTimelineRequestTemplate, cursor: str | None) -> dict[str, object]:
+    """Fetch one likes timeline page inside the authenticated browser session."""
+    variables = dict(template.variables)
+    if cursor:
+        variables["cursor"] = cursor
+    else:
+        variables.pop("cursor", None)
+
+    request_url = template.api_url_base + "?" + urlencode(
+        {
+            "variables": json.dumps(variables, separators=(",", ":")),
+            "features": template.features,
+            "fieldToggles": template.field_toggles,
+        }
+    )
+
+    last_error: Exception | None = None
+    body_text = ""
+    status = 0
+
+    for attempt_index in range(1, LIKES_API_RETRY_ATTEMPTS + 1):
+        try:
+            response = page.context.request.get(
+                request_url,
+                headers=template.headers,
+                fail_on_status_code=False,
+                timeout=120_000,
+            )
+        except PlaywrightError as exc:
+            last_error = exc
+            if attempt_index >= LIKES_API_RETRY_ATTEMPTS:
+                raise RuntimeError(f"X likes timeline request aborted: {exc}") from exc
+
+            logger.warning(
+                "Retrying likes timeline request after a Playwright transport error.",
+                extra={
+                    "request_url": request_url,
+                    "attempt": attempt_index,
+                    "max_attempts": LIKES_API_RETRY_ATTEMPTS,
+                    "error": str(exc),
+                },
+            )
+            time.sleep(LIKES_API_RETRY_DELAY_SECONDS)
+            continue
+
+        status = response.status
+        body_text = response.text()
+        if status == 200:
+            break
+
+        if attempt_index >= LIKES_API_RETRY_ATTEMPTS:
+            break
+
+        logger.warning(
+            "Retrying likes timeline request after a non-200 response.",
+            extra={
+                "request_url": request_url,
+                "attempt": attempt_index,
+                "max_attempts": LIKES_API_RETRY_ATTEMPTS,
+                "status": status,
+                "body_excerpt": body_text[:300],
+            },
+        )
+        time.sleep(LIKES_API_RETRY_DELAY_SECONDS)
+
+    if status != 200:
+        if last_error is not None and not body_text:
+            raise RuntimeError(f"X likes timeline request aborted: {last_error}") from last_error
+        raise RuntimeError(f"X likes timeline request failed with HTTP {status}: {body_text[:300]}")
+
+    try:
+        payload = json.loads(body_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"X likes timeline response was not valid JSON: {body_text[:300]}") from exc
+
+    if not isinstance(payload, dict):
+        raise RuntimeError("X likes timeline response JSON did not contain an object payload.")
+    return payload
+
+
+def wait_for_initial_likes_timeline_response(page, response_box: dict[str, object]) -> object | None:
+    """Wait briefly for X's own likes GraphQL request to complete."""
+    deadline = time.time() + LIKES_REQUEST_TIMEOUT_SECONDS
+    while time.time() < deadline:
+        response = response_box.get("response")
+        if response is not None:
+            return response
+        page.wait_for_timeout(500)
+    return None
+
+
+def collect_liked_tweet_urls_via_api(
+    page,
+    account_handle: str,
+    likes_url: str,
+    config: CrawlConfig,
+    state: TaskState,
+    initial_response,
+) -> list[str]:
+    """Page through the likes GraphQL timeline using the authenticated browser session."""
+    initial_payload = json.loads(initial_response.text())
+    template = build_likes_request_template(initial_response, likes_url)
+
+    state.append_event("Switching to X likes timeline API pagination for reliable discovery.")
+    logger.info(
+        "Using likes timeline API pagination.",
+        extra={
+            "account_handle": account_handle,
+            "likes_url": likes_url,
+            "api_url_base": template.api_url_base,
+        },
+    )
+
+    seen_urls: set[str] = set()
+    cursor: str | None = None
+    previous_cursor = ""
+    stale_rounds = 0
+
+    for round_index in range(config.max_scroll_rounds):
+        payload = initial_payload if round_index == 0 else fetch_likes_timeline_page(page, template, cursor)
+        page_urls, next_cursor = parse_likes_timeline_page(payload)
+
+        before_count = len(seen_urls)
+        seen_urls.update(page_urls)
+        after_count = len(seen_urls)
+
+        state.update(discovered_tweets=after_count, phase="collecting")
+        state.append_event(
+            f"Timeline page {round_index + 1}: discovered {after_count} unique liked tweet URLs."
+        )
+        logger.info(
+            "Likes timeline page completed.",
+            extra={
+                "timeline_page": round_index + 1,
+                "discovered_tweets": after_count,
+                "newly_discovered_tweets": after_count - before_count,
+                "stale_rounds": stale_rounds,
+                "has_next_cursor": bool(next_cursor),
+            },
+        )
+
+        if after_count == before_count:
+            stale_rounds += 1
+        else:
+            stale_rounds = 0
+
+        if not next_cursor or next_cursor == previous_cursor or stale_rounds >= config.stale_round_limit:
+            break
+
+        previous_cursor = next_cursor
+        cursor = next_cursor
+        time.sleep(config.scroll_pause_seconds)
+
+    return sorted(seen_urls)
+
+
+def collect_liked_tweet_urls_via_dom(page, config: CrawlConfig, state: TaskState) -> list[str]:
+    """Fallback to DOM scrolling when the likes API request cannot be captured."""
+    seen_urls: set[str] = set()
+    stale_rounds = 0
+
+    for round_index in range(config.max_scroll_rounds):
+        links = page.locator('article a[href*="/status/"]').evaluate_all(
+            """(elements) => elements
+            .map((element) => element.href)
+            .filter((href) => href && href.includes("/status/"))"""
+        )
+
+        before_count = len(seen_urls)
+        seen_urls.update(normalized_url for normalized_url in (normalize_status_url(link) for link in links) if normalized_url)
+        after_count = len(seen_urls)
+
+        state.update(discovered_tweets=after_count, phase="collecting")
+        state.append_event(f"Scroll round {round_index + 1}: discovered {after_count} unique liked tweet URLs.")
+        logger.info(
+            "Scroll round completed.",
+            extra={
+                "scroll_round": round_index + 1,
+                "discovered_tweets": after_count,
+                "newly_discovered_tweets": after_count - before_count,
+                "stale_rounds": stale_rounds,
+            },
+        )
+
+        if after_count == before_count:
+            stale_rounds += 1
+        else:
+            stale_rounds = 0
+
+        if stale_rounds >= config.stale_round_limit:
+            break
+
+        page.mouse.wheel(0, 6000)
+        time.sleep(config.scroll_pause_seconds)
+
+    return sorted(seen_urls)
 
 
 def launch_context(playwright, config: CrawlConfig, state: TaskState):
@@ -251,6 +606,13 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
             account_handle = detect_account_handle(page)
             likes_url = build_x_likes_url(account_handle)
             state.append_event(f"Opening likes page {likes_url}.")
+            likes_response_box: dict[str, object] = {"response": None}
+
+            def on_likes_response(response) -> None:
+                if LIKES_REQUEST_MARKER in response.url:
+                    likes_response_box["response"] = response
+
+            page.on("response", on_likes_response)
             page.goto(likes_url, wait_until="domcontentloaded", timeout=120_000)
             wait_for_likes_page_ready(page)
 
@@ -263,49 +625,27 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
                     "likes_url": likes_url,
                 },
             )
-
-            seen_urls: set[str] = set()
-            stale_rounds = 0
-
-            for round_index in range(config.max_scroll_rounds):
-                links = page.locator('article a[href*="/status/"]').evaluate_all(
-                    """(elements) => elements
-                    .map((element) => element.href)
-                    .filter((href) => href && href.includes("/status/"))"""
+            initial_likes_response = wait_for_initial_likes_timeline_response(page, likes_response_box)
+            if initial_likes_response is not None:
+                ordered_urls = collect_liked_tweet_urls_via_api(
+                    page=page,
+                    account_handle=account_handle,
+                    likes_url=likes_url,
+                    config=config,
+                    state=state,
+                    initial_response=initial_likes_response,
                 )
-
-                before_count = len(seen_urls)
-                seen_urls.update(
-                    normalized_url for normalized_url in (normalize_status_url(link) for link in links) if normalized_url
-                )
-                after_count = len(seen_urls)
-
-                state.update(discovered_tweets=after_count, phase="collecting")
-                state.append_event(
-                    f"Scroll round {round_index + 1}: discovered {after_count} unique liked tweet URLs."
-                )
-                logger.info(
-                    "Scroll round completed.",
+            else:
+                state.append_event("Likes API request was not observed. Falling back to DOM scrolling.")
+                logger.warning(
+                    "Likes API request was not observed; falling back to DOM scrolling.",
                     extra={
-                        "scroll_round": round_index + 1,
-                        "discovered_tweets": after_count,
-                        "newly_discovered_tweets": after_count - before_count,
-                        "stale_rounds": stale_rounds,
+                        "account_handle": account_handle,
+                        "likes_url": likes_url,
                     },
                 )
+                ordered_urls = collect_liked_tweet_urls_via_dom(page, config, state)
 
-                if after_count == before_count:
-                    stale_rounds += 1
-                else:
-                    stale_rounds = 0
-
-                if stale_rounds >= config.stale_round_limit:
-                    break
-
-                page.mouse.wheel(0, 6000)
-                time.sleep(config.scroll_pause_seconds)
-
-            ordered_urls = sorted(seen_urls)
             if not ordered_urls:
                 raise RuntimeError("No liked tweet URLs were found. The likes timeline may be empty or blocked.")
 
