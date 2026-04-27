@@ -1,4 +1,4 @@
-<!-- Code version: v1.4.0-codex.1 -->
+<!-- Code version: v1.4.1-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -11,7 +11,27 @@
 <body>
 {% set current_phase = snapshot.phase or "idle" %}
 <main class="page">
-    <div class="app-shell is-sidebar-open">
+    <div class="app-shell is-sidebar-open" id="app_shell">
+        <button
+            type="button"
+            class="sidebar-toggle"
+            id="sidebar_toggle"
+            aria-label="Toggle sidebar"
+            aria-expanded="true"
+        >
+            <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
+        </button>
+
+        <button
+            type="button"
+            class="sidebar-backdrop"
+            id="sidebar_backdrop"
+            aria-label="Close sidebar"
+            aria-hidden="true"
+            tabindex="-1"
+            hidden
+        ></button>
+
         <aside class="panel sidebar" id="settings_sidebar">
             <section class="sidebar-section anchor-section" id="settings">
                 <div class="section-heading">
@@ -100,5 +120,75 @@
         </a>
     </nav>
 </main>
+
+<script>
+    const appShell = document.getElementById("app_shell");
+    const sidebarToggle = document.getElementById("sidebar_toggle");
+    const sidebarBackdrop = document.getElementById("sidebar_backdrop");
+    const shellMobileQuery = window.matchMedia("(max-width: 900px)");
+    const sidebarMotionDurationMs = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 500;
+    let sidebarMotionResetTimer = 0;
+
+    function setSidebarMotionState(direction) {
+        if (sidebarMotionResetTimer) {
+            window.clearTimeout(sidebarMotionResetTimer);
+            sidebarMotionResetTimer = 0;
+        }
+
+        appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
+        void appShell.offsetWidth;
+
+        if (!direction) {
+            return;
+        }
+
+        appShell.classList.add("is-sidebar-animating", direction === "opening" ? "is-sidebar-opening" : "is-sidebar-closing");
+        sidebarMotionResetTimer = window.setTimeout(() => {
+            appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
+            sidebarMotionResetTimer = 0;
+        }, sidebarMotionDurationMs);
+    }
+
+    function setSidebarOpen(isOpen, options = {}) {
+        const { persist = true, animate = false } = options;
+        const wasOpen = appShell.classList.contains("is-sidebar-open");
+
+        appShell.classList.toggle("is-sidebar-open", isOpen);
+        appShell.classList.toggle("is-sidebar-collapsed", !isOpen);
+        sidebarToggle.setAttribute("aria-expanded", String(isOpen));
+        sidebarBackdrop.hidden = !shellMobileQuery.matches || !isOpen;
+
+        if (animate && wasOpen !== isOpen) {
+            setSidebarMotionState(isOpen ? "opening" : "closing");
+        }
+
+        if (persist) {
+            try {
+                window.sessionStorage.setItem("cachelikes:settings-sidebar-open", String(isOpen));
+            } catch (_error) {
+            }
+        }
+    }
+
+    try {
+        const storedSidebarState = window.sessionStorage.getItem("cachelikes:settings-sidebar-open");
+        if (storedSidebarState === "false") {
+            setSidebarOpen(false, { persist: false });
+        }
+    } catch (_error) {
+    }
+
+    sidebarToggle.addEventListener("click", () => {
+        setSidebarOpen(!appShell.classList.contains("is-sidebar-open"), { animate: true });
+    });
+
+    sidebarBackdrop.addEventListener("click", () => {
+        setSidebarOpen(false);
+    });
+
+    shellMobileQuery.addEventListener("change", () => {
+        setSidebarOpen(appShell.classList.contains("is-sidebar-open"), { persist: false });
+    });
+</script>
 </body>
 </html>
