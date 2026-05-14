@@ -1,4 +1,4 @@
-/* Code version: v1.3.0-gpt5.4.1 */
+/* Code version: v1.3.1-gpt5.4.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v2:";
@@ -40,6 +40,7 @@
         const selectedIconShell = panel.querySelector('[data-role="browser-picker-selected-icon-shell"]');
         const statusCard = panel.querySelector('[data-role="browser-session-status"]');
         const statusAccount = panel.querySelector('[data-role="browser-session-account"]');
+        const statusMessage = panel.querySelector('[data-role="browser-session-message"]');
         const statusCheckmark = panel.querySelector('[data-role="browser-session-checkmark"]');
         const optionButtons = Array.from(panel.querySelectorAll("[data-browser-option]"));
 
@@ -66,6 +67,7 @@
                 selectedIcon.removeAttribute("src");
                 selectedIcon.alt = "";
                 selectedIconShell.hidden = true;
+                writeSessionValue(selectionStorageKey, "");
                 return;
             }
 
@@ -80,6 +82,10 @@
             panel.classList.remove("is-browser-status-loading");
             panel.classList.toggle("is-browser-ready", Boolean(payload.can_download));
             statusAccount.textContent = payload.account_name || "No signed-in account detected";
+            if (statusMessage) {
+                statusMessage.textContent = payload.message || "";
+                statusMessage.hidden = !payload.message;
+            }
             statusCheckmark.hidden = !Boolean(payload.can_download);
         }
 
@@ -88,6 +94,10 @@
             panel.classList.add("is-browser-status-loading");
             panel.classList.remove("is-browser-ready");
             statusAccount.textContent = "Checking signed-in account...";
+            if (statusMessage) {
+                statusMessage.textContent = "";
+                statusMessage.hidden = true;
+            }
             statusCheckmark.hidden = true;
         }
 
@@ -95,6 +105,10 @@
             if (!browserId) {
                 statusCard.hidden = true;
                 panel.classList.remove("is-browser-status-loading", "is-browser-ready");
+                if (statusMessage) {
+                    statusMessage.textContent = "";
+                    statusMessage.hidden = true;
+                }
                 return;
             }
 
@@ -168,13 +182,20 @@
         });
 
         const storedSelection = readSessionValue(selectionStorageKey) || "";
-        if (storedSelection) {
-            setSelectedBrowser(storedSelection);
-            void loadBrowserStatus(storedSelection);
-        } else {
-            setSelectedBrowser("");
-            statusCard.hidden = true;
+        const defaultBrowserId = optionButtons.length === 1 ? (optionButtons[0].dataset.browserOption || "") : "";
+        const initialBrowserId = optionButtons.some((button) => button.dataset.browserOption === storedSelection)
+            ? storedSelection
+            : defaultBrowserId;
+
+        if (initialBrowserId) {
+            setSelectedBrowser(initialBrowserId);
+            writeSessionValue(selectionStorageKey, initialBrowserId);
+            void loadBrowserStatus(initialBrowserId);
+            return;
         }
+
+        setSelectedBrowser("");
+        statusCard.hidden = true;
     }
 
     document.addEventListener("DOMContentLoaded", () => {

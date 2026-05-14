@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.7.1-codex.1
+# Code version: v1.7.2-codex.1
 
 from __future__ import annotations
 
@@ -607,7 +607,22 @@ def resolve_candidate_from_file_details_page(
         open_grok_page(details_page, build_file_details_url(fallback_candidate.asset_id))
         payload = details_page.evaluate(
             """() => {
-                const activeImage = document.querySelector('img[alt="active-image"]');
+                const pickLargestImage = () => {
+                    const images = Array.from(document.querySelectorAll('img')).filter((candidate) => {
+                        const src = candidate.currentSrc || candidate.src || '';
+                        return src.includes('assets.grok.com');
+                    });
+                    if (!images.length) {
+                        return null;
+                    }
+                    return images.reduce((best, candidate) => {
+                        const bestScore = (best.naturalWidth || 0) * (best.naturalHeight || 0);
+                        const candidateScore = (candidate.naturalWidth || 0) * (candidate.naturalHeight || 0);
+                        return candidateScore >= bestScore ? candidate : best;
+                    });
+                };
+
+                const activeImage = document.querySelector('img[alt="active-image"]') || pickLargestImage();
                 if (activeImage) {
                     return {
                         sourceUrl: activeImage.currentSrc || activeImage.src || '',
@@ -2192,30 +2207,77 @@ def extract_visible_candidates(page) -> list[GrokMediaCandidate]:
     raw_items = page.evaluate(
         """() => {
             const results = [];
-            const seen = new Set();
-            const anchors = Array.from(document.querySelectorAll('a[href*="/files?file="]'));
+            const seenKeys = new Set();
 
+            const isVisible = (element) => {
+                if (!(element instanceof Element)) {
+                    return false;
+                }
+                const rect = element.getBoundingClientRect();
+                return rect.width > 0 && rect.height > 0;
+            };
+
+            const mediaPayloadFromNode = (mediaNode) => {
+                if (!(mediaNode instanceof Element)) {
+                    return null;
+                }
+                const currentSrc = mediaNode.currentSrc || mediaNode.src || '';
+                const previewUrl = currentSrc.split('#')[0];
+                if (!previewUrl || !previewUrl.includes('assets.grok.com')) {
+                    return null;
+                }
+                const tagName = mediaNode.tagName.toLowerCase() === 'source'
+                    ? ((mediaNode.parentElement && mediaNode.parentElement.tagName) || 'video').toLowerCase()
+                    : mediaNode.tagName.toLowerCase();
+                return {
+                    previewUrl,
+                    mediaTag: tagName,
+                };
+            };
+
+            const pushResult = (fileId, previewUrl, mediaTag) => {
+                const dedupeKey = fileId || previewUrl;
+                if (!dedupeKey || seenKeys.has(dedupeKey)) {
+                    return;
+                }
+                seenKeys.add(dedupeKey);
+                results.push({
+                    fileId: fileId || '',
+                    previewUrl: previewUrl || '',
+                    mediaTag: mediaTag || '',
+                });
+            };
+
+            const anchors = Array.from(document.querySelectorAll('a[href*="/files?file="]'));
             anchors.forEach((anchor) => {
                 const href = anchor.href || '';
                 const fileId = new URL(href).searchParams.get('file') || '';
-                if (!fileId || seen.has(fileId)) {
+                const mediaNode = anchor.querySelector('img, video source, video');
+                const mediaPayload = mediaPayloadFromNode(mediaNode);
+                if (!fileId && !mediaPayload) {
                     return;
                 }
+                pushResult(fileId, mediaPayload ? mediaPayload.previewUrl : '', mediaPayload ? mediaPayload.mediaTag : '');
+            });
 
-                seen.add(fileId);
-                const mediaNode = anchor.querySelector('img, video, video source');
-                const currentSrc = mediaNode ? (mediaNode.currentSrc || mediaNode.src || '') : '';
-                const url = currentSrc.split('#')[0];
-                const tagName = mediaNode
-                    ? (mediaNode.tagName.toLowerCase() === 'source'
-                        ? ((mediaNode.parentElement && mediaNode.parentElement.tagName) || 'video').toLowerCase()
-                        : mediaNode.tagName.toLowerCase())
-                    : '';
-                results.push({
-                    fileId,
-                    previewUrl: url,
-                    mediaTag: tagName,
-                });
+            const cardSelectors = [
+                'div[tabindex="0"]',
+                '[role="button"]',
+                'button',
+            ];
+            const cards = Array.from(document.querySelectorAll(cardSelectors.join(',')));
+            cards.forEach((card) => {
+                if (!isVisible(card)) {
+                    return;
+                }
+                const mediaNode = card.querySelector('img, video source, video');
+                const mediaPayload = mediaPayloadFromNode(mediaNode);
+                if (!mediaPayload) {
+                    return;
+                }
+                const linkedAnchor = card.closest('a[href*="/files?file="]') || card.querySelector('a[href*="/files?file="]');
+                const fileId = linkedAnchor ? (new URL(linkedAnchor.href || '').searchParams.get('file') || '') : '';
+                pushResult(fileId, mediaPayload.previewUrl, mediaPayload.mediaTag);
             });
 
             return results;
@@ -2225,11 +2287,12 @@ def extract_visible_candidates(page) -> list[GrokMediaCandidate]:
     candidates: list[GrokMediaCandidate] = []
     seen_identities: set[str] = set()
     for item in raw_items:
-        candidate = candidate_from_file_reference(
-            str(item.get("fileId") or ""),
-            str(item.get("previewUrl") or ""),
-            str(item.get("mediaTag") or ""),
-        )
+        file_id = str(item.get("fileId") or "")
+        preview_url = str(item.get("previewUrl") or "")
+        media_tag = str(item.get("mediaTag") or "")
+        candidate = candidate_from_file_reference(file_id, preview_url, media_tag)
+        if candidate is None and preview_url:
+            candidate = candidate_from_url(preview_url, media_tag)
         if candidate is None or candidate.identity in seen_identities:
             continue
         seen_identities.add(candidate.identity)

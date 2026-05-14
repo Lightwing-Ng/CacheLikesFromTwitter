@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.5.1-gpt5.4.1
+# Code version: v1.5.2-gpt5.4.1
 
 from __future__ import annotations
 
@@ -105,10 +105,15 @@ def create_app() -> Flask:
     @app.get("/grok")
     def grok():
         snapshot = build_reconciled_grok_snapshot()
+        grok_browser_options = [
+            browser_option
+            for browser_option in build_browser_options(saved_config)
+            if browser_option["id"] == "edge"
+        ]
         return render_template(
             "grok.html",
             snapshot=snapshot,
-            browser_options=build_browser_options(saved_config),
+            browser_options=grok_browser_options,
             version=APP_VERSION,
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,

@@ -8,12 +8,12 @@ currently logged-in X account's likes timeline into `local_store/<account_name>/
 ## Quick Start
 
 ```bash
-python3.14 -m pip install -r requirements.txt
-python3.14 -m playwright install chromium
+/usr/local/bin/python3.13 -m pip install -r requirements.txt
+/usr/local/bin/python3.13 -m playwright install chromium
 ```
 
 Then open the project in PyCharm and run the shared `main` configuration with your system
-`Python 3.14` interpreter.
+`Python 3.13` interpreter.
 
 ## Notes
 
