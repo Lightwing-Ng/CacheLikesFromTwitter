@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.4.0-gpt5.4.1
+# Code version: v1.5.0-gpt5.4.1
 
 from __future__ import annotations
 
@@ -38,6 +38,8 @@ class CrawlConfig:
     max_scroll_rounds: int = 200
     scroll_pause_seconds: float = 1.2
     stale_round_limit: int = 8
+    x_browser: str = "chrome"
+    grok_browser: str = "edge"
     chrome_user_data_dir: Path = DEFAULT_CHROME_USER_DATA_DIR
     chrome_profile_directory: str = DEFAULT_CHROME_PROFILE_DIRECTORY
     account_name_override: str = ""
@@ -76,6 +78,8 @@ def load_saved_config(settings_path: Path = SETTINGS_PATH) -> CrawlConfig:
         max_scroll_rounds=int(payload.get("max_scroll_rounds", defaults.max_scroll_rounds)),
         scroll_pause_seconds=float(payload.get("scroll_pause_seconds", defaults.scroll_pause_seconds)),
         stale_round_limit=int(payload.get("stale_round_limit", defaults.stale_round_limit)),
+        x_browser=str(payload.get("x_browser", defaults.x_browser)).strip().lower() or defaults.x_browser,
+        grok_browser=str(payload.get("grok_browser", defaults.grok_browser)).strip().lower() or defaults.grok_browser,
         chrome_user_data_dir=Path(payload.get("chrome_user_data_dir", str(defaults.chrome_user_data_dir))).expanduser(),
         chrome_profile_directory=str(
             payload.get("chrome_profile_directory", defaults.chrome_profile_directory)
@@ -88,6 +92,8 @@ def load_saved_config(settings_path: Path = SETTINGS_PATH) -> CrawlConfig:
 def save_config(config: CrawlConfig, settings_path: Path = SETTINGS_PATH) -> None:
     """Persist crawler settings for future app restarts."""
     payload = asdict(config)
+    payload["x_browser"] = config.x_browser
+    payload["grok_browser"] = config.grok_browser
     payload["chrome_user_data_dir"] = str(config.chrome_user_data_dir)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(payload, indent=2, sort_keys=True))

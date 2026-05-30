@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.7.2-codex.1
+# Code version: v1.8.2-codex.1
 
 from __future__ import annotations
 
@@ -24,7 +24,8 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
 
-from .config import PROJECT_ROOT
+from .browser_sessions import browser_descriptors, launch_chromium_context
+from .config import PROJECT_ROOT, CrawlConfig
 from .state import TaskSnapshot, TaskState, utc_now
 
 try:  # pragma: no cover - depends on the local runtime
@@ -562,7 +563,7 @@ def open_grok_page(page, url: str, settle_seconds: float = 1.0) -> None:
 
 
 def prepare_grok_library_page(context):
-    """Bring the Grok library page to the foreground and close stray blank tabs."""
+    """Prepare the Grok library page and close stray blank tabs."""
     page = None
     for _ in range(10):
         page = next((candidate for candidate in reversed(context.pages) if candidate.url.startswith("https://grok.com/files")), None)
@@ -573,9 +574,6 @@ def prepare_grok_library_page(context):
     if page is None:
         page = context.new_page()
         open_grok_page(page, GROK_FILES_URL, settle_seconds=0.0)
-
-    with contextlib.suppress(PlaywrightError):
-        page.bring_to_front()
 
     for candidate in list(context.pages):
         if candidate is page or candidate.url != "about:blank":
@@ -2361,8 +2359,6 @@ def collect_candidates(
             return ordered_candidates, library_pages
 
         active_page = library_pages[(round_index - 1) % len(library_pages)]
-        with contextlib.suppress(PlaywrightError):
-            active_page.bring_to_front()
 
         if callable(on_pipeline_tick):
             on_pipeline_tick()
@@ -2778,10 +2774,21 @@ def run_download_worker(
 
 def sync_grok_media(
     state: TaskState,
+    config: CrawlConfig | None = None,
     target_dir: Path = GROK_TARGET_DIR,
     should_stop=lambda: False,
 ) -> GrokSyncResult:
     """Sync the latest Grok-generated media into the local cache."""
+    runtime_config = config or CrawlConfig()
+    descriptor = browser_descriptors(runtime_config).get(runtime_config.grok_browser)
+    if descriptor is None:
+        raise RuntimeError(f"Unsupported Grok browser: {runtime_config.grok_browser}")
+    if descriptor.engine != "chromium":
+        raise RuntimeError(
+            "Grok sync currently supports Chrome and Edge for real runtime execution. "
+            "Safari still exposes session detection only."
+        )
+
     catalog = GrokMediaCatalog.build(target_dir)
     manifest = GrokDownloadManifest.build(target_dir, catalog)
     work_queue = GrokWorkQueue.build(target_dir, catalog)
@@ -2814,10 +2821,6 @@ def sync_grok_media(
             stopped=True,
         )
 
-    user_data_dir = EDGE_USER_DATA_DIR
-    profile_dir = user_data_dir / EDGE_PROFILE_DIR
-    if not profile_dir.exists():
-        raise RuntimeError(f"Edge profile not found: {profile_dir}")
     if sync_playwright is None:
         raise RuntimeError(
             "Playwright is not installed. Run `python3 -m pip install -r requirements.txt` "
@@ -2828,23 +2831,21 @@ def sync_grok_media(
     details_pages: list[object] = []
     library_pages_to_close: list[object] = []
     download_auth = GrokDownloadAuth()
-    temp_dir: tempfile.TemporaryDirectory[str] | None = None
+    launch_context_manager = None
+    context_entered = False
 
     try:
         state.update(phase="collecting")
-        state.append_event("Cloning the signed-in Edge profile for Grok sync.")
-        target_user_data_dir, temp_dir = clone_profile(user_data_dir, profile_dir)
-
         with sync_playwright() as playwright:
-            state.append_event("Launching Edge for Grok sync.")
-            context = playwright.chromium.launch_persistent_context(
-                user_data_dir=str(target_user_data_dir),
-                channel="msedge",
-                headless=False,
-                args=[f"--profile-directory={EDGE_PROFILE_DIR}"],
-                ignore_default_args=["--use-mock-keychain", "--password-store=basic"],
-                viewport={"width": 1440, "height": 1200},
+            state.append_event(f"Launching {descriptor.label} in the background for Grok sync.")
+            launch_context_manager = launch_chromium_context(
+                playwright,
+                descriptor,
+                headless=True,
+                clone_profile_first=True,
             )
+            context = launch_context_manager.__enter__()
+            context_entered = True
             page = prepare_grok_library_page(context)
             details_pages = [context.new_page() for _ in range(GROK_RESOLUTION_PAGE_POOL_SIZE)]
             next_details_page_index = 0
@@ -3154,8 +3155,7 @@ def sync_grok_media(
             with contextlib.suppress(Exception):
                 candidate.close()
         with contextlib.suppress(Exception):
-            if context is not None:
+            if launch_context_manager is not None and context_entered:
+                launch_context_manager.__exit__(None, None, None)
+            elif context is not None:
                 context.close()
-        with contextlib.suppress(Exception):
-            if temp_dir is not None:
-                temp_dir.cleanup()

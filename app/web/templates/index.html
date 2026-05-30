@@ -1,4 +1,4 @@
-<!-- Code version: v1.7.0-gpt5.4.1 -->
+<!-- Code version: v1.7.1-gpt5.4.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -66,6 +66,7 @@
                     data-browser-session-panel
                     data-platform="x"
                     data-selection-storage-key="cachelikes:browser-selection:x"
+                    data-hidden-input-selector="#x_browser_input"
                 >
                     <p class="browser-session-panel-label">Browser</p>
                     <div class="trade-strategy-row browser-session-row">
@@ -114,6 +115,7 @@
                     </div>
                 </div>
                 <form action="{{ url_for('start') }}" method="post" class="sidebar-form" id="start_form">
+                    <input type="hidden" name="x_browser" id="x_browser_input" value="{{ saved_config.x_browser }}">
                     <div class="field-grid compact-config-grid">
                         <label class="field compact-config-field">
                             <span>Download workers</span>

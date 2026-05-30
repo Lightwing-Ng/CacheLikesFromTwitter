@@ -1,6 +1,6 @@
 """Download media from tweet URLs with yt-dlp."""
 
-# Code version: v1.3.0-codex.1
+# Code version: v1.4.0-codex.1
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from .browser_sessions import browser_descriptors
 from .cache_catalog import LocalTweetCacheIndex
 from .config import CrawlConfig
 from .state import TaskState
@@ -183,9 +184,16 @@ def ensure_yt_dlp_available() -> list[str]:
 
 
 def build_cookies_from_browser_arg(config: CrawlConfig) -> str:
-    """Match yt-dlp's browser cookies source to the selected Chrome profile."""
-    profile_path = Path(config.chrome_user_data_dir).expanduser() / config.chrome_profile_directory
-    return f"chrome:{profile_path}"
+    """Match yt-dlp's browser cookies source to the selected X browser."""
+    descriptor = browser_descriptors(config).get(config.x_browser)
+    if descriptor is None:
+        raise RuntimeError(f"Unsupported X browser: {config.x_browser}")
+    if descriptor.engine == "safari":
+        return "safari"
+    if descriptor.user_data_dir is None:
+        raise RuntimeError(f"{descriptor.label} does not expose a supported cookie source.")
+    profile_path = descriptor.user_data_dir / descriptor.profile_directory
+    return f"{descriptor.browser_id}:{profile_path}"
 
 
 def run_yt_dlp_with_retries(command: list[str], tweet_url: str) -> subprocess.CompletedProcess[str]:

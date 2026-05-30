@@ -1,4 +1,4 @@
-<!-- Code version: v1.5.1-gpt5.4.1 -->
+<!-- Code version: v1.6.3-gpt5.5.2 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -65,9 +65,11 @@
                     data-browser-session-panel
                     data-platform="grok"
                     data-selection-storage-key="cachelikes:browser-selection:grok"
+                    data-hidden-input-selector="#grok_browser_input"
+                    data-start-button-selector="#start_button"
+                    data-require-download-ready="true"
                 >
                     <p class="browser-session-panel-label">Browser</p>
-                    <p class="browser-session-panel-help">Grok sync currently launches the signed-in Edge profile on this machine.</p>
                     <div class="trade-strategy-row browser-session-row">
                         <div class="trade-strategy-combobox browser-session-combobox">
                         <button
@@ -115,6 +117,7 @@
                     </div>
                 </div>
                 <form action="{{ url_for('start_grok') }}" method="post" class="sidebar-form" id="start_form_grok">
+                    <input type="hidden" name="grok_browser" id="grok_browser_input" value="{{ saved_config.grok_browser }}">
                 </form>
                 <div class="sidebar-action-row">
                     <form action="{{ url_for('stop_grok') }}" method="post" class="sidebar-form sidebar-form-stop">
@@ -191,6 +194,7 @@
                             aria-valuemax="100"
                             aria-valuenow="0"
                         >
+                            <span class="status-progress-audit" id="status_progress_audit"></span>
                             <span class="status-progress-fill" id="status_progress_fill"></span>
                         </div>
                     </div>
@@ -295,7 +299,9 @@
     const phaseValue = document.getElementById("phase_value");
     const startButton = document.getElementById("start_button");
     const stopButton = document.getElementById("stop_button");
+    const browserSessionPanel = document.querySelector("[data-browser-session-panel]");
     const statusProgress = document.getElementById("status_progress");
+    const statusProgressAudit = document.getElementById("status_progress_audit");
     const statusProgressFill = document.getElementById("status_progress_fill");
     const recentEventsBody = document.getElementById("recent_events_body");
     const recentEventsPrev = document.getElementById("recent_events_prev");
@@ -530,8 +536,28 @@
         return numberFormatter.format(parsed);
     }
 
+    function parseAuditProgress(message) {
+        const normalizedMessage = typeof message === "string" ? message : "";
+        const match = normalizedMessage.match(/Auditing Grok image quality\s+(\d+)\s*\/\s*(\d+)/i);
+        if (!match) {
+            return null;
+        }
+
+        const current = Number(match[1]);
+        const total = Number(match[2]);
+        if (!Number.isFinite(current) || !Number.isFinite(total) || total <= 0) {
+            return null;
+        }
+
+        return {
+            current,
+            total,
+            percent: Math.min(Math.max(Math.round((current / total) * 100), 0), 100),
+        };
+    }
+
     function updateProgressBar(data) {
-        if (!statusProgress || !statusProgressFill) {
+        if (!statusProgress || !statusProgressFill || !statusProgressAudit) {
             return;
         }
 
@@ -539,22 +565,31 @@
         const cached = Number(data.downloaded_posts) || 0;
         const skipped = Number(data.skipped_tweets) || 0;
         const total = Math.max(discovered, cached + skipped, 1);
-        let progressPercent = 0;
+        const auditProgress = parseAuditProgress(data.message);
+        let completePercent = 0;
+        let auditPercent = 0;
         let isIndeterminate = false;
 
-        if (data.phase === "collecting" || data.phase === "starting" || data.phase === "stopping") {
+        if (auditProgress) {
+            auditPercent = auditProgress.percent;
+        } else if (data.phase === "collecting" || data.phase === "starting" || data.phase === "stopping") {
             isIndeterminate = true;
         } else if (data.phase === "downloading") {
-            progressPercent = Math.round(((cached + skipped) / total) * 100);
+            completePercent = Math.round(((cached + skipped) / total) * 100);
         } else if (["finished", "completed", "success", "stopped"].includes(data.phase)) {
-            progressPercent = 100;
+            completePercent = 100;
         } else if (data.phase === "failed") {
-            progressPercent = Math.round(((cached + skipped) / total) * 100);
+            completePercent = Math.round(((cached + skipped) / total) * 100);
         }
 
         statusProgress.classList.toggle("is-indeterminate", isIndeterminate);
-        statusProgressFill.style.width = `${Math.min(Math.max(progressPercent, 0), 100)}%`;
-        statusProgress.setAttribute("aria-valuenow", String(Math.min(Math.max(progressPercent, 0), 100)));
+        statusProgress.classList.toggle("is-auditing", auditPercent > 0 && !isIndeterminate);
+        statusProgressFill.style.width = `${Math.min(Math.max(completePercent, 0), 100)}%`;
+        statusProgressAudit.style.width = `${Math.min(Math.max(auditPercent, 0), 100)}%`;
+        statusProgress.setAttribute(
+            "aria-valuenow",
+            String(Math.max(Math.min(Math.max(completePercent, 0), 100), Math.min(Math.max(auditPercent, 0), 100))),
+        );
     }
 
     async function refreshStatus() {
@@ -578,7 +613,10 @@
         bannerMessage.textContent = data.message;
         setPhaseState(data.phase);
         updateProgressBar(data);
-        startButton.disabled = Boolean(data.running);
+        const browserDownloadReady = browserSessionPanel
+            ? browserSessionPanel.dataset.browserDownloadReady !== "false"
+            : true;
+        startButton.disabled = Boolean(data.running) || !browserDownloadReady;
         stopButton.disabled = !Boolean(data.running);
     }
 

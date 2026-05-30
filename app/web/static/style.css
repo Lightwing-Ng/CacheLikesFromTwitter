@@ -1,4 +1,4 @@
-/* Code version: v2.5.1-gpt5.5.1 */
+/* Code version: v2.5.2-gpt5.5.2 */
 :root {
     color-scheme: light;
     --color-scheme: light;
@@ -1281,23 +1281,45 @@ input[type="number"]::-webkit-inner-spin-button {
     min-width: 120px;
     height: 8px;
     border-radius: var(--radius-pill);
-    background: color-mix(in srgb, var(--theme-success) 18%, rgba(255, 255, 255, 0.8));
-    border: 1px solid color-mix(in srgb, var(--theme-success) 22%, transparent);
+    background: color-mix(in srgb, var(--theme-muted) 18%, rgba(255, 255, 255, 0.82));
+    border: 1px solid color-mix(in srgb, var(--theme-muted) 20%, transparent);
     overflow: hidden;
 }
 
+.status-progress-audit,
 .status-progress-fill {
     display: block;
+    position: absolute;
+    inset: 0 auto 0 0;
     width: 0%;
     height: 100%;
     border-radius: inherit;
+    transition: width 280ms var(--motion-inertial);
+}
+
+.status-progress-audit {
+    background: #f2c94c;
+    box-shadow: 0 0 10px color-mix(in srgb, #f2c94c 32%, transparent);
+}
+
+.status-progress-fill {
     background: var(--theme-success-strong);
     box-shadow: 0 0 10px color-mix(in srgb, var(--theme-success-strong) 28%, transparent);
     transition: width 280ms var(--motion-inertial);
 }
 
+.status-progress.is-auditing .status-progress-fill {
+    box-shadow: none;
+}
+
+.status-progress.is-indeterminate .status-progress-audit {
+    width: 0% !important;
+}
+
 .status-progress.is-indeterminate .status-progress-fill {
     width: 36% !important;
+    background: color-mix(in srgb, var(--theme-muted) 44%, rgba(255, 255, 255, 0.92));
+    box-shadow: none;
     animation: statusProgressIndeterminate 1.4s var(--motion-inertial) infinite;
 }
 

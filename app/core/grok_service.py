@@ -1,6 +1,6 @@
 """Background service for Grok media sync."""
 
-# Code version: v1.0.1-codex.1
+# Code version: v1.1.1-codex.1
 
 from __future__ import annotations
 
@@ -8,12 +8,28 @@ import logging
 from threading import Event, Thread
 from uuid import uuid4
 
+from .config import CrawlConfig
 from .grok_downloader import sync_grok_media
 from .logging_setup import reset_job_id, set_job_id
 from .state import TaskState
 
 
 logger = logging.getLogger(__name__)
+
+
+def summarize_error_for_status(error: Exception) -> str:
+    """Return a compact status message while logs retain full exception details."""
+    error_text = str(error).strip()
+    if "BrowserType.launch_persistent_context" in error_text:
+        return (
+            "Grok browser automation failed while launching the selected browser profile. "
+            "The full Playwright output was written to the log."
+        )
+
+    first_line = error_text.splitlines()[0] if error_text else error.__class__.__name__
+    if len(first_line) <= 500:
+        return first_line
+    return f"{first_line[:497]}..."
 
 
 class GrokDownloadService:
@@ -23,18 +39,20 @@ class GrokDownloadService:
         self._state = state
         self._worker: Thread | None = None
         self._stop_requested = Event()
+        self._config = CrawlConfig()
 
     def is_running(self) -> bool:
         """Return whether a Grok sync is active."""
         snapshot = self._state.snapshot()
         return bool(snapshot["running"])
 
-    def start(self) -> None:
+    def start(self, config: CrawlConfig) -> None:
         """Start a new Grok sync worker."""
         if self.is_running():
             raise RuntimeError("A Grok sync is already running.")
 
         self._stop_requested.clear()
+        self._config = config
         self._state.reset_for_run()
         self._worker = Thread(target=self._run, daemon=True)
         self._worker.start()
@@ -56,12 +74,18 @@ class GrokDownloadService:
         job_id = uuid4().hex[:12]
         token = set_job_id(job_id)
         try:
-            logger.info("Grok sync started.", extra={"job_id": job_id})
+            logger.info(
+                "Grok sync started.",
+                extra={
+                    "job_id": job_id,
+                    "grok_browser": self._config.grok_browser,
+                },
+            )
             if self._is_stop_requested():
                 self._state.finish_stopped("Grok sync stopped before the browser was launched.")
                 return
 
-            result = sync_grok_media(self._state, should_stop=self._is_stop_requested)
+            result = sync_grok_media(self._state, config=self._config, should_stop=self._is_stop_requested)
             if result.stopped:
                 self._state.finish_stopped(
                     f"Grok sync stopped. Cached {result.cached_count} assets "
@@ -99,7 +123,7 @@ class GrokDownloadService:
                 },
             )
         except Exception as exc:  # pragma: no cover
-            self._state.finish_error(str(exc))
+            self._state.finish_error(summarize_error_for_status(exc))
             logger.exception(
                 "Grok sync failed.",
                 extra={

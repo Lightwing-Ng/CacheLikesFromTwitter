@@ -1,6 +1,6 @@
 """Browser session probing helpers for X and Grok."""
 
-# Code version: v1.2.0-codex.1
+# Code version: v1.3.5-codex.2
 
 from __future__ import annotations
 
@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import Any
 
 from .config import CrawlConfig
-from .scraper import detect_account_handle
 
 try:  # pragma: no cover - depends on local runtime
     from playwright.sync_api import Error as PlaywrightError
@@ -141,6 +140,8 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
 
 def _probe_chromium_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
     """Probe an X session from a Chromium-family browser profile."""
+    from .scraper import detect_account_handle
+
     with sync_playwright_or_error() as playwright:
         with launch_chromium_context(playwright, descriptor, headless=True) as context:
             page = context.pages[0] if context.pages else context.new_page()
@@ -158,7 +159,7 @@ def _probe_chromium_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
 def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
     """Probe a Grok session from a Chromium-family browser profile."""
     with sync_playwright_or_error() as playwright:
-        with launch_chromium_context(playwright, descriptor, headless=False) as context:
+        with launch_chromium_context(playwright, descriptor, headless=True) as context:
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, GROK_FILES_URL)
             page.wait_for_timeout(8_000)
@@ -229,18 +230,24 @@ def _probe_safari_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
         if account_name:
             return {
                 "logged_in": True,
-                "can_download": True,
+                "can_download": False,
                 "account_name": account_name,
-                "message": f"Safari is signed in to Grok as {account_name}.",
+                "message": (
+                    f"Safari is signed in to Grok as {account_name}, "
+                    "but Grok sync can run only from Chrome or Edge."
+                ),
             }
 
     inferred_handle = extract_x_account_from_source(fetch_safari_page_snapshot(X_HOME_URL, wait_seconds=10)["source"])
     if inferred_handle:
         return {
             "logged_in": True,
-            "can_download": True,
+            "can_download": False,
             "account_name": f"@{inferred_handle}",
-            "message": f"Safari Grok account inferred from the linked X session as @{inferred_handle}.",
+            "message": (
+                f"Safari Grok account was inferred from the linked X session as @{inferred_handle}, "
+                "but Grok sync can run only from Chrome or Edge."
+            ),
         }
 
     return {
@@ -263,17 +270,11 @@ def sync_playwright_or_error():
 
 def wait_for_x_page_ready(page, browser_label: str) -> None:
     """Wait until the X page is usable or fail with a clear auth message."""
-    ready_selectors = [
-        "article",
-        '[data-testid="emptyState"]',
-        '[data-testid="primaryColumn"]',
-        'a[href="/home"]',
-        'a[data-testid="AppTabBar_Home_Link"]',
-    ]
+    from .scraper import X_READY_SELECTORS
 
     deadline = time.time() + 30
     while time.time() < deadline:
-        if any(page.locator(selector).count() for selector in ready_selectors):
+        if any(page.locator(selector).count() for selector in X_READY_SELECTORS):
             page.wait_for_timeout(1_500)
             return
 
@@ -303,7 +304,12 @@ def goto_with_retry(page, url: str, attempts: int = 3) -> None:
         raise last_error
 
 
-def launch_chromium_context(playwright, descriptor: BrowserDescriptor, headless: bool):
+def launch_chromium_context(
+    playwright,
+    descriptor: BrowserDescriptor,
+    headless: bool,
+    clone_profile_first: bool = False,
+):
     """Launch a Chromium-family browser against the selected profile."""
     user_data_dir = descriptor.user_data_dir
     if user_data_dir is None:
@@ -323,18 +329,37 @@ def launch_chromium_context(playwright, descriptor: BrowserDescriptor, headless:
             viewport={"width": 1440, "height": 1200},
         )
 
-    try:
-        context = do_launch(user_data_dir)
-    except PlaywrightError as exc:
-        error_text = str(exc)
-        if "ProcessSingleton" not in error_text and "SingletonLock" not in error_text:
-            raise
+    def should_retry_with_cloned_profile(error_text: str) -> bool:
+        normalized_error = str(error_text or "")
+        retry_markers = (
+            "ProcessSingleton",
+            "SingletonLock",
+            "SingletonSocket",
+            "non-default data directory",
+            "DevTools remote debugging requires a non-default data directory",
+        )
+        return any(marker in normalized_error for marker in retry_markers)
+
+    if clone_profile_first:
         temp_user_data_dir, temp_profile_dir = clone_browser_profile(descriptor)
         try:
             context = do_launch(temp_user_data_dir)
         except Exception:
             temp_profile_dir.cleanup()
             raise
+    else:
+        try:
+            context = do_launch(user_data_dir)
+        except PlaywrightError as exc:
+            error_text = str(exc)
+            if not should_retry_with_cloned_profile(error_text):
+                raise
+            temp_user_data_dir, temp_profile_dir = clone_browser_profile(descriptor)
+            try:
+                context = do_launch(temp_user_data_dir)
+            except Exception:
+                temp_profile_dir.cleanup()
+                raise
 
     if temp_profile_dir is None:
         return contextlib.closing(context)

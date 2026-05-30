@@ -1,7 +1,7 @@
-/* Code version: v1.3.1-gpt5.4.1 */
+/* Code version: v1.4.2-gpt5.4.1 */
 
 (() => {
-    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v2:";
+    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v3:";
     const SESSION_CACHE_TTL_MS = 30_000;
 
     function readSessionValue(key) {
@@ -34,17 +34,33 @@
     function initBrowserSessionPanel(panel) {
         const platform = panel.dataset.platform;
         const selectionStorageKey = panel.dataset.selectionStorageKey;
+        const hiddenInputSelector = panel.dataset.hiddenInputSelector || "";
+        const startButtonSelector = panel.dataset.startButtonSelector || "";
+        const requiresDownloadReady = panel.dataset.requireDownloadReady === "true";
         const trigger = panel.querySelector('[data-role="browser-picker-trigger"]');
         const selectedLabel = panel.querySelector('[data-role="browser-picker-selected-label"]');
         const selectedIcon = panel.querySelector('[data-role="browser-picker-selected-icon"]');
         const selectedIconShell = panel.querySelector('[data-role="browser-picker-selected-icon-shell"]');
+        const hiddenInput = hiddenInputSelector ? document.querySelector(hiddenInputSelector) : null;
         const statusCard = panel.querySelector('[data-role="browser-session-status"]');
         const statusAccount = panel.querySelector('[data-role="browser-session-account"]');
         const statusMessage = panel.querySelector('[data-role="browser-session-message"]');
         const statusCheckmark = panel.querySelector('[data-role="browser-session-checkmark"]');
+        const startButton = startButtonSelector ? document.querySelector(startButtonSelector) : null;
+        const startButtonInitiallyDisabled = startButton ? startButton.disabled : false;
         const optionButtons = Array.from(panel.querySelectorAll("[data-browser-option]"));
 
         let activeBrowser = "";
+
+        function setStartButtonReady(isReady) {
+            if (requiresDownloadReady) {
+                panel.dataset.browserDownloadReady = String(isReady);
+            }
+            if (!requiresDownloadReady || !startButton || startButtonInitiallyDisabled) {
+                return;
+            }
+            startButton.disabled = !isReady;
+        }
 
         function setMenuOpen(isOpen) {
             panel.classList.toggle("is-browser-menu-open", isOpen);
@@ -56,6 +72,9 @@
 
         function setSelectedBrowser(browserId) {
             activeBrowser = browserId || "";
+            if (hiddenInput) {
+                hiddenInput.value = activeBrowser;
+            }
             optionButtons.forEach((button) => {
                 button.classList.toggle("is-selected", button.dataset.browserOption === activeBrowser);
                 button.setAttribute("aria-selected", String(button.dataset.browserOption === activeBrowser));
@@ -67,6 +86,7 @@
                 selectedIcon.removeAttribute("src");
                 selectedIcon.alt = "";
                 selectedIconShell.hidden = true;
+                setStartButtonReady(false);
                 writeSessionValue(selectionStorageKey, "");
                 return;
             }
@@ -87,6 +107,7 @@
                 statusMessage.hidden = !payload.message;
             }
             statusCheckmark.hidden = !Boolean(payload.can_download);
+            setStartButtonReady(Boolean(payload.can_download));
         }
 
         function setLoadingState() {
@@ -99,6 +120,7 @@
                 statusMessage.hidden = true;
             }
             statusCheckmark.hidden = true;
+            setStartButtonReady(false);
         }
 
         async function loadBrowserStatus(browserId) {
@@ -109,6 +131,7 @@
                     statusMessage.textContent = "";
                     statusMessage.hidden = true;
                 }
+                setStartButtonReady(false);
                 return;
             }
 
@@ -182,9 +205,12 @@
         });
 
         const storedSelection = readSessionValue(selectionStorageKey) || "";
+        const hiddenInputSelection = hiddenInput ? (hiddenInput.value || "").trim() : "";
         const defaultBrowserId = optionButtons.length === 1 ? (optionButtons[0].dataset.browserOption || "") : "";
         const initialBrowserId = optionButtons.some((button) => button.dataset.browserOption === storedSelection)
             ? storedSelection
+            : optionButtons.some((button) => button.dataset.browserOption === hiddenInputSelection)
+                ? hiddenInputSelection
             : defaultBrowserId;
 
         if (initialBrowserId) {
@@ -196,6 +222,7 @@
 
         setSelectedBrowser("");
         statusCard.hidden = true;
+        setStartButtonReady(false);
     }
 
     document.addEventListener("DOMContentLoaded", () => {

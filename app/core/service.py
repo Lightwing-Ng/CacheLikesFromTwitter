@@ -1,6 +1,6 @@
 """Orchestration service for the cache job."""
 
-# Code version: v1.3.0-codex.1
+# Code version: v1.4.0-codex.1
 
 from __future__ import annotations
 
@@ -63,6 +63,7 @@ class CacheLikesService:
                 "Cache job started.",
                 extra={
                     "job_id": job_id,
+                    "x_browser": config.x_browser,
                     "chrome_profile_directory": config.chrome_profile_directory,
                     "chrome_user_data_dir": str(config.chrome_user_data_dir),
                     "headless": config.headless,

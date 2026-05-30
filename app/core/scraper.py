@@ -1,6 +1,6 @@
 """Collect liked tweet URLs from the logged-in X account."""
 
-# Code version: v1.1.0-codex.1
+# Code version: v1.2.0-codex.1
 
 from __future__ import annotations
 
@@ -9,12 +9,20 @@ import json
 import logging
 import re
 import shutil
+import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from .browser_sessions import (
+    browser_descriptors,
+    escape_applescript_text,
+    extract_x_account_from_source,
+    fetch_safari_page_snapshot,
+    launch_chromium_context,
+)
 from .config import CrawlConfig
 from .state import TaskState
 
@@ -31,10 +39,31 @@ except ImportError:  # pragma: no cover
 X_HOME_URL = "https://x.com/home"
 STATUS_URL_PATTERN = re.compile(r"^https://x\.com/([^/]+)/status/(\d+)")
 INTERNAL_STATUS_URL_PATTERN = re.compile(r"^https://x\.com/(?:i|i/web)/status/(\d+)")
-LIKES_REQUEST_MARKER = "/Likes?"
 LIKES_REQUEST_TIMEOUT_SECONDS = 15
 LIKES_API_RETRY_ATTEMPTS = 3
 LIKES_API_RETRY_DELAY_SECONDS = 1.0
+X_RESERVED_PATH_SEGMENTS = {
+    "compose",
+    "explore",
+    "grok",
+    "hashtag",
+    "home",
+    "i",
+    "messages",
+    "notifications",
+    "search",
+    "settings",
+}
+X_READY_SELECTORS = [
+    "article",
+    '[data-testid="emptyState"]',
+    '[data-testid="primaryColumn"]',
+    '[data-testid="cellInnerDiv"]',
+    'a[href="/home"]',
+    'a[data-testid="AppTabBar_Home_Link"]',
+    'a[href$="/likes"]',
+    'main[role="main"] [role="progressbar"]',
+]
 LIKES_API_HEADER_NAMES = {
     "authorization",
     "content-type",
@@ -116,43 +145,94 @@ def clone_profile_for_playwright(config: CrawlConfig) -> tuple[Path, tempfile.Te
     return target_user_data_dir, temp_dir
 
 
+def extract_account_handle_from_urlish(value: str) -> str:
+    """Extract an X account handle from an absolute URL or a path-like href."""
+    candidate = (value or "").strip()
+    if not candidate:
+        return ""
+
+    if candidate.startswith("/"):
+        parsed = urlparse(f"https://x.com{candidate}")
+    elif "://" in candidate:
+        parsed = urlparse(candidate)
+    else:
+        parsed = urlparse(f"https://x.com/{candidate.lstrip('/')}")
+
+    netloc = parsed.netloc.lower()
+    if netloc and netloc not in {
+        "x.com",
+        "www.x.com",
+        "twitter.com",
+        "www.twitter.com",
+        "mobile.x.com",
+        "mobile.twitter.com",
+    }:
+        return ""
+
+    path_parts = [part.strip() for part in parsed.path.split("/") if part.strip()]
+    if not path_parts:
+        return ""
+
+    handle = path_parts[0].lstrip("@")
+    if not handle or not re.fullmatch(r"[A-Za-z0-9_]{1,15}", handle):
+        return ""
+    if handle.lower() in X_RESERVED_PATH_SEGMENTS:
+        return ""
+
+    if len(path_parts) == 1:
+        return handle
+    if len(path_parts) >= 2 and path_parts[1].lower() in {"likes", "media", "with_replies"}:
+        return handle
+    return ""
+
+
 def detect_account_handle(page) -> str:
     """Extract the current account handle from the profile tab link."""
-    selectors = [
-        'a[data-testid="AppTabBar_Profile_Link"]',
-        'a[aria-label*="Profile"]',
-    ]
+    handle = extract_account_handle_from_urlish(page.url)
+    if handle:
+        return handle
 
-    for selector in selectors:
-        locator = page.locator(selector).first
-        if locator.count():
-            href = locator.get_attribute("href") or ""
-            handle = href.strip("/").split("/")[0]
-            if handle and handle.lower() not in {"home", "explore"}:
-                return handle
-
-    anchors = page.locator('a[href^="/"]').evaluate_all(
-        """(elements) => elements
-        .map((element) => element.getAttribute("href"))
-        .filter(Boolean)"""
+    href_candidates = page.evaluate(
+        """() => {
+            const selectors = [
+                'a[data-testid="AppTabBar_Profile_Link"]',
+                'a[aria-label*="Profile"]',
+                'a[href$="/likes"]',
+                'a[href*="/likes"]',
+                'a[href^="/"]',
+                'link[rel="canonical"]',
+                'meta[property="og:url"]',
+            ];
+            const values = [
+                window.location.href,
+                window.location.pathname,
+            ];
+            selectors.forEach((selector) => {
+                document.querySelectorAll(selector).forEach((element) => {
+                    if (element instanceof HTMLLinkElement) {
+                        values.push(element.href || '');
+                        return;
+                    }
+                    if (element instanceof HTMLMetaElement) {
+                        values.push(element.content || '');
+                        return;
+                    }
+                    values.push(element.getAttribute('href') || '');
+                });
+            });
+            return Array.from(new Set(values.filter(Boolean)));
+        }"""
     )
-    for href in anchors:
-        parts = href.strip("/").split("/")
-        if len(parts) == 1 and parts[0] and parts[0] not in {"home", "explore", "notifications", "messages"}:
-            return parts[0]
+    for href in href_candidates:
+        handle = extract_account_handle_from_urlish(str(href))
+        if handle:
+            return handle
 
     raise RuntimeError("Could not detect the current X account handle from Chrome.")
 
 
 def wait_for_likes_page_ready(page) -> None:
     """Wait until the likes page looks usable or fail with a clear auth message."""
-    ready_selectors = [
-        "article",
-        '[data-testid="emptyState"]',
-        '[data-testid="primaryColumn"]',
-        'a[href="/home"]',
-        'a[data-testid="AppTabBar_Home_Link"]',
-    ]
     auth_markers = [
         "Sign in",
         "Log in",
@@ -162,7 +242,7 @@ def wait_for_likes_page_ready(page) -> None:
 
     deadline = time.time() + 30
     while time.time() < deadline:
-        if any(page.locator(selector).count() for selector in ready_selectors):
+        if any(page.locator(selector).count() for selector in X_READY_SELECTORS):
             page.wait_for_timeout(1_500)
             return
 
@@ -176,6 +256,16 @@ def wait_for_likes_page_ready(page) -> None:
         page.wait_for_timeout(1_000)
 
     raise RuntimeError("X likes page did not finish loading in time.")
+
+
+def is_likes_timeline_response(response) -> bool:
+    """Return whether one network response looks like the likes timeline GraphQL call."""
+    response_url = str(getattr(response, "url", "") or "")
+    parsed = urlparse(response_url)
+    lowered_path = parsed.path.lower()
+    if "/graphql/" not in lowered_path:
+        return False
+    return "/likes" in lowered_path
 
 
 def normalize_status_url(url: str) -> str:
@@ -266,14 +356,7 @@ def extract_status_url_from_likes_entry(entry: dict[str, object]) -> str:
 
 def parse_likes_timeline_page(payload: dict[str, object]) -> tuple[list[str], str]:
     """Extract canonical status URLs plus the next bottom cursor from one likes response."""
-    instructions = (
-        payload.get("data", {})
-        .get("user", {})
-        .get("result", {})
-        .get("timeline", {})
-        .get("timeline", {})
-        .get("instructions", [])
-    )
+    instructions = extract_likes_timeline_instructions(payload)
     if not isinstance(instructions, list):
         return [], ""
 
@@ -295,11 +378,72 @@ def parse_likes_timeline_page(payload: dict[str, object]) -> tuple[list[str], st
                     bottom_cursor = str(content.get("value") or "").strip()
                 continue
 
-            status_url = extract_status_url_from_likes_entry(entry)
-            if status_url:
-                discovered_urls.append(status_url)
+            for entry_candidate in iter_likes_entry_candidates(entry):
+                status_url = extract_status_url_from_likes_entry(entry_candidate)
+                if status_url:
+                    discovered_urls.append(status_url)
 
     return discovered_urls, bottom_cursor
+
+
+def extract_likes_timeline_instructions(payload: dict[str, object]) -> list[dict[str, object]]:
+    """Find the instructions list even if X renames one timeline wrapper layer."""
+    candidate_paths = [
+        ("data", "user", "result", "timeline", "timeline", "instructions"),
+        ("data", "user", "result", "timeline_v2", "timeline", "instructions"),
+        ("data", "user", "result", "timeline_response", "timeline", "instructions"),
+        ("data", "user", "result", "timeline_response", "instructions"),
+    ]
+    for path_parts in candidate_paths:
+        node: object = payload
+        for part in path_parts:
+            if not isinstance(node, dict):
+                node = None
+                break
+            node = node.get(part)
+        if isinstance(node, list):
+            return node
+
+    queue: list[object] = [payload]
+    visited: set[int] = set()
+    while queue:
+        node = queue.pop(0)
+        node_id = id(node)
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+
+        if isinstance(node, dict):
+            instructions = node.get("instructions")
+            if isinstance(instructions, list) and any(
+                isinstance(item, dict) and isinstance(item.get("entries"), list)
+                for item in instructions
+            ):
+                return instructions
+            queue.extend(value for value in node.values() if isinstance(value, (dict, list)))
+        elif isinstance(node, list):
+            queue.extend(value for value in node if isinstance(value, (dict, list)))
+
+    return []
+
+
+def iter_likes_entry_candidates(entry: dict[str, object]):
+    """Yield one entry plus any nested module items that may contain tweets."""
+    yield entry
+    content = entry.get("content")
+    if not isinstance(content, dict):
+        return
+
+    for key in ("items", "moduleItems"):
+        items = content.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            nested_entry = item.get("item") if isinstance(item.get("item"), dict) else item
+            if isinstance(nested_entry, dict):
+                yield nested_entry
 
 
 def build_likes_request_template(response, likes_url: str) -> LikesTimelineRequestTemplate:
@@ -491,7 +635,7 @@ def collect_liked_tweet_urls_via_dom(page, config: CrawlConfig, state: TaskState
     stale_rounds = 0
 
     for round_index in range(config.max_scroll_rounds):
-        links = page.locator('article a[href*="/status/"]').evaluate_all(
+        links = page.locator('a[href*="/status/"], a[href*="/i/status/"]').evaluate_all(
             """(elements) => elements
             .map((element) => element.href)
             .filter((href) => href && href.includes("/status/"))"""
@@ -522,85 +666,143 @@ def collect_liked_tweet_urls_via_dom(page, config: CrawlConfig, state: TaskState
             break
 
         page.mouse.wheel(0, 6000)
+        with contextlib.suppress(Exception):
+            page.evaluate(
+                """() => {
+                    window.scrollBy(0, Math.max(window.innerHeight, 6000));
+                    const scrollables = Array.from(document.querySelectorAll('*')).filter(
+                        (element) => element.scrollHeight > element.clientHeight + 24
+                    );
+                    scrollables.forEach((element) => {
+                        element.scrollBy(0, Math.max(element.clientHeight, 4000));
+                    });
+                }"""
+            )
         time.sleep(config.scroll_pause_seconds)
 
     return sorted(seen_urls)
 
 
-def launch_context(playwright, config: CrawlConfig, state: TaskState):
-    """Launch Chromium with the user's Chrome profile directory."""
-    user_data_dir = Path(config.chrome_user_data_dir).expanduser()
-    if not user_data_dir.exists():
-        raise RuntimeError(f"Chrome user data directory was not found: {user_data_dir}")
+def selected_x_browser_descriptor(config: CrawlConfig):
+    """Resolve the browser descriptor requested for X collection."""
+    descriptor = browser_descriptors(config).get(config.x_browser)
+    if descriptor is None:
+        raise RuntimeError(f"Unsupported X browser: {config.x_browser}")
+    return descriptor
 
-    temp_profile_dir: tempfile.TemporaryDirectory[str] | None = None
 
-    def do_launch(target_user_data_dir: Path):
-        return playwright.chromium.launch_persistent_context(
-            user_data_dir=str(target_user_data_dir),
-            channel="chrome",
-            headless=config.headless,
-            args=[f"--profile-directory={config.chrome_profile_directory}"],
-            ignore_default_args=["--use-mock-keychain", "--password-store=basic"],
-            viewport={"width": 1440, "height": 1200},
-        )
+def collect_liked_tweet_urls_via_safari(
+    account_handle: str,
+    likes_url: str,
+    config: CrawlConfig,
+    state: TaskState,
+) -> list[str]:
+    """Collect liked tweet URLs inside the signed-in Safari session."""
+    rounds = max(1, int(config.max_scroll_rounds))
+    pause_seconds = max(0.2, float(config.scroll_pause_seconds))
+    collect_links_js = """
+(() => {
+    const hrefs = Array.from(document.querySelectorAll('a[href*="/status/"], a[href*="/i/status/"]'))
+        .map((element) => element.href)
+        .filter(Boolean);
+    const merged = Array.from(new Set([...(window.__cachelikesSeenLinks || []), ...hrefs]));
+    window.__cachelikesSeenLinks = merged;
+    return JSON.stringify(merged);
+})()
+""".strip()
+    scroll_js = """
+(() => {
+    window.scrollBy(0, Math.max(window.innerHeight, 6000));
+    const scrollables = Array.from(document.querySelectorAll('*')).filter(
+        (element) => element.scrollHeight > element.clientHeight + 24
+    );
+    scrollables.forEach((element) => {
+        element.scrollBy(0, Math.max(element.clientHeight, 4000));
+    });
+    return String(window.__cachelikesSeenLinks ? window.__cachelikesSeenLinks.length : 0);
+})()
+""".strip()
+    applescript = f"""
+tell application "Safari"
+    activate
+    make new document
+    set URL of front document to "{escape_applescript_text(likes_url)}"
+    delay 8
+    set linksJson to "[]"
+    repeat with roundIndex from 1 to {rounds}
+        set linksJson to do JavaScript "{escape_applescript_text(collect_links_js)}" in front document
+        do JavaScript "{escape_applescript_text(scroll_js)}" in front document
+        delay {pause_seconds}
+    end repeat
+    set finalUrl to URL of front document
+    close front document
+    return finalUrl & linefeed & linksJson
+end tell
+"""
+    state.append_event(f"Launching Safari for X likes collection at {likes_url}.")
+    process = subprocess.run(
+        ["osascript"],
+        input=applescript,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if process.returncode != 0:
+        stderr = (process.stderr or process.stdout or "").strip()
+        raise RuntimeError(stderr or "Safari likes collection failed.")
 
-    try:
-        context = do_launch(user_data_dir)
-    except PlaywrightError as exc:
-        error_text = str(exc)
-        if "ProcessSingleton" in error_text or "SingletonLock" in error_text:
-            state.append_event("Chrome profile is busy. Cloning the selected profile into a temporary workspace.")
-            logger.warning(
-                "Chrome profile busy, falling back to temporary clone.",
-                extra={
-                    "chrome_user_data_dir": str(user_data_dir),
-                    "chrome_profile_directory": config.chrome_profile_directory,
-                    "playwright_error": error_text,
-                },
-            )
-            temp_user_data_dir, temp_profile_dir = clone_profile_for_playwright(config)
-            try:
-                context = do_launch(temp_user_data_dir)
-            except Exception:
-                if temp_profile_dir is not None:
-                    temp_profile_dir.cleanup()
-                raise
-        else:
-            raise
+    final_url, _separator, raw_links_json = process.stdout.partition("\n")
+    discovered_links = []
+    with contextlib.suppress(json.JSONDecodeError):
+        payload = json.loads(raw_links_json.strip() or "[]")
+        if isinstance(payload, list):
+            discovered_links = [str(item) for item in payload]
 
-    if temp_profile_dir is None:
-        return contextlib.closing(context)
-
-    @contextlib.contextmanager
-    def managed_context():
-        try:
-            yield context
-        finally:
-            with contextlib.suppress(Exception):
-                context.close()
-            temp_profile_dir.cleanup()
-
-    return managed_context()
+    seen_urls = sorted(
+        normalized_url
+        for normalized_url in (normalize_status_url(link) for link in discovered_links)
+        if normalized_url
+    )
+    state.update(account_name=account_handle, discovered_tweets=len(seen_urls), phase="collecting")
+    state.append_event(
+        f"Safari collected {len(seen_urls)} unique liked tweet URLs from {final_url.strip() or likes_url}."
+    )
+    return seen_urls
 
 
 def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str, list[str]]:
     """Open X likes and return the account handle plus all discovered tweet URLs."""
-    ensure_playwright_available()
+    descriptor = selected_x_browser_descriptor(config)
     logger.info(
         "Collecting liked tweet URLs.",
         extra={
             "entry_url": X_HOME_URL,
+            "browser": descriptor.browser_id,
+            "browser_label": descriptor.label,
             "headless": config.headless,
             "max_scroll_rounds": config.max_scroll_rounds,
             "stale_round_limit": config.stale_round_limit,
         },
     )
 
+    if descriptor.engine == "safari":
+        home_snapshot = fetch_safari_page_snapshot(X_HOME_URL, wait_seconds=10)
+        account_handle = extract_account_handle_from_urlish(home_snapshot.get("url", ""))
+        if not account_handle:
+            account_handle = extract_x_account_from_source(home_snapshot.get("source", ""))
+        if not account_handle:
+            raise RuntimeError("Could not detect the current X account handle from Safari.")
+        likes_url = build_x_likes_url(account_handle)
+        ordered_urls = collect_liked_tweet_urls_via_safari(account_handle, likes_url, config, state)
+        if not ordered_urls:
+            raise RuntimeError("No liked tweet URLs were found in Safari. The likes timeline may be empty or blocked.")
+        return account_handle, ordered_urls
+
+    ensure_playwright_available()
     with sync_playwright() as playwright:
-        with launch_context(playwright, config, state) as context:
+        with launch_chromium_context(playwright, descriptor, headless=config.headless) as context:
             page = context.pages[0] if context.pages else context.new_page()
-            state.append_event(f"Opening X home {X_HOME_URL}.")
+            state.append_event(f"Opening X home {X_HOME_URL} in {descriptor.label}.")
             page.goto(X_HOME_URL, wait_until="domcontentloaded", timeout=120_000)
             wait_for_likes_page_ready(page)
             account_handle = detect_account_handle(page)
@@ -609,7 +811,7 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
             likes_response_box: dict[str, object] = {"response": None}
 
             def on_likes_response(response) -> None:
-                if LIKES_REQUEST_MARKER in response.url:
+                if is_likes_timeline_response(response):
                     likes_response_box["response"] = response
 
             page.on("response", on_likes_response)
@@ -617,12 +819,13 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
             wait_for_likes_page_ready(page)
 
             state.update(account_name=account_handle)
-            state.append_event(f"Ready to collect likes for @{account_handle}.")
+            state.append_event(f"Ready to collect likes for @{account_handle} in {descriptor.label}.")
             logger.info(
                 "Likes page ready.",
                 extra={
                     "account_handle": account_handle,
                     "likes_url": likes_url,
+                    "browser": descriptor.browser_id,
                 },
             )
             initial_likes_response = wait_for_initial_likes_timeline_response(page, likes_response_box)
@@ -642,6 +845,7 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
                     extra={
                         "account_handle": account_handle,
                         "likes_url": likes_url,
+                        "browser": descriptor.browser_id,
                     },
                 )
                 ordered_urls = collect_liked_tweet_urls_via_dom(page, config, state)
@@ -654,6 +858,7 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
                 extra={
                     "account_handle": account_handle,
                     "discovered_tweets": len(ordered_urls),
+                    "browser": descriptor.browser_id,
                 },
             )
             return account_handle, ordered_urls

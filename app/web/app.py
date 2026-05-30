@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.5.2-gpt5.4.1
+# Code version: v1.6.3-gpt5.4.1
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from typing import Any
 
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
-from app.core.browser_sessions import build_browser_options, probe_browser_session
+from app.core.browser_sessions import browser_descriptors, build_browser_options, probe_browser_session
 from app.core.config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -78,6 +78,8 @@ def create_app() -> Flask:
             max_scroll_rounds=parse_int_field("max_scroll_rounds", source.max_scroll_rounds),
             scroll_pause_seconds=parse_float_field("scroll_pause_seconds", source.scroll_pause_seconds),
             stale_round_limit=parse_int_field("stale_round_limit", source.stale_round_limit),
+            x_browser=(request.form.get("x_browser", source.x_browser) or source.x_browser).strip().lower(),
+            grok_browser=(request.form.get("grok_browser", source.grok_browser) or source.grok_browser).strip().lower(),
             chrome_user_data_dir=Path(
                 request.form.get("chrome_user_data_dir", str(source.chrome_user_data_dir)).strip()
             ).expanduser(),
@@ -105,15 +107,11 @@ def create_app() -> Flask:
     @app.get("/grok")
     def grok():
         snapshot = build_reconciled_grok_snapshot()
-        grok_browser_options = [
-            browser_option
-            for browser_option in build_browser_options(saved_config)
-            if browser_option["id"] == "edge"
-        ]
         return render_template(
             "grok.html",
             snapshot=snapshot,
-            browser_options=grok_browser_options,
+            browser_options=build_browser_options(saved_config),
+            saved_config=saved_config,
             version=APP_VERSION,
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,
@@ -152,8 +150,19 @@ def create_app() -> Flask:
 
     @app.post("/grok/start")
     def start_grok():
+        nonlocal saved_config
+        config = parse_form_config(saved_config)
+        saved_config = config
+        save_config(saved_config)
+        descriptor = browser_descriptors(config).get(config.grok_browser)
+        if descriptor is None:
+            grok_state.finish_error(f"Unsupported Grok browser: {config.grok_browser}")
+            return redirect(url_for("grok"))
+        if descriptor.engine != "chromium":
+            grok_state.finish_error("Grok sync can run only from Chrome or Edge. Safari can verify sign-in, but cannot run the sync.")
+            return redirect(url_for("grok"))
         try:
-            grok_service.start()
+            grok_service.start(config)
         except RuntimeError as exc:
             grok_state.finish_error(str(exc))
         return redirect(url_for("grok"))
