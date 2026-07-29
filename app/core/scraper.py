@@ -1,6 +1,6 @@
 """Collect liked tweet URLs from the logged-in X account."""
 
-# Code version: v1.2.0-codex.1
+# Code version: v1.2.1-codex.1
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, urlencode, urlparse
 
 from .browser_sessions import (
     browser_descriptors,
+    detect_safari_x_account_handle,
     escape_applescript_text,
     extract_x_account_from_source,
     fetch_safari_page_snapshot,
@@ -724,7 +725,7 @@ def collect_liked_tweet_urls_via_safari(
 """.strip()
     applescript = f"""
 tell application "Safari"
-    activate
+    launch
     make new document
     set URL of front document to "{escape_applescript_text(likes_url)}"
     delay 8
@@ -786,12 +787,17 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
     )
 
     if descriptor.engine == "safari":
-        home_snapshot = fetch_safari_page_snapshot(X_HOME_URL, wait_seconds=10)
-        account_handle = extract_account_handle_from_urlish(home_snapshot.get("url", ""))
+        account_handle = detect_safari_x_account_handle(wait_seconds=10)
+        home_snapshot = {"url": "", "source": ""}
+        if not account_handle:
+            home_snapshot = fetch_safari_page_snapshot(X_HOME_URL, wait_seconds=10)
+            account_handle = extract_account_handle_from_urlish(home_snapshot.get("url", ""))
         if not account_handle:
             account_handle = extract_x_account_from_source(home_snapshot.get("source", ""))
         if not account_handle:
-            raise RuntimeError("Could not detect the current X account handle from Safari.")
+            raise RuntimeError(
+                "Could not detect the current X account handle from Safari. Open the signed-in X home page in Safari and try again."
+            )
         likes_url = build_x_likes_url(account_handle)
         ordered_urls = collect_liked_tweet_urls_via_safari(account_handle, likes_url, config, state)
         if not ordered_urls:

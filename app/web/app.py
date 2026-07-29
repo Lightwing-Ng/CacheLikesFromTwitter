@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.6.3-gpt5.4.1
+# Code version: v1.7.0-codex.1
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from app.core.grok_downloader import build_grok_initial_snapshot, reset_grok_sta
 from app.core.grok_service import GrokDownloadService
 from app.core.logging_setup import configure_logging, get_log_file_path
 from app.core.service import CacheLikesService
-from app.core.state import TaskState, utc_now
+from app.core.state import TaskState, build_initial_snapshot, utc_now
 from app.core.version import APP_VERSION
 
 
@@ -40,6 +40,24 @@ def create_app() -> Flask:
     grok_state = TaskState(version=APP_VERSION, snapshot_factory=build_grok_initial_snapshot)
     grok_service = GrokDownloadService(grok_state)
     saved_config = load_saved_config()
+
+    def build_reconciled_snapshot() -> dict[str, Any]:
+        """Refresh X cache counters from disk without discarding live task status."""
+        snapshot = state.snapshot()
+        if snapshot.get("running"):
+            return snapshot
+
+        hydrated = build_initial_snapshot(APP_VERSION)
+        hydrated_payload = asdict(hydrated)
+        snapshot["account_name"] = hydrated_payload["account_name"]
+        snapshot["output_dir"] = hydrated_payload["output_dir"]
+        snapshot["downloaded_posts"] = hydrated_payload["downloaded_posts"]
+        snapshot["downloaded_tweets"] = hydrated_payload["downloaded_tweets"]
+        snapshot["downloaded_images"] = hydrated_payload["downloaded_images"]
+        snapshot["downloaded_videos"] = hydrated_payload["downloaded_videos"]
+        if snapshot.get("phase") in {"idle", "finished", "completed", "success", "stopped"}:
+            snapshot["message"] = hydrated_payload["message"]
+        return snapshot
 
     def build_reconciled_grok_snapshot() -> dict[str, Any]:
         """Refresh Grok cache counters from disk without discarding live task status."""
@@ -92,7 +110,7 @@ def create_app() -> Flask:
 
     @app.get("/")
     def index():
-        snapshot = state.snapshot()
+        snapshot = build_reconciled_snapshot()
         return render_template(
             "index.html",
             snapshot=snapshot,
@@ -120,10 +138,12 @@ def create_app() -> Flask:
 
     @app.get("/settings")
     def settings():
-        snapshot = state.snapshot()
+        snapshot = build_reconciled_snapshot()
+        grok_snapshot = build_reconciled_grok_snapshot()
         return render_template(
             "settings.html",
             snapshot=snapshot,
+            grok_snapshot=grok_snapshot,
             version=APP_VERSION,
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,
@@ -140,7 +160,11 @@ def create_app() -> Flask:
         try:
             service.start(config)
         except RuntimeError as exc:
-            state.finish_error(str(exc))
+            if service.is_running():
+                state.append_event(str(exc))
+                state.update(last_error=str(exc))
+            else:
+                state.finish_error(str(exc))
         return redirect(url_for("index"))
 
     @app.post("/stop")
@@ -158,13 +182,14 @@ def create_app() -> Flask:
         if descriptor is None:
             grok_state.finish_error(f"Unsupported Grok browser: {config.grok_browser}")
             return redirect(url_for("grok"))
-        if descriptor.engine != "chromium":
-            grok_state.finish_error("Grok sync can run only from Chrome or Edge. Safari can verify sign-in, but cannot run the sync.")
-            return redirect(url_for("grok"))
         try:
             grok_service.start(config)
         except RuntimeError as exc:
-            grok_state.finish_error(str(exc))
+            if grok_service.is_running():
+                grok_state.append_event(str(exc))
+                grok_state.update(last_error=str(exc))
+            else:
+                grok_state.finish_error(str(exc))
         return redirect(url_for("grok"))
 
     @app.post("/grok/stop")
@@ -200,7 +225,7 @@ def create_app() -> Flask:
 
     @app.get("/api/status")
     def api_status():
-        return jsonify(state.snapshot())
+        return jsonify(build_reconciled_snapshot())
 
     @app.get("/api/grok/status")
     def api_grok_status():

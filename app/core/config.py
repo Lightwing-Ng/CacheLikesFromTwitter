@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.5.0-gpt5.4.1
+# Code version: v1.5.1-codex.1
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_STORE_ROOT = PROJECT_ROOT / "local_store"
+X_LOCAL_STORE_DIRNAME = "x"
 LOGS_ROOT = PROJECT_ROOT / "logs"
 LEGACY_SETTINGS_PATH = PROJECT_ROOT / ".cachelikes-settings.json"
 DEFAULT_HOST = "127.0.0.1"

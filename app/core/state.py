@@ -1,6 +1,6 @@
 """Shared task state for the web UI and worker."""
 
-# Code version: v1.2.1-codex.1
+# Code version: v1.2.2-codex.3
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from threading import Lock
 from typing import Any, Callable
 
 from .cache_catalog import summarize_local_store_root
-from .config import LOCAL_STORE_ROOT
+from .config import LOCAL_STORE_ROOT, X_LOCAL_STORE_DIRNAME
 
 
-DEFAULT_OUTPUT_DIR_TEMPLATE = str(LOCAL_STORE_ROOT / "{用户名}")
+DEFAULT_OUTPUT_DIR_TEMPLATE = str(LOCAL_STORE_ROOT / X_LOCAL_STORE_DIRNAME)
 
 
 def utc_now() -> str:
@@ -22,28 +22,22 @@ def utc_now() -> str:
 
 
 def build_initial_snapshot(version: str) -> TaskSnapshot:
-    """Hydrate the initial idle snapshot from any existing local cache."""
+    """Hydrate the initial X idle snapshot from the fixed local cache directory."""
     snapshot = TaskSnapshot(version=version)
     summaries = summarize_local_store_root(LOCAL_STORE_ROOT)
-    if not summaries:
+    x_summary = next((summary for summary in summaries if summary.account_name == X_LOCAL_STORE_DIRNAME), None)
+    if x_summary is None:
         return snapshot
 
-    downloaded_posts = sum(summary.downloaded_posts for summary in summaries)
-    downloaded_images = sum(summary.downloaded_images for summary in summaries)
-    downloaded_videos = sum(summary.downloaded_videos for summary in summaries)
+    downloaded_posts = x_summary.downloaded_posts
+    downloaded_images = x_summary.downloaded_images
+    downloaded_videos = x_summary.downloaded_videos
 
     if downloaded_posts == 0 and downloaded_images == 0 and downloaded_videos == 0:
         return snapshot
 
-    if len(summaries) == 1:
-        account_name = summaries[0].account_name
-        output_dir = str(summaries[0].output_dir)
-    else:
-        account_name = f"{len(summaries)} accounts"
-        output_dir = str(LOCAL_STORE_ROOT)
-
-    snapshot.account_name = account_name
-    snapshot.output_dir = output_dir
+    snapshot.account_name = x_summary.account_name
+    snapshot.output_dir = str(x_summary.output_dir)
     snapshot.downloaded_posts = downloaded_posts
     snapshot.downloaded_images = downloaded_images
     snapshot.downloaded_videos = downloaded_videos
@@ -67,6 +61,9 @@ class TaskSnapshot:
     started_at: str = ""
     finished_at: str = ""
     discovered_tweets: int = 0
+    queued_tweets: int = 0
+    processed_tweets: int = 0
+    discovery_complete: bool = False
     downloaded_tweets: int = 0
     downloaded_posts: int = 0
     downloaded_images: int = 0

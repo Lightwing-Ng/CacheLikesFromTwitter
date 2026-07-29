@@ -1,17 +1,18 @@
 """Orchestration service for the cache job."""
 
-# Code version: v1.4.0-codex.1
+# Code version: v1.4.3-codex.1
 
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import logging
 from pathlib import Path
-from threading import Event, Thread
+from threading import Event, RLock, Thread
 from uuid import uuid4
 
-from .config import CrawlConfig, LOCAL_STORE_ROOT
+from .config import CrawlConfig, LOCAL_STORE_ROOT, X_LOCAL_STORE_DIRNAME
 from .downloader import LocalTweetCacheIndex, download_tweet_media
+from .job_lock import CacheTaskLock, SHARED_CACHE_TASK_LOCK
 from .logging_setup import reset_job_id, set_job_id
 from .scraper import collect_liked_tweet_urls
 from .state import TaskState
@@ -22,10 +23,13 @@ logger = logging.getLogger(__name__)
 class CacheLikesService:
     """Manage a single background cache job."""
 
-    def __init__(self, state: TaskState) -> None:
+    def __init__(self, state: TaskState, task_lock: CacheTaskLock | None = None) -> None:
         self._state = state
         self._worker: Thread | None = None
         self._stop_requested = Event()
+        self._lifecycle_lock = RLock()
+        self._task_lock = task_lock or SHARED_CACHE_TASK_LOCK
+        self._owns_task_lock = False
 
     def is_running(self) -> bool:
         """Return whether a job is active."""
@@ -34,13 +38,24 @@ class CacheLikesService:
 
     def start(self, config: CrawlConfig) -> None:
         """Start a new background job."""
-        if self.is_running():
-            raise RuntimeError("A cache job is already running.")
+        with self._lifecycle_lock:
+            if self.is_running():
+                raise RuntimeError("A cache job is already running.")
+            if not self._task_lock.acquire("x-cache"):
+                raise RuntimeError(
+                    "A cache task is already running in another Cache Likes window or browser. Stop it there before starting a new task."
+                )
 
-        self._stop_requested.clear()
-        self._state.reset_for_run()
-        self._worker = Thread(target=self._run, args=(config,), daemon=True)
-        self._worker.start()
+            self._owns_task_lock = True
+            self._stop_requested.clear()
+            self._state.reset_for_run()
+            try:
+                self._worker = Thread(target=self._run, args=(config,), daemon=True)
+                self._worker.start()
+            except Exception:
+                self._owns_task_lock = False
+                self._task_lock.release()
+                raise
 
     def request_stop(self) -> bool:
         """Request cooperative stop for the active job."""
@@ -81,14 +96,15 @@ class CacheLikesService:
             account_handle, tweet_urls = collect_liked_tweet_urls(config, self._state)
             tweet_urls = list(dict.fromkeys(tweet_urls))
             account_name = config.sanitized_account_name(account_handle)
-            output_dir = LOCAL_STORE_ROOT / account_name
+            output_dir = LOCAL_STORE_ROOT / X_LOCAL_STORE_DIRNAME
             cache_index = LocalTweetCacheIndex.build(output_dir)
             logger.info(
                 "Likes collection completed.",
                 extra={
                     "job_id": job_id,
                     "account_handle": account_handle,
-                    "account_name": account_name,
+                    "detected_account_name": account_name,
+                    "cache_namespace": X_LOCAL_STORE_DIRNAME,
                     "discovered_tweets": len(tweet_urls),
                     "output_dir": str(output_dir),
                 },
@@ -240,6 +256,9 @@ class CacheLikesService:
                     if cap_announced and not futures:
                         break
 
+            # A worker may observe an emergency stop after the final scheduling pass.
+            # Re-check here so a fully drained executor cannot mask that request as success.
+            stop_requested = stop_requested or self._is_stop_requested()
             if stop_requested:
                 self._state.finish_stopped(
                     f"Emergency stop completed. Downloaded {downloaded_posts} posts, {downloaded_images} images, "
@@ -290,3 +309,7 @@ class CacheLikesService:
             )
         finally:
             reset_job_id(token)
+            with self._lifecycle_lock:
+                if self._owns_task_lock:
+                    self._owns_task_lock = False
+                    self._task_lock.release()

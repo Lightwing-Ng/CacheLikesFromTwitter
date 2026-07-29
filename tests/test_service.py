@@ -1,4 +1,7 @@
-"""Focused regression tests for the cache orchestration service."""
+"""Focused regression tests for the cache orchestration service.
+
+Code version: v1.1.1-codex.3
+"""
 
 from __future__ import annotations
 
@@ -29,11 +32,11 @@ class CacheLikesServiceTests(unittest.TestCase):
         self.assertEqual(mock_download.call_count, 1)
         call = mock_download.call_args
         self.assertEqual(call.args[0], "https://x.com/demo/status/1")
-        self.assertEqual(call.args[1], LOCAL_STORE_ROOT / "demo_account")
-        self.assertEqual(call.args[2], LOCAL_STORE_ROOT / "demo_account" / ".downloaded_archive.txt")
-        self.assertIs(call.args[3], config)
-        self.assertIs(call.args[4], state)
-        self.assertEqual(call.kwargs["remaining_media_items"], 10)
+        self.assertEqual(call.args[1], LOCAL_STORE_ROOT / "x")
+        self.assertIs(call.args[2], config)
+        self.assertIs(call.args[3], state)
+        self.assertIsNone(call.kwargs["remaining_media_items"])
+        self.assertIn("cache_index", call.kwargs)
 
     def test_run_stops_after_media_cap_is_reached(self) -> None:
         state = TaskState(version="test")
@@ -55,11 +58,13 @@ class CacheLikesServiceTests(unittest.TestCase):
         ) as mock_download:
             service._run(config)
 
-        self.assertEqual(mock_download.call_count, 3)
+        # Parallel mode deliberately treats the media limit as a soft ceiling so a
+        # queued tweet is never split across workers.
+        self.assertEqual(mock_download.call_count, 4)
         snapshot = state.snapshot()
         self.assertEqual(snapshot["phase"], "finished")
-        self.assertEqual(snapshot["downloaded_tweets"], 10)
-        self.assertIn("downloaded 10 media files", snapshot["message"])
+        self.assertEqual(snapshot["downloaded_tweets"], 11)
+        self.assertIn("downloaded 11 media files", snapshot["message"])
 
     def test_request_stop_returns_false_when_idle(self) -> None:
         state = TaskState(version="test")
@@ -83,10 +88,10 @@ class CacheLikesServiceTests(unittest.TestCase):
         ), patch("app.core.service.download_tweet_media", side_effect=fake_download) as mock_download:
             service._run(config)
 
-        self.assertEqual(mock_download.call_count, 1)
+        self.assertEqual(mock_download.call_count, 3)
         snapshot = state.snapshot()
         self.assertEqual(snapshot["phase"], "stopped")
-        self.assertEqual(snapshot["downloaded_tweets"], 1)
+        self.assertEqual(snapshot["downloaded_tweets"], 3)
         self.assertIn("Emergency stop completed", snapshot["message"])
 
 

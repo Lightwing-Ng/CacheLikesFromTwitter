@@ -1,6 +1,6 @@
 """Browser session probing helpers for X and Grok."""
 
-# Code version: v1.3.5-codex.2
+# Code version: v1.4.0-codex.1
 
 from __future__ import annotations
 
@@ -36,6 +36,13 @@ TRANSIENT_BROWSER_ERROR_MARKERS = (
     "ERR_NETWORK_CHANGED",
     "ERR_TIMED_OUT",
     "ERR_CONNECTION_RESET",
+)
+GROK_SECURITY_CHALLENGE_TITLE_MARKERS = ("just a moment", "attention required")
+GROK_SECURITY_CHALLENGE_BODY_MARKERS = (
+    "performing security verification",
+    "security service to protect against malicious bots",
+    "performance and security by cloudflare",
+    "checking your browser before accessing",
 )
 
 
@@ -163,6 +170,7 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, GROK_FILES_URL)
             page.wait_for_timeout(8_000)
+            title = page.title()
             body_text = page.locator("body").inner_text(timeout=10_000)
             html = page.content()
             account_name = parse_grok_account_label(html)
@@ -172,6 +180,16 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
                     "can_download": True,
                     "account_name": account_name,
                     "message": f"{descriptor.label} is signed in to Grok as {account_name}.",
+                }
+            if is_grok_security_verification_page(title, body_text, html):
+                return {
+                    "logged_in": False,
+                    "can_download": False,
+                    "account_name": "Security verification required",
+                    "message": (
+                        f"Grok showed a Cloudflare security verification page in {descriptor.label}, "
+                        "so the signed-in account could not be verified."
+                    ),
                 }
             if any(marker in body_text for marker in ("Sign in", "Log in")):
                 return {
@@ -185,8 +203,20 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
 
 def _probe_safari_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
     """Probe an X session from Safari by reading the rendered page source."""
-    home_snapshot = fetch_safari_page_snapshot(X_HOME_URL)
-    home_source = home_snapshot["source"]
+    account_handle = detect_safari_x_account_handle()
+    home_source = ""
+    if not account_handle:
+        home_snapshot = fetch_safari_page_snapshot(X_HOME_URL)
+        home_source = home_snapshot["source"]
+        account_handle = extract_x_account_from_source(home_source)
+    if account_handle:
+        return {
+            "logged_in": True,
+            "can_download": True,
+            "account_name": f"@{account_handle}",
+            "message": f"Safari is signed in to X as @{account_handle}.",
+        }
+
     lowered_home_source = home_source.lower()
     if any(marker.lower() in lowered_home_source for marker in X_LOGGED_OUT_SOURCE_MARKERS):
         return {
@@ -194,15 +224,6 @@ def _probe_safari_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
             "can_download": False,
             "account_name": "",
             "message": "Safari is not signed in to X.",
-        }
-
-    account_handle = extract_x_account_from_source(home_source)
-    if account_handle:
-        return {
-            "logged_in": True,
-            "can_download": True,
-            "account_name": f"@{account_handle}",
-            "message": f"Safari is signed in to X as @{account_handle}.",
         }
 
     inferred_handle = extract_json_string_field(fetch_safari_page_snapshot(GROK_FILES_URL)["source"], "xUsername")
@@ -230,24 +251,18 @@ def _probe_safari_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
         if account_name:
             return {
                 "logged_in": True,
-                "can_download": False,
+                "can_download": True,
                 "account_name": account_name,
-                "message": (
-                    f"Safari is signed in to Grok as {account_name}, "
-                    "but Grok sync can run only from Chrome or Edge."
-                ),
+                "message": f"Safari is signed in to Grok as {account_name} and is ready to sync.",
             }
 
     inferred_handle = extract_x_account_from_source(fetch_safari_page_snapshot(X_HOME_URL, wait_seconds=10)["source"])
     if inferred_handle:
         return {
             "logged_in": True,
-            "can_download": False,
+            "can_download": True,
             "account_name": f"@{inferred_handle}",
-            "message": (
-                f"Safari Grok account was inferred from the linked X session as @{inferred_handle}, "
-                "but Grok sync can run only from Chrome or Edge."
-            ),
+            "message": f"Safari Grok account was inferred from the linked X session as @{inferred_handle}.",
         }
 
     return {
@@ -438,6 +453,22 @@ def parse_grok_account_label(html: str) -> str:
     return ""
 
 
+def is_grok_security_verification_page(title: str, body_text: str, html: str = "") -> bool:
+    """Return whether the loaded Grok page is a security verification interstitial."""
+    normalized_title = (title or "").strip().lower()
+    normalized_body = (body_text or "").strip().lower()
+    normalized_html = (html or "").strip().lower()
+
+    if any(marker in normalized_title for marker in GROK_SECURITY_CHALLENGE_TITLE_MARKERS):
+        return True
+
+    marker_hits = 0
+    for marker in GROK_SECURITY_CHALLENGE_BODY_MARKERS:
+        if marker in normalized_body or marker in normalized_html:
+            marker_hits += 1
+    return marker_hits >= 2
+
+
 def extract_json_string_field(text: str, field_name: str) -> str:
     """Extract one JSON string field from page source and decode escapes."""
     patterns = (
@@ -476,11 +507,57 @@ def extract_x_account_from_source(source: str) -> str:
     return ""
 
 
+def detect_safari_x_account_handle(wait_seconds: int = 10) -> str:
+    """Read Safari's signed-in X profile link before falling back to page source."""
+    extract_handle_js = """
+(() => {
+    const profileLinks = [
+        document.querySelector('a[data-testid="AppTabBar_Profile_Link"]'),
+        ...document.querySelectorAll('a[href$="/likes"], a[href*="/likes?"]'),
+    ].filter(Boolean);
+    for (const link of profileLinks) {
+        const match = String(link.href || '').match(
+            /^https?:\\/\\/(?:www\\.)?(?:x|twitter)\\.com\\/([A-Za-z0-9_]{1,15})(?:[\\/?#]|$)/i,
+        );
+        if (match && !['home', 'i', 'settings'].includes(match[1].toLowerCase())) {
+            return match[1];
+        }
+    }
+    return '';
+})()
+""".strip()
+    applescript = f"""
+tell application "Safari"
+    launch
+    make new document
+    set URL of front document to "{escape_applescript_text(X_HOME_URL)}"
+    delay {wait_seconds}
+    set accountHandle to do JavaScript "{escape_applescript_text(extract_handle_js)}" in front document
+    close front document
+    return accountHandle
+end tell
+"""
+    process = subprocess.run(
+        ["osascript"],
+        input=applescript,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if process.returncode != 0:
+        return ""
+
+    handle = (process.stdout or "").strip().lstrip("@")
+    if re.fullmatch(r"[A-Za-z0-9_]{1,15}", handle) and handle.lower() not in {"home", "i", "settings"}:
+        return handle
+    return ""
+
+
 def fetch_safari_page_snapshot(url: str, wait_seconds: int = 8) -> dict[str, str]:
     """Open one URL in Safari, capture the page source, and close the temporary tab."""
     applescript = f"""
 tell application "Safari"
-    activate
+    launch
     make new document
     set URL of front document to "{escape_applescript_text(url)}"
     delay {wait_seconds}

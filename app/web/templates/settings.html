@@ -1,11 +1,11 @@
-<!-- Code version: v1.4.1-codex.1 -->
+<!-- Code version: v1.4.5-codex.6 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter Settings</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.7.2') }}">
     <script defer src="{{ url_for('static', filename='numeric-input-format.js') }}"></script>
 </head>
 <body>
@@ -103,6 +103,33 @@
                         </label>
                         <button type="submit" class="primary-button sidebar-action-button">Save settings</button>
                     </form>
+                    <section class="danger-zone" aria-labelledby="danger_zone_heading">
+                        <div>
+                            <p class="workspace-kicker">Danger zone</p>
+                            <h3 id="danger_zone_heading">Reset Grok state</h3>
+                        </div>
+                        <p id="reset_grok_description">
+                            Permanently delete all cached Grok media, manifests, work queues, and resumable partial downloads.
+                        </p>
+                        {% if grok_snapshot.running %}
+                        <p class="danger-zone-note">Unavailable while a Grok sync is running.</p>
+                        {% endif %}
+                        <form
+                            action="{{ url_for('reset_grok') }}"
+                            method="post"
+                            onsubmit="return window.confirm('Reset Grok state? This will permanently delete all cached Grok media, manifests, queue files, and resumable partial downloads.')"
+                        >
+                            <button
+                                type="submit"
+                                class="danger-button"
+                                id="reset_button"
+                                aria-describedby="reset_grok_description"
+                                {% if grok_snapshot.running %}disabled{% endif %}
+                            >
+                                Reset Grok State
+                            </button>
+                        </form>
+                    </section>
                 </div>
             </div>
         </section>

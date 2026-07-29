@@ -10,5 +10,4 @@ logs/*
 !logs/.gitkeep
 grok/
 grok_local/
-tests/
 tools/

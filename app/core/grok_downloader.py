@@ -1,11 +1,12 @@
 """Grok media sync helpers."""
 
-# Code version: v1.8.2-codex.1
+# Code version: v1.9.0-codex.1
 
 from __future__ import annotations
 
 import contextlib
 import hashlib
+from http.client import IncompleteRead
 import json
 import logging
 import mimetypes
@@ -20,12 +21,14 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from threading import RLock
+from typing import Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
 
 from .browser_sessions import browser_descriptors, launch_chromium_context
-from .config import PROJECT_ROOT, CrawlConfig
+from .config import LOCAL_STORE_ROOT, CrawlConfig
+from .safari_automation import SafariContext
 from .state import TaskSnapshot, TaskState, utc_now
 
 try:  # pragma: no cover - depends on the local runtime
@@ -40,7 +43,7 @@ logger = logging.getLogger(__name__)
 
 EDGE_USER_DATA_DIR = Path.home() / "Library/Application Support/Microsoft Edge"
 EDGE_PROFILE_DIR = "Default"
-GROK_TARGET_DIR = PROJECT_ROOT / "grok"
+GROK_TARGET_DIR = LOCAL_STORE_ROOT / "grok"
 GROK_CATALOG_FILENAME = ".grok_catalog.json"
 GROK_DOWNLOAD_MANIFEST_FILENAME = ".grok_download_manifest.json"
 GROK_WORK_QUEUE_FILENAME = ".grok_work_queue.json"
@@ -52,7 +55,7 @@ DOWNLOAD_TIMEOUT_MS = 30_000
 DOWNLOAD_CHUNK_BYTES = 512 * 1024
 GROK_DOWNLOAD_WORKERS = 4
 GROK_DOWNLOAD_BACKLOG = GROK_DOWNLOAD_WORKERS * 6
-GROK_DOWNLOAD_RETRY_LIMIT = 3
+GROK_DOWNLOAD_RETRY_LIMIT = 4
 GROK_QUEUE_RESOLUTION_RETRY_LIMIT = 2
 GROK_LIBRARY_PAGE_POOL_SIZE = 5
 GROK_LIBRARY_PAGE_OPEN_INTERVAL = 6
@@ -61,6 +64,7 @@ GROK_RESOLUTION_BATCH_SIZE = 6
 PAGE_GOTO_TIMEOUT_MS = 60_000
 PAGE_IDLE_WAIT_TIMEOUT_MS = 5_000
 INITIAL_PAGE_WAIT_SECONDS = 4.0
+SAFARI_LIBRARY_READY_TIMEOUT_SECONDS = 20.0
 SCROLL_WAIT_SECONDS = 0.8
 TEMP_DOWNLOAD_DIRNAME = ".grok-partial"
 LEGACY_ASSET_FILENAME_PATTERN = re.compile(
@@ -201,6 +205,10 @@ class DownloadStoppedError(RuntimeError):
     """Raised when a cooperative stop interrupts an in-flight download."""
 
 
+class DownloadPayloadIntegrityError(RuntimeError):
+    """Raised when an HTTP-successful response is not a complete media file."""
+
+
 def normalize_asset_name(raw_name: str) -> str:
     """Normalize Grok asset names for stable local identity matching."""
     cleaned = (raw_name or "").split("?", 1)[0].split("#", 1)[0].strip()
@@ -316,27 +324,42 @@ def validate_media_file(
     expected_bytes: int = 0,
 ) -> bool:
     """Return whether a local file looks like a complete media payload."""
+    return media_validation_error(file_path, media_kind, content_type, expected_bytes) is None
+
+
+def media_validation_error(
+    file_path: Path,
+    media_kind: str,
+    content_type: str = "",
+    expected_bytes: int = 0,
+) -> str | None:
+    """Return a precise media validation failure reason, when one exists."""
     if not file_path.exists() or not file_path.is_file():
-        return False
+        return "the temporary file is missing"
 
     file_size = file_path.stat().st_size
     if file_size <= 0:
-        return False
-    if expected_bytes > 0 and file_size != expected_bytes:
-        return False
+        return "the response body is empty"
 
     signature = read_file_signature(file_path)
     normalized_content_type = (content_type or "").split(";", 1)[0].strip().lower()
+    problems: list[str] = []
+    if expected_bytes > 0 and file_size != expected_bytes:
+        problems.append(f"received {file_size:,} bytes, expected {expected_bytes:,} bytes")
     if normalized_content_type.startswith("text/") or normalized_content_type in {
         "application/json",
         "application/xml",
         "text/html",
     }:
-        return False
+        problems.append(f"server returned {normalized_content_type or 'a text response'} instead of media")
 
     if media_kind == "video":
-        return looks_like_video_signature(signature)
-    return looks_like_image_signature(signature)
+        if not looks_like_video_signature(signature):
+            problems.append("the payload does not have a recognized video signature")
+    elif not looks_like_image_signature(signature):
+        problems.append("the payload does not have a recognized image signature")
+
+    return "; ".join(problems) if problems else None
 
 
 def build_partial_relative_path(candidate: GrokMediaCandidate) -> str:
@@ -876,6 +899,18 @@ class GrokMediaCatalog:
                 self._flush_unlocked()
             return False
 
+    def has_recorded_asset_id(self, asset_id: str) -> bool:
+        """Return whether the loaded catalog records one Grok asset ID."""
+        normalized_asset_id = str(asset_id or "").strip().lower()
+        if not normalized_asset_id:
+            return False
+
+        with self._lock:
+            return any(
+                extract_status_id_from_identity(identity) == normalized_asset_id
+                for identity in self.entries_by_identity
+            )
+
     def get_entry(self, identity: str) -> GrokCatalogEntry | None:
         """Return one catalog entry when it still points to valid local content."""
         with self._lock:
@@ -989,10 +1024,8 @@ class GrokMediaCatalog:
 
                 absolute_path = self.target_dir / relative_path
                 content_bytes = int(row.get("content_bytes") or 0)
-                if not validate_media_file(
-                    absolute_path,
-                    media_kind=media_kind,
-                    expected_bytes=content_bytes,
+                if not absolute_path.is_file() or (
+                    content_bytes > 0 and absolute_path.stat().st_size != content_bytes
                 ):
                     self.dirty = True
                     continue
@@ -1416,7 +1449,7 @@ class GrokDownloadManifest:
         """Convert stale in-progress records into resumable or completed state."""
         with self._lock:
             for identity, entry in list(self.entries_by_identity.items()):
-                catalog_entry = catalog.get_entry(identity)
+                catalog_entry = catalog.entries_by_identity.get(identity)
                 if catalog_entry is not None:
                     entry.status = "completed"
                     entry.relative_path = catalog_entry.relative_path
@@ -1729,7 +1762,7 @@ class GrokWorkQueue:
         """Repair transient queue states after crashes or forced shutdowns."""
         with self._lock:
             for asset_id, entry in list(self.entries_by_asset_id.items()):
-                if catalog.contains_asset_id(asset_id):
+                if catalog.has_recorded_asset_id(asset_id):
                     entry.status = "completed"
                     entry.last_error = ""
                     entry.updated_at = utc_now()
@@ -1827,7 +1860,8 @@ class GrokWorkQueue:
         with self._lock:
             ordered_entries = sorted(
                 self.entries_by_asset_id.values(),
-                key=lambda entry: (entry.discovered_at or "", entry.asset_id),
+                key=lambda entry: (entry.created_at or entry.discovered_at or "", entry.asset_id),
+                reverse=True,
             )
             for entry in ordered_entries:
                 if len(claimed) >= limit:
@@ -1903,6 +1937,7 @@ class GrokWorkQueue:
             ordered_entries = sorted(
                 self.entries_by_asset_id.values(),
                 key=lambda entry: (entry.created_at or entry.discovered_at or "", entry.asset_id),
+                reverse=True,
             )
             for entry in ordered_entries:
                 if len(claimed) >= limit:
@@ -2146,38 +2181,21 @@ def backfill_grok_file_timestamps(
         if not timestamp_value:
             continue
 
-        before_creation = ""
+        parsed_timestamp = parse_catalog_timestamp(timestamp_value)
+        if parsed_timestamp is None:
+            continue
+
         try:
-            completed = subprocess.run(
-                ["mdls", "-raw", "-name", "kMDItemFSCreationDate", str(file_path)],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            if completed.returncode == 0:
-                before_creation = (completed.stdout or "").strip()
+            current_mtime = file_path.stat().st_mtime
         except OSError:
-            before_creation = ""
+            continue
+
+        target_epoch = min(parsed_timestamp.timestamp(), current_mtime)
+        if abs(current_mtime - target_epoch) < 1:
+            continue
 
         apply_preserved_file_timestamp(file_path, timestamp_value)
-
-        after_creation = before_creation
-        try:
-            completed = subprocess.run(
-                ["mdls", "-raw", "-name", "kMDItemFSCreationDate", str(file_path)],
-                check=False,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.DEVNULL,
-                text=True,
-            )
-            if completed.returncode == 0:
-                after_creation = (completed.stdout or "").strip()
-        except OSError:
-            after_creation = before_creation
-
-        if before_creation != after_creation:
-            fixed_count += 1
+        fixed_count += 1
 
     return fixed_count
 
@@ -2298,6 +2316,16 @@ def extract_visible_candidates(page) -> list[GrokMediaCandidate]:
     return candidates
 
 
+def wait_for_grok_library_candidates(page, timeout_seconds: float) -> bool:
+    """Wait for Grok's client-rendered library cards to become discoverable."""
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
+    while time.monotonic() < deadline:
+        if extract_visible_candidates(page):
+            return True
+        time.sleep(0.5)
+    return False
+
+
 def candidate_is_downloadable(candidate: GrokMediaCandidate) -> bool:
     """Return whether the candidate has a safe canonical download URL."""
     if not candidate.source_url:
@@ -2347,6 +2375,7 @@ def collect_candidates(
     state: TaskState,
     should_stop,
     on_pipeline_tick=None,
+    max_library_pages: int = GROK_LIBRARY_PAGE_POOL_SIZE,
 ) -> tuple[list[GrokMediaCandidate], list[object]]:
     """Incrementally collect Grok assets while keeping the local queue populated."""
     ordered_candidates: list[GrokMediaCandidate] = []
@@ -2398,7 +2427,7 @@ def collect_candidates(
             stale_rounds = 0
 
         should_open_library_helper = (
-            len(library_pages) < GROK_LIBRARY_PAGE_POOL_SIZE
+            len(library_pages) < max(1, max_library_pages)
             and (stale_rounds >= 1 or round_index % GROK_LIBRARY_PAGE_OPEN_INTERVAL == 0)
         )
         if should_open_library_helper:
@@ -2449,13 +2478,16 @@ def commit_downloaded_candidate(
     content_type: str,
 ) -> tuple[bool, bool]:
     """Validate, dedupe, and atomically commit one downloaded asset."""
-    if not validate_media_file(
+    validation_error = media_validation_error(
         temp_path,
         media_kind=candidate.media_kind,
         content_type=content_type,
         expected_bytes=candidate.expected_bytes or 0,
-    ):
-        raise RuntimeError(f"Downloaded payload for {candidate.asset_id} failed integrity validation.")
+    )
+    if validation_error is not None:
+        raise RuntimeError(
+            f"Downloaded payload for {candidate.asset_id} failed integrity validation: {validation_error}."
+        )
 
     content_bytes = temp_path.stat().st_size
     content_sha256 = compute_file_sha256(temp_path)
@@ -2503,13 +2535,67 @@ def commit_downloaded_candidate(
     return downloaded, deduped
 
 
+def response_expected_total_bytes(headers, range_start: int) -> int:
+    """Return the response's advertised final size when it can be determined."""
+    content_range = str(headers.get("Content-Range") or "")
+    range_match = re.fullmatch(r"bytes\s+\d+-\d+/(\d+)", content_range.strip(), flags=re.IGNORECASE)
+    if range_match:
+        return int(range_match.group(1))
+
+    raw_length = str(headers.get("Content-Length") or "").strip()
+    if raw_length.isdigit():
+        return range_start + int(raw_length)
+    return 0
+
+
+def response_matches_requested_range(headers, range_start: int) -> bool:
+    """Return whether a partial response begins at the requested byte offset."""
+    content_range = str(headers.get("Content-Range") or "")
+    range_match = re.fullmatch(r"bytes\s+(\d+)-\d+/(?:\d+|\*)", content_range.strip(), flags=re.IGNORECASE)
+    return range_match is not None and int(range_match.group(1)) == range_start
+
+
+def download_retry_delay(attempt_index: int, retry_after: str = "") -> float:
+    """Return a bounded retry delay while honoring a numeric server instruction."""
+    if retry_after.strip().isdigit():
+        return min(float(retry_after.strip()), 30.0)
+    return min(float(2 ** (attempt_index - 1)), 8.0)
+
+
+def write_download_response(response, temp_path: Path, range_start: int, should_stop) -> tuple[str, bool, bool, int]:
+    """Write one HTTP response and report whether a full restart is required."""
+    status = getattr(response, "status", None)
+    if status is None:
+        status = response.getcode()
+    content_type = str(response.headers.get("Content-Type") or "")
+    if range_start > 0 and status != 206:
+        return content_type, False, True, 0
+    if range_start > 0 and not response_matches_requested_range(response.headers, range_start):
+        raise DownloadPayloadIntegrityError(
+            f"the server returned an unexpected Content-Range for byte {range_start:,}"
+        )
+    if range_start == 0 and status != 200:
+        raise DownloadPayloadIntegrityError(f"the server returned unexpected HTTP status {status}")
+
+    resumed = range_start > 0
+    with temp_path.open("ab" if resumed else "wb") as handle:
+        while True:
+            if should_stop():
+                raise DownloadStoppedError("Stop requested while downloading Grok media.")
+            chunk = response.read(DOWNLOAD_CHUNK_BYTES)
+            if not chunk:
+                break
+            handle.write(chunk)
+    return content_type, resumed, False, response_expected_total_bytes(response.headers, range_start)
+
+
 def stream_candidate_download(
     candidate: GrokMediaCandidate,
     auth: GrokDownloadAuth,
     temp_path: Path,
     should_stop,
 ) -> tuple[str, bool]:
-    """Download one asset into a partial file, resuming when the server supports ranges."""
+    """Download one verified asset, retrying transient and malformed HTTP responses."""
     temp_path.parent.mkdir(parents=True, exist_ok=True)
     resumed = False
     last_error: Exception | None = None
@@ -2520,39 +2606,52 @@ def stream_candidate_download(
         try:
             request = Request(candidate.source_url, headers=build_download_headers(candidate, auth, range_start))
             with urlopen(request, timeout=DOWNLOAD_TIMEOUT_MS / 1_000) as response:
-                status = getattr(response, "status", response.getcode())
-                content_type = str(response.headers.get("Content-Type") or "")
-                if range_start > 0 and status != 206:
-                    with contextlib.suppress(FileNotFoundError):
-                        temp_path.unlink()
-                    range_start = 0
-                    request = Request(candidate.source_url, headers=build_download_headers(candidate, auth, 0))
-                    response.close()
-                    with urlopen(request, timeout=DOWNLOAD_TIMEOUT_MS / 1_000) as response_retry:
-                        content_type = str(response_retry.headers.get("Content-Type") or "")
-                        with temp_path.open("wb") as handle:
-                            while True:
-                                if should_stop():
-                                    raise DownloadStoppedError("Stop requested while downloading Grok media.")
-                                chunk = response_retry.read(DOWNLOAD_CHUNK_BYTES)
-                                if not chunk:
-                                    break
-                                handle.write(chunk)
-                    return content_type, False
+                content_type, did_resume, restart_full_download, response_total_bytes = write_download_response(
+                    response,
+                    temp_path,
+                    range_start,
+                    should_stop,
+                )
 
-                file_mode = "ab" if range_start > 0 and status == 206 else "wb"
-                resumed = resumed or (file_mode == "ab")
-                with temp_path.open(file_mode) as handle:
-                    while True:
-                        if should_stop():
-                            raise DownloadStoppedError("Stop requested while downloading Grok media.")
-                        chunk = response.read(DOWNLOAD_CHUNK_BYTES)
-                        if not chunk:
-                            break
-                        handle.write(chunk)
-                return content_type, resumed
+            if restart_full_download:
+                with contextlib.suppress(FileNotFoundError):
+                    temp_path.unlink()
+                request = Request(candidate.source_url, headers=build_download_headers(candidate, auth, 0))
+                with urlopen(request, timeout=DOWNLOAD_TIMEOUT_MS / 1_000) as response:
+                    content_type, did_resume, restart_full_download, response_total_bytes = write_download_response(
+                        response,
+                        temp_path,
+                        0,
+                        should_stop,
+                    )
+                if restart_full_download:
+                    raise DownloadPayloadIntegrityError("the server did not provide a complete media response")
+
+            expected_bytes = candidate.expected_bytes or response_total_bytes
+            validation_error = media_validation_error(
+                temp_path,
+                candidate.media_kind,
+                content_type,
+                expected_bytes,
+            )
+            if validation_error is not None:
+                raise DownloadPayloadIntegrityError(validation_error)
+
+            return content_type, resumed or did_resume
         except DownloadStoppedError:
             raise
+        except DownloadPayloadIntegrityError as exc:
+            last_error = exc
+            with contextlib.suppress(FileNotFoundError):
+                temp_path.unlink()
+            logger.warning(
+                "Discarding invalid Grok download response before retrying.",
+                extra={
+                    "asset_id": candidate.asset_id,
+                    "attempt_index": attempt_index,
+                    "error": str(exc),
+                },
+            )
         except HTTPError as exc:
             last_error = exc
             if exc.code == 416:
@@ -2562,13 +2661,17 @@ def stream_candidate_download(
                 with contextlib.suppress(FileNotFoundError):
                     if temp_path.exists() and temp_path.stat().st_size == 0:
                         temp_path.unlink()
-        except (OSError, URLError) as exc:
+        except (IncompleteRead, OSError, TimeoutError, URLError) as exc:
             last_error = exc
 
         if attempt_index < GROK_DOWNLOAD_RETRY_LIMIT:
-            time.sleep(min(2.0 * attempt_index, 5.0))
+            error_headers = getattr(last_error, "headers", None)
+            retry_after = str(error_headers.get("Retry-After") or "") if error_headers is not None else ""
+            time.sleep(download_retry_delay(attempt_index, retry_after))
 
-    raise RuntimeError(f"Failed to download {candidate.source_url}: {last_error}")
+    raise RuntimeError(
+        f"Failed to download a valid payload for {candidate.asset_id} after {GROK_DOWNLOAD_RETRY_LIMIT} attempts: {last_error}"
+    )
 
 
 def download_candidate(
@@ -2578,6 +2681,7 @@ def download_candidate(
     candidate: GrokMediaCandidate,
     auth: GrokDownloadAuth,
     should_stop,
+    browser_streamer: Callable[[GrokMediaCandidate, Path, object], tuple[str, bool]] | None = None,
 ) -> tuple[bool, bool, bool]:
     """Download one Grok asset with resume, integrity checks, and manifest tracking."""
     if not candidate.source_url:
@@ -2606,7 +2710,10 @@ def download_candidate(
     temp_relative_path = temp_path.relative_to(target_dir).as_posix()
     manifest.mark_in_progress(candidate, temp_relative_path)
     try:
-        content_type, resumed = stream_candidate_download(candidate, auth, temp_path, should_stop)
+        if browser_streamer is None:
+            content_type, resumed = stream_candidate_download(candidate, auth, temp_path, should_stop)
+        else:
+            content_type, resumed = browser_streamer(candidate, temp_path, should_stop)
     except DownloadStoppedError as exc:
         manifest.mark_pending_resume(candidate, temp_relative_path, str(exc))
         raise
@@ -2639,6 +2746,7 @@ def repair_cached_preview_images(
     auth: GrokDownloadAuth,
     state: TaskState,
     should_stop,
+    browser_streamer: Callable[[GrokMediaCandidate, Path, object], tuple[str, bool]] | None = None,
 ) -> tuple[int, int, int]:
     """Replace cached preview-quality images with original-resolution assets."""
     repaired_count = 0
@@ -2647,7 +2755,11 @@ def repair_cached_preview_images(
     image_entries_by_asset_id: dict[str, list[GrokCatalogEntry]] = {}
     for entry in catalog.snapshot_entries():
         asset_id = extract_status_id_from_identity(entry.identity)
-        if entry.media_kind != "image" or not asset_id:
+        if (
+            entry.media_kind != "image"
+            or not asset_id
+            or not entry_needs_remote_image_upgrade(entry)
+        ):
             continue
         image_entries_by_asset_id.setdefault(asset_id, []).append(entry)
 
@@ -2703,6 +2815,7 @@ def repair_cached_preview_images(
                 resolved_candidate,
                 auth,
                 should_stop,
+                browser_streamer=browser_streamer,
             )
         except DownloadStoppedError:
             break
@@ -2741,6 +2854,7 @@ def run_download_worker(
     candidate: GrokMediaCandidate,
     auth: GrokDownloadAuth,
     should_stop,
+    browser_streamer: Callable[[GrokMediaCandidate, Path, object], tuple[str, bool]] | None = None,
 ) -> GrokDownloadOutcome:
     """Execute one Grok download worker task."""
     try:
@@ -2751,6 +2865,7 @@ def run_download_worker(
             candidate=candidate,
             auth=auth,
             should_stop=should_stop,
+            browser_streamer=browser_streamer,
         )
         return GrokDownloadOutcome(
             candidate=candidate,
@@ -2783,11 +2898,8 @@ def sync_grok_media(
     descriptor = browser_descriptors(runtime_config).get(runtime_config.grok_browser)
     if descriptor is None:
         raise RuntimeError(f"Unsupported Grok browser: {runtime_config.grok_browser}")
-    if descriptor.engine != "chromium":
-        raise RuntimeError(
-            "Grok sync currently supports Chrome and Edge for real runtime execution. "
-            "Safari still exposes session detection only."
-        )
+    if descriptor.engine not in {"chromium", "safari"}:
+        raise RuntimeError(f"Grok sync does not support the {descriptor.label} automation engine.")
 
     catalog = GrokMediaCatalog.build(target_dir)
     manifest = GrokDownloadManifest.build(target_dir, catalog)
@@ -2797,6 +2909,9 @@ def sync_grok_media(
     state.update(
         account_name="Grok",
         output_dir=str(target_dir),
+        queued_tweets=0,
+        processed_tweets=0,
+        discovery_complete=False,
         downloaded_posts=cached_count,
         downloaded_tweets=cached_count,
         downloaded_images=cached_images,
@@ -2821,7 +2936,7 @@ def sync_grok_media(
             stopped=True,
         )
 
-    if sync_playwright is None:
+    if descriptor.engine == "chromium" and sync_playwright is None:
         raise RuntimeError(
             "Playwright is not installed. Run `python3 -m pip install -r requirements.txt` "
             "and `python3 -m playwright install chromium`."
@@ -2831,27 +2946,68 @@ def sync_grok_media(
     details_pages: list[object] = []
     library_pages_to_close: list[object] = []
     download_auth = GrokDownloadAuth()
-    launch_context_manager = None
-    context_entered = False
+    browser_streamer: Callable[[GrokMediaCandidate, Path, object], tuple[str, bool]] | None = None
+    max_library_pages = GROK_LIBRARY_PAGE_POOL_SIZE
+    download_worker_count = GROK_DOWNLOAD_WORKERS
 
     try:
         state.update(phase="collecting")
-        with sync_playwright() as playwright:
-            state.append_event(f"Launching {descriptor.label} in the background for Grok sync.")
-            launch_context_manager = launch_chromium_context(
-                playwright,
-                descriptor,
-                headless=True,
-                clone_profile_first=True,
-            )
-            context = launch_context_manager.__enter__()
-            context_entered = True
+        with contextlib.ExitStack() as browser_stack:
+            if descriptor.engine == "safari":
+                state.append_event("Opening an authenticated Safari window for Grok sync.")
+                context = browser_stack.enter_context(SafariContext(GROK_FILES_URL))
+                max_library_pages = 1
+                download_worker_count = 1
+            else:
+                state.append_event(f"Launching {descriptor.label} in the background for Grok sync.")
+                playwright = browser_stack.enter_context(sync_playwright())
+                context = browser_stack.enter_context(
+                    launch_chromium_context(
+                        playwright,
+                        descriptor,
+                        headless=True,
+                        clone_profile_first=True,
+                    )
+                )
             page = prepare_grok_library_page(context)
+            if descriptor.engine == "safari":
+                def stream_from_safari(
+                    candidate: GrokMediaCandidate,
+                    temp_path: Path,
+                    stop_requested,
+                ) -> tuple[str, bool]:
+                    if (
+                        temp_path.exists()
+                        and candidate.expected_bytes > 0
+                        and temp_path.stat().st_size >= candidate.expected_bytes
+                    ):
+                        if validate_media_file(
+                            temp_path,
+                            candidate.media_kind,
+                            expected_bytes=candidate.expected_bytes,
+                        ):
+                            return "", True
+                        temp_path.unlink()
+                    try:
+                        return page.download_to_path(candidate.source_url, temp_path, stop_requested)
+                    except RuntimeError as exc:
+                        if stop_requested():
+                            raise DownloadStoppedError(str(exc)) from exc
+                        raise
+
+                browser_streamer = stream_from_safari
             details_pages = [context.new_page() for _ in range(GROK_RESOLUTION_PAGE_POOL_SIZE)]
             next_details_page_index = 0
 
             state.append_event("Opening the Grok files library.")
             open_grok_page(page, GROK_FILES_URL, settle_seconds=INITIAL_PAGE_WAIT_SECONDS)
+            if descriptor.engine == "safari" and not wait_for_grok_library_candidates(
+                page,
+                SAFARI_LIBRARY_READY_TIMEOUT_SECONDS,
+            ):
+                state.append_event(
+                    "Safari opened the Grok library, but no file cards were visible before discovery began."
+                )
             download_auth = build_download_auth(context, page)
             state.append_event(
                 "Grok is slow, so this run may keep scrolling and open extra Grok tabs while downloads continue in parallel."
@@ -2865,6 +3021,7 @@ def sync_grok_media(
                 download_auth,
                 state,
                 should_stop,
+                browser_streamer=browser_streamer,
             )
             cached_count, cached_images, cached_videos = catalog.summarize()
             state.update(
@@ -2962,6 +3119,8 @@ def sync_grok_media(
                         state.update(
                             phase="downloading" if (futures or queued_candidates > 0) else state.snapshot()["phase"],
                             discovered_tweets=len(ordered_candidates),
+                            queued_tweets=queued_candidates,
+                            processed_tweets=completed_workers,
                             downloaded_posts=cached_count,
                             downloaded_tweets=cached_count,
                             downloaded_images=cached_images,
@@ -2974,7 +3133,7 @@ def sync_grok_media(
 
                 return stop_detected
 
-            with ThreadPoolExecutor(max_workers=GROK_DOWNLOAD_WORKERS, thread_name_prefix="grok-download") as executor:
+            with ThreadPoolExecutor(max_workers=download_worker_count, thread_name_prefix="grok-download") as executor:
                 download_workers_announced = False
 
                 def schedule_queue_pipeline() -> bool:
@@ -3042,12 +3201,17 @@ def sync_grok_media(
 
                         if not download_workers_announced:
                             state.append_event(
-                                f"Starting {GROK_DOWNLOAD_WORKERS} Grok download workers while discovery continues."
+                                f"Starting {download_worker_count} Grok download "
+                                f"{'worker' if download_worker_count == 1 else 'workers'} while discovery continues."
                             )
                             download_workers_announced = True
 
                         state.update(phase="downloading")
                         queued_candidates += 1
+                        state.update(
+                            queued_tweets=queued_candidates,
+                            processed_tweets=completed_workers,
+                        )
                         submitted_identities.add(candidate.identity)
                         submitted_asset_ids.add(candidate.asset_id)
                         futures[
@@ -3059,6 +3223,7 @@ def sync_grok_media(
                                 candidate,
                                 download_auth,
                                 should_stop,
+                                browser_streamer,
                             )
                         ] = candidate
 
@@ -3073,8 +3238,15 @@ def sync_grok_media(
                     state,
                     should_stop,
                     on_pipeline_tick=schedule_queue_pipeline,
+                    max_library_pages=max_library_pages,
                 )
                 library_pages_to_close = [candidate for candidate in library_pages if candidate is not page]
+                state.update(
+                    discovered_tweets=len(ordered_candidates),
+                    queued_tweets=queued_candidates,
+                    processed_tweets=completed_workers,
+                    discovery_complete=True,
+                )
 
                 stop_detected = False
                 while not should_stop():
@@ -3090,6 +3262,9 @@ def sync_grok_media(
             state.update(
                 phase="downloading" if queued_candidates > 0 else "collecting",
                 discovered_tweets=len(ordered_candidates),
+                queued_tweets=queued_candidates,
+                processed_tweets=completed_workers,
+                discovery_complete=True,
             )
 
             if not queued_candidates and failed_count == 0:
@@ -3154,8 +3329,3 @@ def sync_grok_media(
         for candidate in details_pages:
             with contextlib.suppress(Exception):
                 candidate.close()
-        with contextlib.suppress(Exception):
-            if launch_context_manager is not None and context_entered:
-                launch_context_manager.__exit__(None, None, None)
-            elif context is not None:
-                context.close()

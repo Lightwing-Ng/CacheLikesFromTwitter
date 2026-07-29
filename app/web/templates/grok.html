@@ -1,11 +1,11 @@
-<!-- Code version: v1.6.3-gpt5.5.2 -->
+<!-- Code version: v1.6.7-codex.6 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter Grok</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.7.2') }}">
     <script defer src="{{ url_for('static', filename='browser-session-picker.js') }}"></script>
 </head>
 <body>
@@ -131,16 +131,6 @@
                         </button>
                     </div>
                 </div>
-                <form
-                    action="{{ url_for('reset_grok') }}"
-                    method="post"
-                    class="sidebar-form"
-                    onsubmit="return window.confirm('Reset Grok state? This will delete all cached Grok media, manifests, queue files, and resumable partial downloads.')"
-                >
-                    <button type="submit" class="danger-button sidebar-action-button" id="reset_button" {% if snapshot.running %}disabled{% endif %}>
-                        Reset Grok State
-                    </button>
-                </form>
             </section>
 
         </aside>
@@ -198,6 +188,9 @@
                             <span class="status-progress-fill" id="status_progress_fill"></span>
                         </div>
                     </div>
+                    <p class="status-progress-detail" id="status_progress_detail" aria-live="polite">
+                        Live progress updates every 3 seconds.
+                    </p>
                     <p class="status-copy" id="message">{{ snapshot.message }}</p>
                     <div class="notice-floating notice-floating-banner notice-inline-banner grok-warning-banner" role="note" aria-label="Grok sync notice">
                         <div class="notice-floating-copy">
@@ -303,6 +296,7 @@
     const statusProgress = document.getElementById("status_progress");
     const statusProgressAudit = document.getElementById("status_progress_audit");
     const statusProgressFill = document.getElementById("status_progress_fill");
+    const statusProgressDetail = document.getElementById("status_progress_detail");
     const recentEventsBody = document.getElementById("recent_events_body");
     const recentEventsPrev = document.getElementById("recent_events_prev");
     const recentEventsNext = document.getElementById("recent_events_next");
@@ -561,35 +555,49 @@
             return;
         }
 
-        const discovered = Number(data.discovered_tweets) || 0;
-        const cached = Number(data.downloaded_posts) || 0;
-        const skipped = Number(data.skipped_tweets) || 0;
-        const total = Math.max(discovered, cached + skipped, 1);
+        const queued = Math.max(Number(data.queued_tweets) || 0, 0);
+        const processed = Math.min(Math.max(Number(data.processed_tweets) || 0, 0), queued);
         const auditProgress = parseAuditProgress(data.message);
         let completePercent = 0;
         let auditPercent = 0;
         let isIndeterminate = false;
+        let progressDetail = "No Grok sync is active.";
 
         if (auditProgress) {
             auditPercent = auditProgress.percent;
-        } else if (data.phase === "collecting" || data.phase === "starting" || data.phase === "stopping") {
+            progressDetail = `Auditing image quality: ${formatMetricNumber(auditProgress.current)} of ${formatMetricNumber(auditProgress.total)} assets.`;
+        } else if (data.running && !data.discovery_complete) {
             isIndeterminate = true;
-        } else if (data.phase === "downloading") {
-            completePercent = Math.round(((cached + skipped) / total) * 100);
+            progressDetail = queued > 0
+                ? `Discovery is still running. ${formatMetricNumber(processed)} of ${formatMetricNumber(queued)} scheduled downloads processed; the total may increase.`
+                : "Scanning the Grok library. The final download total is not known yet.";
+        } else if (queued > 0) {
+            completePercent = Math.round((processed / queued) * 100);
+            const pending = Math.max(queued - processed, 0);
+            progressDetail = pending > 0
+                ? `${formatMetricNumber(processed)} of ${formatMetricNumber(queued)} scheduled downloads processed; ${formatMetricNumber(pending)} pending.`
+                : `${formatMetricNumber(processed)} of ${formatMetricNumber(queued)} scheduled downloads processed.`;
         } else if (["finished", "completed", "success", "stopped"].includes(data.phase)) {
             completePercent = 100;
-        } else if (data.phase === "failed") {
-            completePercent = Math.round(((cached + skipped) / total) * 100);
+            progressDetail = "No new Grok downloads were required for this run.";
         }
 
         statusProgress.classList.toggle("is-indeterminate", isIndeterminate);
         statusProgress.classList.toggle("is-auditing", auditPercent > 0 && !isIndeterminate);
         statusProgressFill.style.width = `${Math.min(Math.max(completePercent, 0), 100)}%`;
         statusProgressAudit.style.width = `${Math.min(Math.max(auditPercent, 0), 100)}%`;
-        statusProgress.setAttribute(
-            "aria-valuenow",
-            String(Math.max(Math.min(Math.max(completePercent, 0), 100), Math.min(Math.max(auditPercent, 0), 100))),
-        );
+        statusProgress.setAttribute("aria-valuetext", progressDetail);
+        if (isIndeterminate) {
+            statusProgress.removeAttribute("aria-valuenow");
+        } else {
+            statusProgress.setAttribute(
+                "aria-valuenow",
+                String(Math.max(Math.min(Math.max(completePercent, 0), 100), Math.min(Math.max(auditPercent, 0), 100))),
+            );
+        }
+        if (statusProgressDetail) {
+            statusProgressDetail.textContent = progressDetail;
+        }
     }
 
     async function refreshStatus() {

@@ -1,7 +1,7 @@
-/* Code version: v1.4.2-gpt5.4.1 */
+/* Code version: v1.5.0-codex.1 */
 
 (() => {
-    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v3:";
+    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v4:";
     const SESSION_CACHE_TTL_MS = 30_000;
 
     function readSessionValue(key) {

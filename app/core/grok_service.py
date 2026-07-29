@@ -1,15 +1,16 @@
 """Background service for Grok media sync."""
 
-# Code version: v1.1.1-codex.1
+# Code version: v1.1.2-codex.1
 
 from __future__ import annotations
 
 import logging
-from threading import Event, Thread
+from threading import Event, RLock, Thread
 from uuid import uuid4
 
 from .config import CrawlConfig
 from .grok_downloader import sync_grok_media
+from .job_lock import CacheTaskLock, SHARED_CACHE_TASK_LOCK
 from .logging_setup import reset_job_id, set_job_id
 from .state import TaskState
 
@@ -35,11 +36,14 @@ def summarize_error_for_status(error: Exception) -> str:
 class GrokDownloadService:
     """Manage a single Grok sync worker."""
 
-    def __init__(self, state: TaskState) -> None:
+    def __init__(self, state: TaskState, task_lock: CacheTaskLock | None = None) -> None:
         self._state = state
         self._worker: Thread | None = None
         self._stop_requested = Event()
         self._config = CrawlConfig()
+        self._lifecycle_lock = RLock()
+        self._task_lock = task_lock or SHARED_CACHE_TASK_LOCK
+        self._owns_task_lock = False
 
     def is_running(self) -> bool:
         """Return whether a Grok sync is active."""
@@ -48,14 +52,25 @@ class GrokDownloadService:
 
     def start(self, config: CrawlConfig) -> None:
         """Start a new Grok sync worker."""
-        if self.is_running():
-            raise RuntimeError("A Grok sync is already running.")
+        with self._lifecycle_lock:
+            if self.is_running():
+                raise RuntimeError("A Grok sync is already running.")
+            if not self._task_lock.acquire("grok-sync"):
+                raise RuntimeError(
+                    "A cache task is already running in another Cache Likes window or browser. Stop it there before starting a Grok sync."
+                )
 
-        self._stop_requested.clear()
-        self._config = config
-        self._state.reset_for_run()
-        self._worker = Thread(target=self._run, daemon=True)
-        self._worker.start()
+            self._owns_task_lock = True
+            self._stop_requested.clear()
+            self._config = config
+            self._state.reset_for_run()
+            try:
+                self._worker = Thread(target=self._run, daemon=True)
+                self._worker.start()
+            except Exception:
+                self._owns_task_lock = False
+                self._task_lock.release()
+                raise
 
     def request_stop(self) -> bool:
         """Request cooperative stop for the active Grok sync."""
@@ -133,3 +148,7 @@ class GrokDownloadService:
             )
         finally:
             reset_job_id(token)
+            with self._lifecycle_lock:
+                if self._owns_task_lock:
+                    self._owns_task_lock = False
+                    self._task_lock.release()

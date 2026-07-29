@@ -1,0 +1,3 @@
+# Test dependencies. Code version: v1.0.0-codex.1
+-r requirements.txt
+pytest>=9.0.0,<10.0.0
