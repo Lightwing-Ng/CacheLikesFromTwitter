@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.7.0-codex.1
+# Code version: v1.7.1-codex.1
 
 from __future__ import annotations
 
@@ -26,6 +26,24 @@ from app.core.state import TaskState, build_initial_snapshot, utc_now
 from app.core.version import APP_VERSION
 
 
+CACHE_RECONCILE_PHASES = {"idle", "finished", "completed", "success", "stopped"}
+
+
+def reconcile_cached_snapshot(snapshot: dict[str, Any], hydrated_payload: dict[str, Any]) -> dict[str, Any]:
+    """Refresh persisted cache counters only for stable non-error task states."""
+    if snapshot.get("running") or snapshot.get("phase") not in CACHE_RECONCILE_PHASES:
+        return snapshot
+
+    snapshot["account_name"] = hydrated_payload["account_name"]
+    snapshot["output_dir"] = hydrated_payload["output_dir"]
+    snapshot["downloaded_posts"] = hydrated_payload["downloaded_posts"]
+    snapshot["downloaded_tweets"] = hydrated_payload["downloaded_tweets"]
+    snapshot["downloaded_images"] = hydrated_payload["downloaded_images"]
+    snapshot["downloaded_videos"] = hydrated_payload["downloaded_videos"]
+    snapshot["message"] = hydrated_payload["message"]
+    return snapshot
+
+
 def create_app() -> Flask:
     """Build and configure the Flask app."""
     configure_logging(APP_VERSION)
@@ -44,38 +62,14 @@ def create_app() -> Flask:
     def build_reconciled_snapshot() -> dict[str, Any]:
         """Refresh X cache counters from disk without discarding live task status."""
         snapshot = state.snapshot()
-        if snapshot.get("running"):
-            return snapshot
-
         hydrated = build_initial_snapshot(APP_VERSION)
-        hydrated_payload = asdict(hydrated)
-        snapshot["account_name"] = hydrated_payload["account_name"]
-        snapshot["output_dir"] = hydrated_payload["output_dir"]
-        snapshot["downloaded_posts"] = hydrated_payload["downloaded_posts"]
-        snapshot["downloaded_tweets"] = hydrated_payload["downloaded_tweets"]
-        snapshot["downloaded_images"] = hydrated_payload["downloaded_images"]
-        snapshot["downloaded_videos"] = hydrated_payload["downloaded_videos"]
-        if snapshot.get("phase") in {"idle", "finished", "completed", "success", "stopped"}:
-            snapshot["message"] = hydrated_payload["message"]
-        return snapshot
+        return reconcile_cached_snapshot(snapshot, asdict(hydrated))
 
     def build_reconciled_grok_snapshot() -> dict[str, Any]:
         """Refresh Grok cache counters from disk without discarding live task status."""
         snapshot = grok_state.snapshot()
-        if snapshot.get("running"):
-            return snapshot
-
         hydrated = build_grok_initial_snapshot(APP_VERSION)
-        hydrated_payload = asdict(hydrated)
-        snapshot["account_name"] = hydrated_payload["account_name"]
-        snapshot["output_dir"] = hydrated_payload["output_dir"]
-        snapshot["downloaded_posts"] = hydrated_payload["downloaded_posts"]
-        snapshot["downloaded_tweets"] = hydrated_payload["downloaded_tweets"]
-        snapshot["downloaded_images"] = hydrated_payload["downloaded_images"]
-        snapshot["downloaded_videos"] = hydrated_payload["downloaded_videos"]
-        if snapshot.get("phase") in {"idle", "finished", "completed", "success", "stopped"}:
-            snapshot["message"] = hydrated_payload["message"]
-        return snapshot
+        return reconcile_cached_snapshot(snapshot, asdict(hydrated))
 
     def parse_int_field(field_name: str, fallback: int, minimum: int = 1) -> int:
         """Parse one integer form field while tolerating display separators."""

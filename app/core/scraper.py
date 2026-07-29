@@ -1,6 +1,6 @@
 """Collect liked tweet URLs from the logged-in X account."""
 
-# Code version: v1.2.1-codex.1
+# Code version: v1.2.2-codex.1
 
 from __future__ import annotations
 
@@ -727,16 +727,20 @@ def collect_liked_tweet_urls_via_safari(
 tell application "Safari"
     launch
     make new document
-    set URL of front document to "{escape_applescript_text(likes_url)}"
+    set targetWindow to front window
+    set windowId to id of targetWindow
+    set URL of current tab of targetWindow to "{escape_applescript_text(likes_url)}"
     delay 8
     set linksJson to "[]"
     repeat with roundIndex from 1 to {rounds}
-        set linksJson to do JavaScript "{escape_applescript_text(collect_links_js)}" in front document
-        do JavaScript "{escape_applescript_text(scroll_js)}" in front document
+        set targetWindow to first window whose id is windowId
+        set linksJson to do JavaScript "{escape_applescript_text(collect_links_js)}" in current tab of targetWindow
+        do JavaScript "{escape_applescript_text(scroll_js)}" in current tab of targetWindow
         delay {pause_seconds}
     end repeat
-    set finalUrl to URL of front document
-    close front document
+    set targetWindow to first window whose id is windowId
+    set finalUrl to URL of current tab of targetWindow
+    close targetWindow
     return finalUrl & linefeed & linksJson
 end tell
 """

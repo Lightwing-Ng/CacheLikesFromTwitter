@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.1.0-codex.1
+Code version: v1.1.1-codex.1
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from app.core.config import CrawlConfig
 from app.core.scraper import (
     build_likes_request_template,
     build_x_likes_url,
+    collect_liked_tweet_urls_via_safari,
     extract_account_handle_from_urlish,
     normalize_status_url,
     parse_likes_timeline_page,
@@ -131,6 +132,37 @@ def test_safari_profile_link_detection_uses_the_rendered_navigation() -> None:
         assert detect_safari_x_account_handle(wait_seconds=1) == "demo_user"
 
     assert "AppTabBar_Profile_Link" in run.call_args.kwargs["input"]
+    assert "current tab of targetWindow" in run.call_args.kwargs["input"]
+
+
+def test_safari_likes_collection_uses_window_id_targeting() -> None:
+    process = SimpleNamespace(
+        returncode=0,
+        stdout=(
+            "https://x.com/demo_user/likes\n"
+            '["https://twitter.com/demo_user/status/123?ref=copy","https://x.com/demo_user/status/456"]'
+        ),
+    )
+    config = CrawlConfig(x_browser="safari", max_scroll_rounds=2, scroll_pause_seconds=0.2)
+    state = TaskState("test")
+
+    with patch("app.core.scraper.subprocess.run", return_value=process) as run:
+        urls = collect_liked_tweet_urls_via_safari(
+            "demo_user",
+            "https://x.com/demo_user/likes",
+            config,
+            state,
+        )
+
+    script = run.call_args.kwargs["input"]
+    assert "set windowId to id of targetWindow" in script
+    assert "current tab of targetWindow" in script
+    assert "front document" not in script
+    assert urls == [
+        "https://x.com/demo_user/status/123",
+        "https://x.com/demo_user/status/456",
+    ]
+    assert state.snapshot()["discovered_tweets"] == 2
 
 
 def test_safari_collection_prefers_navigation_handle_before_page_source() -> None:

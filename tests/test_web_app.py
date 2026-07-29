@@ -1,12 +1,14 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.1.0-codex.3
+# Code version: v1.1.1-codex.1
 
 from __future__ import annotations
 
+from dataclasses import asdict
 import unittest
 
-from app.web.app import create_app
+from app.core.state import TaskSnapshot
+from app.web.app import create_app, reconcile_cached_snapshot
 
 
 class WebAppTests(unittest.TestCase):
@@ -48,6 +50,66 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('id="reset_button"', grok_body)
         self.assertIn('id="reset_button"', settings_body)
         self.assertIn("Danger zone", settings_body)
+
+    def test_cache_reconciliation_skips_failed_snapshots(self) -> None:
+        snapshot = {
+            "running": False,
+            "phase": "failed",
+            "message": "Failure.",
+            "account_name": "demo_user",
+            "output_dir": "/tmp/live",
+            "downloaded_posts": 0,
+            "downloaded_tweets": 0,
+            "downloaded_images": 0,
+            "downloaded_videos": 0,
+        }
+        hydrated = TaskSnapshot(
+            version="v-test",
+            account_name="x",
+            output_dir="/tmp/cache",
+            downloaded_posts=542,
+            downloaded_tweets=542,
+            downloaded_images=0,
+            downloaded_videos=542,
+            message="Ready. Found existing cache: 542 posts, 0 images, 542 videos.",
+        )
+
+        reconciled = reconcile_cached_snapshot(snapshot, asdict(hydrated))
+
+        self.assertEqual(reconciled["message"], "Failure.")
+        self.assertEqual(reconciled["downloaded_posts"], 0)
+        self.assertEqual(reconciled["downloaded_videos"], 0)
+        self.assertEqual(reconciled["output_dir"], "/tmp/live")
+
+    def test_cache_reconciliation_hydrates_finished_snapshots(self) -> None:
+        snapshot = {
+            "running": False,
+            "phase": "finished",
+            "message": "Finished.",
+            "account_name": "",
+            "output_dir": "",
+            "downloaded_posts": 1,
+            "downloaded_tweets": 1,
+            "downloaded_images": 1,
+            "downloaded_videos": 0,
+        }
+        hydrated = TaskSnapshot(
+            version="v-test",
+            account_name="x",
+            output_dir="/tmp/cache",
+            downloaded_posts=542,
+            downloaded_tweets=542,
+            downloaded_images=0,
+            downloaded_videos=542,
+            message="Ready. Found existing cache: 542 posts, 0 images, 542 videos.",
+        )
+
+        reconciled = reconcile_cached_snapshot(snapshot, asdict(hydrated))
+
+        self.assertEqual(reconciled["message"], hydrated.message)
+        self.assertEqual(reconciled["downloaded_posts"], 542)
+        self.assertEqual(reconciled["downloaded_videos"], 542)
+        self.assertEqual(reconciled["output_dir"], "/tmp/cache")
 
 
 if __name__ == "__main__":

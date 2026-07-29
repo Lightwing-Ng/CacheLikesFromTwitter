@@ -1,6 +1,6 @@
 """Browser session probing helpers for X and Grok."""
 
-# Code version: v1.4.0-codex.1
+# Code version: v1.4.1-codex.1
 
 from __future__ import annotations
 
@@ -530,10 +530,13 @@ def detect_safari_x_account_handle(wait_seconds: int = 10) -> str:
 tell application "Safari"
     launch
     make new document
-    set URL of front document to "{escape_applescript_text(X_HOME_URL)}"
+    set targetWindow to front window
+    set windowId to id of targetWindow
+    set URL of current tab of targetWindow to "{escape_applescript_text(X_HOME_URL)}"
     delay {wait_seconds}
-    set accountHandle to do JavaScript "{escape_applescript_text(extract_handle_js)}" in front document
-    close front document
+    set targetWindow to first window whose id is windowId
+    set accountHandle to do JavaScript "{escape_applescript_text(extract_handle_js)}" in current tab of targetWindow
+    close targetWindow
     return accountHandle
 end tell
 """
@@ -559,17 +562,20 @@ def fetch_safari_page_snapshot(url: str, wait_seconds: int = 8) -> dict[str, str
 tell application "Safari"
     launch
     make new document
-    set URL of front document to "{escape_applescript_text(url)}"
+    set targetWindow to front window
+    set windowId to id of targetWindow
+    set URL of current tab of targetWindow to "{escape_applescript_text(url)}"
     delay {wait_seconds}
-    set currentUrl to URL of front document
-    set docSource to source of front document
+    set targetWindow to first window whose id is windowId
+    set currentUrl to URL of current tab of targetWindow
+    set docSource to source of current tab of targetWindow
     set sourceLength to length of docSource
     if sourceLength > {SAFARI_APPLESCRIPT_SOURCE_LIMIT} then
         set clippedSource to text 1 thru {SAFARI_APPLESCRIPT_SOURCE_LIMIT} of docSource
     else
         set clippedSource to docSource
     end if
-    close front document
+    close targetWindow
     return currentUrl & linefeed & clippedSource
 end tell
 """
