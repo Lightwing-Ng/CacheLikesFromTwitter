@@ -1,13 +1,12 @@
-<!-- Code version: v1.7.5-codex.5 -->
+<!-- Code version: v1.0.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>CacheLikesFromTwitter</title>
+    <title>CacheLikesFromTwitter ChatGPT</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.7.2') }}">
     <script defer src="{{ url_for('static', filename='browser-session-picker.js') }}"></script>
-    <script defer src="{{ url_for('static', filename='numeric-input-format.js') }}"></script>
 </head>
 <body>
 {% set current_phase = snapshot.phase or "idle" %}
@@ -21,27 +20,13 @@
             <p class="notice-floating-title" id="banner_message">{{ snapshot.message }}</p>
         </div>
         <span class="status-chip status-{{ current_phase }}" id="banner_phase">{{ current_phase }}</span>
-        <button
-            type="button"
-            class="notice-floating-dismiss"
-            id="status_banner_dismiss"
-            aria-label="Dismiss status banner"
-        >
-            x
-        </button>
+        <button type="button" class="notice-floating-dismiss" id="status_banner_dismiss" aria-label="Dismiss status banner">x</button>
     </div>
 
     <div class="app-shell is-sidebar-open" id="app_shell">
-        <button
-            type="button"
-            class="sidebar-toggle"
-            id="sidebar_toggle"
-            aria-label="Toggle sidebar"
-            aria-expanded="true"
-        >
+        <button type="button" class="sidebar-toggle" id="sidebar_toggle" aria-label="Toggle sidebar" aria-expanded="true">
             <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
         </button>
-
         <button
             type="button"
             class="sidebar-backdrop"
@@ -57,102 +42,91 @@
                 <div class="section-heading">
                     <div>
                         <p class="section-kicker">Download</p>
-                        <h2>X</h2>
+                        <h2>ChatGPT</h2>
                     </div>
                     <span class="status-chip status-{{ current_phase }}" id="phase_chip">{{ current_phase }}</span>
                 </div>
+
                 <div
                     class="browser-session-panel"
                     data-browser-session-panel
-                    data-platform="x"
-                    data-selection-storage-key="cachelikes:browser-selection:x"
-                    data-hidden-input-selector="#x_browser_input"
+                    data-platform="chatgpt"
+                    data-selection-storage-key="cachelikes:browser-selection:chatgpt"
+                    data-hidden-input-selector="#chatgpt_browser_input"
+                    data-start-button-selector="#start_button"
+                    data-require-download-ready="true"
                 >
-                    <p class="browser-session-panel-label">Browser</p>
+                    <p class="browser-session-panel-label">Authorized browser</p>
                     <div class="trade-strategy-row browser-session-row">
                         <div class="trade-strategy-combobox browser-session-combobox">
-                        <button
-                            type="button"
-                            class="trade-strategy-select form-select trade-strategy-trigger browser-session-trigger"
-                            data-role="browser-picker-trigger"
-                            aria-haspopup="listbox"
-                            aria-expanded="false"
-                        >
-                            <span class="browser-session-trigger-leading">
-                                <span class="browser-picker-selected-icon-shell" data-role="browser-picker-selected-icon-shell" hidden>
-                                    <img class="browser-picker-option-icon" data-role="browser-picker-selected-icon" alt="">
-                                </span>
-                                <span class="trade-strategy-trigger-label browser-session-trigger-label" data-role="browser-picker-selected-label">Select browser</span>
-                            </span>
-                            <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
-                        </button>
-                        <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown" data-role="browser-picker-menu" role="listbox">
-                            {% for browser in browser_options %}
                             <button
                                 type="button"
-                                class="trade-strategy-dropdown-option browser-picker-option"
-                                data-browser-option="{{ browser.id }}"
-                                data-browser-label="{{ browser.label }}"
-                                data-browser-icon="{{ url_for('static', filename=browser.icon_filename) }}"
-                                role="option"
-                                aria-selected="false"
+                                class="trade-strategy-select form-select trade-strategy-trigger browser-session-trigger"
+                                data-role="browser-picker-trigger"
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
                             >
-                                <span class="trade-strategy-dropdown-check browser-session-option-check" aria-hidden="true"></span>
-                                <img class="browser-picker-option-icon" src="{{ url_for('static', filename=browser.icon_filename) }}" alt="{{ browser.label }} icon">
-                                <span class="trade-strategy-dropdown-text browser-session-option-text">{{ browser.label }}</span>
+                                <span class="browser-session-trigger-leading">
+                                    <span class="browser-picker-selected-icon-shell" data-role="browser-picker-selected-icon-shell" hidden>
+                                        <img class="browser-picker-option-icon" data-role="browser-picker-selected-icon" alt="">
+                                    </span>
+                                    <span class="trade-strategy-trigger-label browser-session-trigger-label" data-role="browser-picker-selected-label">Select browser</span>
+                                </span>
+                                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
-                            {% endfor %}
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown" data-role="browser-picker-menu" role="listbox">
+                                {% for browser in browser_options %}
+                                <button
+                                    type="button"
+                                    class="trade-strategy-dropdown-option browser-picker-option"
+                                    data-browser-option="{{ browser.id }}"
+                                    data-browser-label="{{ browser.label }}"
+                                    data-browser-icon="{{ url_for('static', filename=browser.icon_filename) }}"
+                                    role="option"
+                                    aria-selected="false"
+                                >
+                                    <span class="trade-strategy-dropdown-check browser-session-option-check" aria-hidden="true"></span>
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename=browser.icon_filename) }}" alt="{{ browser.label }} icon">
+                                    <span class="trade-strategy-dropdown-text browser-session-option-text">{{ browser.label }}</span>
+                                </button>
+                                {% endfor %}
+                            </div>
                         </div>
-                    </div>
                     </div>
                     <div class="browser-session-status-card" data-role="browser-session-status" hidden>
                         <div class="browser-session-status-row">
                             <div class="browser-session-status-copy">
-                                <strong class="browser-session-status-account" data-role="browser-session-account">No signed-in account detected</strong>
+                                <strong class="browser-session-status-account" data-role="browser-session-account">No authorized project detected</strong>
+                                <p class="browser-session-status-message" data-role="browser-session-message" hidden></p>
                             </div>
                             <span class="browser-session-status-checkmark" data-role="browser-session-checkmark" aria-label="Ready to download" hidden></span>
                         </div>
                     </div>
                 </div>
-                <form action="{{ url_for('start') }}" method="post" class="sidebar-form" id="start_form">
-                    <input type="hidden" name="x_browser" id="x_browser_input" value="{{ saved_config.x_browser }}">
-                    <div class="field-grid compact-config-grid">
-                        <label class="field compact-config-field">
-                            <span>Download workers</span>
-                            <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="download_workers" value="{{ saved_config.download_workers }}">
-                        </label>
-                        <label class="field compact-config-field">
-                            <span>Max media files</span>
-                            <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="max_media_items" value="{{ saved_config.max_media_items }}">
-                        </label>
-                        <label class="field compact-config-field">
-                            <span>Max scroll rounds</span>
-                            <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="max_scroll_rounds" value="{{ saved_config.max_scroll_rounds }}">
-                        </label>
-                        <label class="field compact-config-field">
-                            <span>Scroll pause seconds</span>
-                            <input type="text" inputmode="decimal" class="formatted-number-input" data-number-format="decimal" name="scroll_pause_seconds" value="{{ saved_config.scroll_pause_seconds }}">
-                        </label>
-                    </div>
-                    <label class="field compact-config-field">
-                        <span>Stale round limit</span>
-                        <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="stale_round_limit" value="{{ saved_config.stale_round_limit }}">
+
+                <form action="{{ url_for('start_chatgpt') }}" method="post" class="sidebar-form" id="start_form_chatgpt">
+                    <input type="hidden" name="chatgpt_browser" id="chatgpt_browser_input" value="{{ saved_config.chatgpt_browser }}">
+                    <label class="field">
+                        <span>Project name</span>
+                        <input type="text" name="chatgpt_project_name" value="{{ saved_config.chatgpt_project_name }}" autocomplete="off">
+                    </label>
+                    <label class="field">
+                        <span>Project URL</span>
+                        <input type="text" name="chatgpt_project_url" value="{{ saved_config.chatgpt_project_url }}" autocomplete="off">
                     </label>
                 </form>
+                <p class="status-copy chatgpt-sidebar-note">
+                    The cache opens an interactive Edge window using the host's authorized ChatGPT session.
+                </p>
                 <div class="sidebar-action-row">
-                    <form action="{{ url_for('stop') }}" method="post" class="sidebar-form sidebar-form-stop">
-                        <button type="submit" class="danger-button stop-button sidebar-action-button" id="stop_button" {% if not snapshot.running %}disabled{% endif %}>
-                            Stop
-                        </button>
+                    <form action="{{ url_for('stop_chatgpt') }}" method="post" class="sidebar-form sidebar-form-stop">
+                        <button type="submit" class="danger-button stop-button sidebar-action-button" id="stop_button" {% if not snapshot.running %}disabled{% endif %}>Stop</button>
                     </form>
                     <div class="sidebar-form sidebar-form-start">
-                        <button type="submit" form="start_form" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled{% endif %}>
-                            Start caching
-                        </button>
+                        <button type="submit" form="start_form_chatgpt" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled{% endif %}>Start sync</button>
                     </div>
                 </div>
             </section>
-
         </aside>
 
         <section class="panel chart-panel workspace" id="workspace_panel">
@@ -161,35 +135,36 @@
                     <div class="report-heading-row">
                         <div>
                             <p class="workspace-kicker">Live snapshot</p>
-                            <h2>Execution overview</h2>
+                            <h2>Studio208cm project overview</h2>
                         </div>
                     </div>
                     <div class="metric-grid">
                         <div class="metric-card metric-card-accent">
-                            <span class="metric-label">Posts discovered</span>
+                            <span class="metric-label">Conversations discovered</span>
                             <strong id="discovered_tweets">{{ "{:,}".format(snapshot.discovered_tweets) }}</strong>
                         </div>
                         <div class="metric-card metric-card-accent">
-                            <span class="metric-label">Posts</span>
-                            <strong id="downloaded_posts">{{ "{:,}".format(snapshot.downloaded_posts) }}</strong>
+                            <span class="metric-label">Images discovered</span>
+                            <strong id="discovered_images">{{ "{:,}".format(snapshot.discovered_images) }}</strong>
                         </div>
                         <div class="metric-card metric-card-accent">
-                            <span class="metric-label">Images</span>
+                            <span class="metric-label">Images cached</span>
                             <strong id="downloaded_images">{{ "{:,}".format(snapshot.downloaded_images) }}</strong>
                         </div>
                         <div class="metric-card">
-                            <span class="metric-label">Videos</span>
-                            <strong id="downloaded_videos">{{ "{:,}".format(snapshot.downloaded_videos) }}</strong>
+                            <span class="metric-label">Known images</span>
+                            <strong id="skipped_tweets">{{ "{:,}".format(snapshot.skipped_tweets) }}</strong>
                         </div>
                         <div class="metric-card">
-                            <span class="metric-label">Skipped</span>
-                            <strong id="skipped_tweets">{{ "{:,}".format(snapshot.skipped_tweets) }}</strong>
+                            <span class="metric-label">Failures</span>
+                            <strong id="failed_tweets">{{ "{:,}".format(snapshot.failed_tweets) }}</strong>
                         </div>
                         <div class="metric-card">
                             <span class="metric-label">Phase</span>
                             <strong id="phase_value">{{ current_phase }}</strong>
                         </div>
                     </div>
+
                     <div class="report-heading-row">
                         <div>
                             <p class="workspace-kicker">Status</p>
@@ -199,27 +174,38 @@
                             class="status-progress is-indeterminate"
                             id="status_progress"
                             role="progressbar"
-                            aria-label="Download progress"
+                            aria-label="ChatGPT sync progress"
                             aria-valuemin="0"
                             aria-valuemax="100"
                             aria-valuenow="0"
                         >
+                            <span class="status-progress-audit" id="status_progress_audit"></span>
                             <span class="status-progress-fill" id="status_progress_fill"></span>
                         </div>
                     </div>
+                    <p class="status-progress-detail" id="status_progress_detail" aria-live="polite">Live progress updates every 3 seconds.</p>
                     <p class="status-copy" id="message">{{ snapshot.message }}</p>
-                    <div class="progress-metric-grid" aria-label="Cached media progress">
+                    <div class="notice-floating notice-floating-banner notice-inline-banner chatgpt-warning-banner" role="note" aria-label="ChatGPT sync notice">
+                        <div class="notice-floating-copy">
+                            <p class="notice-floating-label">Original-resolution cache</p>
+                            <p class="notice-floating-title">
+                                Only original raster images from assistant messages are saved. User-uploaded images are skipped. ChatGPT's image viewer may require the interactive Edge window to remain open during the scan.
+                            </p>
+                        </div>
+                        <span class="status-chip status-collecting">Edge session</span>
+                    </div>
+                    <div class="progress-metric-grid" aria-label="Cached ChatGPT image progress">
                         <div class="progress-metric-card">
-                            <span class="progress-metric-label">Cached posts</span>
-                            <strong id="progress_downloaded_posts">{{ "{:,}".format(snapshot.downloaded_posts) }}</strong>
+                            <span class="progress-metric-label">Images found</span>
+                            <strong id="progress_discovered_images">{{ "{:,}".format(snapshot.discovered_images) }}</strong>
                         </div>
                         <div class="progress-metric-card">
-                            <span class="progress-metric-label">Cached images</span>
+                            <span class="progress-metric-label">Images cached</span>
                             <strong id="progress_downloaded_images">{{ "{:,}".format(snapshot.downloaded_images) }}</strong>
                         </div>
                         <div class="progress-metric-card">
-                            <span class="progress-metric-label">Cached videos</span>
-                            <strong id="progress_downloaded_videos">{{ "{:,}".format(snapshot.downloaded_videos) }}</strong>
+                            <span class="progress-metric-label">Conversations processed</span>
+                            <strong id="progress_processed_tweets">{{ "{:,}".format(snapshot.processed_tweets) }}</strong>
                         </div>
                     </div>
                     <dl class="summary-list">
@@ -275,13 +261,13 @@
     </div>
 
     <nav class="sidebar-dock" aria-label="Workspace sections">
-        <a href="#overview" class="sidebar-dock-item is-active" data-section-link="x" aria-label="X">
+        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="x" aria-label="X">
             <span class="icon dock-icon dock-icon-x" aria-hidden="true"></span>
         </a>
         <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" aria-label="Grok">
             <span class="icon dock-icon dock-icon-grok" aria-hidden="true"></span>
         </a>
-        <a href="{{ url_for('chatgpt') }}" class="sidebar-dock-item" data-section-link="chatgpt" aria-label="ChatGPT">
+        <a href="#overview" class="sidebar-dock-item is-active" data-section-link="chatgpt" aria-label="ChatGPT">
             <span class="icon dock-icon dock-icon-chatgpt" aria-hidden="true"></span>
         </a>
         <a href="{{ url_for('settings') }}" class="sidebar-dock-item" data-section-link="settings" aria-label="Settings">
@@ -302,15 +288,19 @@
     const phaseValue = document.getElementById("phase_value");
     const startButton = document.getElementById("start_button");
     const stopButton = document.getElementById("stop_button");
+    const browserSessionPanel = document.querySelector("[data-browser-session-panel]");
     const statusProgress = document.getElementById("status_progress");
+    const statusProgressAudit = document.getElementById("status_progress_audit");
     const statusProgressFill = document.getElementById("status_progress_fill");
+    const statusProgressDetail = document.getElementById("status_progress_detail");
     const recentEventsBody = document.getElementById("recent_events_body");
     const recentEventsPrev = document.getElementById("recent_events_prev");
     const recentEventsNext = document.getElementById("recent_events_next");
     const recentEventsPage = document.getElementById("recent_events_page");
     const sectionLinks = Array.from(document.querySelectorAll("[data-section-link]"));
     const shellMobileQuery = window.matchMedia("(max-width: 900px)");
-    const statusBannerStorageKey = "cachelikes:status-banner-dismissed";
+    const statusBannerStorageKey = "cachelikes:chatgpt-status-banner-dismissed";
+    const sidebarStorageKey = "cachelikes:chatgpt-sidebar-open";
     const sidebarMotionDurationMs = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 500;
     const recentEventsPageSize = 12;
     let recentEvents = {{ snapshot.recent_events | tojson }};
@@ -319,10 +309,8 @@
 
     function setStatusBannerVisible(isVisible, options = {}) {
         const { persist = true } = options;
-
         statusBanner.hidden = !isVisible;
         statusBanner.setAttribute("aria-hidden", String(!isVisible));
-
         if (persist) {
             try {
                 window.sessionStorage.setItem(statusBannerStorageKey, String(!isVisible));
@@ -336,14 +324,11 @@
             window.clearTimeout(sidebarMotionResetTimer);
             sidebarMotionResetTimer = 0;
         }
-
         appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
         void appShell.offsetWidth;
-
         if (!direction) {
             return;
         }
-
         appShell.classList.add("is-sidebar-animating", direction === "opening" ? "is-sidebar-opening" : "is-sidebar-closing");
         sidebarMotionResetTimer = window.setTimeout(() => {
             appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
@@ -354,35 +339,26 @@
     function setSidebarOpen(isOpen, options = {}) {
         const { persist = true, animate = false } = options;
         const wasOpen = appShell.classList.contains("is-sidebar-open");
-
         appShell.classList.toggle("is-sidebar-open", isOpen);
         appShell.classList.toggle("is-sidebar-collapsed", !isOpen);
         sidebarToggle.setAttribute("aria-expanded", String(isOpen));
         sidebarBackdrop.hidden = !shellMobileQuery.matches || !isOpen;
-
         if (animate && wasOpen !== isOpen) {
             setSidebarMotionState(isOpen ? "opening" : "closing");
         }
-
         if (persist) {
             try {
-                window.sessionStorage.setItem("cachelikes:sidebar-open", String(isOpen));
+                window.sessionStorage.setItem(sidebarStorageKey, String(isOpen));
             } catch (_error) {
             }
         }
     }
 
     try {
-        const storedSidebarState = window.sessionStorage.getItem("cachelikes:sidebar-open");
-        if (storedSidebarState === "false") {
+        if (window.sessionStorage.getItem(sidebarStorageKey) === "false") {
             setSidebarOpen(false, { persist: false });
         }
-    } catch (_error) {
-    }
-
-    try {
-        const storedBannerState = window.sessionStorage.getItem(statusBannerStorageKey);
-        if (storedBannerState === "true") {
+        if (window.sessionStorage.getItem(statusBannerStorageKey) === "true") {
             setStatusBannerVisible(false, { persist: false });
         }
     } catch (_error) {
@@ -391,15 +367,8 @@
     sidebarToggle.addEventListener("click", () => {
         setSidebarOpen(!appShell.classList.contains("is-sidebar-open"), { animate: true });
     });
-
-    sidebarBackdrop.addEventListener("click", () => {
-        setSidebarOpen(false);
-    });
-
-    statusBannerDismiss.addEventListener("click", () => {
-        setStatusBannerVisible(false);
-    });
-
+    sidebarBackdrop.addEventListener("click", () => setSidebarOpen(false));
+    statusBannerDismiss.addEventListener("click", () => setStatusBannerVisible(false));
     shellMobileQuery.addEventListener("change", () => {
         setSidebarOpen(appShell.classList.contains("is-sidebar-open"), { persist: false });
     });
@@ -412,181 +381,135 @@
         phaseValue.textContent = phase;
     }
 
-    function getRecentEventsTotalPages() {
-        return Math.max(1, Math.ceil(recentEvents.length / recentEventsPageSize));
-    }
-
     function renderRecentEventsPage() {
-        if (!recentEventsBody || !recentEventsPage || !recentEventsPrev || !recentEventsNext) {
-            return;
-        }
-
-        const totalPages = getRecentEventsTotalPages();
+        const totalPages = Math.max(1, Math.ceil(recentEvents.length / recentEventsPageSize));
         recentEventsCurrentPage = Math.min(Math.max(recentEventsCurrentPage, 1), totalPages);
-
         const pageStartIndex = (recentEventsCurrentPage - 1) * recentEventsPageSize;
         const pageItems = recentEvents.slice(pageStartIndex, pageStartIndex + recentEventsPageSize);
-
         recentEventsBody.innerHTML = "";
-
         if (pageItems.length === 0) {
             const row = document.createElement("tr");
-            const indexCell = document.createElement("td");
-            const messageCell = document.createElement("td");
-
-            indexCell.textContent = "-";
-            indexCell.className = "events-empty-index";
-            messageCell.textContent = "No recent events.";
-            messageCell.className = "events-empty-message";
-
-            row.append(indexCell, messageCell);
+            row.innerHTML = '<td class="events-empty-index">-</td><td class="events-empty-message">No recent events.</td>';
             recentEventsBody.appendChild(row);
         } else {
             pageItems.forEach((eventText, index) => {
                 const row = document.createElement("tr");
                 const indexCell = document.createElement("td");
                 const messageCell = document.createElement("td");
-
                 indexCell.textContent = String(pageStartIndex + index + 1);
                 messageCell.textContent = eventText;
-
                 row.append(indexCell, messageCell);
                 recentEventsBody.appendChild(row);
             });
         }
-
         recentEventsPage.textContent = `${recentEventsCurrentPage} / ${totalPages}`;
         recentEventsPrev.disabled = recentEventsCurrentPage <= 1;
         recentEventsNext.disabled = recentEventsCurrentPage >= totalPages;
     }
 
     function setRecentEvents(events) {
-        const normalizedEvents = Array.isArray(events) ? events : [];
-        recentEvents = normalizedEvents.filter((eventText) => eventText && String(eventText).trim().length > 0);
-
-        const totalPages = getRecentEventsTotalPages();
-        recentEventsCurrentPage = totalPages;
+        recentEvents = (Array.isArray(events) ? events : []).filter((eventText) => String(eventText || "").trim());
+        recentEventsCurrentPage = Math.max(1, Math.ceil(recentEvents.length / recentEventsPageSize));
         renderRecentEventsPage();
     }
 
-    function normalizeDockSection(activeId) {
-        if (activeId === "settings") {
-            return "settings";
-        }
-
-        if (["overview", "download", "activity"].includes(activeId)) {
-            return "x";
-        }
-
-        return activeId;
-    }
-
     function updateSectionLinkState(activeId) {
-        const normalizedActiveId = normalizeDockSection(activeId);
-        sectionLinks.forEach((link) => {
-            link.classList.toggle("is-active", link.dataset.sectionLink === normalizedActiveId);
-        });
+        const normalizedActiveId = ["overview", "chatgpt", "activity"].includes(activeId) ? "chatgpt" : activeId;
+        sectionLinks.forEach((link) => link.classList.toggle("is-active", link.dataset.sectionLink === normalizedActiveId));
     }
 
     const settingsDockLink = document.querySelector('[data-section-link="settings"]');
     if (settingsDockLink) {
-        settingsDockLink.addEventListener("click", () => {
-            setSidebarOpen(true);
-        });
+        settingsDockLink.addEventListener("click", () => setSidebarOpen(true));
     }
-
-    if (recentEventsPrev && recentEventsNext) {
-        recentEventsPrev.addEventListener("click", () => {
-            recentEventsCurrentPage -= 1;
-            renderRecentEventsPage();
-        });
-
-        recentEventsNext.addEventListener("click", () => {
-            recentEventsCurrentPage += 1;
-            renderRecentEventsPage();
-        });
-    }
+    recentEventsPrev.addEventListener("click", () => {
+        recentEventsCurrentPage -= 1;
+        renderRecentEventsPage();
+    });
+    recentEventsNext.addEventListener("click", () => {
+        recentEventsCurrentPage += 1;
+        renderRecentEventsPage();
+    });
 
     const observedSections = Array.from(document.querySelectorAll(".anchor-section"));
     if ("IntersectionObserver" in window) {
-        const sectionObserver = new IntersectionObserver(
-            (entries) => {
-                const visibleEntry = entries
-                    .filter((entry) => entry.isIntersecting)
-                    .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
-
-                if (visibleEntry) {
-                    updateSectionLinkState(visibleEntry.target.id);
-                }
-            },
-            {
-                rootMargin: "-10% 0px -55% 0px",
-                threshold: [0.2, 0.4, 0.6],
-            },
-        );
-
+        const sectionObserver = new IntersectionObserver((entries) => {
+            const visibleEntry = entries.filter((entry) => entry.isIntersecting)
+                .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+            if (visibleEntry) {
+                updateSectionLinkState(visibleEntry.target.id);
+            }
+        }, { rootMargin: "-10% 0px -55% 0px", threshold: [0.2, 0.4, 0.6] });
         observedSections.forEach((section) => sectionObserver.observe(section));
     }
 
     const numberFormatter = new Intl.NumberFormat("en-US");
     function formatMetricNumber(value) {
         const parsed = Number(value);
-        if (!Number.isFinite(parsed)) {
-            return "0";
-        }
-        return numberFormatter.format(parsed);
+        return Number.isFinite(parsed) ? numberFormatter.format(parsed) : "0";
     }
 
     function updateProgressBar(data) {
-        if (!statusProgress || !statusProgressFill) {
-            return;
+        const queued = Math.max(Number(data.queued_tweets) || 0, 0);
+        const processed = Math.min(Math.max(Number(data.processed_tweets) || 0, 0), queued);
+        const isIndeterminate = Boolean(data.running && !data.discovery_complete);
+        let completePercent = queued > 0 ? Math.round((processed / queued) * 100) : 0;
+        let progressDetail = "No ChatGPT sync is active.";
+        if (isIndeterminate) {
+            completePercent = 0;
+            progressDetail = queued > 0
+                ? `Discovery is running. ${formatMetricNumber(processed)} of ${formatMetricNumber(queued)} conversations processed; the total may increase.`
+                : "Scanning the ChatGPT project. The final conversation total is not known yet.";
+        } else if (queued > 0) {
+            const pending = Math.max(queued - processed, 0);
+            progressDetail = pending > 0
+                ? `${formatMetricNumber(processed)} of ${formatMetricNumber(queued)} conversations processed; ${formatMetricNumber(pending)} pending.`
+                : `${formatMetricNumber(processed)} of ${formatMetricNumber(queued)} conversations processed.`;
+        } else if (["finished", "success", "stopped"].includes(data.phase)) {
+            completePercent = 100;
+            progressDetail = "No new ChatGPT images were required for this run.";
         }
-
-        const discovered = Number(data.discovered_tweets) || 0;
-        const processed = (Number(data.downloaded_posts) || 0) + (Number(data.skipped_tweets) || 0) + (Number(data.failed_tweets) || 0);
-        let progressPercent = 0;
-        let isIndeterminate = false;
-
-        if (data.phase === "collecting" || data.phase === "starting" || data.phase === "stopping") {
-            isIndeterminate = true;
-        } else if (data.phase === "downloading") {
-            const total = Math.max(discovered, processed, 1);
-            progressPercent = Math.round((processed / total) * 100);
-        } else if (["finished", "completed", "success", "stopped"].includes(data.phase)) {
-            progressPercent = 100;
-        } else if (data.phase === "failed") {
-            const total = Math.max(discovered, processed, 1);
-            progressPercent = Math.round((processed / total) * 100);
-        }
-
         statusProgress.classList.toggle("is-indeterminate", isIndeterminate);
-        statusProgressFill.style.width = `${Math.min(Math.max(progressPercent, 0), 100)}%`;
-        statusProgress.setAttribute("aria-valuenow", String(Math.min(Math.max(progressPercent, 0), 100)));
+        statusProgress.classList.remove("is-auditing");
+        statusProgressFill.style.width = `${Math.min(Math.max(completePercent, 0), 100)}%`;
+        statusProgressAudit.style.width = "0%";
+        statusProgress.setAttribute("aria-valuetext", progressDetail);
+        if (isIndeterminate) {
+            statusProgress.removeAttribute("aria-valuenow");
+        } else {
+            statusProgress.setAttribute("aria-valuenow", String(completePercent));
+        }
+        statusProgressDetail.textContent = progressDetail;
     }
 
     async function refreshStatus() {
-        const response = await fetch("{{ url_for('api_status') }}", { cache: "no-store" });
-        const data = await response.json();
-
-        document.getElementById("discovered_tweets").textContent = formatMetricNumber(data.discovered_tweets);
-        document.getElementById("downloaded_posts").textContent = formatMetricNumber(data.downloaded_posts);
-        document.getElementById("downloaded_images").textContent = formatMetricNumber(data.downloaded_images);
-        document.getElementById("downloaded_videos").textContent = formatMetricNumber(data.downloaded_videos);
-        document.getElementById("progress_downloaded_posts").textContent = formatMetricNumber(data.downloaded_posts);
-        document.getElementById("progress_downloaded_images").textContent = formatMetricNumber(data.downloaded_images);
-        document.getElementById("progress_downloaded_videos").textContent = formatMetricNumber(data.downloaded_videos);
-        document.getElementById("skipped_tweets").textContent = formatMetricNumber(data.skipped_tweets);
-        document.getElementById("output_dir").textContent = data.output_dir || "-";
-        document.getElementById("message").textContent = data.message;
-        document.getElementById("started_at").textContent = data.started_at || "-";
-        document.getElementById("finished_at").textContent = data.finished_at || "-";
-        setRecentEvents(data.recent_events || []);
-
-        bannerMessage.textContent = data.message;
-        setPhaseState(data.phase);
-        updateProgressBar(data);
-        startButton.disabled = Boolean(data.running);
-        stopButton.disabled = !Boolean(data.running);
+        try {
+            const response = await fetch("{{ url_for('api_chatgpt_status') }}", { cache: "no-store" });
+            const data = await response.json();
+            document.getElementById("discovered_tweets").textContent = formatMetricNumber(data.discovered_tweets);
+            document.getElementById("discovered_images").textContent = formatMetricNumber(data.discovered_images);
+            document.getElementById("downloaded_images").textContent = formatMetricNumber(data.downloaded_images);
+            document.getElementById("skipped_tweets").textContent = formatMetricNumber(data.skipped_tweets);
+            document.getElementById("failed_tweets").textContent = formatMetricNumber(data.failed_tweets);
+            document.getElementById("progress_discovered_images").textContent = formatMetricNumber(data.discovered_images);
+            document.getElementById("progress_downloaded_images").textContent = formatMetricNumber(data.downloaded_images);
+            document.getElementById("progress_processed_tweets").textContent = formatMetricNumber(data.processed_tweets);
+            document.getElementById("output_dir").textContent = data.output_dir || "-";
+            document.getElementById("message").textContent = data.message;
+            document.getElementById("started_at").textContent = data.started_at || "-";
+            document.getElementById("finished_at").textContent = data.finished_at || "-";
+            bannerMessage.textContent = data.message;
+            setPhaseState(data.phase);
+            setRecentEvents(data.recent_events || []);
+            updateProgressBar(data);
+            const browserDownloadReady = browserSessionPanel
+                ? browserSessionPanel.dataset.browserDownloadReady !== "false"
+                : true;
+            startButton.disabled = Boolean(data.running) || !browserDownloadReady;
+            stopButton.disabled = !Boolean(data.running);
+        } catch (_error) {
+            statusProgressDetail.textContent = "Status refresh temporarily unavailable.";
+        }
     }
 
     setRecentEvents(recentEvents);

@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.7.1-codex.1
+# Code version: v1.7.2-codex.1
 
 from __future__ import annotations
 
@@ -11,6 +11,8 @@ from typing import Any
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 from app.core.browser_sessions import browser_descriptors, build_browser_options, probe_browser_session
+from app.core.chatgpt_downloader import build_chatgpt_initial_snapshot, reset_chatgpt_state
+from app.core.chatgpt_service import ChatGPTDownloadService
 from app.core.config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -38,6 +40,8 @@ def reconcile_cached_snapshot(snapshot: dict[str, Any], hydrated_payload: dict[s
     snapshot["output_dir"] = hydrated_payload["output_dir"]
     snapshot["downloaded_posts"] = hydrated_payload["downloaded_posts"]
     snapshot["downloaded_tweets"] = hydrated_payload["downloaded_tweets"]
+    if "discovered_images" in hydrated_payload:
+        snapshot["discovered_images"] = hydrated_payload["discovered_images"]
     snapshot["downloaded_images"] = hydrated_payload["downloaded_images"]
     snapshot["downloaded_videos"] = hydrated_payload["downloaded_videos"]
     snapshot["message"] = hydrated_payload["message"]
@@ -57,6 +61,8 @@ def create_app() -> Flask:
     service = CacheLikesService(state)
     grok_state = TaskState(version=APP_VERSION, snapshot_factory=build_grok_initial_snapshot)
     grok_service = GrokDownloadService(grok_state)
+    chatgpt_state = TaskState(version=APP_VERSION, snapshot_factory=build_chatgpt_initial_snapshot)
+    chatgpt_service = ChatGPTDownloadService(chatgpt_state)
     saved_config = load_saved_config()
 
     def build_reconciled_snapshot() -> dict[str, Any]:
@@ -69,6 +75,15 @@ def create_app() -> Flask:
         """Refresh Grok cache counters from disk without discarding live task status."""
         snapshot = grok_state.snapshot()
         hydrated = build_grok_initial_snapshot(APP_VERSION)
+        return reconcile_cached_snapshot(snapshot, asdict(hydrated))
+
+    def build_reconciled_chatgpt_snapshot() -> dict[str, Any]:
+        """Refresh ChatGPT image counters from disk without discarding live task status."""
+        snapshot = chatgpt_state.snapshot()
+        hydrated = build_chatgpt_initial_snapshot(
+            APP_VERSION,
+            project_name=saved_config.chatgpt_project_name,
+        )
         return reconcile_cached_snapshot(snapshot, asdict(hydrated))
 
     def parse_int_field(field_name: str, fallback: int, minimum: int = 1) -> int:
@@ -92,6 +107,17 @@ def create_app() -> Flask:
             stale_round_limit=parse_int_field("stale_round_limit", source.stale_round_limit),
             x_browser=(request.form.get("x_browser", source.x_browser) or source.x_browser).strip().lower(),
             grok_browser=(request.form.get("grok_browser", source.grok_browser) or source.grok_browser).strip().lower(),
+            chatgpt_browser=(request.form.get("chatgpt_browser", source.chatgpt_browser) or source.chatgpt_browser)
+            .strip()
+            .lower(),
+            chatgpt_project_url=(
+                request.form.get("chatgpt_project_url", source.chatgpt_project_url) or source.chatgpt_project_url
+            ).strip()
+            or source.chatgpt_project_url,
+            chatgpt_project_name=(
+                request.form.get("chatgpt_project_name", source.chatgpt_project_name) or source.chatgpt_project_name
+            ).strip()
+            or source.chatgpt_project_name,
             chrome_user_data_dir=Path(
                 request.form.get("chrome_user_data_dir", str(source.chrome_user_data_dir)).strip()
             ).expanduser(),
@@ -130,14 +156,30 @@ def create_app() -> Flask:
             log_file_path=str(get_log_file_path()),
         )
 
+    @app.get("/chatgpt")
+    def chatgpt():
+        snapshot = build_reconciled_chatgpt_snapshot()
+        return render_template(
+            "chatgpt.html",
+            snapshot=snapshot,
+            browser_options=build_browser_options(saved_config),
+            saved_config=saved_config,
+            version=APP_VERSION,
+            default_host=DEFAULT_HOST,
+            default_port=DEFAULT_PORT,
+            log_file_path=str(get_log_file_path()),
+        )
+
     @app.get("/settings")
     def settings():
         snapshot = build_reconciled_snapshot()
         grok_snapshot = build_reconciled_grok_snapshot()
+        chatgpt_snapshot = build_reconciled_chatgpt_snapshot()
         return render_template(
             "settings.html",
             snapshot=snapshot,
             grok_snapshot=grok_snapshot,
+            chatgpt_snapshot=chatgpt_snapshot,
             version=APP_VERSION,
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,
@@ -191,6 +233,53 @@ def create_app() -> Flask:
         grok_service.request_stop()
         return redirect(url_for("grok"))
 
+    @app.post("/chatgpt/start")
+    def start_chatgpt():
+        nonlocal saved_config
+        config = parse_form_config(saved_config)
+        saved_config = config
+        save_config(saved_config)
+        descriptor = browser_descriptors(config).get(config.chatgpt_browser)
+        if descriptor is None:
+            chatgpt_state.finish_error(f"Unsupported ChatGPT browser: {config.chatgpt_browser}")
+            return redirect(url_for("chatgpt"))
+        try:
+            chatgpt_service.start(config)
+        except RuntimeError as exc:
+            if chatgpt_service.is_running():
+                chatgpt_state.append_event(str(exc))
+                chatgpt_state.update(last_error=str(exc))
+            else:
+                chatgpt_state.finish_error(str(exc))
+        return redirect(url_for("chatgpt"))
+
+    @app.post("/chatgpt/stop")
+    def stop_chatgpt():
+        chatgpt_service.request_stop()
+        return redirect(url_for("chatgpt"))
+
+    @app.post("/chatgpt/reset")
+    def reset_chatgpt():
+        if chatgpt_service.is_running():
+            chatgpt_state.append_event("Reset skipped because a ChatGPT sync is still running.")
+            chatgpt_state.update(last_error="Cannot reset ChatGPT state while a sync is running.")
+            return redirect(url_for("chatgpt"))
+
+        result = reset_chatgpt_state(project_name=saved_config.chatgpt_project_name)
+        snapshot = build_chatgpt_initial_snapshot(
+            APP_VERSION,
+            project_name=saved_config.chatgpt_project_name,
+        )
+        message = (
+            f"Reset ChatGPT state. Removed {result.removed_media_files} image files, "
+            f"{result.removed_state_files} state files, "
+            f"{result.removed_partial_files} partial files."
+        )
+        snapshot.message = message
+        snapshot.recent_events = [f"[{utc_now()}] {message}"]
+        chatgpt_state.replace_snapshot(snapshot)
+        return redirect(url_for("chatgpt"))
+
     @app.post("/grok/reset")
     def reset_grok():
         if grok_service.is_running():
@@ -224,6 +313,10 @@ def create_app() -> Flask:
     @app.get("/api/grok/status")
     def api_grok_status():
         return jsonify(build_reconciled_grok_snapshot())
+
+    @app.get("/api/chatgpt/status")
+    def api_chatgpt_status():
+        return jsonify(build_reconciled_chatgpt_snapshot())
 
     @app.get("/api/browser-session")
     def api_browser_session():

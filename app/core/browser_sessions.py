@@ -1,6 +1,6 @@
-"""Browser session probing helpers for X and Grok."""
+"""Browser session probing helpers for X, Grok, and ChatGPT."""
 
-# Code version: v1.4.1-codex.1
+# Code version: v1.4.2-codex.1
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .config import CrawlConfig
+from .config import CrawlConfig, DEFAULT_CHATGPT_PROJECT_URL
 
 try:  # pragma: no cover - depends on local runtime
     from playwright.sync_api import Error as PlaywrightError
@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover
 
 X_HOME_URL = "https://x.com/home"
 GROK_FILES_URL = "https://grok.com/files"
+CHATGPT_PROJECT_URL = DEFAULT_CHATGPT_PROJECT_URL
 EDGE_USER_DATA_DIR = Path.home() / "Library/Application Support/Microsoft Edge"
 EDGE_PROFILE_DIRECTORY = "Default"
 SAFARI_APPLESCRIPT_SOURCE_LIMIT = 500_000
@@ -109,7 +110,7 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
         raise ValueError(f"Unsupported browser: {browser_name}")
 
     platform_key = (platform_name or "").strip().lower()
-    if platform_key not in {"x", "grok"}:
+    if platform_key not in {"x", "grok", "chatgpt"}:
         raise ValueError(f"Unsupported platform: {platform_name}")
 
     result = {
@@ -124,7 +125,9 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
     }
 
     try:
-        if descriptor.engine == "safari":
+        if platform_key == "chatgpt":
+            result.update(_probe_chromium_chatgpt_session(descriptor, config))
+        elif descriptor.engine == "safari":
             if platform_key == "x":
                 result.update(_probe_safari_x_session(descriptor))
             else:
@@ -199,6 +202,37 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
                     "message": f"{descriptor.label} is not signed in to Grok.",
                 }
             raise RuntimeError(f"Could not detect the signed-in Grok account from {descriptor.label}.")
+
+
+def _probe_chromium_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -> dict[str, Any]:
+    """Validate the configured ChatGPT project without opening a second browser window."""
+    if descriptor.engine != "chromium":
+        return {
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "",
+            "message": f"ChatGPT sync requires a Chromium browser; {descriptor.label} is not supported.",
+        }
+
+    project_name = config.chatgpt_project_name or "ChatGPT project"
+    project_url = config.chatgpt_project_url or CHATGPT_PROJECT_URL
+    if not project_url.startswith("https://chatgpt.com/"):
+        return {
+            "logged_in": False,
+            "can_download": False,
+            "account_name": project_name,
+            "message": "ChatGPT project URL must use https://chatgpt.com/.",
+        }
+
+    return {
+        "logged_in": True,
+        "can_download": True,
+        "account_name": project_name,
+        "message": (
+            f"{descriptor.label} is configured for {project_name}. "
+            "An interactive Edge window will open when the sync starts."
+        ),
+    }
 
 
 def _probe_safari_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:

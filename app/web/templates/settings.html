@@ -1,4 +1,4 @@
-<!-- Code version: v1.4.5-codex.6 -->
+<!-- Code version: v1.4.6-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -130,6 +130,33 @@
                             </button>
                         </form>
                     </section>
+                    <section class="danger-zone" aria-labelledby="chatgpt_danger_zone_heading">
+                        <div>
+                            <p class="workspace-kicker">Danger zone</p>
+                            <h3 id="chatgpt_danger_zone_heading">Reset ChatGPT state</h3>
+                        </div>
+                        <p id="reset_chatgpt_description">
+                            Permanently delete all cached original ChatGPT project images and resumable partial downloads.
+                        </p>
+                        {% if chatgpt_snapshot.running %}
+                        <p class="danger-zone-note">Unavailable while a ChatGPT sync is running.</p>
+                        {% endif %}
+                        <form
+                            action="{{ url_for('reset_chatgpt') }}"
+                            method="post"
+                            onsubmit="return window.confirm('Reset ChatGPT state? This will permanently delete all cached original project images and resumable partial downloads.')"
+                        >
+                            <button
+                                type="submit"
+                                class="danger-button"
+                                id="reset_chatgpt_button"
+                                aria-describedby="reset_chatgpt_description"
+                                {% if chatgpt_snapshot.running %}disabled{% endif %}
+                            >
+                                Reset ChatGPT State
+                            </button>
+                        </form>
+                    </section>
                 </div>
             </div>
         </section>
@@ -141,6 +168,9 @@
         </a>
         <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" aria-label="Grok">
             <span class="icon dock-icon dock-icon-grok" aria-hidden="true"></span>
+        </a>
+        <a href="{{ url_for('chatgpt') }}" class="sidebar-dock-item" data-section-link="chatgpt" aria-label="ChatGPT">
+            <span class="icon dock-icon dock-icon-chatgpt" aria-hidden="true"></span>
         </a>
         <a href="{{ url_for('settings') }}" class="sidebar-dock-item is-active" data-section-link="settings" aria-label="Settings">
             <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>

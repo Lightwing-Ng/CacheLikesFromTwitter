@@ -55,15 +55,22 @@ def test_grok_status_error_summary_is_actionable_and_bounded() -> None:
 
 @pytest.mark.integration
 def test_web_pages_and_status_apis_are_available(client) -> None:
-    for path, expected_text in (("/", b"Execution overview"), ("/grok", b"Grok library overview"), ("/settings", b"Configuration center")):
+    for path, expected_text in (
+        ("/", b"Execution overview"),
+        ("/grok", b"Grok library overview"),
+        ("/chatgpt", b"Studio208cm project overview"),
+        ("/settings", b"Configuration center"),
+    ):
         response = client.get(path)
         assert response.status_code == 200
         assert expected_text in response.data
 
     status = client.get("/api/status")
     grok_status = client.get("/api/grok/status")
+    chatgpt_status = client.get("/api/chatgpt/status")
     assert status.status_code == 200
     assert grok_status.status_code == 200
+    assert chatgpt_status.status_code == 200
     assert status.get_json()["phase"] in {"idle", "starting", "downloading", "finished", "failed", "stopped", "stopping"}
 
 

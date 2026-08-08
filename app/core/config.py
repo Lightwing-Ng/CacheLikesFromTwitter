@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.5.1-codex.1
+# Code version: v1.5.2-codex.1
 
 from __future__ import annotations
 
@@ -14,11 +14,15 @@ LOCAL_STORE_ROOT = PROJECT_ROOT / "local_store"
 X_LOCAL_STORE_DIRNAME = "x"
 LOGS_ROOT = PROJECT_ROOT / "logs"
 LEGACY_SETTINGS_PATH = PROJECT_ROOT / ".cachelikes-settings.json"
-DEFAULT_HOST = "127.0.0.1"
+DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8666
 DEFAULT_CHROME_USER_DATA_DIR = Path.home() / "Library/Application Support/Google/Chrome"
 DEFAULT_CHROME_PROFILE_DIRECTORY = "Default"
 DEFAULT_DOWNLOAD_WORKERS = 4
+DEFAULT_CHATGPT_PROJECT_URL = (
+    "https://chatgpt.com/g/g-p-69522aca2f788191b337866d5c03c59e-studio208cm/project"
+)
+DEFAULT_CHATGPT_PROJECT_NAME = "Studio208cm"
 
 
 def default_settings_path() -> Path:
@@ -41,6 +45,9 @@ class CrawlConfig:
     stale_round_limit: int = 8
     x_browser: str = "chrome"
     grok_browser: str = "edge"
+    chatgpt_browser: str = "edge"
+    chatgpt_project_url: str = DEFAULT_CHATGPT_PROJECT_URL
+    chatgpt_project_name: str = DEFAULT_CHATGPT_PROJECT_NAME
     chrome_user_data_dir: Path = DEFAULT_CHROME_USER_DATA_DIR
     chrome_profile_directory: str = DEFAULT_CHROME_PROFILE_DIRECTORY
     account_name_override: str = ""
@@ -81,6 +88,12 @@ def load_saved_config(settings_path: Path = SETTINGS_PATH) -> CrawlConfig:
         stale_round_limit=int(payload.get("stale_round_limit", defaults.stale_round_limit)),
         x_browser=str(payload.get("x_browser", defaults.x_browser)).strip().lower() or defaults.x_browser,
         grok_browser=str(payload.get("grok_browser", defaults.grok_browser)).strip().lower() or defaults.grok_browser,
+        chatgpt_browser=str(payload.get("chatgpt_browser", defaults.chatgpt_browser)).strip().lower()
+        or defaults.chatgpt_browser,
+        chatgpt_project_url=str(payload.get("chatgpt_project_url", defaults.chatgpt_project_url)).strip()
+        or defaults.chatgpt_project_url,
+        chatgpt_project_name=str(payload.get("chatgpt_project_name", defaults.chatgpt_project_name)).strip()
+        or defaults.chatgpt_project_name,
         chrome_user_data_dir=Path(payload.get("chrome_user_data_dir", str(defaults.chrome_user_data_dir))).expanduser(),
         chrome_profile_directory=str(
             payload.get("chrome_profile_directory", defaults.chrome_profile_directory)
@@ -95,6 +108,9 @@ def save_config(config: CrawlConfig, settings_path: Path = SETTINGS_PATH) -> Non
     payload = asdict(config)
     payload["x_browser"] = config.x_browser
     payload["grok_browser"] = config.grok_browser
+    payload["chatgpt_browser"] = config.chatgpt_browser
+    payload["chatgpt_project_url"] = config.chatgpt_project_url
+    payload["chatgpt_project_name"] = config.chatgpt_project_name
     payload["chrome_user_data_dir"] = str(config.chrome_user_data_dir)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(payload, indent=2, sort_keys=True))

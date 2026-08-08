@@ -9,8 +9,9 @@ language is the source of truth for shared application-shell, typography, surfac
 control, and motion decisions. Read [STYLE_REFERENCE.md](STYLE_REFERENCE.md) before
 making any UI change.
 
-This project starts a local web console on `http://127.0.0.1:8666` and caches media from the
-currently logged-in X account's likes timeline into `local_store/<account_name>/`.
+This project starts a web console on `http://localhost:8666` and listens on all network
+interfaces so devices on the same LAN can use `http://<computer-ip>:8666`. It caches media from
+the currently logged-in X account's likes timeline into `local_store/<account_name>/`.
 
 ## Quick Start
 
