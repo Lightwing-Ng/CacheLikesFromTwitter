@@ -161,7 +161,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn('local-media-browser.js?v=local-media-browser-v1.9.0-codex.1', body)
+            self.assertIn('local-media-browser.js?v=local-media-browser-v1.10.0-codex.1', body)
             self.assertIn('data-media-source-link', body)
             self.assertIn('data-media-copy-source-url', body)
             self.assertIn('Open original post', body)

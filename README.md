@@ -1,6 +1,6 @@
 # CacheLikesFromTwitter
 
-Documentation version: `v1.4.0`
+Documentation version: `v1.4.2`
 
 CacheLikesFromTwitter is a local Flask web console that caches media from the
 currently signed-in X account's Likes timeline, Grok's Files library, and a
@@ -20,10 +20,14 @@ endpoint as trusted-only; do not expose it through port forwarding or a public r
 
 ## Requirements
 
-- macOS with `/usr/local/bin/python3.13`
+- macOS with a supported Python 3.13 or 3.14 interpreter; the resolver prefers the host
+  `python3` when it is supported
 - A signed-in Chrome, Edge, or Safari session for the source you want to cache
 - Playwright Chromium for Chromium-backed X, Grok, and ChatGPT automation
 - `yt-dlp` for X media downloads
+
+ChatGPT project caching uses up to three isolated Edge workers in parallel. The worker count is
+bounded deliberately because each worker owns a separate authenticated browser context.
 
 ## Quick Start
 
@@ -31,15 +35,16 @@ endpoint as trusted-only; do not expose it through port forwarding or a public r
 ./scripts/setup_python.sh
 ```
 
-Then open the project in PyCharm and run the shared `main` configuration with your system
-`Python 3.13` interpreter, or launch it from a shell:
+Then open the project in PyCharm and run the shared `main` configuration with a supported
+Python 3.13 or 3.14 interpreter, or launch it from a shell:
 
 ```bash
 ./scripts/run_app.sh
 ```
 
 Set `CACHELIKES_SKIP_PLAYWRIGHT_INSTALL=1` only for an offline test-only dependency setup.
-`CACHELIKES_PYTHON` is an explicit Python 3.13 override intended primarily for CI.
+`CACHELIKES_PYTHON` is an explicit Python 3.13 or 3.14 override intended primarily for CI or
+local runtime compatibility.
 
 ## Quality Checks
 
@@ -70,7 +75,7 @@ authenticated browser, downloads media, or writes to user-owned caches, logs, or
 
 ## Project Layout
 
-- `main.py`: guarded Python 3.13 entrypoint
+- `main.py`: supported Python 3.13/3.14 entrypoint
 - `app/core/`: cache services, browser automation, downloaders, state, storage, and logging
 - `app/web/`: Flask routes, templates, static assets, and the local-media browser
 - `tests/`: deterministic unit and Flask integration coverage

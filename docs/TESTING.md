@@ -1,10 +1,10 @@
 # Testing guide
 
-Documentation version: `v1.0.2-codex.1`
+Documentation version: `v1.0.3-codex.1`
 
 ## Supported commands
 
-Install the runtime and development dependencies with the pinned Python 3.13 workflow:
+Install the runtime and development dependencies with the supported Python 3.13/3.14 workflow:
 
 ```bash
 ./scripts/setup_python.sh
@@ -32,8 +32,9 @@ Run the complete quality gate:
 ./scripts/check.sh
 ```
 
-`CACHELIKES_PYTHON` may override the interpreter only when it resolves to Python 3.13. It exists
-for non-macOS CI runners; normal local development must use `/usr/local/bin/python3.13`.
+`CACHELIKES_PYTHON` may override the interpreter only when it resolves to Python 3.13 or 3.14.
+The resolver prefers the supported host `python3`, then falls back to known macOS Python
+installations.
 
 ## Quality gate
 
@@ -48,8 +49,8 @@ ignored by Git. The gate currently enforces a 55% combined statement-and-branch 
 Override `CACHELIKES_COVERAGE_MINIMUM` only for an intentional local diagnostic, never to make a
 regression pass.
 
-Baseline measured on 9 Aug 2026 with Python 3.13.0, pytest 9.0.3, pytest-cov 7.1.0, and Ruff
-0.15.21:
+Baseline measured on 9 Aug 2026 with a supported Python 3.13/3.14 runtime, pytest 9.0.3,
+pytest-cov 7.1.0, and Ruff 0.15.21:
 
 - 120 tests passed, with 13 unittest subtests passed.
 - Combined coverage for `app/` was approximately 59% using branch coverage.

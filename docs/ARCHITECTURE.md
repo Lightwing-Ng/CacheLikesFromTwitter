@@ -1,21 +1,22 @@
 # Architecture guide
 
-Documentation version: `v1.0.0-codex.1`
+Documentation version: `v1.0.2-codex.1`
 
 ## Runtime flow
 
 ```text
 main.py
-  -> Python 3.13 guard
+  -> supported Python 3.13/3.14 runtime resolution
   -> structured logging setup
   -> app.web.app.create_app()
   -> Flask routes and static UI
   -> app.core services, browser sessions, downloaders, and local catalogs
 ```
 
-`main.py` is the only supported application entrypoint. It rejects any interpreter other than
-Python 3.13 before Flask is imported. `create_app()` builds independent state containers for the
-X, Grok, and ChatGPT workflows, registers the local-media browser, and serves the Flask routes.
+`main.py` is the only supported application entrypoint. The shell runtime resolver accepts Python
+3.13 or 3.14 and the module itself remains runtime-agnostic before Flask is imported.
+`create_app()` builds independent state containers for the X, Grok, and ChatGPT workflows,
+registers the local-media browser, and serves the Flask routes.
 
 ## Application layers
 
@@ -71,12 +72,16 @@ resolve their default cache directory at call time so tests can safely redirect 
 ```text
 configured ChatGPT project or conversation URL
   -> ChatGPTDownloadService
-  -> original-image discovery and catalog validation
+  -> bounded parallel conversation workers with isolated Edge contexts
+  -> original-image discovery, download claims, and catalog validation
   -> local_store/chatgpt/<project-name>/
 ```
 
-Only original image payloads that pass signature validation are retained. The project name is
-sanitized before it becomes a cache path.
+Up to three workers scan conversations and download original image payloads concurrently. Each
+worker owns its Playwright context and recycles its page after a bounded number of conversations;
+recoverable page failures receive one retry. Catalog claims and atomic writes prevent duplicate
+workers from corrupting the local index. Only image payloads that pass signature validation are
+retained. The project name is sanitized before it becomes a cache path.
 
 ### Local-media browser
 

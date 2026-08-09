@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.0.0-codex.1`
+Documentation version: `v1.0.2-codex.1`
 
 ## Launch
 
@@ -60,10 +60,13 @@ you intend to discard that cache. Do not use reset operations as a routine troub
 
 ## Troubleshooting
 
-- Missing Playwright Chromium: run `/usr/local/bin/python3.13 -m playwright install chromium`.
-- Missing downloader: install the project requirements so `yt-dlp` is available to the pinned
-  interpreter.
+- Missing Playwright Chromium: run `./scripts/setup_python.sh`, or run
+  `CACHELIKES_PYTHON=/path/to/python3 -m playwright install chromium` with Python 3.13 or 3.14.
+- Missing downloader: install the project requirements so `yt-dlp` is available to the selected
+  supported interpreter.
 - Browser profile lock: close duplicate normal browser windows, then retry the session probe.
+- ChatGPT parallel sync: the project workflow uses up to three isolated Edge contexts; lower the
+  shared Download workers setting only when the machine cannot sustain that browser load.
 - Sync failure: inspect `logs/cachelikes.log.jsonl` for full structured diagnostics. The UI shows a
   bounded status message while retaining the detailed local log.
 - Cache inconsistency: use the local-media browser to inspect the affected source before choosing a

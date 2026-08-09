@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.1.2-codex.1
+Code version: v1.3.0-codex.1
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ import pytest
 from app.core.browser_sessions import (
     BrowserDescriptor,
     build_chromium_launch_args,
+    clone_browser_profile,
     extract_json_string_field,
     extract_x_account_from_source,
     detect_safari_x_account_handle,
@@ -146,6 +147,59 @@ def test_background_chromium_launch_args_keep_the_window_offscreen() -> None:
         "--window-size=1280,900",
         "--start-minimized",
     ]
+
+
+def test_clone_browser_profile_continues_when_macos_blocks_local_state(tmp_path: Path) -> None:
+    source_user_data_dir = tmp_path / "Edge"
+    source_profile_dir = source_user_data_dir / "Default"
+    source_profile_dir.mkdir(parents=True)
+    (source_profile_dir / "Preferences").write_text("{}", encoding="utf-8")
+    local_state = source_user_data_dir / "Local State"
+    local_state.write_text("{}", encoding="utf-8")
+    descriptor = BrowserDescriptor(
+        browser_id="edge",
+        label="Edge",
+        icon_filename="images/browser.edge.png",
+        engine="chromium",
+        user_data_dir=source_user_data_dir,
+        profile_directory="Default",
+        channel="msedge",
+    )
+
+    original_read_bytes = Path.read_bytes
+
+    def read_bytes_with_permission_error(path: Path) -> bytes:
+        if path == local_state:
+            raise PermissionError(1, "Operation not permitted", str(path))
+        return original_read_bytes(path)
+
+    with patch.object(Path, "read_bytes", read_bytes_with_permission_error):
+        target_user_data_dir, temp_dir = clone_browser_profile(descriptor)
+
+    try:
+        assert (target_user_data_dir / "Default" / "Preferences").read_text(encoding="utf-8") == "{}"
+        assert not (target_user_data_dir / "Local State").exists()
+    finally:
+        temp_dir.cleanup()
+
+
+def test_clone_browser_profile_reports_macos_profile_permission_error(tmp_path: Path) -> None:
+    source_user_data_dir = tmp_path / "Edge"
+    source_profile_dir = source_user_data_dir / "Default"
+    source_profile_dir.mkdir(parents=True)
+    descriptor = BrowserDescriptor(
+        browser_id="edge",
+        label="Edge",
+        icon_filename="images/browser.edge.png",
+        engine="chromium",
+        user_data_dir=source_user_data_dir,
+        profile_directory="Default",
+        channel="msedge",
+    )
+
+    with patch("shutil.copytree", side_effect=PermissionError(1, "Operation not permitted", source_profile_dir)):
+        with pytest.raises(RuntimeError, match="Full Disk Access"):
+            clone_browser_profile(descriptor)
 
 
 def test_safari_profile_link_detection_uses_the_rendered_navigation() -> None:

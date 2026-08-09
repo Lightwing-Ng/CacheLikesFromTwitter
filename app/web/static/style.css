@@ -1,4 +1,4 @@
-/* Code version: v2.18.0-codex.1 */
+/* Code version: v2.19.0-codex.1 */
 :root {
     color-scheme: light;
     --color-scheme: light;
@@ -3459,6 +3459,9 @@ body::before,
 
 .browser-dialog.is-media-viewer {
     --browser-media-viewer-edge-inset: 48px;
+    --browser-media-viewer-control-size: var(--settings-round-icon-button-size);
+    --browser-media-viewer-control-gap: clamp(12px, 1.5vw, 18px);
+    --browser-media-frame-radius: clamp(18px, 2.2vw, 30px);
     display: grid;
     place-items: center;
     grid-template-columns: minmax(0, 1fr);
@@ -3500,12 +3503,12 @@ body::before,
 }
 
 .browser-dialog.is-media-viewer .browser-dialog-close {
-    top: clamp(10px, 1.5vw, 18px);
-    right: clamp(10px, 1.5vw, 18px);
-    width: var(--settings-round-icon-button-size);
-    min-width: var(--settings-round-icon-button-size);
-    height: var(--settings-round-icon-button-size);
-    min-height: var(--settings-round-icon-button-size);
+    top: calc(var(--browser-media-frame-radius) - (var(--browser-media-viewer-control-size) / 2));
+    right: calc(-1 * (var(--browser-media-viewer-control-gap) + var(--browser-media-viewer-control-size)));
+    width: var(--browser-media-viewer-control-size);
+    min-width: var(--browser-media-viewer-control-size);
+    height: var(--browser-media-viewer-control-size);
+    min-height: var(--browser-media-viewer-control-size);
     padding: 0;
     border: var(--frosted-glass-border);
     border-radius: var(--settings-round-icon-button-radius);
@@ -3516,6 +3519,7 @@ body::before,
     color: var(--settings-round-icon-button-color);
     font-size: 20px;
     line-height: 1;
+    transform: none;
 }
 
 .browser-dialog.is-media-viewer .browser-dialog-close:hover,
@@ -3569,23 +3573,18 @@ body::before,
 
 .browser-video-navigation {
     position: absolute;
-    top: 50%;
-    right: 0;
-    left: 0;
+    inset: 0;
     z-index: var(--layer-control-affordance);
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 14px;
     pointer-events: none;
-    transform: translateY(-50%);
 }
 
 .browser-video-nav-button {
-    width: var(--settings-round-icon-button-size);
-    min-width: var(--settings-round-icon-button-size);
-    height: var(--settings-round-icon-button-size);
-    min-height: var(--settings-round-icon-button-size);
+    position: absolute;
+    top: 50%;
+    width: var(--browser-media-viewer-control-size);
+    min-width: var(--browser-media-viewer-control-size);
+    height: var(--browser-media-viewer-control-size);
+    min-height: var(--browser-media-viewer-control-size);
     padding: 0;
     border: var(--frosted-glass-border);
     border-radius: var(--settings-round-icon-button-radius);
@@ -3595,7 +3594,16 @@ body::before,
     -webkit-backdrop-filter: var(--frosted-glass-blur);
     color: var(--settings-round-icon-button-color);
     pointer-events: auto;
+    transform: translateY(-50%);
     transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), color 160ms var(--motion-standard), transform 460ms var(--motion-press);
+}
+
+.browser-video-nav-button:first-child {
+    left: calc(-1 * (var(--browser-media-viewer-control-gap) + var(--browser-media-viewer-control-size)));
+}
+
+.browser-video-nav-button:last-child {
+    right: calc(-1 * (var(--browser-media-viewer-control-gap) + var(--browser-media-viewer-control-size)));
 }
 
 .browser-video-nav-button:hover,
@@ -3604,11 +3612,12 @@ body::before,
     background: var(--settings-round-icon-button-background-hover);
     color: var(--settings-round-icon-button-color-hover);
     box-shadow: var(--settings-round-icon-button-shadow-hover);
-    transform: translateY(-1px);
+    transform: translateY(calc(-50% - 1px));
 }
 
 .browser-video-nav-button:active {
     box-shadow: var(--settings-round-icon-button-shadow-active);
+    transform: translateY(-50%);
 }
 
 .browser-video-nav-button:disabled {

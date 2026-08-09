@@ -1,13 +1,15 @@
 """Browser session probing helpers for X, Grok, and ChatGPT."""
 
-# Code version: v1.4.3-codex.1
+# Code version: v1.7.0-codex.1
 
 from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import re
 import subprocess
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -15,6 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from .config import CrawlConfig, DEFAULT_CHATGPT_PROJECT_URL
+
+
+LOGGER = logging.getLogger(__name__)
 
 try:  # pragma: no cover - depends on local runtime
     from playwright.sync_api import Error as PlaywrightError
@@ -317,7 +322,7 @@ def sync_playwright_or_error():
     if sync_playwright is None:
         raise RuntimeError(
             "Playwright is not installed for the current interpreter. "
-            "Run `/usr/local/bin/python3.13 -m pip install -r requirements.txt`."
+            "Run `./scripts/setup_python.sh` with a supported Python 3.13 or 3.14 interpreter."
         )
     return sync_playwright()
 
@@ -460,7 +465,14 @@ def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile
     local_state = source_user_data_dir / "Local State"
     if local_state.exists():
         local_state_target = target_user_data_dir / "Local State"
-        local_state_target.write_bytes(local_state.read_bytes())
+        try:
+            local_state_target.write_bytes(local_state.read_bytes())
+        except PermissionError:
+            LOGGER.warning(
+                "macOS denied access to %s; continuing with the readable %s profile directory.",
+                local_state,
+                source_profile_dir,
+            )
 
     def ignore_transient_files(_directory: str, names: list[str]) -> set[str]:
         ignored = {
@@ -474,7 +486,18 @@ def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile
 
     import shutil
 
-    shutil.copytree(source_profile_dir, target_profile_dir, dirs_exist_ok=True, ignore=ignore_transient_files)
+    try:
+        shutil.copytree(source_profile_dir, target_profile_dir, dirs_exist_ok=True, ignore=ignore_transient_files)
+    except PermissionError as exc:
+        denied_path = getattr(exc, "filename", None) or source_profile_dir
+        temp_dir.cleanup()
+        if sys.platform == "darwin":
+            raise RuntimeError(
+                f"macOS denied access to the {descriptor.label} profile at {denied_path}. "
+                "Open System Settings > Privacy & Security > Full Disk Access and enable "
+                "the Python 3.13 or 3.14 runtime used by CacheLikesFromTwitter, then restart the cache service."
+            ) from exc
+        raise
     return target_user_data_dir, temp_dir
 
 

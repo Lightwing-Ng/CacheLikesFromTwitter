@@ -1,4 +1,4 @@
-/* Code version: v1.9.0-codex.1 */
+/* Code version: v1.10.0-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -195,9 +195,11 @@
             viewerVideo.load();
             viewerVideo = null;
         }
+        dialog.querySelectorAll(".browser-video-navigation").forEach((navigation) => navigation.remove());
         if (viewerMedia) viewerMedia.replaceChildren();
         dialog.style.removeProperty("width");
         dialog.style.removeProperty("height");
+        dialog.style.removeProperty("--browser-media-frame-radius");
     }
 
     function validExternalUrl(value) {
@@ -248,11 +250,18 @@
         const dialogStyles = window.getComputedStyle(dialog);
         const edgeInset = parseFloat(dialogStyles.getPropertyValue("--browser-media-viewer-edge-inset")) || 48;
         const frameStyles = window.getComputedStyle(frame);
+        const frameRadius = parseFloat(frameStyles.borderTopRightRadius || "0") || 0;
+        const controlSize = parseFloat(dialogStyles.getPropertyValue("--browser-media-viewer-control-size")) || 36;
+        const controlGap = parseFloat(dialogStyles.getPropertyValue("--browser-media-viewer-control-gap")) || 14;
         const horizontalInset = getFrameInset(frameStyles, "paddingLeft", "paddingRight")
             + getFrameInset(frameStyles, "borderLeftWidth", "borderRightWidth");
         const verticalInset = getFrameInset(frameStyles, "paddingTop", "paddingBottom")
             + getFrameInset(frameStyles, "borderTopWidth", "borderBottomWidth");
-        const maxFrameWidth = Math.max(1, Math.min(1440, window.innerWidth - edgeInset));
+        const horizontalControlAllowance = 2 * (controlSize + controlGap);
+        const maxFrameWidth = Math.max(
+            1,
+            Math.min(1440, window.innerWidth - edgeInset - horizontalControlAllowance),
+        );
         const maxFrameHeight = Math.max(1, Math.min(900, window.innerHeight - edgeInset));
         const maxMediaWidth = Math.max(1, maxFrameWidth - horizontalInset);
         const maxMediaHeight = Math.max(1, maxFrameHeight - verticalInset);
@@ -264,6 +273,7 @@
         }
         dialog.style.width = `${Math.round(mediaWidth + horizontalInset)}px`;
         dialog.style.height = `${Math.round(mediaHeight + verticalInset)}px`;
+        dialog.style.setProperty("--browser-media-frame-radius", `${frameRadius}px`);
     }
 
     function createImagePlayer(item) {
@@ -312,7 +322,7 @@
             createVideoNavigationButton(-1, item),
             createVideoNavigationButton(1, item),
         );
-        player.append(video, navigation);
+        player.appendChild(video);
 
         const resizePlayer = () => resizeViewerFrame(
             player,
@@ -323,7 +333,7 @@
         video.addEventListener("loadedmetadata", resizePlayer, { once: true });
         resizePlayer();
         window.addEventListener("resize", resizePlayer, { passive: true });
-        return { player, video, resizeHandler: resizePlayer };
+        return { player, video, navigation, resizeHandler: resizePlayer };
     }
 
     function openDetails(trigger) {
@@ -383,6 +393,9 @@
             }, { once: true });
         }
         viewerMedia.appendChild(mediaPlayer.player);
+        if (isVideo && mediaPlayer.navigation) {
+            dialog.appendChild(mediaPlayer.navigation);
+        }
 
         if (!dialog.open && !dialog.hasAttribute("open")) {
             if (typeof dialog.showModal === "function") {

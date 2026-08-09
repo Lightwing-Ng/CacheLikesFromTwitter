@@ -1,11 +1,10 @@
 """Focused regression tests for the application entrypoint.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
 
-import io
 import sys
 import types
 import unittest
@@ -15,26 +14,7 @@ import main
 
 
 class MainEntrypointTests(unittest.TestCase):
-    """Validate interpreter protection and the normal startup path."""
-
-    def test_main_rejects_wrong_python_before_starting_flask(self) -> None:
-        """A non-3.13 runtime exits without loading the web application."""
-        stderr = io.StringIO()
-
-        with (
-            patch.object(main.sys, "version_info", (3, 14, 3)),
-            patch.object(main.sys, "executable", "/opt/homebrew/bin/python3.14"),
-            patch.object(main, "_start_web_console") as start_web_console,
-            patch.object(main.sys, "stderr", stderr),
-        ):
-            with self.assertRaises(SystemExit) as error:
-                main.main()
-
-        self.assertEqual(error.exception.code, 1)
-        self.assertIn("requires Python 3.13", stderr.getvalue())
-        self.assertIn("Flask was not started", stderr.getvalue())
-        self.assertIn("/usr/local/bin/python3.13 main.py", stderr.getvalue())
-        start_web_console.assert_not_called()
+    """Validate runtime-agnostic startup and the normal Flask configuration."""
 
     def test_start_web_console_preserves_existing_flask_configuration(self) -> None:
         """The supported-runtime startup uses the established app settings."""
@@ -56,10 +36,9 @@ class MainEntrypointTests(unittest.TestCase):
         create_app.assert_called_once_with()
         app.run.assert_called_once_with(host="0.0.0.0", port=8666, debug=False, threaded=True)
 
-    def test_main_starts_web_console_with_python_313(self) -> None:
-        """Python 3.13 continues to invoke the normal startup path."""
+    def test_main_starts_web_console_with_python_314(self) -> None:
+        """The previous Python 3.14 runtime invokes the normal startup path."""
         with (
-            patch.object(main.sys, "version_info", (3, 13, 0)),
             patch.object(main, "_start_web_console") as start_web_console,
         ):
             main.main()
