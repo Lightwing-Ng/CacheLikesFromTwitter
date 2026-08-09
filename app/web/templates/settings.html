@@ -1,11 +1,11 @@
-<!-- Code version: v1.4.6-codex.3 -->
+<!-- Code version: v1.6.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter Settings</title>
-            <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.16.1-codex.1') }}">
+            <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.18.0-codex.1') }}">
     <script defer src="{{ url_for('static', filename='numeric-input-format.js') }}"></script>
 </head>
 <body>
@@ -86,6 +86,14 @@
                                 <span>Scroll pause seconds</span>
                                 <input type="text" inputmode="decimal" class="formatted-number-input" data-number-format="decimal" name="scroll_pause_seconds" value="{{ saved_config.scroll_pause_seconds }}">
                             </label>
+                            <label class="field compact-config-field">
+                                <span>ChatGPT startup timeout (s)</span>
+                                <input type="text" inputmode="decimal" class="formatted-number-input" data-number-format="decimal" name="chatgpt_startup_timeout_seconds" value="{{ saved_config.chatgpt_startup_timeout_seconds }}">
+                            </label>
+                            <label class="field compact-config-field">
+                                <span>ChatGPT scan wait (s)</span>
+                                <input type="text" inputmode="decimal" class="formatted-number-input" data-number-format="decimal" name="chatgpt_scan_wait_seconds" value="{{ saved_config.chatgpt_scan_wait_seconds }}">
+                            </label>
                         </div>
                         <label class="field compact-config-field">
                             <span>Stale round limit</span>
@@ -162,30 +170,10 @@
         </section>
     </div>
 
-    <nav class="sidebar-dock" aria-label="Workspace sections">
-        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="x" data-tooltip="X" aria-label="X">
-            <span class="icon dock-icon dock-icon-x" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">X</span>
-        </a>
-        <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" data-tooltip="Grok" aria-label="Grok">
-            <span class="icon dock-icon dock-icon-grok" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Grok</span>
-        </a>
-        <a href="{{ url_for('browser') }}" class="sidebar-dock-item" data-section-link="browser" data-tooltip="Browser" aria-label="Browser">
-            <span class="icon dock-icon dock-icon-browser" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Browser</span>
-        </a>
-        <a href="{{ url_for('chatgpt') }}" class="sidebar-dock-item" data-section-link="chatgpt" data-tooltip="ChatGPT" aria-label="ChatGPT">
-            <span class="icon dock-icon dock-icon-chatgpt" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">ChatGPT</span>
-        </a>
-        <a href="{{ url_for('settings') }}" class="sidebar-dock-item is-active" data-section-link="settings" data-tooltip="Settings" aria-label="Settings">
-            <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Settings</span>
-        </a>
-    </nav>
+    {% set dock_section = "settings" %}
+    {% include "_sidebar_dock.html" %}
 </main>
 
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.0.0-codex.2') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.2.0-codex.1') }}"></script>
 </body>
 </html>

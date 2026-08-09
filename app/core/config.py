@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.6.0-codex.1
+# Code version: v1.7.0-codex.1
 
 from __future__ import annotations
 
@@ -37,6 +37,12 @@ DEFAULT_CHATGPT_PROJECT_URL = (
     "https://chatgpt.com/g/g-p-69522aca2f788191b337866d5c03c59e-studio208cm/project"
 )
 DEFAULT_CHATGPT_PROJECT_NAME = "Studio208cm"
+DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS = 30.0
+DEFAULT_CHATGPT_SCAN_WAIT_SECONDS = 0.5
+MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS = 1.0
+MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS = 600.0
+MIN_CHATGPT_SCAN_WAIT_SECONDS = 0.1
+MAX_CHATGPT_SCAN_WAIT_SECONDS = 5.0
 
 
 def default_settings_path() -> Path:
@@ -65,6 +71,8 @@ class CrawlConfig:
     chatgpt_browser: str = "edge"
     chatgpt_project_url: str = DEFAULT_CHATGPT_PROJECT_URL
     chatgpt_project_name: str = DEFAULT_CHATGPT_PROJECT_NAME
+    chatgpt_startup_timeout_seconds: float = DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS
+    chatgpt_scan_wait_seconds: float = DEFAULT_CHATGPT_SCAN_WAIT_SECONDS
     chrome_user_data_dir: Path = DEFAULT_CHROME_USER_DATA_DIR
     chrome_profile_directory: str = DEFAULT_CHROME_PROFILE_DIRECTORY
     account_name_override: str = ""
@@ -111,6 +119,18 @@ def load_saved_config(settings_path: Path = SETTINGS_PATH) -> CrawlConfig:
         or defaults.chatgpt_project_url,
         chatgpt_project_name=str(payload.get("chatgpt_project_name", defaults.chatgpt_project_name)).strip()
         or defaults.chatgpt_project_name,
+        chatgpt_startup_timeout_seconds=_clamp_float_setting(
+            payload.get("chatgpt_startup_timeout_seconds", defaults.chatgpt_startup_timeout_seconds),
+            defaults.chatgpt_startup_timeout_seconds,
+            MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+            MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+        ),
+        chatgpt_scan_wait_seconds=_clamp_float_setting(
+            payload.get("chatgpt_scan_wait_seconds", defaults.chatgpt_scan_wait_seconds),
+            defaults.chatgpt_scan_wait_seconds,
+            MIN_CHATGPT_SCAN_WAIT_SECONDS,
+            MAX_CHATGPT_SCAN_WAIT_SECONDS,
+        ),
         chrome_user_data_dir=Path(payload.get("chrome_user_data_dir", str(defaults.chrome_user_data_dir))).expanduser(),
         chrome_profile_directory=str(
             payload.get("chrome_profile_directory", defaults.chrome_profile_directory)
@@ -118,6 +138,15 @@ def load_saved_config(settings_path: Path = SETTINGS_PATH) -> CrawlConfig:
         or defaults.chrome_profile_directory,
         account_name_override=str(payload.get("account_name_override", defaults.account_name_override)).strip(),
     )
+
+
+def _clamp_float_setting(value: object, fallback: float, minimum: float, maximum: float) -> float:
+    """Parse one persisted float setting and keep it within its supported range."""
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = fallback
+    return min(max(parsed, minimum), maximum)
 
 
 def save_config(config: CrawlConfig, settings_path: Path = SETTINGS_PATH) -> None:

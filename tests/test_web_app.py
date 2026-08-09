@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.9.0-codex.1
+# Code version: v1.11.0-codex.1
 
 from __future__ import annotations
 
@@ -11,7 +11,10 @@ import unittest
 
 from app.core.state import TaskSnapshot
 from app.core.local_media_browser import stable_media_id
-from app.web.app import create_app, reconcile_cached_snapshot
+from app.web.app import create_app, format_media_size, reconcile_cached_snapshot
+
+
+SIDEBAR_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/sidebar.js"
 
 
 class WebAppTests(unittest.TestCase):
@@ -29,7 +32,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="progress_downloaded_images"', body)
         self.assertIn('id="progress_downloaded_videos"', body)
 
-    def test_grok_page_and_five_slot_dock_render(self) -> None:
+    def test_cache_pages_share_the_first_dock_menu(self) -> None:
         with TemporaryDirectory() as raw_root:
             app = create_app(Path(raw_root) / "local_store")
             with app.test_client() as client:
@@ -49,33 +52,44 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(chatgpt_response.status_code, 200)
         self.assertEqual(settings_response.status_code, 200)
         self.assertEqual(browser_response.status_code, 200)
-        self.assertIn('data-section-link="x"', grok_body)
-        self.assertIn('data-section-link="grok"', grok_body)
         self.assertIn('data-section-link="settings"', grok_body)
-        self.assertIn('data-section-link="chatgpt"', grok_body)
         self.assertIn('href="/chatgpt"', grok_body)
-        self.assertIn('data-section-link="grok"', index_body)
-        self.assertIn('data-section-link="chatgpt"', index_body)
         self.assertIn('data-section-link="browser"', browser_body)
         self.assertIn("ChatGPT cache overview", chatgpt_body)
         self.assertIn('name="chatgpt_project_url"', chatgpt_body)
+        self.assertIn('name="chatgpt_startup_timeout_seconds"', chatgpt_body)
+        self.assertIn('name="chatgpt_scan_wait_seconds"', chatgpt_body)
         self.assertIn("Project or chat URL", chatgpt_body)
         self.assertNotIn('name="chatgpt_project_name"', chatgpt_body)
         self.assertIn('data-platform="chatgpt"', chatgpt_body)
         self.assertIn('action="/chatgpt/start"', chatgpt_body)
         for body in (grok_body, chatgpt_body, index_body, settings_body, browser_body):
             with self.subTest(page=body[:40]):
-                dock_positions = [
-                    body.index(f'data-section-link="{label}"')
-                    for label in ("x", "grok", "browser", "chatgpt", "settings")
+                dock_start = body.index('<nav class="sidebar-dock"')
+                dock_end = body.index("</nav>", dock_start) + len("</nav>")
+                dock_markup = body[dock_start:dock_end]
+                source_positions = [
+                    dock_markup.index(f'data-cache-source-option="{label}"')
+                    for label in ("x", "grok", "chatgpt")
                 ]
-                self.assertEqual(dock_positions, sorted(dock_positions))
-                self.assertEqual(body.count('class="sidebar-dock-item is-active"'), 1)
+                self.assertEqual(source_positions, sorted(source_positions))
+                self.assertEqual(dock_markup.count('data-cache-source-option='), 3)
+                self.assertEqual(dock_markup.count('data-section-link='), 3)
+                self.assertEqual(dock_markup.count('aria-current="page"'), 1)
+                self.assertIn('class="sidebar-dock-cache-menu" data-cache-source-menu', dock_markup)
+                self.assertIn('class="sidebar-dock-item sidebar-dock-cache-trigger', dock_markup)
+                self.assertIn('class="trade-strategy-dropdown backtest-shared-select-dropdown sidebar-dock-cache-dropdown"', dock_markup)
+                self.assertIn('data-tooltip="Caches"', dock_markup)
+                self.assertIn('class="icon dock-icon dock-icon-cache"', dock_markup)
+                if 'aria-selected="true"' in dock_markup:
+                    self.assertIn('class="sidebar-dock-cache-current"', dock_markup)
+                self.assertIn('src="/static/images/x.svg"', dock_markup)
+                self.assertIn('src="/static/images/grok.svg"', dock_markup)
+                self.assertIn('src="/static/images/ChatGPT-Logo.svg"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=', body)
-                self.assertIn('data-tooltip="X"', body)
-                self.assertIn('class="sidebar-dock-label"', body)
+                self.assertIn('class="sidebar-dock-label"', dock_markup)
                 self.assertNotIn("cachelikes:browser-sidebar-open", body)
-        self.assertIn('data-section-link="browser" data-tooltip="Browser" aria-label="Browser"', browser_body)
+        self.assertIn('data-section-link="browser"', browser_body)
         self.assertIn("Cached media browser", browser_body)
         self.assertNotIn("Apply filters", browser_body)
         self.assertIn('id="status_progress_detail"', grok_body)
@@ -84,7 +98,29 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('id="reset_button"', grok_body)
         self.assertIn('id="reset_button"', settings_body)
         self.assertIn('id="reset_chatgpt_button"', settings_body)
+        self.assertIn('name="chatgpt_startup_timeout_seconds"', settings_body)
+        self.assertIn('name="chatgpt_scan_wait_seconds"', settings_body)
         self.assertIn("Danger zone", settings_body)
+
+    def test_cache_source_menu_has_keyboard_and_dismissal_controls(self) -> None:
+        script = SIDEBAR_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        expected_fragments = (
+            'document.querySelector("[data-cache-source-menu]")',
+            'querySelector(".sidebar-dock-cache-trigger")',
+            'positionCacheSourceDropdown()',
+            'getBoundingClientRect()',
+            'window.innerWidth - dropdownRect.width - viewportPadding',
+            'cacheSourceMenu?.addEventListener("mouseenter"',
+            'cacheSourceDropdown.hidden = !nextIsOpen;',
+            'event.key !== "ArrowDown" && event.key !== "ArrowUp"',
+            'event.key === "Escape"',
+            'document.addEventListener("click"',
+        )
+
+        for fragment in expected_fragments:
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, script)
 
     def test_browser_page_and_secure_media_route_use_isolated_cache(self) -> None:
         with TemporaryDirectory() as raw_root:
@@ -125,8 +161,9 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn('local-media-browser.js?v=local-media-browser-v1.8.1-codex.2', body)
+            self.assertIn('local-media-browser.js?v=local-media-browser-v1.9.0-codex.1', body)
             self.assertIn('data-media-source-link', body)
+            self.assertIn('data-media-copy-source-url', body)
             self.assertIn('Open original post', body)
             self.assertIn('https://x.com/demo/status/123', body)
             self.assertIn('class="local-store-pagination-indicator" aria-hidden="true"></span>', body)
@@ -136,6 +173,44 @@ class WebAppTests(unittest.TestCase):
             self.assertEqual(invalid_extension.status_code, 404)
             self.assertEqual(traversal.status_code, 404)
             self.assertEqual(external_link.status_code, 404)
+
+    def test_browser_card_uses_filename_metadata_and_binary_size_units(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            root = Path(raw_root) / "local_store"
+            media_path = root / "chatgpt" / "Studio208cm" / "img_file.png"
+            media_path.parent.mkdir(parents=True)
+            media_path.write_bytes(b"x" * 1_805_089)
+            (media_path.parent / ".chatgpt_catalog.json").write_text(
+                """{
+                    "entries": {
+                        "file-123": {
+                            "file_id": "file-123",
+                            "relative_path": "img_file.png",
+                            "conversation_url": "https://chatgpt.com/c/demo-session",
+                            "conversation_title": "A regular session",
+                            "first_seen_at": "2026-08-09T07:09:50Z"
+                        }
+                    }
+                }""",
+                encoding="utf-8",
+            )
+            app = create_app(root)
+            with app.test_client() as client:
+                response = client.get("/browser?source=chatgpt")
+
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="browser-media-card-title" title="img_file.png">img_file.png</span>', body)
+        self.assertNotIn("browser-media-card-description", body)
+        self.assertIn("Project:</dt><dd title=\"A regular session\">A regular session</dd>", body)
+        self.assertIn("Created on:</dt><dd>9 Aug 2026, 07:09</dd>", body)
+        self.assertIn("Size:</dt><dd>1.72 MiB</dd>", body)
+        self.assertIn('class="browser-media-copy-source-url"', body)
+
+    def test_format_media_size_uses_two_decimal_binary_units(self) -> None:
+        self.assertEqual(format_media_size(1_024), "1.00 KiB")
+        self.assertEqual(format_media_size(1_805_089), "1.72 MiB")
+        self.assertEqual(format_media_size(1_024**3), "1.00 GiB")
 
     def test_browser_delete_and_restore_routes_keep_a_preview(self) -> None:
         with TemporaryDirectory() as raw_root:

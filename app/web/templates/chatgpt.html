@@ -1,11 +1,11 @@
-<!-- Code version: v1.0.0-codex.5 -->
+<!-- Code version: v1.2.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter ChatGPT</title>
-            <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.16.1-codex.1') }}">
+            <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.18.0-codex.1') }}">
     <script defer src="{{ url_for('static', filename='browser-session-picker.js') }}"></script>
 </head>
 <body>
@@ -117,9 +117,19 @@
                             required
                         >
                     </label>
+                    <div class="field-grid compact-config-grid">
+                        <label class="field compact-config-field">
+                            <span>Startup timeout (s)</span>
+                            <input type="text" inputmode="decimal" class="formatted-number-input" data-number-format="decimal" name="chatgpt_startup_timeout_seconds" value="{{ saved_config.chatgpt_startup_timeout_seconds }}">
+                        </label>
+                        <label class="field compact-config-field">
+                            <span>Scan wait (s)</span>
+                            <input type="text" inputmode="decimal" class="formatted-number-input" data-number-format="decimal" name="chatgpt_scan_wait_seconds" value="{{ saved_config.chatgpt_scan_wait_seconds }}">
+                        </label>
+                    </div>
                 </form>
                 <p class="status-copy chatgpt-sidebar-note">
-                    Enter a project URL to cache every original image across its conversations, or a chat URL to cache only that session. Edge runs offscreen using the host's authorized ChatGPT session.
+                    Enter a project URL to cache every original image across its conversations, or a chat URL to cache only that session. Edge runs offscreen using the host's authorized ChatGPT session. Lower scan wait values are faster but give lazy-loaded images less time to appear.
                 </p>
                 <div class="sidebar-action-row">
                     <form action="{{ url_for('stop_chatgpt') }}" method="post" class="sidebar-form sidebar-form-stop">
@@ -263,28 +273,8 @@
         </section>
     </div>
 
-    <nav class="sidebar-dock" aria-label="Workspace sections">
-        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="x" data-tooltip="X" aria-label="X">
-            <span class="icon dock-icon dock-icon-x" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">X</span>
-        </a>
-        <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" data-tooltip="Grok" aria-label="Grok">
-            <span class="icon dock-icon dock-icon-grok" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Grok</span>
-        </a>
-        <a href="{{ url_for('browser') }}" class="sidebar-dock-item" data-section-link="browser" data-tooltip="Browser" aria-label="Browser">
-            <span class="icon dock-icon dock-icon-browser" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Browser</span>
-        </a>
-        <a href="#overview" class="sidebar-dock-item is-active" data-section-link="chatgpt" data-tooltip="ChatGPT" aria-label="ChatGPT">
-            <span class="icon dock-icon dock-icon-chatgpt" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">ChatGPT</span>
-        </a>
-        <a href="{{ url_for('settings') }}" class="sidebar-dock-item" data-section-link="settings" data-tooltip="Settings" aria-label="Settings">
-            <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Settings</span>
-        </a>
-    </nav>
+    {% set dock_section = "chatgpt" %}
+    {% include "_sidebar_dock.html" %}
 </main>
 
 <script>
@@ -474,6 +464,6 @@
     refreshStatus();
     window.setInterval(refreshStatus, 3000);
 </script>
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.0.0-codex.2') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.2.0-codex.1') }}"></script>
 </body>
 </html>

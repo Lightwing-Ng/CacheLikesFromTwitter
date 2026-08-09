@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.0.6-codex.1
+# Code version: v1.2.0-codex.1
 
 from __future__ import annotations
 
@@ -9,15 +9,22 @@ import json
 import mimetypes
 import os
 import re
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
 from .browser_sessions import browser_descriptors, launch_chromium_context
 from .config import (
+    DEFAULT_CHATGPT_SCAN_WAIT_SECONDS,
     DEFAULT_CHATGPT_PROJECT_NAME,
     DEFAULT_CHATGPT_PROJECT_URL,
+    DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS,
     LOCAL_STORE_ROOT,
+    MAX_CHATGPT_SCAN_WAIT_SECONDS,
+    MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    MIN_CHATGPT_SCAN_WAIT_SECONDS,
+    MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
     CrawlConfig,
 )
 from .local_media_browser import BrowserDeletionCatalog
@@ -39,7 +46,7 @@ CHATGPT_IMAGE_TIMEOUT_MS = 60_000
 CHATGPT_PROJECT_LOAD_ROUNDS = 64
 CHATGPT_PROJECT_LINK_WAIT_ROUNDS = 30
 CHATGPT_SCROLL_ROUNDS = 80
-CHATGPT_IMAGE_WAIT_MS = 500
+CHATGPT_SCAN_WAIT_SECONDS = DEFAULT_CHATGPT_SCAN_WAIT_SECONDS
 CHATGPT_SCROLL_STEP_RATIO = 0.8
 CHATGPT_IMAGE_SUFFIXES = {".avif", ".gif", ".heic", ".jpeg", ".jpg", ".png", ".webp"}
 
@@ -55,6 +62,7 @@ class ChatGPTImageCandidate:
     width: int = 0
     height: int = 0
     message_role: str = ""
+    conversation_title: str = ""
 
 
 @dataclass(slots=True)
@@ -72,6 +80,7 @@ class ChatGPTCatalogEntry:
     height: int
     first_seen_at: str
     last_seen_at: str
+    conversation_title: str = ""
 
 
 @dataclass(slots=True)
@@ -211,6 +220,7 @@ class ChatGPTImageCatalog:
                             height=int(raw_entry.get("height") or 0),
                             first_seen_at=str(raw_entry.get("first_seen_at") or ""),
                             last_seen_at=str(raw_entry.get("last_seen_at") or ""),
+                            conversation_title=str(raw_entry.get("conversation_title") or ""),
                         )
                     except (TypeError, ValueError):
                         continue
@@ -303,6 +313,7 @@ class ChatGPTImageCatalog:
             height=candidate.height,
             first_seen_at=existing.first_seen_at if existing else seen_at,
             last_seen_at=seen_at,
+            conversation_title=candidate.conversation_title or (existing.conversation_title if existing else ""),
         )
         self.save()
 
@@ -419,12 +430,24 @@ def _has_load_more_conversations(page) -> bool:
     )
 
 
-def _wait_for_project_conversation_links(page, project_url: str, should_stop) -> list[str]:
+def _wait_for_project_conversation_links(
+    page,
+    project_url: str,
+    should_stop,
+    startup_timeout_seconds: float = DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    scan_wait_seconds: float = CHATGPT_SCAN_WAIT_SECONDS,
+) -> list[str]:
     """Wait for the project list to finish its initial asynchronous rendering."""
     previous_count = 0
     stable_rounds = 0
     current_links: list[str] = []
-    for _ in range(CHATGPT_PROJECT_LINK_WAIT_ROUNDS):
+    timeout_seconds = min(
+        max(float(startup_timeout_seconds), MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS),
+        MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    )
+    poll_seconds = min(max(float(scan_wait_seconds), MIN_CHATGPT_SCAN_WAIT_SECONDS), timeout_seconds)
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
         if should_stop():
             return []
         current_links = _extract_project_links(page, project_url)
@@ -437,41 +460,83 @@ def _wait_for_project_conversation_links(page, project_url: str, should_stop) ->
         if current_links and stable_rounds >= 3:
             return current_links
         previous_count = len(current_links)
-        page.wait_for_timeout(1_000)
+        remaining_seconds = max(0.05, deadline - time.monotonic())
+        page.wait_for_timeout(int(min(poll_seconds, remaining_seconds) * 1_000))
     if current_links:
         return current_links
     raise RuntimeError(
-        "ChatGPT project loaded without any conversation links after 30 seconds. "
+        f"ChatGPT project loaded without any conversation links after {timeout_seconds:g} seconds. "
         "The authorized Edge session may need to finish loading the project first."
     )
 
 
-def open_chatgpt_page(page, url: str, settle_ms: int = 2_500) -> None:
+def open_chatgpt_page(
+    page,
+    url: str,
+    settle_ms: int = 2_500,
+    startup_timeout_seconds: float | None = None,
+) -> None:
     """Open a ChatGPT page and tolerate its long-lived application requests."""
-    page.goto(url, wait_until="domcontentloaded", timeout=CHATGPT_PAGE_GOTO_TIMEOUT_MS)
+    timeout_seconds = startup_timeout_seconds or CHATGPT_PAGE_GOTO_TIMEOUT_MS / 1_000
+    timeout_seconds = min(
+        max(float(timeout_seconds), MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS),
+        MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    )
+    deadline = time.monotonic() + timeout_seconds
+    navigation_timeout_ms = min(CHATGPT_PAGE_GOTO_TIMEOUT_MS, int(timeout_seconds * 1_000))
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=navigation_timeout_ms)
+    except PlaywrightError as exc:
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"ChatGPT startup timed out after {timeout_seconds:g} seconds while opening the page."
+            ) from exc
+        raise
     for _ in range(30):
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                f"ChatGPT startup timed out after {timeout_seconds:g} seconds while waiting for the page."
+            )
         title = page.title().lower()
-        body_text = page.locator("body").inner_text(timeout=15_000)[:500].lower()
+        remaining_ms = max(100, int((deadline - time.monotonic()) * 1_000))
+        body_text = page.locator("body").inner_text(timeout=min(15_000, remaining_ms))[:500].lower()
         if "just a moment" not in title and "checking your browser" not in body_text:
             break
-        page.wait_for_timeout(1_000)
+        page.wait_for_timeout(min(1_000, remaining_ms))
     else:
-        raise RuntimeError("ChatGPT showed a security verification page instead of the authorized project.")
+        raise RuntimeError(
+            f"ChatGPT startup timed out after {timeout_seconds:g} seconds on a security verification page."
+        )
     if settle_ms > 0:
-        page.wait_for_timeout(settle_ms)
+        remaining_ms = max(0, int((deadline - time.monotonic()) * 1_000))
+        if remaining_ms:
+            page.wait_for_timeout(min(settle_ms, remaining_ms))
 
 
-def collect_project_conversation_urls(page, project_url: str, state: TaskState, should_stop) -> list[str]:
+def collect_project_conversation_urls(
+    page,
+    project_url: str,
+    state: TaskState,
+    should_stop,
+    startup_timeout_seconds: float = DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    scan_wait_seconds: float = CHATGPT_SCAN_WAIT_SECONDS,
+) -> list[str]:
     """Load every project conversation, or use one supplied chat session URL."""
     if is_chatgpt_conversation_url(project_url):
         state.append_event("Using the supplied ChatGPT chat session URL.")
         return [project_url]
 
-    open_chatgpt_page(page, project_url)
+    open_chatgpt_page(page, project_url, startup_timeout_seconds=startup_timeout_seconds)
     conversation_urls: list[str] = []
     seen_urls: set[str] = set()
     stagnant_rounds = 0
-    current_links = _wait_for_project_conversation_links(page, project_url, should_stop)
+    current_links = _wait_for_project_conversation_links(
+        page,
+        project_url,
+        should_stop,
+        startup_timeout_seconds=startup_timeout_seconds,
+        scan_wait_seconds=scan_wait_seconds,
+    )
 
     for round_index in range(CHATGPT_PROJECT_LOAD_ROUNDS):
         if should_stop():
@@ -601,6 +666,7 @@ def _merge_current_conversation_images(
     page,
     conversation_url: str,
     candidates_by_file_id: dict[str, ChatGPTImageCandidate],
+    conversation_title: str,
 ) -> None:
     """Merge original images currently visible in one ChatGPT conversation."""
     for raw_candidate in _extract_original_image_payloads(page):
@@ -616,6 +682,7 @@ def _merge_current_conversation_images(
             width=int(raw_candidate.get("width") or 0),
             height=int(raw_candidate.get("height") or 0),
             message_role=str(raw_candidate.get("messageRole") or "").strip(),
+            conversation_title=conversation_title,
         )
         if not should_cache_chatgpt_candidate(candidate):
             continue
@@ -624,9 +691,24 @@ def _merge_current_conversation_images(
             candidates_by_file_id[file_id] = candidate
 
 
-def collect_conversation_images(page, conversation_url: str, should_stop) -> list[ChatGPTImageCandidate]:
+def collect_conversation_images(
+    page,
+    conversation_url: str,
+    should_stop,
+    startup_timeout_seconds: float = DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    scan_wait_seconds: float = CHATGPT_SCAN_WAIT_SECONDS,
+) -> list[ChatGPTImageCandidate]:
     """Open one conversation, scan its lazy message view, and collect original images."""
-    open_chatgpt_page(page, conversation_url, settle_ms=3_000)
+    open_chatgpt_page(
+        page,
+        conversation_url,
+        settle_ms=3_000,
+        startup_timeout_seconds=startup_timeout_seconds,
+    )
+    try:
+        conversation_title = _chatgpt_conversation_title(page.title())
+    except (AttributeError, TypeError):
+        conversation_title = ""
     candidates_by_file_id: dict[str, ChatGPTImageCandidate] = {}
     for direction in ("top", "bottom"):
         stable_rounds = 0
@@ -634,9 +716,13 @@ def collect_conversation_images(page, conversation_url: str, should_stop) -> lis
         for _ in range(CHATGPT_SCROLL_ROUNDS):
             if should_stop():
                 break
-            _merge_current_conversation_images(page, conversation_url, candidates_by_file_id)
+            _merge_current_conversation_images(page, conversation_url, candidates_by_file_id, conversation_title)
             scroll_metrics = _scroll_chatgpt_message_view(page, direction)
-            page.wait_for_timeout(CHATGPT_IMAGE_WAIT_MS)
+            wait_seconds = min(
+                max(float(scan_wait_seconds), MIN_CHATGPT_SCAN_WAIT_SECONDS),
+                MAX_CHATGPT_SCAN_WAIT_SECONDS,
+            )
+            page.wait_for_timeout(int(wait_seconds * 1_000))
             current_height = int(scroll_metrics.get("height") or 0)
             at_boundary = bool(scroll_metrics.get("atBoundary"))
             if at_boundary and (not bool(scroll_metrics.get("moved")) or current_height == previous_height):
@@ -649,8 +735,14 @@ def collect_conversation_images(page, conversation_url: str, should_stop) -> lis
         if should_stop():
             break
 
-    _merge_current_conversation_images(page, conversation_url, candidates_by_file_id)
+    _merge_current_conversation_images(page, conversation_url, candidates_by_file_id, conversation_title)
     return list(candidates_by_file_id.values())
+
+
+def _chatgpt_conversation_title(value: str) -> str:
+    """Remove the ChatGPT product suffix from one browser tab title."""
+    title = re.sub(r"\s*(?:[-|–—]\s*)?ChatGPT\s*$", "", str(value or "").strip(), flags=re.IGNORECASE)
+    return "" if title.casefold() == "chatgpt" else title.strip()
 
 
 def download_chatgpt_image(
@@ -664,7 +756,12 @@ def download_chatgpt_image(
         return False
     if BrowserDeletionCatalog(target_dir.parent.parent).is_excluded("chatgpt", candidate.file_id):
         return False
-    if catalog.complete_entry(candidate.file_id) is not None:
+    existing = catalog.complete_entry(candidate.file_id)
+    if existing is not None:
+        if candidate.conversation_title and candidate.conversation_title != existing.conversation_title:
+            existing.conversation_title = candidate.conversation_title
+            existing.conversation_url = candidate.conversation_url
+            catalog.save()
         return False
 
     response = context.request.get(
@@ -722,6 +819,17 @@ def sync_chatgpt_images(
 
     project_name = runtime_config.chatgpt_project_name or DEFAULT_CHATGPT_PROJECT_NAME
     project_url = runtime_config.chatgpt_project_url or DEFAULT_CHATGPT_PROJECT_URL
+    startup_timeout_seconds = min(
+        max(
+            float(runtime_config.chatgpt_startup_timeout_seconds),
+            MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+        ),
+        MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    )
+    scan_wait_seconds = min(
+        max(float(runtime_config.chatgpt_scan_wait_seconds), MIN_CHATGPT_SCAN_WAIT_SECONDS),
+        MAX_CHATGPT_SCAN_WAIT_SECONDS,
+    )
     resolved_target_dir = target_dir or chatgpt_target_dir(project_name)
     catalog = ChatGPTImageCatalog.build(resolved_target_dir)
     cached_count = catalog.summarize()
@@ -738,6 +846,10 @@ def sync_chatgpt_images(
         discovery_complete=False,
     )
     state.append_event(f"Prepared ChatGPT cache with {cached_count:,} existing original images.")
+    state.append_event(
+        f"ChatGPT startup timeout: {startup_timeout_seconds:g} s; "
+        f"scan wait: {scan_wait_seconds:g} s."
+    )
     if should_stop():
         return ChatGPTSyncResult(cached_count=cached_count, stopped=True)
 
@@ -756,7 +868,14 @@ def sync_chatgpt_images(
                 background_window=True,
             ) as context:
                 page = context.new_page()
-                conversation_urls = collect_project_conversation_urls(page, project_url, state, should_stop)
+                conversation_urls = collect_project_conversation_urls(
+                    page,
+                    project_url,
+                    state,
+                    should_stop,
+                    startup_timeout_seconds=startup_timeout_seconds,
+                    scan_wait_seconds=scan_wait_seconds,
+                )
                 state.update(
                     discovered_tweets=len(conversation_urls),
                     discovered_images=0,
@@ -774,7 +893,13 @@ def sync_chatgpt_images(
                     if should_stop():
                         break
                     try:
-                        candidates = collect_conversation_images(page, conversation_url, should_stop)
+                        candidates = collect_conversation_images(
+                            page,
+                            conversation_url,
+                            should_stop,
+                            startup_timeout_seconds=startup_timeout_seconds,
+                            scan_wait_seconds=scan_wait_seconds,
+                        )
                     except Exception as exc:  # pragma: no cover - depends on live ChatGPT rendering
                         failed_count += 1
                         state.append_event(

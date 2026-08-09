@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from pathlib import Path
@@ -143,16 +143,25 @@ def test_events_table_consumes_shared_scrollable_table_tokens() -> None:
         assert token in stylesheet
 
 
-def test_browser_dock_and_gallery_use_shared_tokens() -> None:
-    """Protect the fifth dock slot and the local media browser compatibility layer."""
+def test_cache_dock_menu_and_gallery_use_shared_tokens() -> None:
+    """Protect the sibling-style cache menu and local media browser compatibility layer."""
     stylesheet = _stylesheet()
 
     expected_tokens = (
-        ".sidebar-dock:has(.sidebar-dock-item:nth-child(5).is-active)",
+        ".sidebar-dock:has(> .sidebar-dock-cache-menu > .sidebar-dock-item.is-active)",
+        ".sidebar-dock-cache-dropdown {",
+        ".sidebar-dock-cache-menu.is-cache-source-menu-open .sidebar-dock-cache-dropdown {",
+        "width: min(248px, calc(100vw - 24px));",
+        ".sidebar-dock-cache-dropdown .sidebar-dock-cache-option",
+        ".sidebar-dock-cache-option .browser-picker-option-icon",
+        ".sidebar-dock-cache-current",
+        ".dock-icon-cache",
+        "mask: url(\"/static/images/externaldrive.fill.badge.checkmark.svg\")",
         ".dock-icon-browser",
         "mask: url(\"/static/images/square.grid.2x2.fill.svg\")",
         ".browser-gallery",
         "grid-template-columns: repeat(4, minmax(0, 1fr));",
+        ".browser-media-remove[hidden]",
         ".browser-dialog::backdrop",
         "background: var(--frosted-glass-background);",
         "border: var(--frosted-glass-border);",

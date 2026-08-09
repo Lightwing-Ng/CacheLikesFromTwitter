@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.4.1-codex.1
+# Code version: v1.5.0-codex.1
 
 from __future__ import annotations
 
@@ -120,6 +120,17 @@ def format_captured_at_label(value: str | datetime | None) -> str:
     if parsed is None:
         return "Unknown date"
     return f"{parsed.day} {_ENGLISH_MONTHS[parsed.month - 1]} {parsed.year}"
+
+
+def format_captured_at_timestamp_label(value: str | datetime | None) -> str:
+    """Format a UTC timestamp with minute precision for browser metadata."""
+    parsed = _parse_datetime(value)
+    if parsed is None:
+        return "Unknown date"
+    return (
+        f"{parsed.day} {_ENGLISH_MONTHS[parsed.month - 1]} {parsed.year}, "
+        f"{parsed.hour:02d}:{parsed.minute:02d}"
+    )
 
 
 def resolve_local_media_path(local_store_root: Path | str, relative_path: str) -> Path | None:
@@ -691,13 +702,16 @@ class LocalMediaCatalog:
                 except (TypeError, ValueError):
                     width = 0
                     height = 0
+                collection_name = project_name
+                if _is_direct_chatgpt_session_url(_display_text(entry.get("conversation_url"))):
+                    collection_name = _display_text(entry.get("conversation_title")) or project_name
                 items.append(
                     self._build_item(
                         media_path,
                         source="chatgpt",
                         title=alt_text or media_path.name,
                         description=alt_text,
-                        creator=project_name,
+                        creator=collection_name,
                         source_url=_safe_source_url(entry.get("conversation_url")),
                         resource_key=_display_text(entry.get("file_id")) or media_path.stem.removeprefix("img_"),
                         captured_value=entry.get("last_seen_at") or entry.get("first_seen_at"),
@@ -986,6 +1000,19 @@ def _safe_source_url(value: Any) -> str:
     if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
         return ""
     return text
+
+
+def _is_direct_chatgpt_session_url(value: str) -> bool:
+    """Return whether a ChatGPT conversation URL is outside a project."""
+    parsed = urlsplit(value)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    return (
+        parsed.scheme.lower() == "https"
+        and parsed.netloc.lower() == "chatgpt.com"
+        and len(path_parts) == 2
+        and path_parts[0] == "c"
+        and bool(path_parts[1])
+    )
 
 
 def _parse_datetime(value: str | datetime | Any) -> datetime | None:

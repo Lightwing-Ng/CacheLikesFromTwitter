@@ -25,6 +25,8 @@ def test_settings_round_trip_and_invalid_payload_fall_back_to_defaults(tmp_path:
         headless=True,
         download_workers=7,
         max_media_items=1_234,
+        chatgpt_startup_timeout_seconds=45.0,
+        chatgpt_scan_wait_seconds=0.25,
         x_browser="safari",
         grok_browser="chrome",
         chrome_user_data_dir=tmp_path / "Chrome",
@@ -52,6 +54,19 @@ def test_settings_clamp_workers_and_normalize_browser_names(tmp_path: Path) -> N
     assert loaded.download_workers == 1
     assert loaded.x_browser == "edge"
     assert loaded.grok_browser == CrawlConfig().grok_browser
+
+
+def test_settings_clamp_chatgpt_timeout_and_scan_wait_seconds(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        '{"chatgpt_startup_timeout_seconds": 9999, "chatgpt_scan_wait_seconds": 0}',
+        encoding="utf-8",
+    )
+
+    loaded = load_saved_config(settings_path)
+
+    assert loaded.chatgpt_startup_timeout_seconds == 600.0
+    assert loaded.chatgpt_scan_wait_seconds == 0.1
 
 
 def test_task_state_lifecycle_caps_events_and_preserves_version() -> None:

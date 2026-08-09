@@ -1,4 +1,4 @@
-/* Code version: v1.8.1-codex.2 */
+/* Code version: v1.9.0-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -40,6 +40,7 @@
     );
     const previewElements = Array.from(document.querySelectorAll("[data-preview]"));
     const mediaCards = Array.from(document.querySelectorAll("[data-media-id]"));
+    const sourceCopyButtons = Array.from(document.querySelectorAll("[data-media-copy-source-url]"));
     const previewObserver = "IntersectionObserver" in window
         ? new IntersectionObserver((entries, observer) => {
             entries.forEach((entry) => {
@@ -91,6 +92,50 @@
         } else if (element.tagName === "IMG") {
             loadPreview(element);
         }
+    });
+
+    async function copyText(value) {
+        if (!value) return false;
+        if (navigator.clipboard?.writeText) {
+            try {
+                await navigator.clipboard.writeText(value);
+                return true;
+            } catch (_error) {
+            }
+        }
+
+        const textarea = document.createElement("textarea");
+        textarea.value = value;
+        textarea.setAttribute("readonly", "");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        textarea.style.pointerEvents = "none";
+        document.body.append(textarea);
+        textarea.select();
+        let didCopy = false;
+        try {
+            didCopy = document.execCommand("copy");
+        } catch (_error) {
+            didCopy = false;
+        }
+        textarea.remove();
+        return didCopy;
+    }
+
+    sourceCopyButtons.forEach((button) => {
+        button.addEventListener("click", async () => {
+            const sourceLink = button.parentElement?.querySelector("[data-media-source-link]");
+            const url = sourceLink instanceof HTMLAnchorElement ? sourceLink.href : "";
+            const didCopy = await copyText(url);
+            button.classList.toggle("is-copied", didCopy);
+            button.setAttribute("aria-label", didCopy ? "Original URL copied" : "Unable to copy original URL");
+            button.title = didCopy ? "URL copied" : "Unable to copy URL";
+            window.setTimeout(() => {
+                button.classList.remove("is-copied");
+                button.setAttribute("aria-label", "Copy original URL");
+                button.title = "Copy URL";
+            }, 1_600);
+        });
     });
 
     const pagination = document.querySelector(".browser-pagination");

@@ -1,12 +1,14 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.0.3-codex.1
+# Code version: v1.1.0-codex.1
 
 from __future__ import annotations
 
 from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from app.core.browser_sessions import probe_browser_session
 from app.core.chatgpt_downloader import (
@@ -24,6 +26,7 @@ from app.core.chatgpt_downloader import (
     should_cache_chatgpt_candidate,
     sync_chatgpt_images,
 )
+from app.core.chatgpt_downloader import _wait_for_project_conversation_links
 from app.core.config import CrawlConfig, DEFAULT_CHATGPT_PROJECT_NAME, DEFAULT_CHATGPT_PROJECT_URL
 from app.core.state import TaskState
 
@@ -239,8 +242,32 @@ def test_chatgpt_scans_the_nested_message_view_in_both_directions() -> None:
             page,
             "https://chatgpt.com/c/conversation-123",
             should_stop=lambda: False,
+            scan_wait_seconds=0.2,
         )
 
     assert [candidate.file_id for candidate in candidates] == ["file_user_image"]
     assert set(directions) == {"top", "bottom"}
     assert page.waits
+    assert set(page.waits) == {200}
+
+
+def test_chatgpt_project_startup_timeout_is_explicit() -> None:
+    class _ProjectPage:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            pass
+
+    with patch(
+        "app.core.chatgpt_downloader._extract_project_links",
+        return_value=[],
+    ), patch(
+        "app.core.chatgpt_downloader._has_load_more_conversations",
+        return_value=False,
+    ):
+        with pytest.raises(RuntimeError, match="after 1 seconds"):
+            _wait_for_project_conversation_links(
+                _ProjectPage(),
+                DEFAULT_CHATGPT_PROJECT_URL,
+                should_stop=lambda: False,
+                startup_timeout_seconds=1,
+                scan_wait_seconds=0.1,
+            )

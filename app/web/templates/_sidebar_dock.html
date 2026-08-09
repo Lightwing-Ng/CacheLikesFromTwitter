@@ -1,0 +1,94 @@
+<!-- Code version: v1.2.0-codex.1 -->
+<nav class="sidebar-dock" aria-label="Workspace sections">
+    <div class="sidebar-dock-cache-menu" data-cache-source-menu>
+        <button
+            type="button"
+            class="sidebar-dock-item sidebar-dock-cache-trigger{% if dock_section in ['x', 'grok', 'chatgpt'] %} is-active{% endif %}"
+            data-section-link="{{ dock_section if dock_section in ['x', 'grok', 'chatgpt'] else 'cache' }}"
+            data-tooltip="Caches"
+            aria-label="Switch cache source"
+            aria-haspopup="listbox"
+            aria-expanded="false"
+            aria-controls="cache_source_menu"
+        >
+            <span class="icon dock-icon dock-icon-cache" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">Caches</span>
+        </button>
+        <div
+            id="cache_source_menu"
+            class="trade-strategy-dropdown backtest-shared-select-dropdown sidebar-dock-cache-dropdown"
+            data-role="cache-source-menu"
+            role="listbox"
+            aria-label="Choose cache source"
+            hidden
+        >
+            <a
+                href="{{ url_for('index') }}"
+                class="trade-strategy-dropdown-option sidebar-dock-cache-option{% if dock_section == 'x' %} is-selected is-active{% endif %}"
+                data-cache-source-option="x"
+                role="option"
+                aria-selected="{{ 'true' if dock_section == 'x' else 'false' }}"
+                {% if dock_section == 'x' %}aria-current="page"{% endif %}
+            >
+                <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/x.svg') }}" alt="" aria-hidden="true">
+                <span class="sidebar-dock-cache-option-copy">
+                    <span class="trade-strategy-dropdown-text">X cache</span>
+                    {% if dock_section == 'x' %}<span class="sidebar-dock-cache-current" aria-hidden="true">Current</span>{% endif %}
+                </span>
+            </a>
+            <a
+                href="{{ url_for('grok') }}"
+                class="trade-strategy-dropdown-option sidebar-dock-cache-option{% if dock_section == 'grok' %} is-selected is-active{% endif %}"
+                data-cache-source-option="grok"
+                role="option"
+                aria-selected="{{ 'true' if dock_section == 'grok' else 'false' }}"
+                {% if dock_section == 'grok' %}aria-current="page"{% endif %}
+            >
+                <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/grok.svg') }}" alt="" aria-hidden="true">
+                <span class="sidebar-dock-cache-option-copy">
+                    <span class="trade-strategy-dropdown-text">Grok cache</span>
+                    {% if dock_section == 'grok' %}<span class="sidebar-dock-cache-current" aria-hidden="true">Current</span>{% endif %}
+                </span>
+            </a>
+            <a
+                href="{{ url_for('chatgpt') }}"
+                class="trade-strategy-dropdown-option sidebar-dock-cache-option{% if dock_section == 'chatgpt' %} is-selected is-active{% endif %}"
+                data-cache-source-option="chatgpt"
+                role="option"
+                aria-selected="{{ 'true' if dock_section == 'chatgpt' else 'false' }}"
+                {% if dock_section == 'chatgpt' %}aria-current="page"{% endif %}
+            >
+                <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/ChatGPT-Logo.svg') }}" alt="" aria-hidden="true">
+                <span class="sidebar-dock-cache-option-copy">
+                    <span class="trade-strategy-dropdown-text">ChatGPT cache</span>
+                    {% if dock_section == 'chatgpt' %}<span class="sidebar-dock-cache-current" aria-hidden="true">Current</span>{% endif %}
+                </span>
+            </a>
+        </div>
+    </div>
+    <a
+        href="{{ url_for('browser') }}"
+        class="sidebar-dock-item{% if dock_section == 'browser' %} is-active{% endif %}"
+        data-section-link="browser"
+        data-tooltip="Browser"
+        aria-label="Browser"
+        {% if dock_section == 'browser' %}aria-current="page"{% endif %}
+    >
+        <span class="icon dock-icon dock-icon-browser" aria-hidden="true"></span>
+        <span class="sidebar-dock-label" aria-hidden="true">Browser</span>
+    </a>
+    <a
+        href="{{ url_for('settings') }}"
+        class="sidebar-dock-item{% if dock_section == 'settings' %} is-active{% endif %}"
+        data-section-link="settings"
+        data-tooltip="Settings"
+        aria-label="Settings"
+        {% if dock_section == 'settings' %}aria-current="page"{% endif %}
+    >
+        <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>
+        <span class="sidebar-dock-label" aria-hidden="true">Settings</span>
+    </a>
+</nav>

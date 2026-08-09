@@ -104,9 +104,20 @@ def test_browser_session_api_validates_inputs_and_returns_probe_payload(client) 
 @pytest.mark.integration
 def test_settings_and_grok_reset_routes_redirect_without_external_work(client, tmp_path: Path) -> None:
     with patch("app.web.app.save_config") as save_config:
-        settings_response = client.post("/settings", data={"download_workers": "1,234", "scroll_pause_seconds": "2.5"})
+        settings_response = client.post(
+            "/settings",
+            data={
+                "download_workers": "1,234",
+                "scroll_pause_seconds": "2.5",
+                "chatgpt_startup_timeout_seconds": "45",
+                "chatgpt_scan_wait_seconds": "0.25",
+            },
+        )
     assert settings_response.status_code == 302
     save_config.assert_called_once()
+    saved_config = save_config.call_args.args[0]
+    assert saved_config.chatgpt_startup_timeout_seconds == 45.0
+    assert saved_config.chatgpt_scan_wait_seconds == 0.25
 
     with patch("app.web.app.reset_grok_state", return_value=GrokResetResult(removed_media_files=2, removed_state_files=1)):
         reset_response = client.post("/grok/reset")

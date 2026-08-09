@@ -1,6 +1,6 @@
 """Read-only local media browser tests.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -19,6 +19,7 @@ from app.core.local_media_browser import (
     LocalMediaItem,
     build_local_store_pagination,
     format_captured_at_label,
+    format_captured_at_timestamp_label,
     paginate_media_items,
     resolve_local_media_path,
     sort_media_items,
@@ -304,6 +305,33 @@ def test_scans_chatgpt_catalog_and_project_name(tmp_path: Path) -> None:
     assert items[0].height == 800
 
 
+def test_chatgpt_direct_session_uses_its_recorded_title(tmp_path: Path) -> None:
+    root = tmp_path / "local_store"
+    media_path = root / "chatgpt" / "Configured Project" / "img_file.png"
+    _write_media(media_path, b"chatgpt-image")
+    (media_path.parent / ".chatgpt_catalog.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "entries": {
+                    "file-123": {
+                        "file_id": "file-123",
+                        "relative_path": "img_file.png",
+                        "conversation_url": "https://chatgpt.com/c/demo-session",
+                        "conversation_title": "A regular session",
+                        "first_seen_at": "2026-08-09T07:09:50Z",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    items = LocalMediaCatalog(root).snapshot(force_refresh=True)
+
+    assert items[0].creator == "A regular session"
+
+
 def test_chatgpt_catalog_missing_falls_back_to_filename(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
     media_path = root / "chatgpt" / "Fallback" / "img_file.avif"
@@ -315,6 +343,10 @@ def test_chatgpt_catalog_missing_falls_back_to_filename(tmp_path: Path) -> None:
     assert items[0].project_name == "Fallback"
     assert items[0].title == "img_file.avif"
     assert items[0].media_kind == "image"
+
+
+def test_formats_captured_timestamp_with_minute_precision() -> None:
+    assert format_captured_at_timestamp_label("2026-08-09T07:09:50Z") == "9 Aug 2026, 07:09"
 
 
 def test_chatgpt_for_prompts_is_exempt_from_regular_inventory(tmp_path: Path) -> None:

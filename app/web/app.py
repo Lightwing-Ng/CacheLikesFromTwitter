@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.9.0-codex.1
+# Code version: v1.11.0-codex.1
 
 from __future__ import annotations
 
@@ -18,13 +18,22 @@ from app.core.config import (
     DEFAULT_PORT,
     CrawlConfig,
     LOCAL_STORE_ROOT,
+    MAX_CHATGPT_SCAN_WAIT_SECONDS,
+    MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    MIN_CHATGPT_SCAN_WAIT_SECONDS,
+    MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
     load_saved_config,
     save_config,
 )
 from app.core.grok_downloader import build_grok_initial_snapshot, reset_grok_state
 from app.core.grok_service import GrokDownloadService
 from app.core.logging_setup import configure_logging, get_log_file_path
-from app.core.local_media_browser import LocalMediaCatalog, normalize_browser_filters, resolve_local_media_path
+from app.core.local_media_browser import (
+    LocalMediaCatalog,
+    format_captured_at_timestamp_label,
+    normalize_browser_filters,
+    resolve_local_media_path,
+)
 from app.core.service import CacheLikesService
 from app.core.state import TaskState, build_initial_snapshot, utc_now
 from app.core.version import APP_VERSION
@@ -129,10 +138,20 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         raw_value = (request.form.get(field_name, str(fallback)) or str(fallback)).replace(",", "").strip()
         return max(minimum, int(raw_value or fallback))
 
-    def parse_float_field(field_name: str, fallback: float) -> float:
+    def parse_float_field(
+        field_name: str,
+        fallback: float,
+        minimum: float | None = None,
+        maximum: float | None = None,
+    ) -> float:
         """Parse one float form field while tolerating display separators."""
         raw_value = (request.form.get(field_name, str(fallback)) or str(fallback)).replace(",", "").strip()
-        return float(raw_value or fallback)
+        parsed = float(raw_value or fallback)
+        if minimum is not None:
+            parsed = max(minimum, parsed)
+        if maximum is not None:
+            parsed = min(maximum, parsed)
+        return parsed
 
     def parse_form_config(base: CrawlConfig | None = None) -> CrawlConfig:
         source = base or CrawlConfig()
@@ -156,6 +175,18 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 request.form.get("chatgpt_project_name", source.chatgpt_project_name) or source.chatgpt_project_name
             ).strip()
             or source.chatgpt_project_name,
+            chatgpt_startup_timeout_seconds=parse_float_field(
+                "chatgpt_startup_timeout_seconds",
+                source.chatgpt_startup_timeout_seconds,
+                minimum=MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+                maximum=MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+            ),
+            chatgpt_scan_wait_seconds=parse_float_field(
+                "chatgpt_scan_wait_seconds",
+                source.chatgpt_scan_wait_seconds,
+                minimum=MIN_CHATGPT_SCAN_WAIT_SECONDS,
+                maximum=MAX_CHATGPT_SCAN_WAIT_SECONDS,
+            ),
             chrome_user_data_dir=Path(
                 request.form.get("chrome_user_data_dir", str(source.chrome_user_data_dir)).strip()
             ).expanduser(),
@@ -250,6 +281,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             media_payload=media_payload,
             filters=filters,
             has_any_media=bool(all_items),
+            format_captured_at_timestamp_label=format_captured_at_timestamp_label,
             format_media_size=format_media_size,
             version=APP_VERSION,
         )
@@ -442,7 +474,7 @@ def format_media_size(content_bytes: int) -> str:
     if size < 1_024:
         return f"{size:,} B"
     if size < 1_024**2:
-        return f"{size / 1_024:.1f} KB"
+        return f"{size / 1_024:.2f} KiB"
     if size < 1_024**3:
-        return f"{size / 1_024**2:.1f} MB"
-    return f"{size / 1_024**3:.1f} GB"
+        return f"{size / 1_024**2:.2f} MiB"
+    return f"{size / 1_024**3:.2f} GiB"

@@ -1,12 +1,12 @@
-<!-- Code version: v1.10.1-codex.1 -->
+<!-- Code version: v1.12.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter Browser</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.16.1-codex.1') }}">
-    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.8.1-codex.2') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.18.0-codex.1') }}">
+    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.9.0-codex.1') }}"></script>
 </head>
 <body>
 <main class="page">
@@ -134,11 +134,12 @@
                             data-deleted="{{ 'true' if item.is_deleted else 'false' }}"
                         >
                             {% set original_link_label = {"x": "Open original post", "chatgpt": "Open original conversation", "grok": "Open original source"}.get(item.source, "Open original source") %}
+                            {% set attribution_label = "Project" if item.source == "chatgpt" else "Creator" %}
                             <button
                                 type="button"
                                 class="browser-media-open"
                                 data-media-open
-                                aria-label="Open {{ item.title }}"
+                                aria-label="Open {{ item.filename }}"
                             >
                             <span class="browser-preview" data-preview-shell>
                                 {% if item.media_kind == "video" %}
@@ -169,27 +170,37 @@
                                     <span class="status-chip browser-source-chip source-{{ item.source }}">{{ {"x": "X", "grok": "Grok", "chatgpt": "ChatGPT"}.get(item.source, item.source.title()) }}</span>
                                     <span class="browser-media-type">{{ item.media_kind.title() }}</span>
                                 </span>
-                                <span class="browser-media-card-title" title="{{ item.title }}">{{ item.title }}</span>
-                                <span class="browser-media-card-description">{{ item.description or item.filename }}</span>
-                                <span class="browser-media-card-meta">
-                                    <span>{{ item.creator or item.project_name }}</span>
-                                    <span>{{ item.captured_at_label }}</span>
-                                    <span>{{ "{:,}".format(item.content_bytes) }} bytes · {{ format_media_size(item.content_bytes) }}</span>
-                                </span>
+                                <span class="browser-media-card-title" title="{{ item.filename }}">{{ item.filename }}</span>
+                                <dl class="browser-media-card-metadata">
+                                    <div><dt>{{ attribution_label }}:</dt><dd title="{{ item.creator or item.project_name }}">{{ item.creator or item.project_name }}</dd></div>
+                                    <div><dt>Created on:</dt><dd>{{ format_captured_at_timestamp_label(item.captured_at) }}</dd></div>
+                                    <div><dt>Size:</dt><dd>{{ format_media_size(item.content_bytes) }}</dd></div>
+                                </dl>
                             </span>
                             </button>
                             {% if item.source_url %}
-                            <a
-                                class="ghost-link browser-media-source-link"
-                                data-media-source-link
-                                href="{{ item.source_url }}"
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                aria-label="{{ original_link_label }} for {{ item.title }}"
-                            >
-                                <span class="browser-media-source-link-label">{{ original_link_label }}</span>
-                                <span class="browser-media-source-link-url" title="{{ item.source_url }}">{{ item.source_url }}</span>
-                            </a>
+                            <div class="browser-media-source-actions">
+                                <a
+                                    class="ghost-link browser-media-source-link"
+                                    data-media-source-link
+                                    href="{{ item.source_url }}"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    aria-label="{{ original_link_label }} for {{ item.filename }}"
+                                >
+                                    <span class="browser-media-source-link-label">{{ original_link_label }}</span>
+                                    <span class="browser-media-source-link-url" title="{{ item.source_url }}">{{ item.source_url }}</span>
+                                </a>
+                                <button
+                                    type="button"
+                                    class="browser-media-copy-source-url"
+                                    data-media-copy-source-url
+                                    aria-label="Copy original URL for {{ item.filename }}"
+                                    title="Copy URL"
+                                >
+                                    <span class="icon browser-media-copy-source-url-icon" aria-hidden="true"></span>
+                                </button>
+                            </div>
                             {% endif %}
                             <button
                                 type="button"
@@ -260,28 +271,8 @@
         </section>
     </div>
 
-    <nav class="sidebar-dock" aria-label="Workspace sections">
-        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="x" data-tooltip="X" aria-label="X">
-            <span class="icon dock-icon dock-icon-x" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">X</span>
-        </a>
-        <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" data-tooltip="Grok" aria-label="Grok">
-            <span class="icon dock-icon dock-icon-grok" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Grok</span>
-        </a>
-        <a href="#browser_workspace" class="sidebar-dock-item is-active" data-section-link="browser" data-tooltip="Browser" aria-label="Browser">
-            <span class="icon dock-icon dock-icon-browser" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Browser</span>
-        </a>
-        <a href="{{ url_for('chatgpt') }}" class="sidebar-dock-item" data-section-link="chatgpt" data-tooltip="ChatGPT" aria-label="ChatGPT">
-            <span class="icon dock-icon dock-icon-chatgpt" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">ChatGPT</span>
-        </a>
-        <a href="{{ url_for('settings') }}" class="sidebar-dock-item" data-section-link="settings" data-tooltip="Settings" aria-label="Settings">
-            <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Settings</span>
-        </a>
-    </nav>
+    {% set dock_section = "browser" %}
+    {% include "_sidebar_dock.html" %}
 </main>
 
 <dialog class="browser-dialog" id="browser_detail_dialog" aria-labelledby="browser_dialog_title">
@@ -306,6 +297,6 @@
 </dialog>
 
 <script type="application/json" id="browser_media_data">{{ media_payload|tojson }}</script>
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.0.0-codex.2') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.2.0-codex.1') }}"></script>
 </body>
 </html>
