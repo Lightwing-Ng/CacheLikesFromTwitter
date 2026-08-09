@@ -1,10 +1,10 @@
 # Test Suite
 
-Test-suite version: `v1.0.0-codex.1`
+Test-suite version: `v1.1.0-codex.1`
 
-The suite follows the sibling project's testing model: fast deterministic unit tests for
-parsers and state transitions, filesystem-backed regression tests for durable catalogs and
-manifests, then Flask integration tests for route contracts.
+The authoritative test workflow, coverage baseline, isolation contract, and CI behavior are
+documented in [docs/TESTING.md](../docs/TESTING.md). Use `./scripts/test.sh` for the normal
+offline suite and `./scripts/check.sh` for the full quality gate.
 
 ## Coverage Map
 
@@ -22,12 +22,14 @@ manifests, then Flask integration tests for route contracts.
 - `test_service.py` and `test_services_and_web.py`: concurrent download orchestration,
   emergency-stop semantics, status summaries, Flask pages, APIs, settings, and reset routes.
 - `test_logging_setup.py`: structured logging setup and JSON line output.
+- `test_runtime_isolation.py`: process-wide pytest runtime redirection and the Grok
+  snapshot default-path regression.
 
 ## Isolation Rules
 
-`conftest.py` changes `HOME` before application modules load, so default settings remain in a
-temporary pytest directory. Filesystem tests use pytest temporary paths. Browser, Playwright,
+`conftest.py` changes `HOME`, `CACHELIKES_RUNTIME_ROOT`, and `CACHELIKES_SETTINGS_PATH` before
+application modules load. Filesystem tests use pytest temporary paths. Browser, Playwright,
 yt-dlp, X, Grok, and network transport are replaced by fakes or mocks; no authenticated session
-or local media cache is touched.
+or user-owned local media cache is touched.
 
-Run the full suite with `/usr/local/bin/python3.13 -m pytest -q`.
+Run the full suite with `./scripts/test.sh`.

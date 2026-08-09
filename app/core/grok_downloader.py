@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.11.0-codex.1
+# Code version: v1.11.1-codex.1
 
 from __future__ import annotations
 
@@ -2097,10 +2097,11 @@ class GrokWorkQueue:
         )
 
 
-def build_grok_initial_snapshot(version: str, target_dir: Path = GROK_TARGET_DIR) -> TaskSnapshot:
+def build_grok_initial_snapshot(version: str, target_dir: Path | None = None) -> TaskSnapshot:
     """Hydrate the Grok page with existing local cache metrics."""
-    snapshot = TaskSnapshot(version=version, account_name="Grok", output_dir=str(target_dir))
-    catalog = GrokMediaCatalog.build(target_dir)
+    resolved_target_dir = target_dir or GROK_TARGET_DIR
+    snapshot = TaskSnapshot(version=version, account_name="Grok", output_dir=str(resolved_target_dir))
+    catalog = GrokMediaCatalog.build(resolved_target_dir)
     cached_count, cached_images, cached_videos = catalog.summarize()
     if cached_count == 0:
         snapshot.message = "Ready. No Grok media has been cached yet."
@@ -2117,15 +2118,16 @@ def build_grok_initial_snapshot(version: str, target_dir: Path = GROK_TARGET_DIR
     return snapshot
 
 
-def reset_grok_state(target_dir: Path = GROK_TARGET_DIR) -> GrokResetResult:
+def reset_grok_state(target_dir: Path | None = None) -> GrokResetResult:
     """Delete cached Grok media plus resumable local state for a full resync."""
+    resolved_target_dir = target_dir or GROK_TARGET_DIR
     result = GrokResetResult()
-    target_dir.mkdir(parents=True, exist_ok=True)
+    resolved_target_dir.mkdir(parents=True, exist_ok=True)
 
     state_paths = [
-        target_dir / GROK_CATALOG_FILENAME,
-        target_dir / GROK_DOWNLOAD_MANIFEST_FILENAME,
-        target_dir / GROK_WORK_QUEUE_FILENAME,
+        resolved_target_dir / GROK_CATALOG_FILENAME,
+        resolved_target_dir / GROK_DOWNLOAD_MANIFEST_FILENAME,
+        resolved_target_dir / GROK_WORK_QUEUE_FILENAME,
     ]
     for state_path in state_paths:
         if not state_path.exists():
@@ -2134,7 +2136,7 @@ def reset_grok_state(target_dir: Path = GROK_TARGET_DIR) -> GrokResetResult:
             state_path.unlink()
             result.removed_state_files += 1
 
-    partial_dir = target_dir / TEMP_DOWNLOAD_DIRNAME
+    partial_dir = resolved_target_dir / TEMP_DOWNLOAD_DIRNAME
     if partial_dir.exists() and partial_dir.is_dir():
         for partial_path in partial_dir.rglob("*"):
             if partial_path.is_file():
@@ -2142,7 +2144,7 @@ def reset_grok_state(target_dir: Path = GROK_TARGET_DIR) -> GrokResetResult:
         shutil.rmtree(partial_dir, ignore_errors=False)
         result.removed_partial_dirs += 1
 
-    for file_path in target_dir.iterdir():
+    for file_path in resolved_target_dir.iterdir():
         if not file_path.is_file():
             continue
         if file_path.name.startswith("."):

@@ -1,12 +1,11 @@
 """Focused regression tests for the cache orchestration service.
 
-Code version: v1.1.1-codex.3
+Code version: v1.1.1-codex.4
 """
 
 from __future__ import annotations
 
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
 from app.core.config import CrawlConfig, LOCAL_STORE_ROOT

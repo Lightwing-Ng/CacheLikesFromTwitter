@@ -1,19 +1,33 @@
 """Configuration helpers."""
 
-# Code version: v1.5.2-codex.1
+# Code version: v1.6.0-codex.1
 
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-LOCAL_STORE_ROOT = PROJECT_ROOT / "local_store"
+RUNTIME_ROOT_ENV = "CACHELIKES_RUNTIME_ROOT"
+SETTINGS_PATH_ENV = "CACHELIKES_SETTINGS_PATH"
+
+
+def resolve_runtime_root() -> Path:
+    """Return the optional runtime root used by isolated test processes."""
+    configured_root = os.environ.get(RUNTIME_ROOT_ENV, "").strip()
+    if not configured_root:
+        return PROJECT_ROOT
+    return Path(configured_root).expanduser().resolve(strict=False)
+
+
+RUNTIME_ROOT = resolve_runtime_root()
+LOCAL_STORE_ROOT = RUNTIME_ROOT / "local_store"
 X_LOCAL_STORE_DIRNAME = "x"
-LOGS_ROOT = PROJECT_ROOT / "logs"
-LEGACY_SETTINGS_PATH = PROJECT_ROOT / ".cachelikes-settings.json"
+LOGS_ROOT = RUNTIME_ROOT / "logs"
+LEGACY_SETTINGS_PATH = RUNTIME_ROOT / ".cachelikes-settings.json"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8666
 DEFAULT_CHROME_USER_DATA_DIR = Path.home() / "Library/Application Support/Google/Chrome"
@@ -27,6 +41,9 @@ DEFAULT_CHATGPT_PROJECT_NAME = "Studio208cm"
 
 def default_settings_path() -> Path:
     """Store local settings outside the Git worktree to avoid accidental commits."""
+    configured_path = os.environ.get(SETTINGS_PATH_ENV, "").strip()
+    if configured_path:
+        return Path(configured_path).expanduser().resolve(strict=False)
     return Path.home() / "Library/Application Support/CacheLikesFromTwitter/settings.json"
 
 

@@ -1,0 +1,114 @@
+# Testing guide
+
+Documentation version: `v1.0.2-codex.1`
+
+## Supported commands
+
+Install the runtime and development dependencies with the pinned Python 3.13 workflow:
+
+```bash
+./scripts/setup_python.sh
+```
+
+Run the ordinary offline suite:
+
+```bash
+./scripts/test.sh
+```
+
+Run a focused test or marker selection:
+
+```bash
+./scripts/test.sh tests/test_local_media_browser.py
+CACHELIKES_TEST_MARK_EXPRESSION=integration ./scripts/test.sh
+```
+
+The default marker expression is `not live`. Run an intentionally manual live check only with an
+explicit override, for example `CACHELIKES_TEST_MARK_EXPRESSION=live ./scripts/test.sh`.
+
+Run the complete quality gate:
+
+```bash
+./scripts/check.sh
+```
+
+`CACHELIKES_PYTHON` may override the interpreter only when it resolves to Python 3.13. It exists
+for non-macOS CI runners; normal local development must use `/usr/local/bin/python3.13`.
+
+## Quality gate
+
+`scripts/check.sh` is the single local and CI quality command. It runs, in order:
+
+1. Ruff static checks over `main.py`, `app/`, and `tests/`.
+2. `node --check` for every first-party JavaScript file in `app/web/static/`.
+3. The full pytest suite with branch coverage for `app/`.
+
+The coverage report is written to `test-results/coverage.json`; all generated test artifacts are
+ignored by Git. The gate currently enforces a 55% combined statement-and-branch coverage floor.
+Override `CACHELIKES_COVERAGE_MINIMUM` only for an intentional local diagnostic, never to make a
+regression pass.
+
+Baseline measured on 9 Aug 2026 with Python 3.13.0, pytest 9.0.3, pytest-cov 7.1.0, and Ruff
+0.15.21:
+
+- 120 tests passed, with 13 unittest subtests passed.
+- Combined coverage for `app/` was approximately 59% using branch coverage.
+- All four first-party JavaScript files passed syntax checks.
+
+Raise the coverage floor only after adding behavior-level tests. Do not exclude production modules
+or lower the threshold to mask a gap.
+
+## Test organization
+
+- Pure unit tests cover URL normalization, source parsing, media classification, state
+  transitions, durable queue behavior, retries, and path validation.
+- Filesystem regression tests use `tmp_path` or `TemporaryDirectory` for catalogs, manifests,
+  media files, deleted previews, and settings.
+- Flask integration tests use `create_app()` plus `test_client()` and assert route contracts
+  without starting a web server.
+- Style-token and template tests protect durable UI contracts without requiring a browser runtime.
+
+The current detailed module-to-behavior map is maintained in [tests/README.md](../tests/README.md).
+
+## Isolation contract
+
+`tests/conftest.py` runs before application test modules are imported. It redirects all default
+runtime locations to process-scoped temporary directories:
+
+- `HOME` keeps settings and browser-profile defaults away from the user account.
+- `CACHELIKES_RUNTIME_ROOT` moves default local caches and logs away from the repository.
+- `CACHELIKES_SETTINGS_PATH` redirects persisted settings.
+
+Default tests must not:
+
+- start Chrome, Edge, Safari, or an authenticated Playwright context;
+- make X, Grok, ChatGPT, yt-dlp, or general network requests;
+- read, copy, delete, reset, or restore a user-owned cache, log, setting, or browser profile;
+- submit a real background cache job.
+
+Mock external boundaries at the module that invokes them. Existing patterns mock
+`sync_playwright`, `launch_chromium_context`, `subprocess.run`, `urlopen`, the scraper, and
+source download functions. Do not replace a lower-level implementation when the route or service
+boundary is the behavior being tested.
+
+## Markers
+
+- `integration`: Flask tests that cross module boundaries and remain fully offline.
+- `slow`: Tests materially slower than the unit-test median.
+- `live`: Explicit manual checks that require a signed-in browser or a remote service. These never
+  belong in CI or the default quality gate.
+
+The project intentionally does not yet run Playwright browser E2E checks in CI. The current
+JavaScript files are DOM-oriented scripts rather than importable pure modules, so the first
+baseline uses syntax validation and Flask route contracts. Add browser E2E only after creating a
+seeded, disposable runtime and proving that it cannot access authenticated profiles or production
+cache data.
+
+## Writing a new test
+
+1. Put the test beside the behavior it protects under `tests/test_<area>.py`.
+2. Prefer a public behavior or invariant over assertions about incidental implementation details.
+3. Use a temporary filesystem location for every test-owned file.
+4. Use the `client` fixture for route contracts and preserve the injected runtime boundary.
+5. Add a marker only when it accurately describes the test's cost or boundary.
+6. Run the focused test, then `./scripts/check.sh` before handoff.

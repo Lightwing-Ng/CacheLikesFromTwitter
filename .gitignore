@@ -4,6 +4,13 @@
 .idea/*
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+.coverage
+coverage.json
+htmlcov/
+playwright-report/
+test-results/*
+!test-results/.gitkeep
 local_store/*
 !local_store/.gitkeep
 logs/*

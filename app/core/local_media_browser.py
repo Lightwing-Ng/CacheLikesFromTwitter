@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.4.0-codex.1
+# Code version: v1.4.1-codex.1
 
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
 
 from . import config
-from .config import LOCAL_STORE_ROOT
 
 
 IMAGE_SUFFIXES = frozenset({".avif", ".gif", ".heic", ".jpeg", ".jpg", ".png", ".webp"})
@@ -405,7 +404,8 @@ def sort_media_items(items: Iterable[LocalMediaItem], sort: str = "newest") -> t
         normalized_sort = "newest"
 
     if normalized_sort == "name":
-        key = lambda item: (item.filename.casefold(), item.relative_path)
+        def key(item: LocalMediaItem) -> tuple[str, str]:
+            return (item.filename.casefold(), item.relative_path)
     else:
         direction = -1 if normalized_sort == "newest" else 1
 

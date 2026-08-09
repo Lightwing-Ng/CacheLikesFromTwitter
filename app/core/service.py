@@ -1,17 +1,16 @@
 """Orchestration service for the cache job."""
 
-# Code version: v1.4.3-codex.1
+# Code version: v1.4.4-codex.1
 
 from __future__ import annotations
 
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 import logging
-from pathlib import Path
 from threading import Event, RLock, Thread
 from uuid import uuid4
 
 from .config import CrawlConfig, LOCAL_STORE_ROOT, X_LOCAL_STORE_DIRNAME
-from .downloader import LocalTweetCacheIndex, download_tweet_media
+from .downloader import DownloadResult, LocalTweetCacheIndex, download_tweet_media
 from .job_lock import CacheTaskLock, SHARED_CACHE_TASK_LOCK
 from .logging_setup import reset_job_id, set_job_id
 from .scraper import collect_liked_tweet_urls
