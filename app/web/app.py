@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.7.2-codex.1
+# Code version: v1.9.0-codex.1
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from flask import Flask, jsonify, redirect, render_template, request, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, url_for
 
 from app.core.browser_sessions import browser_descriptors, build_browser_options, probe_browser_session
 from app.core.chatgpt_downloader import build_chatgpt_initial_snapshot, reset_chatgpt_state
@@ -17,12 +17,14 @@ from app.core.config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
     CrawlConfig,
+    LOCAL_STORE_ROOT,
     load_saved_config,
     save_config,
 )
 from app.core.grok_downloader import build_grok_initial_snapshot, reset_grok_state
 from app.core.grok_service import GrokDownloadService
 from app.core.logging_setup import configure_logging, get_log_file_path
+from app.core.local_media_browser import LocalMediaCatalog, normalize_browser_filters, resolve_local_media_path
 from app.core.service import CacheLikesService
 from app.core.state import TaskState, build_initial_snapshot, utc_now
 from app.core.version import APP_VERSION
@@ -48,7 +50,7 @@ def reconcile_cached_snapshot(snapshot: dict[str, Any], hydrated_payload: dict[s
     return snapshot
 
 
-def create_app() -> Flask:
+def create_app(local_store_root: Path | str | None = None) -> Flask:
     """Build and configure the Flask app."""
     configure_logging(APP_VERSION)
     app = Flask(
@@ -63,7 +65,43 @@ def create_app() -> Flask:
     grok_service = GrokDownloadService(grok_state)
     chatgpt_state = TaskState(version=APP_VERSION, snapshot_factory=build_chatgpt_initial_snapshot)
     chatgpt_service = ChatGPTDownloadService(chatgpt_state)
+    media_catalog = LocalMediaCatalog(local_store_root or LOCAL_STORE_ROOT)
+    app.extensions["local_media_catalog"] = media_catalog
     saved_config = load_saved_config()
+
+    def serialize_media_item(item) -> dict[str, Any]:
+        """Serialize one browser item without exposing local absolute paths."""
+        media_url = (
+            url_for("browser_deleted_preview", stable_id=item.stable_id)
+            if item.is_deleted
+            else url_for("browser_media", relative_path=item.relative_path)
+        )
+        return {
+            "id": item.stable_id,
+            "source": item.source,
+            "source_label": {"x": "X", "grok": "Grok", "chatgpt": "ChatGPT"}.get(
+                item.source, item.source.title()
+            ),
+            "media_kind": item.media_kind,
+            "media_kind_label": item.media_kind.title(),
+            "relative_path": item.relative_path,
+            "filename": item.filename,
+            "title": item.title,
+            "description": item.description,
+            "creator": item.creator,
+            "project_name": item.project_name,
+            "source_url": item.source_url,
+            "resource_key": item.resource_key,
+            "captured_at_label": item.captured_at_label,
+            "content_bytes": item.content_bytes,
+            "size_label": format_media_size(item.content_bytes),
+            "media_url": media_url,
+            "preview_url": media_url,
+            "alt_text": item.alt_text,
+            "width": item.width,
+            "height": item.height,
+            "is_deleted": item.is_deleted,
+        }
 
     def build_reconciled_snapshot() -> dict[str, Any]:
         """Refresh X cache counters from disk without discarding live task status."""
@@ -186,6 +224,73 @@ def create_app() -> Flask:
             saved_config=saved_config,
             log_file_path=str(get_log_file_path()),
         )
+
+    @app.get("/browser")
+    def browser():
+        filters = normalize_browser_filters(
+            source=request.args.get("source"),
+            media_kind=request.args.get("kind"),
+            query=request.args.get("q"),
+            sort=request.args.get("sort"),
+            page=request.args.get("page"),
+        )
+        force_refresh = request.args.get("refresh") == "1"
+        all_items = media_catalog.snapshot(force_refresh=force_refresh)
+        media_page = media_catalog.query(
+            source=filters["source"],
+            media_kind=filters["kind"],
+            query=filters["q"],
+            sort=filters["sort"],
+            page=filters["page"],
+        )
+        media_payload = [serialize_media_item(item) for item in media_page.items]
+        return render_template(
+            "browser.html",
+            media_page=media_page,
+            media_payload=media_payload,
+            filters=filters,
+            has_any_media=bool(all_items),
+            format_media_size=format_media_size,
+            version=APP_VERSION,
+        )
+
+    @app.get("/browser/media/<path:relative_path>")
+    def browser_media(relative_path: str):
+        resolved_path = resolve_local_media_path(media_catalog.local_store_root, relative_path)
+        if resolved_path is None:
+            abort(404)
+        return send_file(resolved_path, conditional=True, etag=True, max_age=0)
+
+    @app.get("/browser/deleted-preview/<stable_id>")
+    def browser_deleted_preview(stable_id: str):
+        resolved_path = media_catalog.deleted_preview_path(stable_id)
+        if resolved_path is None:
+            abort(404)
+        return send_file(resolved_path, conditional=True, etag=True, max_age=0)
+
+    @app.post("/api/browser/media/<stable_id>/delete")
+    def delete_browser_media(stable_id: str):
+        try:
+            item = media_catalog.delete(stable_id)
+        except KeyError:
+            return jsonify({"error": "Cached media was not found."}), 404
+        except FileNotFoundError:
+            return jsonify({"error": "Cached media is no longer available."}), 404
+        except (OSError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify({"item": serialize_media_item(item)})
+
+    @app.post("/api/browser/media/<stable_id>/restore")
+    def restore_browser_media(stable_id: str):
+        try:
+            item = media_catalog.restore(stable_id)
+        except KeyError:
+            return jsonify({"error": "Removed media was not found."}), 404
+        except FileNotFoundError:
+            return jsonify({"error": "The retained preview is no longer available."}), 404
+        except (OSError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify({"item": serialize_media_item(item)})
 
     @app.post("/start")
     def start():
@@ -329,3 +434,15 @@ def create_app() -> Flask:
         return jsonify(payload)
 
     return app
+
+
+def format_media_size(content_bytes: int) -> str:
+    """Render a byte count as a compact, readable English file size."""
+    size = max(0, int(content_bytes))
+    if size < 1_024:
+        return f"{size:,} B"
+    if size < 1_024**2:
+        return f"{size / 1_024:.1f} KB"
+    if size < 1_024**3:
+        return f"{size / 1_024**2:.1f} MB"
+    return f"{size / 1_024**3:.1f} GB"

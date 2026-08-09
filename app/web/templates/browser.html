@@ -1,0 +1,311 @@
+<!-- Code version: v1.10.1-codex.1 -->
+<!doctype html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>CacheLikesFromTwitter Browser</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.16.1-codex.1') }}">
+    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.8.1-codex.2') }}"></script>
+</head>
+<body>
+<main class="page">
+    <div class="ambient ambient-left" aria-hidden="true"></div>
+    <div class="ambient ambient-right" aria-hidden="true"></div>
+
+    <div class="app-shell is-sidebar-open" id="app_shell">
+        <button
+            type="button"
+            class="sidebar-toggle"
+            id="sidebar_toggle"
+            aria-label="Toggle sidebar"
+            aria-expanded="true"
+        >
+            <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
+        </button>
+
+        <button
+            type="button"
+            class="sidebar-backdrop"
+            id="sidebar_backdrop"
+            aria-label="Close sidebar"
+            aria-hidden="true"
+            tabindex="-1"
+            hidden
+        ></button>
+
+        <aside class="panel sidebar browser-sidebar" id="browser_sidebar">
+            <section class="sidebar-section">
+                <div class="section-heading">
+                    <div>
+                        <p class="section-kicker">Local cache</p>
+                        <h2>Browser</h2>
+                    </div>
+                    <span class="status-chip status-collecting">Manageable</span>
+                </div>
+                <form action="{{ url_for('browser') }}" method="get" class="sidebar-form browser-filter-form">
+                    <label class="field browser-filter-field">
+                        <span>Search</span>
+                        <input
+                            type="search"
+                            name="q"
+                            class="browser-search-input"
+                            value="{{ filters.q }}"
+                            maxlength="120"
+                            autocomplete="off"
+                            aria-label="Search cached media"
+                        >
+                    </label>
+                    <label class="field browser-filter-field">
+                        <span>Source</span>
+                        <select name="source" class="form-select" aria-label="Filter by source">
+                            <option value="all" {% if filters.source == "all" %}selected{% endif %}>All sources</option>
+                            <option value="x" {% if filters.source == "x" %}selected{% endif %}>X</option>
+                            <option value="grok" {% if filters.source == "grok" %}selected{% endif %}>Grok</option>
+                            <option value="chatgpt" {% if filters.source == "chatgpt" %}selected{% endif %}>ChatGPT</option>
+                        </select>
+                    </label>
+                    <label class="field browser-filter-field">
+                        <span>Media type</span>
+                        <select name="kind" class="form-select" aria-label="Filter by media type">
+                            <option value="all" {% if filters.kind == "all" %}selected{% endif %}>All media</option>
+                            <option value="image" {% if filters.kind == "image" %}selected{% endif %}>Images</option>
+                            <option value="video" {% if filters.kind == "video" %}selected{% endif %}>Videos</option>
+                        </select>
+                    </label>
+                    <label class="field browser-filter-field">
+                        <span>Sort order</span>
+                        <select name="sort" class="form-select" aria-label="Sort cached media">
+                            <option value="newest" {% if filters.sort == "newest" %}selected{% endif %}>Newest first</option>
+                            <option value="oldest" {% if filters.sort == "oldest" %}selected{% endif %}>Oldest first</option>
+                            <option value="name" {% if filters.sort == "name" %}selected{% endif %}>File name</option>
+                        </select>
+                    </label>
+                    <div class="browser-filter-actions">
+                        <a href="{{ url_for('browser') }}" class="ghost-link browser-clear-link">Clear filters</a>
+                        <button type="submit" name="refresh" value="1" class="ghost-link browser-refresh-button">Refresh cache</button>
+                    </div>
+                </form>
+            </section>
+        </aside>
+
+        <section class="panel chart-panel workspace browser-workspace" id="browser_workspace">
+            <div class="workspace-header browser-workspace-header">
+                <div class="report-card workspace-summary-card workspace-article-card browser-summary-card">
+                    <div class="report-heading-row browser-heading-row">
+                        <div>
+                            <p class="workspace-kicker">Local media</p>
+                            <h2>Cached media browser</h2>
+                        </div>
+                    </div>
+                    <p class="status-copy browser-intro">
+                        Browse cached media, remove unwanted resources, or undo a removal while its preview is retained.
+                    </p>
+                    <div class="metric-grid browser-metric-grid" aria-label="Cached media totals">
+                        <div class="metric-card metric-card-accent">
+                            <span class="metric-label">Total results</span>
+                            <strong>{{ "{:,}".format(media_page.total_count) }}</strong>
+                        </div>
+                        <div class="metric-card metric-card-accent">
+                            <span class="metric-label">Images</span>
+                            <strong>{{ "{:,}".format(media_page.image_count) }}</strong>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Videos</span>
+                            <strong>{{ "{:,}".format(media_page.video_count) }}</strong>
+                        </div>
+                    </div>
+
+                    {% if media_page.items %}
+                    <div class="browser-result-summary" aria-live="polite">
+                        <p>
+                            Showing page {{ "{:,}".format(media_page.current_page) }} of {{ "{:,}".format(media_page.total_pages) }}
+                            · {{ "{:,}".format(media_page.total_count) }} results
+                        </p>
+                        {% if filters.q or filters.source != "all" or filters.kind != "all" %}
+                        <span class="status-chip browser-filter-chip">Filtered view</span>
+                        {% endif %}
+                    </div>
+                    <div class="browser-gallery" aria-label="Cached media gallery">
+                        {% for item in media_page.items %}
+                        <article
+                            class="browser-media-card workspace-article-card{% if item.is_deleted %} is-deleted{% endif %}"
+                            data-media-id="{{ item.stable_id }}"
+                            data-deleted="{{ 'true' if item.is_deleted else 'false' }}"
+                        >
+                            {% set original_link_label = {"x": "Open original post", "chatgpt": "Open original conversation", "grok": "Open original source"}.get(item.source, "Open original source") %}
+                            <button
+                                type="button"
+                                class="browser-media-open"
+                                data-media-open
+                                aria-label="Open {{ item.title }}"
+                            >
+                            <span class="browser-preview" data-preview-shell>
+                                {% if item.media_kind == "video" %}
+                                <video
+                                    class="browser-preview-media"
+                                    data-preview
+                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else url_for('browser_media', relative_path=item.relative_path) }}"
+                                    muted
+                                    playsinline
+                                    preload="none"
+                                    aria-label="Video preview for {{ item.title }}"
+                                ></video>
+                                {% else %}
+                                <img
+                                    class="browser-preview-media"
+                                    data-preview
+                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else url_for('browser_media', relative_path=item.relative_path) }}"
+                                    alt="{{ item.alt_text or item.title }}"
+                                    loading="lazy"
+                                    decoding="async"
+                                >
+                                {% endif %}
+                                <span class="browser-preview-status" data-preview-status>Loading preview</span>
+                                <span class="browser-preview-kind">{{ item.media_kind.title() }}</span>
+                            </span>
+                            <span class="browser-media-card-body">
+                                <span class="browser-media-card-topline">
+                                    <span class="status-chip browser-source-chip source-{{ item.source }}">{{ {"x": "X", "grok": "Grok", "chatgpt": "ChatGPT"}.get(item.source, item.source.title()) }}</span>
+                                    <span class="browser-media-type">{{ item.media_kind.title() }}</span>
+                                </span>
+                                <span class="browser-media-card-title" title="{{ item.title }}">{{ item.title }}</span>
+                                <span class="browser-media-card-description">{{ item.description or item.filename }}</span>
+                                <span class="browser-media-card-meta">
+                                    <span>{{ item.creator or item.project_name }}</span>
+                                    <span>{{ item.captured_at_label }}</span>
+                                    <span>{{ "{:,}".format(item.content_bytes) }} bytes · {{ format_media_size(item.content_bytes) }}</span>
+                                </span>
+                            </span>
+                            </button>
+                            {% if item.source_url %}
+                            <a
+                                class="ghost-link browser-media-source-link"
+                                data-media-source-link
+                                href="{{ item.source_url }}"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                aria-label="{{ original_link_label }} for {{ item.title }}"
+                            >
+                                <span class="browser-media-source-link-label">{{ original_link_label }}</span>
+                                <span class="browser-media-source-link-url" title="{{ item.source_url }}">{{ item.source_url }}</span>
+                            </a>
+                            {% endif %}
+                            <button
+                                type="button"
+                                class="browser-media-remove dismiss-button"
+                                data-media-delete
+                                aria-label="Delete locally and stop tracking {{ item.title }}"
+                                title="Delete locally and stop tracking"
+                                {% if item.is_deleted %}hidden{% endif %}
+                            >
+                                <span class="browser-media-remove-label">Delete locally and stop tracking</span>
+                            </button>
+                            <div class="browser-media-deleted-bar" data-media-deleted-bar{% if not item.is_deleted %} hidden{% endif %}>
+                                <span data-media-deleted-message>Deleted locally; future tracking stopped</span>
+                                <button type="button" class="browser-media-undo" data-media-restore>Undo</button>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </div>
+                    {% elif has_any_media %}
+                    <div class="browser-empty-state" role="status">
+                        <span class="browser-empty-icon" aria-hidden="true"></span>
+                        <h3>No media matches these filters.</h3>
+                        <p>Try a broader source, media type, or search term.</p>
+                    </div>
+                    {% else %}
+                    <div class="browser-empty-state" role="status">
+                        <span class="browser-empty-icon" aria-hidden="true"></span>
+                        <h3>No cached media found.</h3>
+                        <p>Media saved by X, Grok, or ChatGPT will appear here after a cache run.</p>
+                    </div>
+                    {% endif %}
+
+                    {% if media_page.total_pages > 1 %}
+                    <nav
+                        class="browser-pagination local-store-pagination local-store-pagination--floating is-animated"
+                        aria-label="Media pages"
+                        style="--local-store-pagination-slots: {{ media_page.pagination_items|length }};"
+                    >
+                        <span class="local-store-pagination-indicator" aria-hidden="true"></span>
+                        {% for pagination_item in media_page.pagination_items %}
+                        {% if pagination_item.kind == "ellipsis" %}
+                        <span class="local-store-page-ellipsis" aria-hidden="true" data-pagination-ellipsis>
+                            <span class="local-store-page-ellipsis-dots"></span>
+                        </span>
+                        {% else %}
+                        <a
+                            class="local-store-page-button{% if pagination_item.is_active %} is-active{% endif %}{% if pagination_item.kind in ('previous', 'next') %} local-store-page-nav{% endif %}"
+                            href="{{ url_for('browser', source=filters.source, kind=filters.kind, q=filters.q, sort=filters.sort, page=pagination_item.page) }}"
+                            data-pagination-target="{{ pagination_item.page }}"
+                            data-pagination-current="{{ '1' if pagination_item.is_active else '0' }}"
+                            aria-label="{% if pagination_item.kind == 'previous' %}Previous page{% elif pagination_item.kind == 'next' %}Next page{% else %}Page {{ pagination_item.page }}{% endif %}"
+                            {% if pagination_item.is_active %}aria-current="page"{% endif %}
+                        >
+                            {% if pagination_item.kind == "previous" %}
+                            <span class="icon icon-page-prev" aria-hidden="true"></span>
+                            {% elif pagination_item.kind == "next" %}
+                            <span class="icon icon-page-next" aria-hidden="true"></span>
+                            {% else %}
+                            {{ pagination_item.page }}
+                            {% endif %}
+                        </a>
+                        {% endif %}
+                        {% endfor %}
+                    </nav>
+                    {% endif %}
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <nav class="sidebar-dock" aria-label="Workspace sections">
+        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="x" data-tooltip="X" aria-label="X">
+            <span class="icon dock-icon dock-icon-x" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">X</span>
+        </a>
+        <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" data-tooltip="Grok" aria-label="Grok">
+            <span class="icon dock-icon dock-icon-grok" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">Grok</span>
+        </a>
+        <a href="#browser_workspace" class="sidebar-dock-item is-active" data-section-link="browser" data-tooltip="Browser" aria-label="Browser">
+            <span class="icon dock-icon dock-icon-browser" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">Browser</span>
+        </a>
+        <a href="{{ url_for('chatgpt') }}" class="sidebar-dock-item" data-section-link="chatgpt" data-tooltip="ChatGPT" aria-label="ChatGPT">
+            <span class="icon dock-icon dock-icon-chatgpt" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">ChatGPT</span>
+        </a>
+        <a href="{{ url_for('settings') }}" class="sidebar-dock-item" data-section-link="settings" data-tooltip="Settings" aria-label="Settings">
+            <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">Settings</span>
+        </a>
+    </nav>
+</main>
+
+<dialog class="browser-dialog" id="browser_detail_dialog" aria-labelledby="browser_dialog_title">
+    <button type="button" class="browser-dialog-close dismiss-button" data-dialog-close aria-label="Close media details">×</button>
+    <div class="browser-dialog-media" data-viewer-media aria-label="Media detail preview"></div>
+    <div class="browser-dialog-copy">
+        <p class="workspace-kicker">Cached media</p>
+        <h2 id="browser_dialog_title" data-viewer-title>Media details</h2>
+        <dl class="browser-detail-list">
+            <div><dt>Source</dt><dd data-viewer-source>—</dd></div>
+            <div><dt>Creator or project</dt><dd data-viewer-creator>—</dd></div>
+            <div><dt>Date</dt><dd data-viewer-date>—</dd></div>
+            <div><dt>File name</dt><dd data-viewer-filename>—</dd></div>
+            <div><dt>File size</dt><dd data-viewer-size>—</dd></div>
+        </dl>
+        <p class="browser-dialog-description" data-viewer-description hidden></p>
+        <a class="ghost-link browser-source-link" data-viewer-source-link target="_blank" rel="noopener noreferrer" hidden>
+            <span data-viewer-source-link-label>Open original source</span>
+            <span class="browser-source-link-url" data-viewer-source-url></span>
+        </a>
+    </div>
+</dialog>
+
+<script type="application/json" id="browser_media_data">{{ media_payload|tojson }}</script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.0.0-codex.2') }}"></script>
+</body>
+</html>

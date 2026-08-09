@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.9.0-codex.1
+# Code version: v1.11.0-codex.1
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 
 from .browser_sessions import browser_descriptors, launch_chromium_context
 from .config import LOCAL_STORE_ROOT, CrawlConfig
+from .local_media_browser import BrowserDeletionCatalog
 from .safari_automation import SafariContext
 from .state import TaskSnapshot, TaskState, utc_now
 
@@ -2684,6 +2685,8 @@ def download_candidate(
     browser_streamer: Callable[[GrokMediaCandidate, Path, object], tuple[str, bool]] | None = None,
 ) -> tuple[bool, bool, bool]:
     """Download one Grok asset with resume, integrity checks, and manifest tracking."""
+    if BrowserDeletionCatalog(target_dir.parent).is_excluded("grok", candidate.asset_id or candidate.identity):
+        return False, False, False
     if not candidate.source_url:
         raise RuntimeError(f"No canonical download URL is available for {candidate.asset_id}.")
     if candidate.media_kind == "image" and is_preview_asset_url(candidate.source_url):
@@ -2752,6 +2755,7 @@ def repair_cached_preview_images(
     repaired_count = 0
     deduped_count = 0
     failed_count = 0
+    deletion_catalog = BrowserDeletionCatalog(target_dir.parent)
     image_entries_by_asset_id: dict[str, list[GrokCatalogEntry]] = {}
     for entry in catalog.snapshot_entries():
         asset_id = extract_status_id_from_identity(entry.identity)
@@ -2770,6 +2774,8 @@ def repair_cached_preview_images(
     for index, asset_id in enumerate(ordered_asset_ids, start=1):
         if should_stop():
             break
+        if deletion_catalog.is_excluded("grok", asset_id):
+            continue
 
         entries = image_entries_by_asset_id[asset_id]
         representative_entry = min(
@@ -3329,3 +3335,6 @@ def sync_grok_media(
         for candidate in details_pages:
             with contextlib.suppress(Exception):
                 candidate.close()
+        if descriptor.engine == "safari" and isinstance(context, SafariContext):
+            with contextlib.suppress(Exception):
+                context.housekeep()

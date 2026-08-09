@@ -1,6 +1,6 @@
 """Download media from tweet URLs with yt-dlp."""
 
-# Code version: v1.4.0-codex.1
+# Code version: v1.5.0-codex.1
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from pathlib import Path
 from .browser_sessions import browser_descriptors
 from .cache_catalog import LocalTweetCacheIndex
 from .config import CrawlConfig
+from .local_media_browser import BrowserDeletionCatalog
 from .state import TaskState
 
 
@@ -238,6 +239,15 @@ def download_tweet_media(
 ) -> DownloadResult:
     """Download media for one tweet URL."""
     output_dir.mkdir(parents=True, exist_ok=True)
+    deletion_catalog = BrowserDeletionCatalog(output_dir.parent)
+    if deletion_catalog.is_excluded("x", tweet_url):
+        state.append_event(f"Skipped removed X resource {tweet_url}")
+        logger.info(
+            "Skipped X resource because it was removed from the local browser.",
+            extra={"tweet_url": tweet_url, "output_dir": str(output_dir)},
+        )
+        return DownloadResult(skipped=True)
+
     local_cache = cache_index or LocalTweetCacheIndex.build(output_dir)
     if not local_cache.claim(tweet_url):
         state.append_event(f"Skipped cached or in-flight tweet {tweet_url}")

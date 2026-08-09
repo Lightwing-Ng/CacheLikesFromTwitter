@@ -1,6 +1,6 @@
 """Minimal Safari automation primitives backed by Apple Events."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.1.0-codex.1
 
 from __future__ import annotations
 
@@ -19,6 +19,14 @@ from typing import Any
 SAFARI_DOWNLOAD_RANGE_BYTES = 512 * 1024
 SAFARI_BASE64_SLICE_BYTES = 96 * 1024
 SAFARI_POLL_INTERVAL_SECONDS = 0.2
+SAFARI_APPLESCRIPT_RETRY_LIMIT = 2
+SAFARI_APPLESCRIPT_RETRY_DELAY_SECONDS = 0.25
+
+
+def is_missing_safari_window_error(error: BaseException) -> bool:
+    """Return whether Safari rejected an operation for a window that vanished."""
+    message = str(error).lower()
+    return "invalid index" in message and "window" in message
 
 
 def escape_applescript_text(value: str) -> str:
@@ -28,17 +36,28 @@ def escape_applescript_text(value: str) -> str:
 
 def run_applescript(source: str) -> str:
     """Run one AppleScript program and return its standard output."""
-    process = subprocess.run(
-        ["osascript"],
-        input=source,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if process.returncode != 0:
-        error_text = (process.stderr or process.stdout or "").strip()
-        raise RuntimeError(error_text or "Safari automation failed.")
-    return (process.stdout or "").rstrip("\n")
+    last_error = ""
+    for attempt_index in range(SAFARI_APPLESCRIPT_RETRY_LIMIT + 1):
+        process = subprocess.run(
+            ["osascript"],
+            input=source,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if process.returncode == 0:
+            return (process.stdout or "").rstrip("\n")
+        last_error = (process.stderr or process.stdout or "").strip()
+        if attempt_index >= SAFARI_APPLESCRIPT_RETRY_LIMIT:
+            break
+        lowered = last_error.lower()
+        if not any(
+            marker in lowered
+            for marker in ("-1712", "-1719", "-609", "-600", "timed out", "connection is invalid")
+        ):
+            break
+        time.sleep(SAFARI_APPLESCRIPT_RETRY_DELAY_SECONDS * (attempt_index + 1))
+    raise RuntimeError(last_error or "Safari automation failed.")
 
 
 @dataclass(slots=True)
@@ -95,6 +114,7 @@ class SafariPage:
         self._context = context
         self.window_id = int(window_id)
         self._closed = False
+        self._recovery_url = context.initial_url if not context.pages else "about:blank"
 
     @property
     def url(self) -> str:
@@ -104,6 +124,7 @@ class SafariPage:
     def goto(self, url: str, wait_until: str = "domcontentloaded", timeout: int = 60_000) -> None:
         """Navigate the current tab and wait for the requested ready state."""
         del wait_until
+        self._recovery_url = url
         source = f"""
 tell application "Safari"
     set targetWindow to first window whose id is {self.window_id}
@@ -186,6 +207,7 @@ end tell
             content_type = ""
             expected_total = 0
 
+            restarted_after_range_error = False
             while expected_total == 0 or range_start < expected_total:
                 if should_stop():
                     raise RuntimeError("Stop requested while downloading Grok media.")
@@ -225,6 +247,22 @@ end tell
                 metadata = self._wait_for_download_chunk(should_stop)
                 status = int(metadata.get("status") or 0)
                 chunk_bytes = int(metadata.get("bytes") or 0)
+                if status == 416 and range_start > 0 and not restarted_after_range_error:
+                    # A stale partial file can be exactly at the remote EOF, or the
+                    # asset may have changed since the partial was written. Safari
+                    # reports that as 416 instead of returning an empty range.
+                    destination_path.unlink(missing_ok=True)
+                    range_start = 0
+                    expected_total = 0
+                    content_type = ""
+                    restarted_after_range_error = True
+                    self.evaluate(
+                        """() => {
+                            delete window.__cachelikesSafariDownload;
+                            return true;
+                        }"""
+                    )
+                    continue
                 if status not in {200, 206} or chunk_bytes <= 0:
                     raise RuntimeError(
                         f"Safari media request returned HTTP {status} with {chunk_bytes:,} bytes."
@@ -314,7 +352,13 @@ tell application "Safari"
     {statement}
 end tell
 """
-        return run_applescript(source)
+        try:
+            return run_applescript(source)
+        except RuntimeError as exc:
+            if "close targetWindow" in statement or not is_missing_safari_window_error(exc):
+                raise
+            self._context._recover_page(self)
+            return run_applescript(source)
 
 
 class SafariContext:
@@ -352,10 +396,27 @@ class SafariContext:
 
     def close(self) -> None:
         """Close all Safari windows owned by this sync."""
+        self.housekeep()
+
+    def housekeep(self) -> int:
+        """Close every tracked Safari window and return the number released."""
+        closed_count = 0
         for page in list(reversed(self.pages)):
+            was_tracked = page in self.pages
             page.close()
+            if was_tracked and page not in self.pages:
+                closed_count += 1
+        return closed_count
 
     def _create_page(self, url: str) -> SafariPage:
+        raw_window_id = self._create_window(url)
+        if not raw_window_id.isdigit():
+            raise RuntimeError("Safari did not return a usable window identifier.")
+        page = SafariPage(self, int(raw_window_id))
+        self.pages.append(page)
+        return page
+
+    def _create_window(self, url: str) -> str:
         source = f"""
 tell application "Safari"
     launch
@@ -365,12 +426,15 @@ tell application "Safari"
     return id of targetWindow
 end tell
 """
-        raw_window_id = run_applescript(source).strip()
+        return run_applescript(source).strip()
+
+    def _recover_page(self, page: SafariPage) -> None:
+        """Replace a Safari page whose native window was closed externally."""
+        raw_window_id = self._create_window(page._recovery_url)
         if not raw_window_id.isdigit():
-            raise RuntimeError("Safari did not return a usable window identifier.")
-        page = SafariPage(self, int(raw_window_id))
-        self.pages.append(page)
-        return page
+            raise RuntimeError("Safari did not return a usable recovery window identifier.")
+        page.window_id = int(raw_window_id)
+        page._closed = False
 
     def _forget_page(self, page: SafariPage) -> None:
         with contextlib.suppress(ValueError):

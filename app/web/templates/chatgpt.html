@@ -1,11 +1,11 @@
-<!-- Code version: v1.0.0-codex.1 -->
+<!-- Code version: v1.0.0-codex.5 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter ChatGPT</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.7.2') }}">
+            <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.16.1-codex.1') }}">
     <script defer src="{{ url_for('static', filename='browser-session-picker.js') }}"></script>
 </head>
 <body>
@@ -107,16 +107,19 @@
                 <form action="{{ url_for('start_chatgpt') }}" method="post" class="sidebar-form" id="start_form_chatgpt">
                     <input type="hidden" name="chatgpt_browser" id="chatgpt_browser_input" value="{{ saved_config.chatgpt_browser }}">
                     <label class="field">
-                        <span>Project name</span>
-                        <input type="text" name="chatgpt_project_name" value="{{ saved_config.chatgpt_project_name }}" autocomplete="off">
-                    </label>
-                    <label class="field">
-                        <span>Project URL</span>
-                        <input type="text" name="chatgpt_project_url" value="{{ saved_config.chatgpt_project_url }}" autocomplete="off">
+                        <span>Project or chat URL</span>
+                        <input
+                            type="url"
+                            name="chatgpt_project_url"
+                            value="{{ saved_config.chatgpt_project_url }}"
+                            placeholder="https://chatgpt.com/g/.../project or /c/..."
+                            autocomplete="url"
+                            required
+                        >
                     </label>
                 </form>
                 <p class="status-copy chatgpt-sidebar-note">
-                    The cache opens an interactive Edge window using the host's authorized ChatGPT session.
+                    Enter a project URL to cache every original image across its conversations, or a chat URL to cache only that session. Edge runs offscreen using the host's authorized ChatGPT session.
                 </p>
                 <div class="sidebar-action-row">
                     <form action="{{ url_for('stop_chatgpt') }}" method="post" class="sidebar-form sidebar-form-stop">
@@ -135,7 +138,7 @@
                     <div class="report-heading-row">
                         <div>
                             <p class="workspace-kicker">Live snapshot</p>
-                            <h2>Studio208cm project overview</h2>
+                            <h2>ChatGPT cache overview</h2>
                         </div>
                     </div>
                     <div class="metric-grid">
@@ -189,7 +192,7 @@
                         <div class="notice-floating-copy">
                             <p class="notice-floating-label">Original-resolution cache</p>
                             <p class="notice-floating-title">
-                                Only original raster images from assistant messages are saved. User-uploaded images are skipped. ChatGPT's image viewer may require the interactive Edge window to remain open during the scan.
+                                Original raster images from both user and assistant messages are saved. The cache reads the selected project or chat session through an offscreen Edge session.
                             </p>
                         </div>
                         <span class="status-chip status-collecting">Edge session</span>
@@ -261,25 +264,30 @@
     </div>
 
     <nav class="sidebar-dock" aria-label="Workspace sections">
-        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="x" aria-label="X">
+        <a href="{{ url_for('index') }}" class="sidebar-dock-item" data-section-link="x" data-tooltip="X" aria-label="X">
             <span class="icon dock-icon dock-icon-x" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">X</span>
         </a>
-        <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" aria-label="Grok">
+        <a href="{{ url_for('grok') }}" class="sidebar-dock-item" data-section-link="grok" data-tooltip="Grok" aria-label="Grok">
             <span class="icon dock-icon dock-icon-grok" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">Grok</span>
         </a>
-        <a href="#overview" class="sidebar-dock-item is-active" data-section-link="chatgpt" aria-label="ChatGPT">
+        <a href="{{ url_for('browser') }}" class="sidebar-dock-item" data-section-link="browser" data-tooltip="Browser" aria-label="Browser">
+            <span class="icon dock-icon dock-icon-browser" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">Browser</span>
+        </a>
+        <a href="#overview" class="sidebar-dock-item is-active" data-section-link="chatgpt" data-tooltip="ChatGPT" aria-label="ChatGPT">
             <span class="icon dock-icon dock-icon-chatgpt" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">ChatGPT</span>
         </a>
-        <a href="{{ url_for('settings') }}" class="sidebar-dock-item" data-section-link="settings" aria-label="Settings">
+        <a href="{{ url_for('settings') }}" class="sidebar-dock-item" data-section-link="settings" data-tooltip="Settings" aria-label="Settings">
             <span class="icon dock-icon dock-icon-settings" aria-hidden="true"></span>
+            <span class="sidebar-dock-label" aria-hidden="true">Settings</span>
         </a>
     </nav>
 </main>
 
 <script>
-    const appShell = document.getElementById("app_shell");
-    const sidebarToggle = document.getElementById("sidebar_toggle");
-    const sidebarBackdrop = document.getElementById("sidebar_backdrop");
     const phaseChip = document.getElementById("phase_chip");
     const bannerPhase = document.getElementById("banner_phase");
     const bannerMessage = document.getElementById("banner_message");
@@ -298,14 +306,10 @@
     const recentEventsNext = document.getElementById("recent_events_next");
     const recentEventsPage = document.getElementById("recent_events_page");
     const sectionLinks = Array.from(document.querySelectorAll("[data-section-link]"));
-    const shellMobileQuery = window.matchMedia("(max-width: 900px)");
     const statusBannerStorageKey = "cachelikes:chatgpt-status-banner-dismissed";
-    const sidebarStorageKey = "cachelikes:chatgpt-sidebar-open";
-    const sidebarMotionDurationMs = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 500;
     const recentEventsPageSize = 12;
     let recentEvents = {{ snapshot.recent_events | tojson }};
     let recentEventsCurrentPage = 1;
-    let sidebarMotionResetTimer = 0;
 
     function setStatusBannerVisible(isVisible, options = {}) {
         const { persist = true } = options;
@@ -319,60 +323,14 @@
         }
     }
 
-    function setSidebarMotionState(direction) {
-        if (sidebarMotionResetTimer) {
-            window.clearTimeout(sidebarMotionResetTimer);
-            sidebarMotionResetTimer = 0;
-        }
-        appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
-        void appShell.offsetWidth;
-        if (!direction) {
-            return;
-        }
-        appShell.classList.add("is-sidebar-animating", direction === "opening" ? "is-sidebar-opening" : "is-sidebar-closing");
-        sidebarMotionResetTimer = window.setTimeout(() => {
-            appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
-            sidebarMotionResetTimer = 0;
-        }, sidebarMotionDurationMs);
-    }
-
-    function setSidebarOpen(isOpen, options = {}) {
-        const { persist = true, animate = false } = options;
-        const wasOpen = appShell.classList.contains("is-sidebar-open");
-        appShell.classList.toggle("is-sidebar-open", isOpen);
-        appShell.classList.toggle("is-sidebar-collapsed", !isOpen);
-        sidebarToggle.setAttribute("aria-expanded", String(isOpen));
-        sidebarBackdrop.hidden = !shellMobileQuery.matches || !isOpen;
-        if (animate && wasOpen !== isOpen) {
-            setSidebarMotionState(isOpen ? "opening" : "closing");
-        }
-        if (persist) {
-            try {
-                window.sessionStorage.setItem(sidebarStorageKey, String(isOpen));
-            } catch (_error) {
-            }
-        }
-    }
-
     try {
-        if (window.sessionStorage.getItem(sidebarStorageKey) === "false") {
-            setSidebarOpen(false, { persist: false });
-        }
         if (window.sessionStorage.getItem(statusBannerStorageKey) === "true") {
             setStatusBannerVisible(false, { persist: false });
         }
     } catch (_error) {
     }
 
-    sidebarToggle.addEventListener("click", () => {
-        setSidebarOpen(!appShell.classList.contains("is-sidebar-open"), { animate: true });
-    });
-    sidebarBackdrop.addEventListener("click", () => setSidebarOpen(false));
     statusBannerDismiss.addEventListener("click", () => setStatusBannerVisible(false));
-    shellMobileQuery.addEventListener("change", () => {
-        setSidebarOpen(appShell.classList.contains("is-sidebar-open"), { persist: false });
-    });
-
     function setPhaseState(phase) {
         phaseChip.textContent = phase;
         phaseChip.className = `status-chip status-${phase}`;
@@ -516,5 +474,6 @@
     refreshStatus();
     window.setInterval(refreshStatus, 3000);
 </script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.0.0-codex.2') }}"></script>
 </body>
 </html>

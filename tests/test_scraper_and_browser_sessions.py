@@ -1,16 +1,19 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.1.1-codex.1
+Code version: v1.1.2-codex.1
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from app.core.browser_sessions import (
+    BrowserDescriptor,
+    build_chromium_launch_args,
     extract_json_string_field,
     extract_x_account_from_source,
     detect_safari_x_account_handle,
@@ -123,6 +126,26 @@ def test_browser_session_parsers_do_not_require_live_browser_access() -> None:
         probe_browser_session("unknown", "chrome", CrawlConfig())
     with pytest.raises(ValueError, match="Unsupported browser"):
         probe_browser_session("x", "firefox", CrawlConfig())
+
+
+def test_background_chromium_launch_args_keep_the_window_offscreen() -> None:
+    descriptor = BrowserDescriptor(
+        browser_id="edge",
+        label="Edge",
+        icon_filename="images/browser.edge.png",
+        engine="chromium",
+        user_data_dir=Path("/tmp/edge"),
+        profile_directory="Default",
+        channel="msedge",
+    )
+
+    assert build_chromium_launch_args(descriptor) == ["--profile-directory=Default"]
+    assert build_chromium_launch_args(descriptor, background_window=True) == [
+        "--profile-directory=Default",
+        "--window-position=-32000,-32000",
+        "--window-size=1280,900",
+        "--start-minimized",
+    ]
 
 
 def test_safari_profile_link_detection_uses_the_rendered_navigation() -> None:

@@ -1,6 +1,6 @@
 """Browser session probing helpers for X, Grok, and ChatGPT."""
 
-# Code version: v1.4.2-codex.1
+# Code version: v1.4.3-codex.1
 
 from __future__ import annotations
 
@@ -44,6 +44,11 @@ GROK_SECURITY_CHALLENGE_BODY_MARKERS = (
     "security service to protect against malicious bots",
     "performance and security by cloudflare",
     "checking your browser before accessing",
+)
+BACKGROUND_CHROMIUM_WINDOW_ARGS = (
+    "--window-position=-32000,-32000",
+    "--window-size=1280,900",
+    "--start-minimized",
 )
 
 
@@ -205,7 +210,7 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
 
 
 def _probe_chromium_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -> dict[str, Any]:
-    """Validate the configured ChatGPT project without opening a second browser window."""
+    """Validate the configured ChatGPT source without opening a second browser window."""
     if descriptor.engine != "chromium":
         return {
             "logged_in": False,
@@ -221,7 +226,7 @@ def _probe_chromium_chatgpt_session(descriptor: BrowserDescriptor, config: Crawl
             "logged_in": False,
             "can_download": False,
             "account_name": project_name,
-            "message": "ChatGPT project URL must use https://chatgpt.com/.",
+            "message": "ChatGPT project or chat URL must use https://chatgpt.com/.",
         }
 
     return {
@@ -230,7 +235,7 @@ def _probe_chromium_chatgpt_session(descriptor: BrowserDescriptor, config: Crawl
         "account_name": project_name,
         "message": (
             f"{descriptor.label} is configured for {project_name}. "
-            "An interactive Edge window will open when the sync starts."
+            "A background browser session will run when the sync starts."
         ),
     }
 
@@ -358,6 +363,7 @@ def launch_chromium_context(
     descriptor: BrowserDescriptor,
     headless: bool,
     clone_profile_first: bool = False,
+    background_window: bool = False,
 ):
     """Launch a Chromium-family browser against the selected profile."""
     user_data_dir = descriptor.user_data_dir
@@ -373,7 +379,7 @@ def launch_chromium_context(
             user_data_dir=str(target_user_data_dir),
             channel=descriptor.channel,
             headless=headless,
-            args=[f"--profile-directory={descriptor.profile_directory}"],
+            args=build_chromium_launch_args(descriptor, background_window=background_window),
             ignore_default_args=["--use-mock-keychain", "--password-store=basic"],
             viewport={"width": 1440, "height": 1200},
         )
@@ -425,6 +431,14 @@ def launch_chromium_context(
             return False
 
     return ManagedContext()
+
+
+def build_chromium_launch_args(descriptor: BrowserDescriptor, background_window: bool = False) -> list[str]:
+    """Build Chromium launch arguments for a normal or offscreen window."""
+    args = [f"--profile-directory={descriptor.profile_directory}"]
+    if background_window:
+        args.extend(BACKGROUND_CHROMIUM_WINDOW_ARGS)
+    return args
 
 
 def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile.TemporaryDirectory[str]]:

@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.0.3-codex.1
+# Code version: v1.0.6-codex.1
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from .config import (
     LOCAL_STORE_ROOT,
     CrawlConfig,
 )
+from .local_media_browser import BrowserDeletionCatalog
 from .state import TaskSnapshot, TaskState, utc_now
 
 try:  # pragma: no cover - depends on the local runtime
@@ -39,6 +40,7 @@ CHATGPT_PROJECT_LOAD_ROUNDS = 64
 CHATGPT_PROJECT_LINK_WAIT_ROUNDS = 30
 CHATGPT_SCROLL_ROUNDS = 80
 CHATGPT_IMAGE_WAIT_MS = 500
+CHATGPT_SCROLL_STEP_RATIO = 0.8
 CHATGPT_IMAGE_SUFFIXES = {".avif", ".gif", ".heic", ".jpeg", ".jpg", ".png", ".webp"}
 
 
@@ -169,8 +171,8 @@ def looks_like_image(content: bytes) -> bool:
 
 
 def should_cache_chatgpt_candidate(candidate: ChatGPTImageCandidate) -> bool:
-    """Return whether an image belongs to an assistant message and may be cached."""
-    return candidate.message_role.strip().lower() != "user"
+    """Return whether a ChatGPT original-image candidate can be cached."""
+    return bool(candidate.source_url.strip() and candidate.file_id.strip())
 
 
 class ChatGPTImageCatalog:
@@ -363,6 +365,19 @@ def _project_conversation_prefix(project_url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{project_path}/c/"
 
 
+def is_chatgpt_conversation_url(url: str) -> bool:
+    """Return whether a ChatGPT URL points to one conversation session."""
+    parsed = urlsplit(url)
+    path_parts = [part for part in parsed.path.split("/") if part]
+    return (
+        parsed.scheme.lower() == "https"
+        and parsed.netloc.lower() == "chatgpt.com"
+        and len(path_parts) >= 2
+        and path_parts[-2] == "c"
+        and bool(path_parts[-1])
+    )
+
+
 def _extract_project_links(page, project_url: str) -> list[str]:
     """Read currently rendered conversation links from the project page."""
     prefix = _project_conversation_prefix(project_url)
@@ -447,7 +462,11 @@ def open_chatgpt_page(page, url: str, settle_ms: int = 2_500) -> None:
 
 
 def collect_project_conversation_urls(page, project_url: str, state: TaskState, should_stop) -> list[str]:
-    """Load every conversation link exposed by the ChatGPT project list."""
+    """Load every project conversation, or use one supplied chat session URL."""
+    if is_chatgpt_conversation_url(project_url):
+        state.append_event("Using the supplied ChatGPT chat session URL.")
+        return [project_url]
+
     open_chatgpt_page(page, project_url)
     conversation_urls: list[str] = []
     seen_urls: set[str] = set()
@@ -534,68 +553,62 @@ def _extract_original_image_payloads(page) -> list[dict[str, object]]:
     )
 
 
-def collect_conversation_images(page, conversation_url: str, should_stop) -> list[ChatGPTImageCandidate]:
-    """Open one conversation, scroll through lazy content, and collect original images."""
-    open_chatgpt_page(page, conversation_url, settle_ms=3_000)
-    candidates_by_file_id: dict[str, ChatGPTImageCandidate] = {}
-    stable_rounds = 0
-    previous_height = -1
+def _scroll_chatgpt_message_view(page, direction: str) -> dict[str, object]:
+    """Move the conversation's own scroll container one viewport step."""
+    return page.evaluate(
+        """({ direction, stepRatio }) => {
+            const messageSelector = '[data-message-author-role]';
+            const scrollRoots = new Set();
+            for (const message of document.querySelectorAll(messageSelector)) {
+                for (let parent = message.parentElement; parent; parent = parent.parentElement) {
+                    const overflowY = getComputedStyle(parent).overflowY;
+                    if (
+                        parent.scrollHeight > parent.clientHeight &&
+                        (overflowY === 'auto' || overflowY === 'scroll')
+                    ) {
+                        scrollRoots.add(parent);
+                    }
+                }
+            }
 
-    for _ in range(CHATGPT_SCROLL_ROUNDS):
-        if should_stop():
-            break
-        raw_candidates = _extract_original_image_payloads(page)
-        for raw_candidate in raw_candidates:
-            source_url = str(raw_candidate.get("sourceUrl") or "").strip()
-            if not source_url:
-                continue
-            file_id = str(raw_candidate.get("fileId") or extract_chatgpt_file_id(source_url)).strip()
-            candidate = ChatGPTImageCandidate(
-                source_url=source_url,
-                file_id=file_id,
-                conversation_url=conversation_url,
-                alt_text=str(raw_candidate.get("altText") or "").strip(),
-                width=int(raw_candidate.get("width") or 0),
-                height=int(raw_candidate.get("height") or 0),
-                message_role=str(raw_candidate.get("messageRole") or "").strip(),
-            )
-            if not should_cache_chatgpt_candidate(candidate):
-                continue
-            previous = candidates_by_file_id.get(file_id)
-            if previous is None or candidate.width * candidate.height >= previous.width * previous.height:
-                candidates_by_file_id[file_id] = candidate
+            const root = [...scrollRoots]
+                .sort((left, right) => right.scrollHeight - left.scrollHeight)[0] ||
+                document.scrollingElement ||
+                document.documentElement;
+            const previousTop = root.scrollTop;
+            const step = Math.max(1, Math.floor(root.clientHeight * stepRatio));
+            const maximumTop = Math.max(0, root.scrollHeight - root.clientHeight);
+            root.scrollTop = direction === 'top'
+                ? Math.max(0, previousTop - step)
+                : Math.min(maximumTop, previousTop + step);
+            const currentTop = root.scrollTop;
+            const atBoundary = direction === 'top'
+                ? currentTop <= 12
+                : currentTop >= maximumTop - 12;
+            return {
+                height: root.scrollHeight,
+                top: currentTop,
+                viewport: root.clientHeight,
+                atBoundary,
+                moved: Math.abs(currentTop - previousTop) > 0,
+            };
+        }""",
+        {"direction": direction, "stepRatio": CHATGPT_SCROLL_STEP_RATIO},
+    )
 
-        scroll_metrics = page.evaluate(
-            """() => {
-                const scrollingElement = document.scrollingElement || document.documentElement;
-                window.scrollTo(0, scrollingElement.scrollHeight);
-                return {
-                    height: scrollingElement.scrollHeight,
-                    top: window.scrollY,
-                    viewport: window.innerHeight,
-                };
-            }"""
-        )
-        page.wait_for_timeout(CHATGPT_IMAGE_WAIT_MS)
-        at_bottom = float(scroll_metrics.get("top") or 0) + float(scroll_metrics.get("viewport") or 0) >= float(
-            scroll_metrics.get("height") or 0
-        ) - 12
-        if at_bottom and int(scroll_metrics.get("height") or 0) == previous_height:
-            stable_rounds += 1
-        else:
-            stable_rounds = 0
-        previous_height = int(scroll_metrics.get("height") or 0)
-        if stable_rounds >= 3:
-            break
 
-    page.evaluate("window.scrollTo(0, 0)")
-    page.wait_for_timeout(CHATGPT_IMAGE_WAIT_MS)
+def _merge_current_conversation_images(
+    page,
+    conversation_url: str,
+    candidates_by_file_id: dict[str, ChatGPTImageCandidate],
+) -> None:
+    """Merge original images currently visible in one ChatGPT conversation."""
     for raw_candidate in _extract_original_image_payloads(page):
         source_url = str(raw_candidate.get("sourceUrl") or "").strip()
         if not source_url:
             continue
         file_id = str(raw_candidate.get("fileId") or extract_chatgpt_file_id(source_url)).strip()
-        candidates_by_file_id[file_id] = ChatGPTImageCandidate(
+        candidate = ChatGPTImageCandidate(
             source_url=source_url,
             file_id=file_id,
             conversation_url=conversation_url,
@@ -604,8 +617,39 @@ def collect_conversation_images(page, conversation_url: str, should_stop) -> lis
             height=int(raw_candidate.get("height") or 0),
             message_role=str(raw_candidate.get("messageRole") or "").strip(),
         )
-        if not should_cache_chatgpt_candidate(candidates_by_file_id[file_id]):
-            candidates_by_file_id.pop(file_id, None)
+        if not should_cache_chatgpt_candidate(candidate):
+            continue
+        previous = candidates_by_file_id.get(file_id)
+        if previous is None or candidate.width * candidate.height >= previous.width * previous.height:
+            candidates_by_file_id[file_id] = candidate
+
+
+def collect_conversation_images(page, conversation_url: str, should_stop) -> list[ChatGPTImageCandidate]:
+    """Open one conversation, scan its lazy message view, and collect original images."""
+    open_chatgpt_page(page, conversation_url, settle_ms=3_000)
+    candidates_by_file_id: dict[str, ChatGPTImageCandidate] = {}
+    for direction in ("top", "bottom"):
+        stable_rounds = 0
+        previous_height = -1
+        for _ in range(CHATGPT_SCROLL_ROUNDS):
+            if should_stop():
+                break
+            _merge_current_conversation_images(page, conversation_url, candidates_by_file_id)
+            scroll_metrics = _scroll_chatgpt_message_view(page, direction)
+            page.wait_for_timeout(CHATGPT_IMAGE_WAIT_MS)
+            current_height = int(scroll_metrics.get("height") or 0)
+            at_boundary = bool(scroll_metrics.get("atBoundary"))
+            if at_boundary and (not bool(scroll_metrics.get("moved")) or current_height == previous_height):
+                stable_rounds += 1
+            else:
+                stable_rounds = 0
+            previous_height = current_height
+            if stable_rounds >= 3:
+                break
+        if should_stop():
+            break
+
+    _merge_current_conversation_images(page, conversation_url, candidates_by_file_id)
     return list(candidates_by_file_id.values())
 
 
@@ -617,6 +661,8 @@ def download_chatgpt_image(
 ) -> bool:
     """Download one original image through the authenticated browser context."""
     if not should_cache_chatgpt_candidate(candidate):
+        return False
+    if BrowserDeletionCatalog(target_dir.parent.parent).is_excluded("chatgpt", candidate.file_id):
         return False
     if catalog.complete_entry(candidate.file_id) is not None:
         return False
@@ -661,7 +707,7 @@ def sync_chatgpt_images(
     target_dir: Path | None = None,
     should_stop=lambda: False,
 ) -> ChatGPTSyncResult:
-    """Cache assistant images while excluding user-uploaded message attachments."""
+    """Cache all original images from the selected ChatGPT source."""
     runtime_config = config or CrawlConfig()
     descriptor = browser_descriptors(runtime_config).get(runtime_config.chatgpt_browser)
     if descriptor is None:
@@ -699,12 +745,15 @@ def sync_chatgpt_images(
     try:
         state.update(phase="collecting")
         with sync_playwright() as playwright:
-            state.append_event("Opening the authorized Edge window for ChatGPT sync.")
+            state.append_event(
+                f"Starting an offscreen {descriptor.label} session for the authorized ChatGPT sync."
+            )
             with launch_chromium_context(
                 playwright,
                 descriptor,
                 headless=False,
                 clone_profile_first=True,
+                background_window=True,
             ) as context:
                 page = context.new_page()
                 conversation_urls = collect_project_conversation_urls(page, project_url, state, should_stop)
@@ -714,7 +763,7 @@ def sync_chatgpt_images(
                     queued_tweets=len(conversation_urls),
                     processed_tweets=0,
                 )
-                state.append_event(f"Found {len(conversation_urls):,} Studio208cm conversations to inspect.")
+                state.append_event(f"Found {len(conversation_urls):,} ChatGPT conversations to inspect.")
 
                 discovered_images: set[str] = set()
                 downloaded_count = 0

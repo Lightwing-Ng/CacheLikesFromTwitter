@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.0.2-codex.3
+Code version: v1.1.0-codex.1
 """
 
 from pathlib import Path
@@ -137,6 +137,28 @@ def test_events_table_consumes_shared_scrollable_table_tokens() -> None:
         "color: var(--scrollable-data-table-header-color);",
         "background: var(--scrollable-data-table-row-background);",
         "background: var(--scrollable-data-table-row-background-alt);",
+    )
+
+    for token in expected_tokens:
+        assert token in stylesheet
+
+
+def test_browser_dock_and_gallery_use_shared_tokens() -> None:
+    """Protect the fifth dock slot and the local media browser compatibility layer."""
+    stylesheet = _stylesheet()
+
+    expected_tokens = (
+        ".sidebar-dock:has(.sidebar-dock-item:nth-child(5).is-active)",
+        ".dock-icon-browser",
+        "mask: url(\"/static/images/square.grid.2x2.fill.svg\")",
+        ".browser-gallery",
+        "grid-template-columns: repeat(4, minmax(0, 1fr));",
+        ".browser-dialog::backdrop",
+        "background: var(--frosted-glass-background);",
+        "border: var(--frosted-glass-border);",
+        "box-shadow: var(--frosted-glass-shadow);",
+        "backdrop-filter: var(--frosted-glass-blur);",
+        "@media (prefers-reduced-motion: reduce)",
     )
 
     for token in expected_tokens:

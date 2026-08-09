@@ -1,6 +1,6 @@
 """Service orchestration and Flask contract tests.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ from app.core.grok_downloader import GrokResetResult
 from app.core.grok_service import summarize_error_for_status
 from app.core.service import CacheLikesService
 from app.core.state import TaskSnapshot, TaskState
+from app.web.app import create_app
 
 
 def test_cache_service_run_aggregates_download_results_without_browser_access(tmp_path: Path) -> None:
@@ -58,7 +59,7 @@ def test_web_pages_and_status_apis_are_available(client) -> None:
     for path, expected_text in (
         ("/", b"Execution overview"),
         ("/grok", b"Grok library overview"),
-        ("/chatgpt", b"Studio208cm project overview"),
+        ("/chatgpt", b"ChatGPT cache overview"),
         ("/settings", b"Configuration center"),
     ):
         response = client.get(path)
@@ -72,6 +73,18 @@ def test_web_pages_and_status_apis_are_available(client) -> None:
     assert grok_status.status_code == 200
     assert chatgpt_status.status_code == 200
     assert status.get_json()["phase"] in {"idle", "starting", "downloading", "finished", "failed", "stopped", "stopping"}
+
+
+def test_browser_empty_cache_isolated_from_repository_cache(tmp_path: Path) -> None:
+    application = create_app(tmp_path / "local_store")
+    application.config.update(TESTING=True)
+
+    with application.test_client() as isolated_client:
+        response = isolated_client.get("/browser")
+
+    assert response.status_code == 200
+    assert b"Cached media browser" in response.data
+    assert b"No cached media found." in response.data
 
 
 @pytest.mark.integration
