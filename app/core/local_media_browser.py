@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.5.0-codex.1
+# Code version: v1.10.0-codex.1
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import json
 import os
 import re
 import shutil
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from threading import Condition, RLock
@@ -31,6 +31,9 @@ DEFAULT_TTL_SECONDS = 5.0
 CHATGPT_TEMPORARY_PROJECT_NAMES = frozenset({"forprompts"})
 _DATE_RE = re.compile(r"^\d{8}$")
 _NUMERIC_RE = re.compile(r"^\d+(?:\.\d+)?$")
+_CHATGPT_BRANCH_MARKER_RE = re.compile(r"\bbranch\b", re.IGNORECASE)
+_CHATGPT_BRANCH_LABEL_RE = re.compile(r"\bbranch\b\s*(?:[·•]|[-–—])?\s*", re.IGNORECASE)
+_CHATGPT_MASTER_REVISION_RE = re.compile(r"\bmaster\s+([0-9]{4}[a-z0-9._-]*)\b", re.IGNORECASE)
 _ENGLISH_MONTHS = (
     "Jan",
     "Feb",
@@ -65,10 +68,14 @@ class LocalMediaItem:
     content_bytes: int
     project_name: str
     alt_text: str = ""
+    prompt_markdown: str = ""
     width: int = 0
     height: int = 0
     resource_key: str = ""
+    chatgpt_session_key: str = ""
+    chatgpt_branch_key: str = ""
     is_deleted: bool = False
+    deleted_at: str = ""
     preview_relative_path: str = ""
 
 
@@ -92,6 +99,11 @@ class LocalMediaPage:
     current_page: int
     total_pages: int
     page_size: int = PAGE_SIZE
+    pagination_unit: str = "media"
+    session_count: int = 0
+    current_session_key: str = ""
+    current_session_label: str = ""
+    current_session_latest_at: str = ""
 
     @property
     def pagination_items(self) -> tuple[LocalMediaPaginationItem, ...]:
@@ -235,8 +247,15 @@ class BrowserDeletionCatalog:
             trash_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(media_path), str(trash_path))
 
+            deleted_at = (
+                datetime.now(UTC)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
             payload = asdict(item)
             payload["resource_key"] = item.resource_key or item.source_url or item.relative_path
+            payload["deleted_at"] = deleted_at
             entry = {
                 "stable_id": item.stable_id,
                 "source": item.source,
@@ -244,7 +263,7 @@ class BrowserDeletionCatalog:
                 "original_relative_path": item.relative_path,
                 "preview_relative_path": trash_relative_path,
                 "item": payload,
-                "deleted_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+                "deleted_at": deleted_at,
             }
             self._entries[item.stable_id] = entry
             self._save_entries()
@@ -274,6 +293,7 @@ class BrowserDeletionCatalog:
             self._save_entries()
             payload = dict(entry.get("item") or {})
             payload["is_deleted"] = False
+            payload["deleted_at"] = ""
             payload["preview_relative_path"] = ""
             return self._item_from_payload(payload)
 
@@ -351,6 +371,7 @@ class BrowserDeletionCatalog:
         payload["relative_path"] = str(entry.get("original_relative_path") or payload.get("relative_path") or "")
         payload["resource_key"] = str(entry.get("resource_key") or payload.get("resource_key") or "")
         payload["is_deleted"] = True
+        payload["deleted_at"] = str(entry.get("deleted_at") or payload.get("deleted_at") or "")
         payload["preview_relative_path"] = str(entry.get("preview_relative_path") or "")
         return self._item_from_payload(payload)
 
@@ -398,6 +419,7 @@ def filter_media_items(
                     item.filename,
                     item.title,
                     item.description,
+                    item.prompt_markdown,
                     item.creator,
                     item.project_name,
                 )
@@ -409,7 +431,7 @@ def filter_media_items(
 
 
 def sort_media_items(items: Iterable[LocalMediaItem], sort: str = "newest") -> tuple[LocalMediaItem, ...]:
-    """Sort media deterministically, using relative paths as stable tie breakers."""
+    """Sort active media by user order while keeping ChatGPT session families contiguous."""
     normalized_sort = str(sort or "").strip().lower()
     if normalized_sort not in SORT_VALUES:
         normalized_sort = "newest"
@@ -425,7 +447,31 @@ def sort_media_items(items: Iterable[LocalMediaItem], sort: str = "newest") -> t
             timestamp_value = timestamp.timestamp() if timestamp is not None else 0.0
             return (direction * timestamp_value, item.relative_path)
 
-    return tuple(sorted(items, key=key))
+    active_items: list[LocalMediaItem] = []
+    deleted_items: list[LocalMediaItem] = []
+    for item in items:
+        (deleted_items if item.is_deleted else active_items).append(item)
+
+    active_groups: dict[str, list[LocalMediaItem]] = {}
+    for item in active_items:
+        group_key = _media_sort_group_key(item)
+        active_groups.setdefault(group_key, []).append(item)
+
+    def deleted_key(item: LocalMediaItem) -> tuple[float, str]:
+        deleted_at = _parse_datetime(item.deleted_at)
+        deleted_timestamp = deleted_at.timestamp() if deleted_at is not None else 0.0
+        return (deleted_timestamp, item.relative_path)
+
+    sorted_active_groups = sorted(
+        active_groups.values(),
+        key=lambda group: min(key(item) for item in group),
+    )
+    sorted_active_items = [
+        item
+        for group in sorted_active_groups
+        for item in sorted(group, key=key)
+    ]
+    return tuple(sorted_active_items + sorted(deleted_items, key=deleted_key))
 
 
 def paginate_media_items(
@@ -449,6 +495,63 @@ def paginate_media_items(
         current_page=current_page,
         total_pages=total_pages,
         page_size=safe_page_size,
+    )
+
+
+def paginate_chatgpt_sessions(
+    items: Iterable[LocalMediaItem],
+    page: object = 1,
+    sort: str = "newest",
+) -> LocalMediaPage:
+    """Return one whole ChatGPT session per page, ordered by its latest image."""
+    materialized = tuple(items)
+    groups: dict[str, list[LocalMediaItem]] = {}
+    for item in materialized:
+        groups.setdefault(_chatgpt_session_page_key(item), []).append(item)
+
+    def timestamp_value(item: LocalMediaItem) -> float:
+        timestamp = _parse_datetime(item.captured_at)
+        return timestamp.timestamp() if timestamp is not None else 0.0
+
+    def latest_image(group: list[LocalMediaItem]) -> LocalMediaItem:
+        images = [item for item in group if item.media_kind == "image"]
+        candidates = images or group
+        return max(candidates, key=lambda item: (timestamp_value(item), item.relative_path))
+
+    ordered_groups = sorted(
+        groups.items(),
+        key=lambda entry: (
+            -timestamp_value(latest_image(entry[1])),
+            entry[0],
+        ),
+    )
+    session_count = len(ordered_groups)
+    total_pages = max(1, session_count)
+    current_page = min(total_pages, _coerce_positive_page(page))
+    if ordered_groups:
+        current_session_key, current_group = ordered_groups[current_page - 1]
+        latest = latest_image(current_group)
+        page_items = sort_media_items(current_group, sort)
+        current_session_label = latest.creator or latest.project_name or "Unknown session"
+        current_session_latest_at = latest.captured_at
+    else:
+        current_session_key = ""
+        page_items = ()
+        current_session_label = ""
+        current_session_latest_at = ""
+
+    return LocalMediaPage(
+        items=tuple(page_items),
+        total_count=len(materialized),
+        image_count=sum(1 for item in materialized if item.media_kind == "image"),
+        video_count=sum(1 for item in materialized if item.media_kind == "video"),
+        current_page=current_page,
+        total_pages=total_pages,
+        pagination_unit="session",
+        session_count=session_count,
+        current_session_key=current_session_key,
+        current_session_label=current_session_label,
+        current_session_latest_at=current_session_latest_at,
     )
 
 
@@ -556,8 +659,76 @@ class LocalMediaCatalog:
             except Exception:
                 continue
 
-        items.extend(self._deletion_catalog.deleted_items())
+        items.extend(self._hydrate_chatgpt_deleted_items(self._deletion_catalog.deleted_items()))
         return tuple(sorted(items, key=lambda item: (item.relative_path.casefold(), item.relative_path)))
+
+    def _hydrate_chatgpt_deleted_items(
+        self,
+        items: Iterable[LocalMediaItem],
+    ) -> list[LocalMediaItem]:
+        """Refresh legacy ChatGPT tombstones from their durable project catalog."""
+        hydrated_items: list[LocalMediaItem] = []
+        catalogs_by_project: dict[
+            str,
+            tuple[dict[str, Mapping[str, Any]], dict[str, Mapping[str, Any]]],
+        ] = {}
+        for item in items:
+            if item.source != "chatgpt":
+                hydrated_items.append(item)
+                continue
+
+            decoded_path = _decode_relative_path(item.relative_path)
+            relative_path = PurePosixPath(decoded_path or "")
+            if len(relative_path.parts) < 3 or relative_path.parts[0].casefold() != "chatgpt":
+                hydrated_items.append(item)
+                continue
+
+            project_directory_name = relative_path.parts[1]
+            if project_directory_name not in catalogs_by_project:
+                project_dir = self.local_store_root / "chatgpt" / project_directory_name
+                if self._resolve_inside(project_dir, require_directory=True) is None:
+                    catalogs_by_project[project_directory_name] = ({}, {})
+                else:
+                    entries_by_path = self._load_chatgpt_catalog(project_dir, include_missing=True)
+                    entries_by_file_id = {
+                        _display_text(entry.get("file_id")): entry
+                        for entry in entries_by_path.values()
+                        if _display_text(entry.get("file_id"))
+                    }
+                    catalogs_by_project[project_directory_name] = (entries_by_path, entries_by_file_id)
+
+            entries_by_path, entries_by_file_id = catalogs_by_project[project_directory_name]
+            project_relative_path = PurePosixPath(*relative_path.parts[2:]).as_posix()
+            entry = entries_by_file_id.get(item.resource_key) or entries_by_path.get(project_relative_path)
+            if entry is None:
+                hydrated_items.append(item)
+                continue
+
+            source_url = _safe_source_url(entry.get("conversation_url")) or item.source_url
+            conversation_title = _display_text(entry.get("conversation_title"))
+            prompt_markdown = _display_text(entry.get("prompt_markdown"))
+            created_at = _parse_datetime(entry.get("created_at"))
+            hydrated_items.append(
+                replace(
+                    item,
+                    creator=conversation_title or item.creator,
+                    prompt_markdown=prompt_markdown or item.prompt_markdown,
+                    source_url=source_url,
+                    captured_at=_isoformat(created_at) if created_at is not None else item.captured_at,
+                    captured_at_label=(
+                        format_captured_at_label(created_at)
+                        if created_at is not None
+                        else item.captured_at_label
+                    ),
+                    chatgpt_session_key=item.chatgpt_session_key or _chatgpt_session_key(source_url),
+                    chatgpt_branch_key=(
+                        _chatgpt_branch_key(item.project_name, conversation_title)
+                        if conversation_title
+                        else item.chatgpt_branch_key
+                    ),
+                )
+            )
+        return hydrated_items
 
     def invalidate(self) -> None:
         """Discard the in-memory snapshot without touching the local cache."""
@@ -618,6 +789,8 @@ class LocalMediaCatalog:
             media_kind=filters["kind"],
             query=filters["q"],
         )
+        if filters["source"] == "chatgpt":
+            return paginate_chatgpt_sessions(filtered, filters["page"], filters["sort"])
         return paginate_media_items(sort_media_items(filtered, filters["sort"]), filters["page"])
 
     def _scan_x(self) -> list[LocalMediaItem]:
@@ -696,15 +869,16 @@ class LocalMediaCatalog:
                     continue
                 entry = catalog_entries.get(relative_path, {})
                 alt_text = _display_text(entry.get("alt_text"))
+                prompt_markdown = _display_text(entry.get("prompt_markdown"))
                 try:
                     width = max(0, int(entry.get("width") or 0))
                     height = max(0, int(entry.get("height") or 0))
                 except (TypeError, ValueError):
                     width = 0
                     height = 0
-                collection_name = project_name
-                if _is_direct_chatgpt_session_url(_display_text(entry.get("conversation_url"))):
-                    collection_name = _display_text(entry.get("conversation_title")) or project_name
+                conversation_url = _safe_source_url(entry.get("conversation_url"))
+                conversation_title = _display_text(entry.get("conversation_title"))
+                collection_name = conversation_title or project_name
                 items.append(
                     self._build_item(
                         media_path,
@@ -712,13 +886,20 @@ class LocalMediaCatalog:
                         title=alt_text or media_path.name,
                         description=alt_text,
                         creator=collection_name,
-                        source_url=_safe_source_url(entry.get("conversation_url")),
+                        source_url=conversation_url,
                         resource_key=_display_text(entry.get("file_id")) or media_path.stem.removeprefix("img_"),
-                        captured_value=entry.get("last_seen_at") or entry.get("first_seen_at"),
+                        captured_value=(
+                            entry.get("created_at")
+                            or entry.get("first_seen_at")
+                            or entry.get("last_seen_at")
+                        ),
                         project_name=project_name,
                         alt_text=alt_text,
+                        prompt_markdown=prompt_markdown,
                         width=width,
                         height=height,
+                        chatgpt_session_key=_chatgpt_session_key(conversation_url),
+                        chatgpt_branch_key=_chatgpt_branch_key(project_name, conversation_title),
                         stat_result=file_info,
                     )
                 )
@@ -738,8 +919,11 @@ class LocalMediaCatalog:
         resource_key: str = "",
         project_name: str = "",
         alt_text: str = "",
+        prompt_markdown: str = "",
         width: int = 0,
         height: int = 0,
+        chatgpt_session_key: str = "",
+        chatgpt_branch_key: str = "",
     ) -> LocalMediaItem:
         relative_path = media_path.relative_to(self.local_store_root).as_posix()
         captured_at_dt = _parse_datetime(captured_value) or datetime.fromtimestamp(stat_result.st_mtime, tz=UTC)
@@ -762,9 +946,12 @@ class LocalMediaCatalog:
             content_bytes=int(stat_result.st_size),
             project_name=_redact_local_root(_display_text(project_name), self.local_store_root),
             alt_text=_redact_local_root(_display_text(alt_text), self.local_store_root),
+            prompt_markdown=_redact_local_root(_display_text(prompt_markdown), self.local_store_root),
             width=width,
             height=height,
             resource_key=_redact_local_root(_display_text(resource_key), self.local_store_root),
+            chatgpt_session_key=_redact_local_root(_display_text(chatgpt_session_key), self.local_store_root),
+            chatgpt_branch_key=_redact_local_root(_display_text(chatgpt_branch_key), self.local_store_root),
         )
 
     def _media_files_by_relative_path(self, root: Path) -> dict[str, Path]:
@@ -891,7 +1078,12 @@ class LocalMediaCatalog:
             entries.setdefault(local_relative, raw_entry)
         return entries
 
-    def _load_chatgpt_catalog(self, project_dir: Path) -> dict[str, Mapping[str, Any]]:
+    def _load_chatgpt_catalog(
+        self,
+        project_dir: Path,
+        *,
+        include_missing: bool = False,
+    ) -> dict[str, Mapping[str, Any]]:
         payload = _read_json_object(project_dir / ".chatgpt_catalog.json", self.local_store_root, allow_hidden=True)
         if not payload:
             return {}
@@ -906,7 +1098,12 @@ class LocalMediaCatalog:
             if not relative_path:
                 continue
             candidate = project_dir / relative_path
-            if self._resolve_inside(candidate) is None:
+            if include_missing:
+                try:
+                    candidate.resolve(strict=False).relative_to(self.local_store_root)
+                except (OSError, RuntimeError, ValueError):
+                    continue
+            elif self._resolve_inside(candidate) is None:
                 continue
             try:
                 local_relative = candidate.relative_to(project_dir).as_posix()
@@ -1002,17 +1199,59 @@ def _safe_source_url(value: Any) -> str:
     return text
 
 
-def _is_direct_chatgpt_session_url(value: str) -> bool:
-    """Return whether a ChatGPT conversation URL is outside a project."""
+def _chatgpt_session_key(value: str) -> str:
+    """Return the stable conversation ID embedded in one ChatGPT URL."""
     parsed = urlsplit(value)
     path_parts = [part for part in parsed.path.split("/") if part]
-    return (
-        parsed.scheme.lower() == "https"
-        and parsed.netloc.lower() == "chatgpt.com"
-        and len(path_parts) == 2
-        and path_parts[0] == "c"
-        and bool(path_parts[1])
-    )
+    if parsed.scheme.lower() != "https" or parsed.netloc.lower() != "chatgpt.com":
+        return ""
+    try:
+        conversation_index = len(path_parts) - 1 - path_parts[::-1].index("c")
+    except ValueError:
+        return ""
+    return path_parts[conversation_index + 1] if conversation_index + 1 < len(path_parts) else ""
+
+
+def _chatgpt_branch_key(project_name: str, conversation_title: str) -> str:
+    """Return a conservative family key for ChatGPT branch titles."""
+    title = _display_text(conversation_title)
+    if not title:
+        return ""
+    project_key = _display_text(project_name).casefold()
+    master_match = _CHATGPT_MASTER_REVISION_RE.search(title)
+    if master_match:
+        return f"{project_key}:master:{master_match.group(1).casefold()}"
+    if not _CHATGPT_BRANCH_MARKER_RE.search(title):
+        return ""
+    base_title = _CHATGPT_BRANCH_LABEL_RE.sub("", title)
+    normalized_title = re.sub(r"[^a-z0-9]+", " ", base_title.casefold()).strip()
+    return f"{project_key}:branch:{normalized_title}" if normalized_title else ""
+
+
+def _media_sort_group_key(item: LocalMediaItem) -> str:
+    """Return one grouping key that keeps related ChatGPT iterations adjacent."""
+    if item.source != "chatgpt":
+        return f"media:{item.stable_id}"
+    project_key = item.project_name.casefold()
+    if item.chatgpt_branch_key:
+        return f"chatgpt:branch:{item.chatgpt_branch_key}"
+    if item.chatgpt_session_key:
+        return f"chatgpt:session:{project_key}:{item.chatgpt_session_key}"
+    return f"media:{item.stable_id}"
+
+
+def _chatgpt_session_page_key(item: LocalMediaItem) -> str:
+    """Return the strict session key used by ChatGPT-specific pagination."""
+    project_key = item.project_name.casefold()
+    session_key = item.chatgpt_session_key or _chatgpt_session_key(item.source_url)
+    if session_key:
+        return f"chatgpt:session:{project_key}:{session_key}"
+    if item.source_url:
+        return f"chatgpt:url:{project_key}:{item.source_url.casefold()}"
+    fallback_label = (item.creator or item.project_name).casefold()
+    if fallback_label:
+        return f"chatgpt:unknown:{project_key}:{fallback_label}"
+    return f"chatgpt:orphan:{item.stable_id}"
 
 
 def _parse_datetime(value: str | datetime | Any) -> datetime | None:

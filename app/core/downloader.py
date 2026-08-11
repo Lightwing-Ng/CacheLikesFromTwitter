@@ -1,6 +1,6 @@
 """Download media from tweet URLs with yt-dlp."""
 
-# Code version: v1.5.0-codex.1
+# Code version: v1.6.0-codex.1
 
 from __future__ import annotations
 
@@ -57,6 +57,11 @@ CONFLICT_ERROR_MARKERS = (
     "cannot move file",
     "not overwriting",
 )
+MAX_FILE_SIZE_SKIP_MARKERS = (
+    "max-filesize",
+    "file is larger than",
+    "filesize is larger than",
+)
 DOWNLOAD_RETRY_ATTEMPTS = 3
 DOWNLOAD_RETRY_DELAY_SECONDS = 1.5
 logger = logging.getLogger(__name__)
@@ -71,6 +76,7 @@ class DownloadResult:
     downloaded_image_count: int = 0
     downloaded_video_count: int = 0
     skipped: bool = False
+    skipped_oversized_media_count: int = 0
 
 
 IMAGE_SUFFIXES = {
@@ -121,6 +127,41 @@ def is_existing_file_conflict(command_output: str) -> bool:
     """Return whether the failure looks like a local file collision."""
     lowered = command_output.lower()
     return any(marker in lowered for marker in CONFLICT_ERROR_MARKERS)
+
+
+def is_max_file_size_skip_output(command_output: str) -> bool:
+    """Return whether yt-dlp rejected media because it exceeded the configured limit."""
+    lowered = command_output.lower()
+    return any(marker in lowered for marker in MAX_FILE_SIZE_SKIP_MARKERS)
+
+
+def discard_oversized_downloads(
+    downloaded_paths: list[Path],
+    max_file_size_bytes: int,
+) -> tuple[list[Path], list[Path]]:
+    """Remove newly written media files above the universal cache size limit."""
+    if max_file_size_bytes <= 0:
+        return downloaded_paths, []
+
+    accepted_paths: list[Path] = []
+    oversized_paths: list[Path] = []
+    for downloaded_path in downloaded_paths:
+        try:
+            is_oversized = downloaded_path.is_file() and downloaded_path.stat().st_size > max_file_size_bytes
+        except OSError:
+            is_oversized = False
+        if not is_oversized:
+            accepted_paths.append(downloaded_path)
+            continue
+        try:
+            downloaded_path.unlink()
+        except OSError as exc:
+            raise RuntimeError(
+                f"Unable to remove oversized X download {downloaded_path} above the "
+                f"{max_file_size_bytes:,}-byte cache limit."
+            ) from exc
+        oversized_paths.append(downloaded_path)
+    return accepted_paths, oversized_paths
 
 
 def is_missing_media_skip_output(command_output: str) -> bool:
@@ -275,6 +316,8 @@ def download_tweet_media(
             "--no-progress",
             "--restrict-filenames",
             "--no-overwrites",
+            "--max-filesize",
+            str(config.max_media_file_size_bytes),
             "--print",
             f"after_move:{MEDIA_MARKER_PREFIX}%(filepath)s",
         ]
@@ -296,8 +339,24 @@ def download_tweet_media(
         stderr = result.stderr or ""
         combined = "\n".join(part for part in (stdout.strip(), stderr.strip()) if part).strip()
         downloaded_paths = parse_downloaded_paths(stdout)
+        downloaded_paths, oversized_paths = discard_oversized_downloads(
+            downloaded_paths,
+            config.max_media_file_size_bytes,
+        )
+        if oversized_paths:
+            state.append_event(
+                f"Skipped {len(oversized_paths):,} X media file(s) above the {config.max_media_file_size_mib:,} MiB cache limit."
+            )
+            logger.info(
+                "Skipped oversized X media files.",
+                extra={
+                    "tweet_url": tweet_url,
+                    "max_file_size_bytes": config.max_media_file_size_bytes,
+                    "oversized_paths": [str(path) for path in oversized_paths],
+                },
+            )
 
-        if result.returncode == 0:
+        if result.returncode == 0 or is_max_file_size_skip_output(combined):
             if downloaded_paths:
                 image_count, video_count = count_downloaded_media_types(downloaded_paths)
                 for downloaded_path in downloaded_paths:
@@ -318,6 +377,13 @@ def download_tweet_media(
                     downloaded_post_count=1,
                     downloaded_image_count=image_count,
                     downloaded_video_count=video_count,
+                    skipped_oversized_media_count=len(oversized_paths),
+                )
+
+            if oversized_paths or is_max_file_size_skip_output(combined):
+                return DownloadResult(
+                    skipped=True,
+                    skipped_oversized_media_count=len(oversized_paths) or 1,
                 )
 
             if is_successful_skip_output(combined) or local_cache.contains_complete_cache(tweet_url):

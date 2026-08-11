@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.7.0-codex.1
+# Code version: v1.9.0-codex.1
 
 from __future__ import annotations
 
@@ -32,7 +32,13 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8666
 DEFAULT_CHROME_USER_DATA_DIR = Path.home() / "Library/Application Support/Google/Chrome"
 DEFAULT_CHROME_PROFILE_DIRECTORY = "Default"
+DEFAULT_SHADOW_BACKUP_DESTINATION = Path(
+    "/Users/lightwing/Library/CloudStorage/OneDrive-Personal/AICaches"
+)
 DEFAULT_DOWNLOAD_WORKERS = 4
+DEFAULT_MAX_MEDIA_FILE_SIZE_MIB = 50
+MIN_MAX_MEDIA_FILE_SIZE_MIB = 1
+MAX_MAX_MEDIA_FILE_SIZE_MIB = 10_240
 DEFAULT_CHATGPT_PROJECT_URL = (
     "https://chatgpt.com/g/g-p-69522aca2f788191b337866d5c03c59e-studio208cm/project"
 )
@@ -76,6 +82,16 @@ class CrawlConfig:
     chrome_user_data_dir: Path = DEFAULT_CHROME_USER_DATA_DIR
     chrome_profile_directory: str = DEFAULT_CHROME_PROFILE_DIRECTORY
     account_name_override: str = ""
+    shadow_backup_enabled: bool = True
+    shadow_backup_auto_sync: bool = True
+    shadow_backup_mirror_deletions: bool = False
+    shadow_backup_destination: Path = DEFAULT_SHADOW_BACKUP_DESTINATION
+    max_media_file_size_mib: int = DEFAULT_MAX_MEDIA_FILE_SIZE_MIB
+
+    @property
+    def max_media_file_size_bytes(self) -> int:
+        """Return the universal media-file limit in bytes."""
+        return self.max_media_file_size_mib * 1024 * 1024
 
     def sanitized_account_name(self, fallback: str) -> str:
         raw_name = self.account_name_override.strip() or fallback.strip() or "unknown_account"
@@ -107,6 +123,12 @@ def load_saved_config(settings_path: Path = SETTINGS_PATH) -> CrawlConfig:
     return CrawlConfig(
         headless=bool(payload.get("headless", defaults.headless)),
         download_workers=max(1, int(payload.get("download_workers", defaults.download_workers))),
+        max_media_file_size_mib=_clamp_int_setting(
+            payload.get("max_media_file_size_mib", defaults.max_media_file_size_mib),
+            defaults.max_media_file_size_mib,
+            MIN_MAX_MEDIA_FILE_SIZE_MIB,
+            MAX_MAX_MEDIA_FILE_SIZE_MIB,
+        ),
         max_media_items=int(payload.get("max_media_items", defaults.max_media_items)),
         max_scroll_rounds=int(payload.get("max_scroll_rounds", defaults.max_scroll_rounds)),
         scroll_pause_seconds=float(payload.get("scroll_pause_seconds", defaults.scroll_pause_seconds)),
@@ -137,6 +159,15 @@ def load_saved_config(settings_path: Path = SETTINGS_PATH) -> CrawlConfig:
         ).strip()
         or defaults.chrome_profile_directory,
         account_name_override=str(payload.get("account_name_override", defaults.account_name_override)).strip(),
+        shadow_backup_enabled=bool(payload.get("shadow_backup_enabled", defaults.shadow_backup_enabled)),
+        shadow_backup_auto_sync=bool(payload.get("shadow_backup_auto_sync", defaults.shadow_backup_auto_sync)),
+        shadow_backup_mirror_deletions=bool(
+            payload.get("shadow_backup_mirror_deletions", defaults.shadow_backup_mirror_deletions)
+        ),
+        shadow_backup_destination=Path(
+            str(payload.get("shadow_backup_destination", defaults.shadow_backup_destination)).strip()
+            or str(defaults.shadow_backup_destination)
+        ).expanduser(),
     )
 
 
@@ -144,6 +175,15 @@ def _clamp_float_setting(value: object, fallback: float, minimum: float, maximum
     """Parse one persisted float setting and keep it within its supported range."""
     try:
         parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = fallback
+    return min(max(parsed, minimum), maximum)
+
+
+def _clamp_int_setting(value: object, fallback: int, minimum: int, maximum: int) -> int:
+    """Parse one persisted integer setting and keep it within its supported range."""
+    try:
+        parsed = int(value)
     except (TypeError, ValueError):
         parsed = fallback
     return min(max(parsed, minimum), maximum)
@@ -158,5 +198,6 @@ def save_config(config: CrawlConfig, settings_path: Path = SETTINGS_PATH) -> Non
     payload["chatgpt_project_url"] = config.chatgpt_project_url
     payload["chatgpt_project_name"] = config.chatgpt_project_name
     payload["chrome_user_data_dir"] = str(config.chrome_user_data_dir)
+    payload["shadow_backup_destination"] = str(config.shadow_backup_destination)
     settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(payload, indent=2, sort_keys=True))

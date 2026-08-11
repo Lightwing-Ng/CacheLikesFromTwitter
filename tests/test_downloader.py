@@ -1,6 +1,6 @@
 """Tests for yt-dlp output classification and retry boundaries.
 
-Code version: v1.0.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -15,16 +15,20 @@ from app.core.downloader import (
     MEDIA_MARKER_PREFIX,
     build_cookies_from_browser_arg,
     count_downloaded_media_types,
+    discard_oversized_downloads,
     is_existing_file_conflict,
     is_missing_media_skip_output,
+    is_max_file_size_skip_output,
     is_not_found_skip_output,
     is_successful_skip_output,
     is_suspended_skip_output,
     is_transient_retryable_output,
     is_unsupported_external_url_skip_output,
     parse_downloaded_paths,
+    download_tweet_media,
     run_yt_dlp_with_retries,
 )
+from app.core.state import TaskState
 
 
 def test_output_parsing_counts_media_and_classifies_skips() -> None:
@@ -46,6 +50,48 @@ def test_output_parsing_counts_media_and_classifies_skips() -> None:
     assert is_not_found_skip_output("HTTP Error 404")
     assert is_suspended_skip_output("account: suspended")
     assert is_existing_file_conflict("unable to rename because the file exists")
+    assert is_max_file_size_skip_output("File is larger than max-filesize")
+
+
+def test_discard_oversized_downloads_removes_only_files_above_limit(tmp_path) -> None:
+    small_path = tmp_path / "small.jpg"
+    large_path = tmp_path / "large.mp4"
+    small_path.write_bytes(b"small")
+    large_path.write_bytes(b"large-file")
+
+    accepted, oversized = discard_oversized_downloads([small_path, large_path], max_file_size_bytes=5)
+
+    assert accepted == [small_path]
+    assert oversized == [large_path]
+    assert small_path.exists()
+    assert not large_path.exists()
+
+
+def test_download_tweet_media_passes_the_universal_size_limit_to_yt_dlp(tmp_path) -> None:
+    config = CrawlConfig(max_media_file_size_mib=1, x_browser="safari")
+    state = TaskState("test")
+    oversized_result = subprocess.CompletedProcess(
+        ["yt-dlp"],
+        1,
+        stdout="",
+        stderr="File is larger than max-filesize (2097152 bytes > 1048576 bytes).",
+    )
+
+    with patch("app.core.downloader.ensure_yt_dlp_available", return_value=["yt-dlp"]), patch(
+        "app.core.downloader.build_cookies_from_browser_arg", return_value="safari"
+    ), patch("app.core.downloader.run_yt_dlp_with_retries", return_value=oversized_result) as run_yt_dlp:
+        result = download_tweet_media(
+            "https://x.com/demo/status/1",
+            tmp_path / "x",
+            config,
+            state,
+        )
+
+    command = run_yt_dlp.call_args.args[0]
+    limit_index = command.index("--max-filesize")
+    assert command[limit_index + 1] == str(1 * 1024 * 1024)
+    assert result.skipped
+    assert result.skipped_oversized_media_count == 1
 
 
 def test_external_url_classifier_does_not_skip_native_x_urls() -> None:

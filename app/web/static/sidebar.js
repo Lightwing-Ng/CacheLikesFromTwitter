@@ -1,4 +1,4 @@
-/* Code version: v1.2.0-codex.1 */
+/* Code version: v1.4.1-codex.1 */
 
 (function initializeSidebar() {
     "use strict";
@@ -22,7 +22,6 @@
     let isSidebarOpen = true;
     let sidebarMotionResetTimer = 0;
     let dockPositionFrame = 0;
-    let cacheSourceMenuCloseTimer = 0;
 
     function positionCacheSourceDropdown() {
         if (!cacheSourceMenu || !cacheSourceTrigger || !cacheSourceDropdown || cacheSourceDropdown.hidden) return;
@@ -48,29 +47,24 @@
         cacheSourceDropdown.style.bottom = "auto";
     }
 
-    function scheduleCacheSourceMenuClose() {
-        if (cacheSourceMenuCloseTimer) window.clearTimeout(cacheSourceMenuCloseTimer);
-        cacheSourceMenuCloseTimer = window.setTimeout(() => {
-            cacheSourceMenuCloseTimer = 0;
-            setCacheSourceMenuOpen(false);
-        }, 140);
-    }
-
     function setCacheSourceMenuOpen(isOpen) {
         if (!cacheSourceMenu || !cacheSourceTrigger || !cacheSourceDropdown) return;
-
-        if (cacheSourceMenuCloseTimer) {
-            window.clearTimeout(cacheSourceMenuCloseTimer);
-            cacheSourceMenuCloseTimer = 0;
-        }
 
         const nextIsOpen = Boolean(isOpen);
         cacheSourceMenu.classList.toggle("is-cache-source-menu-open", nextIsOpen);
         cacheSourceTrigger.setAttribute("aria-expanded", String(nextIsOpen));
         cacheSourceDropdown.hidden = !nextIsOpen;
         if (nextIsOpen) {
+            const selectedIndex = selectedCacheSourceIndex();
+            cacheSourceOptions.forEach((option, index) => {
+                option.classList.toggle("is-active", index === selectedIndex);
+            });
             positionCacheSourceDropdown();
         } else {
+            cacheSourceTrigger.removeAttribute("aria-activedescendant");
+            cacheSourceOptions.forEach((option) => {
+                option.classList.toggle("is-active", option.getAttribute("aria-selected") === "true");
+            });
             cacheSourceDropdown.style.removeProperty("left");
             cacheSourceDropdown.style.removeProperty("top");
             cacheSourceDropdown.style.removeProperty("right");
@@ -78,9 +72,22 @@
         }
     }
 
+    function selectedCacheSourceIndex() {
+        const selectedIndex = cacheSourceOptions.findIndex(
+            (option) => option.getAttribute("aria-selected") === "true",
+        );
+        return selectedIndex >= 0 ? selectedIndex : 0;
+    }
+
     function focusCacheSourceOption(index) {
         const option = cacheSourceOptions[index];
-        if (option instanceof HTMLElement) option.focus();
+        if (!(option instanceof HTMLElement)) return;
+        cacheSourceOptions.forEach((candidate, candidateIndex) => {
+            candidate.classList.toggle("is-active", candidateIndex === index);
+        });
+        if (option.id) cacheSourceTrigger?.setAttribute("aria-activedescendant", option.id);
+        option.focus({ preventScroll: true });
+        option.scrollIntoView({ block: "nearest" });
     }
 
     function readSidebarMemory() {
@@ -183,33 +190,47 @@
         applySidebarState(false);
     });
 
-    cacheSourceMenu?.addEventListener("mouseenter", () => {
-        setCacheSourceMenuOpen(true);
-    });
-
-    cacheSourceMenu?.addEventListener("mouseleave", () => {
-        scheduleCacheSourceMenuClose();
-    });
-
     cacheSourceTrigger?.addEventListener("click", () => {
         setCacheSourceMenuOpen(!cacheSourceMenu?.classList.contains("is-cache-source-menu-open"));
     });
 
     cacheSourceTrigger?.addEventListener("keydown", (event) => {
-        if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+        const supportedKeys = new Set(["ArrowDown", "ArrowUp", "Home", "End"]);
+        if (!supportedKeys.has(event.key) || !cacheSourceOptions.length) return;
 
         event.preventDefault();
         setCacheSourceMenuOpen(true);
-        focusCacheSourceOption(event.key === "ArrowDown" ? 0 : cacheSourceOptions.length - 1);
+        if (event.key === "Home") {
+            focusCacheSourceOption(0);
+            return;
+        }
+        if (event.key === "End") {
+            focusCacheSourceOption(cacheSourceOptions.length - 1);
+            return;
+        }
+        const selectedIndex = selectedCacheSourceIndex();
+        const offset = event.key === "ArrowDown" ? 1 : -1;
+        focusCacheSourceOption((selectedIndex + offset + cacheSourceOptions.length) % cacheSourceOptions.length);
     });
 
     cacheSourceOptions.forEach((option, index) => {
-        option.addEventListener("click", () => setCacheSourceMenuOpen(false));
+        option.addEventListener("click", () => {
+            setCacheSourceMenuOpen(false);
+        });
         option.addEventListener("keydown", (event) => {
             if (event.key === "Escape") {
                 event.preventDefault();
                 setCacheSourceMenuOpen(false);
                 cacheSourceTrigger?.focus();
+                return;
+            }
+            if (event.key === "Tab") {
+                setCacheSourceMenuOpen(false);
+                return;
+            }
+            if (event.key === "Home" || event.key === "End") {
+                event.preventDefault();
+                focusCacheSourceOption(event.key === "Home" ? 0 : cacheSourceOptions.length - 1);
                 return;
             }
             if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -222,7 +243,8 @@
     });
 
     document.addEventListener("click", (event) => {
-        if (!cacheSourceMenu?.contains(event.target)) setCacheSourceMenuOpen(false);
+        if (cacheSourceMenu?.contains(event.target)) return;
+        setCacheSourceMenuOpen(false);
     });
 
     document.addEventListener("keydown", (event) => {

@@ -1,6 +1,6 @@
 """Focused regression tests for Grok media sync dedupe."""
 
-# Code version: v1.2.0-codex.2
+# Code version: v1.4.0-codex.1
 
 from __future__ import annotations
 
@@ -13,19 +13,23 @@ from unittest.mock import patch
 
 from app.core.grok_downloader import (
     GROK_CATALOG_FILENAME,
+    GROK_DOWNLOAD_WORKERS,
     GrokMediaCatalog,
     GrokCatalogEntry,
     GrokDownloadAuth,
     GrokDownloadManifest,
     GrokMediaCandidate,
+    DownloadSizeLimitError,
     build_grok_initial_snapshot,
     build_candidate_from_versions_payload,
     compare_seen_at,
     compute_sha256,
     download_candidate,
     entry_needs_remote_image_upgrade,
+    resolve_grok_download_worker_count,
     stream_candidate_download,
 )
+from app.core.config import CrawlConfig
 from app.core.state import TaskState
 
 
@@ -97,6 +101,20 @@ class _FakeContext:
 class GrokDownloaderTests(unittest.TestCase):
     """Validate Grok flat-file compatibility and content-level dedupe."""
 
+    def test_grok_download_workers_reuse_the_shared_cache_setting(self) -> None:
+        self.assertEqual(
+            resolve_grok_download_worker_count(CrawlConfig(download_workers=2), "chromium"),
+            2,
+        )
+        self.assertEqual(
+            resolve_grok_download_worker_count(CrawlConfig(download_workers=100), "chromium"),
+            GROK_DOWNLOAD_WORKERS,
+        )
+        self.assertEqual(
+            resolve_grok_download_worker_count(CrawlConfig(download_workers=3), "safari"),
+            1,
+        )
+
     def test_catalog_rebuild_recovers_existing_flat_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             target_dir = Path(temp_dir) / "grok"
@@ -149,6 +167,35 @@ class GrokDownloaderTests(unittest.TestCase):
             self.assertEqual(catalog.summarize(), (1, 1, 0))
             self.assertTrue(catalog.contains_identity(candidate.identity))
             self.assertEqual(len([path for path in target_dir.iterdir() if path.is_file() and not path.name.startswith(".")]), 1)
+
+    def test_download_candidate_skips_known_oversized_asset(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = Path(temp_dir) / "grok"
+            target_dir.mkdir(parents=True, exist_ok=True)
+            candidate = GrokMediaCandidate(
+                source_url="https://assets.grok.com/users/demo/generated/cebf0764-8ee5-44f5-9653-753701bfdb96/image.jpg",
+                asset_id="cebf0764-8ee5-44f5-9653-753701bfdb96",
+                asset_name="oversized-image",
+                media_kind="image",
+                identity="cebf0764-8ee5-44f5-9653-753701bfdb96/oversized-image",
+                expected_bytes=10,
+            )
+            catalog = GrokMediaCatalog.build(target_dir)
+            manifest = GrokDownloadManifest.build(target_dir, catalog)
+
+            with self.assertRaisesRegex(DownloadSizeLimitError, "cache limit"):
+                download_candidate(
+                    catalog,
+                    manifest,
+                    target_dir,
+                    candidate,
+                    GrokDownloadAuth(),
+                    lambda: False,
+                    max_file_size_bytes=5,
+                )
+
+            self.assertEqual(catalog.summarize(), (0, 0, 0))
+            self.assertFalse(list(target_dir.glob("*.part")))
 
     def test_stream_retries_an_http_successful_html_response_before_committing_media(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

@@ -1,6 +1,6 @@
 """Service orchestration and Flask contract tests.
 
-Code version: v1.2.0-codex.1
+Code version: v1.4.0-codex.1
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from app.core.grok_service import summarize_error_for_status
 from app.core.service import CacheLikesService
 from app.core.state import TaskSnapshot, TaskState
 from app.web.app import create_app
+from app.web.cache_sources import CACHE_SOURCE_VIEWS
 
 
 def test_cache_service_run_aggregates_download_results_without_browser_access(tmp_path: Path) -> None:
@@ -69,9 +70,11 @@ def test_web_pages_and_status_apis_are_available(client) -> None:
     status = client.get("/api/status")
     grok_status = client.get("/api/grok/status")
     chatgpt_status = client.get("/api/chatgpt/status")
+    generic_statuses = [client.get(f"/api/cache/{source.key}/status") for source in CACHE_SOURCE_VIEWS]
     assert status.status_code == 200
     assert grok_status.status_code == 200
     assert chatgpt_status.status_code == 200
+    assert all(response.status_code == 200 for response in generic_statuses)
     assert status.get_json()["phase"] in {"idle", "starting", "downloading", "finished", "failed", "stopped", "stopping"}
 
 
@@ -128,7 +131,50 @@ def test_settings_and_grok_reset_routes_redirect_without_external_work(client, t
 @pytest.mark.integration
 def test_grok_start_route_accepts_safari(client) -> None:
     with patch("app.core.grok_service.GrokDownloadService.start") as start:
-        response = client.post("/grok/start", data={"grok_browser": "safari"})
+        response = client.post(
+            "/grok/start",
+            data={
+                "grok_browser": "safari",
+                "download_workers": "2",
+                "max_media_file_size_mib": "75",
+            },
+        )
 
     assert response.status_code == 302
-    assert start.call_args.args[0].grok_browser == "safari"
+    config = start.call_args.args[0]
+    assert config.grok_browser == "safari"
+    assert config.download_workers == 2
+    assert config.max_media_file_size_mib == 75
+
+
+@pytest.mark.integration
+def test_partial_cache_start_preserves_unsubmitted_global_booleans(tmp_path: Path) -> None:
+    initial_config = CrawlConfig(
+        headless=True,
+        shadow_backup_enabled=True,
+        shadow_backup_auto_sync=True,
+        shadow_backup_mirror_deletions=True,
+    )
+
+    with patch("app.web.app.load_saved_config", return_value=initial_config), patch(
+        "app.web.app.save_config"
+    ) as save_config, patch("app.core.service.CacheLikesService.start") as start:
+        application = create_app(tmp_path / "local_store")
+        application.config.update(TESTING=True)
+        with application.test_client() as isolated_client:
+            response = isolated_client.post(
+                "/start",
+                data={
+                    "x_browser": "safari",
+                    "download_workers": "3",
+                    "max_media_file_size_mib": "50",
+                },
+            )
+
+    assert response.status_code == 302
+    config = start.call_args.args[0]
+    assert config.headless
+    assert config.shadow_backup_enabled
+    assert config.shadow_backup_auto_sync
+    assert config.shadow_backup_mirror_deletions
+    save_config.assert_called_once_with(config)

@@ -1,6 +1,6 @@
 """Background service for Grok media sync."""
 
-# Code version: v1.1.2-codex.1
+# Code version: v1.3.0-codex.1
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from .config import CrawlConfig
 from .grok_downloader import sync_grok_media
 from .job_lock import CacheTaskLock, SHARED_CACHE_TASK_LOCK
 from .logging_setup import reset_job_id, set_job_id
+from .shadow_backup import ShadowBackupService
 from .state import TaskState
 
 
@@ -36,7 +37,12 @@ def summarize_error_for_status(error: Exception) -> str:
 class GrokDownloadService:
     """Manage a single Grok sync worker."""
 
-    def __init__(self, state: TaskState, task_lock: CacheTaskLock | None = None) -> None:
+    def __init__(
+        self,
+        state: TaskState,
+        task_lock: CacheTaskLock | None = None,
+        shadow_backup_service: ShadowBackupService | None = None,
+    ) -> None:
         self._state = state
         self._worker: Thread | None = None
         self._stop_requested = Event()
@@ -44,6 +50,7 @@ class GrokDownloadService:
         self._lifecycle_lock = RLock()
         self._task_lock = task_lock or SHARED_CACHE_TASK_LOCK
         self._owns_task_lock = False
+        self._shadow_backup_service = shadow_backup_service
 
     def is_running(self) -> bool:
         """Return whether a Grok sync is active."""
@@ -117,13 +124,20 @@ class GrokDownloadService:
                 )
                 return
 
-            self._state.finish_success(
+            completion_message = (
                 f"Finished Grok sync. Discovered {result.discovered_count} assets, "
                 f"added {result.downloaded_count} new files ({result.downloaded_images} images, "
                 f"{result.downloaded_videos} videos), deduped {result.deduped_by_hash}, "
+                f"skipped over size limit {result.skipped_size}, "
                 f"failed {result.failed_count}, "
                 f"cached total {result.cached_count} assets."
             )
+            if self._shadow_backup_service is not None:
+                shadow_backup_message = self._shadow_backup_service.sync_after_cache_task(self._config)
+                if shadow_backup_message:
+                    self._state.append_event(shadow_backup_message)
+                    completion_message = f"{completion_message} {shadow_backup_message}"
+            self._state.finish_success(completion_message)
             logger.info(
                 "Grok sync finished successfully.",
                 extra={

@@ -1,14 +1,16 @@
-<!-- Code version: v1.6.0-codex.1 -->
+<!-- Code version: v1.12.2-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter Settings</title>
-            <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.19.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.25.0-codex.1') }}">
+    <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js') }}"></script>
 </head>
 <body>
+{% from "_cache_common_config.html" import render_cache_common_config %}
 {% set current_phase = snapshot.phase or "idle" %}
 <main class="page">
     <div class="app-shell is-sidebar-open" id="app_shell">
@@ -56,7 +58,14 @@
                     <p class="status-copy">
                         Save your crawler configuration here. Then return to the download page and start caching with one click.
                     </p>
-                    <form action="{{ url_for('save_settings') }}" method="post" class="sidebar-form" id="settings_form">
+                    <form
+                        action="{{ url_for('save_settings') }}"
+                        method="post"
+                        class="sidebar-form"
+                        id="settings_form"
+                        data-wait-title="Saving settings"
+                        data-wait-copy="Saving your cache and browser configuration on this Mac."
+                    >
                         <label class="field">
                             <span>Chrome user data dir</span>
                             <input type="text" name="chrome_user_data_dir" value="{{ saved_config.chrome_user_data_dir }}">
@@ -69,11 +78,8 @@
                             <span>Account name override</span>
                             <input type="text" name="account_name_override" value="{{ saved_config.account_name_override }}" placeholder="Optional folder name override">
                         </label>
+                        {{ render_cache_common_config(saved_config, "settings") }}
                         <div class="field-grid compact-config-grid">
-                            <label class="field compact-config-field">
-                                <span>Download workers</span>
-                                <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="download_workers" value="{{ saved_config.download_workers }}">
-                            </label>
                             <label class="field compact-config-field">
                                 <span>Max media files</span>
                                 <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="max_media_items" value="{{ saved_config.max_media_items }}">
@@ -109,8 +115,132 @@
                                 </span>
                             </span>
                         </label>
+                        <section
+                            class="shadow-backup-section"
+                            id="shadow_backup_section"
+                            data-shadow-backup-section
+                            data-shadow-backup-enabled="{{ 'true' if saved_config.shadow_backup_enabled else 'false' }}"
+                            aria-labelledby="shadow_backup_heading"
+                        >
+                            <div class="shadow-backup-heading">
+                                <div>
+                                    <p class="workspace-kicker">Shadow cloud backup</p>
+                                    <h3 id="shadow_backup_heading">One-way cache mirror</h3>
+                                </div>
+                                <span class="status-chip status-{{ shadow_backup_snapshot.phase }}" id="shadow_backup_phase">
+                                    {{ shadow_backup_snapshot.phase }}
+                                </span>
+                            </div>
+                            <p class="shadow-backup-copy">
+                                The local cache is authoritative. New and changed files are copied to the selected cloud folder; cloud files never write back to this Mac.
+                            </p>
+                            <label class="field compact-config-field">
+                                <span>Source folder</span>
+                                <input type="text" value="{{ local_store_root }}" readonly aria-readonly="true">
+                            </label>
+                            <label class="field compact-config-field">
+                                <span>Cloud destination</span>
+                                <span class="shadow-backup-destination-control">
+                                    <input
+                                        type="text"
+                                        id="shadow_backup_destination"
+                                        name="shadow_backup_destination"
+                                        value="{{ saved_config.shadow_backup_destination }}"
+                                        spellcheck="false"
+                                        autocomplete="off"
+                                    >
+                                    <button
+                                        type="button"
+                                        class="secondary-button shadow-backup-choose-button"
+                                        id="shadow_backup_choose_destination"
+                                    >
+                                        Choose folder…
+                                    </button>
+                                </span>
+                            </label>
+                            <label class="field field-switch">
+                                <span>Cloud backup</span>
+                                <span class="switch-row">
+                                    <span class="switch-label">Enable shadow cloud backup</span>
+                                    <span class="ios-switch-shell">
+                                        <input
+                                            type="checkbox"
+                                            name="shadow_backup_enabled"
+                                            id="shadow_backup_enabled"
+                                            {% if saved_config.shadow_backup_enabled %}checked{% endif %}
+                                        >
+                                        <span class="ios-switch-slider" aria-hidden="true"></span>
+                                    </span>
+                                </span>
+                            </label>
+                            <label class="field field-switch" data-shadow-backup-dependent>
+                                <span>Sync timing</span>
+                                <span class="switch-row">
+                                    <span class="switch-label">Sync after every successful cache task</span>
+                                    <span class="ios-switch-shell">
+                                        <input
+                                            type="checkbox"
+                                            name="shadow_backup_auto_sync"
+                                            id="shadow_backup_auto_sync"
+                                            {% if saved_config.shadow_backup_auto_sync %}checked{% endif %}
+                                        >
+                                        <span class="ios-switch-slider" aria-hidden="true"></span>
+                                    </span>
+                                </span>
+                            </label>
+                            <label class="field field-switch" data-shadow-backup-dependent>
+                                <span>Deletion policy</span>
+                                <span class="switch-row">
+                                    <span class="switch-label">Mirror local deletions to the cloud on sync</span>
+                                    <span class="ios-switch-shell">
+                                        <input
+                                            type="checkbox"
+                                            name="shadow_backup_mirror_deletions"
+                                            id="shadow_backup_mirror_deletions"
+                                            {% if saved_config.shadow_backup_mirror_deletions %}checked{% endif %}
+                                        >
+                                        <span class="ios-switch-slider" aria-hidden="true"></span>
+                                    </span>
+                                </span>
+                            </label>
+                            <p class="shadow-backup-warning" data-shadow-backup-mirror-warning {% if not saved_config.shadow_backup_mirror_deletions %}hidden{% endif %}>
+                                Mirror deletions removes cloud-only files from this destination during the next sync.
+                            </p>
+                        </section>
                         <button type="submit" class="primary-button sidebar-action-button">Save settings</button>
                     </form>
+                    <section class="shadow-backup-actions" aria-labelledby="shadow_backup_sync_heading">
+                        <div>
+                            <p class="workspace-kicker">Cloud sync</p>
+                            <h3 id="shadow_backup_sync_heading">Synchronize now</h3>
+                        </div>
+                        <p class="shadow-backup-status" id="shadow_backup_status" data-phase="{{ shadow_backup_snapshot.phase }}" aria-live="polite">
+                            <span
+                                class="suggestion-loading-spinner shadow-backup-status-spinner"
+                                data-shadow-backup-status-spinner
+                                aria-hidden="true"
+                                {% if not shadow_backup_snapshot.running %}hidden{% endif %}
+                            ></span>
+                            <span data-shadow-backup-status-copy>{{ shadow_backup_snapshot.message }}</span>
+                        </p>
+                        <p class="shadow-backup-last-synced" id="shadow_backup_last_synced" {% if not shadow_backup_snapshot.last_synced_at %}hidden{% endif %}>
+                            Last successful sync: {{ shadow_backup_snapshot.last_synced_at }}
+                        </p>
+                        <button
+                            type="submit"
+                            form="settings_form"
+                            formaction="{{ url_for('start_shadow_backup_sync') }}"
+                            formmethod="post"
+                            class="secondary-button shadow-backup-sync-button"
+                            id="shadow_backup_sync_now"
+                            data-wait-title="Starting cloud sync"
+                            data-wait-copy="Comparing the local cache with the selected cloud destination and preparing the one-way mirror."
+                            onclick="return !document.getElementById('shadow_backup_mirror_deletions').checked || window.confirm('Mirror local deletions to the cloud? Cloud-only files in this destination will be permanently removed.')"
+                            {% if not saved_config.shadow_backup_enabled or shadow_backup_snapshot.running %}disabled{% endif %}
+                        >
+                            Sync now
+                        </button>
+                    </section>
                     <section class="danger-zone" aria-labelledby="danger_zone_heading">
                         <div>
                             <p class="workspace-kicker">Danger zone</p>
@@ -125,6 +255,8 @@
                         <form
                             action="{{ url_for('reset_grok') }}"
                             method="post"
+                            data-wait-title="Resetting Grok state"
+                            data-wait-copy="Removing cached Grok media, manifests, queues, and resumable partial downloads."
                             onsubmit="return window.confirm('Reset Grok state? This will permanently delete all cached Grok media, manifests, queue files, and resumable partial downloads.')"
                         >
                             <button
@@ -152,6 +284,8 @@
                         <form
                             action="{{ url_for('reset_chatgpt') }}"
                             method="post"
+                            data-wait-title="Resetting ChatGPT state"
+                            data-wait-copy="Removing cached original ChatGPT images and resumable partial downloads."
                             onsubmit="return window.confirm('Reset ChatGPT state? This will permanently delete all cached original project images and resumable partial downloads.')"
                         >
                             <button
@@ -174,6 +308,8 @@
     {% include "_sidebar_dock.html" %}
 </main>
 
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.2.0-codex.1') }}"></script>
+{% include "_waiting_modal.html" %}
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.4.1-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='shadow-backup-settings.js', v='shadow-backup-settings-v1.2.0-codex.1') }}"></script>
 </body>
 </html>

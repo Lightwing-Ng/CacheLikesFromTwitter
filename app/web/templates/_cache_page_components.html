@@ -1,0 +1,92 @@
+{# Code version: v1.0.0-codex.1 #}
+
+{% macro render_browser_session(cache_source, browser_options) -%}
+<div
+    class="browser-session-panel"
+    data-browser-session-panel
+    data-platform="{{ cache_source.key }}"
+    data-selection-storage-key="{{ cache_source.browser_storage_key }}"
+    data-hidden-input-selector="#{{ cache_source.browser_input_id }}"
+    {% if cache_source.require_browser_ready %}data-start-button-selector="#start_button" data-require-download-ready="true"{% endif %}
+>
+    <p class="browser-session-panel-label">{{ cache_source.browser_panel_label }}</p>
+    <div class="trade-strategy-row browser-session-row">
+        <div class="trade-strategy-combobox browser-session-combobox">
+            <button
+                type="button"
+                class="trade-strategy-select form-select trade-strategy-trigger browser-session-trigger"
+                data-role="browser-picker-trigger"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+            >
+                <span class="browser-session-trigger-leading">
+                    <span class="browser-picker-selected-icon-shell" data-role="browser-picker-selected-icon-shell" hidden>
+                        <img class="browser-picker-option-icon" data-role="browser-picker-selected-icon" alt="">
+                    </span>
+                    <span class="trade-strategy-trigger-label browser-session-trigger-label" data-role="browser-picker-selected-label">Select browser</span>
+                </span>
+                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+            </button>
+            <div
+                class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown"
+                data-role="browser-picker-menu"
+                role="listbox"
+                aria-label="Choose authorized browser"
+            >
+                {% for browser in browser_options %}
+                <button
+                    type="button"
+                    class="trade-strategy-dropdown-option browser-picker-option"
+                    data-browser-option="{{ browser.id }}"
+                    data-browser-label="{{ browser.label }}"
+                    data-browser-icon="{{ url_for('static', filename=browser.icon_filename) }}"
+                    role="option"
+                    aria-selected="false"
+                >
+                    <span class="trade-strategy-dropdown-check browser-session-option-check" aria-hidden="true"></span>
+                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename=browser.icon_filename) }}" alt="{{ browser.label }} icon">
+                    <span class="trade-strategy-dropdown-text browser-session-option-text">{{ browser.label }}</span>
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+    <div class="browser-session-status-card" data-role="browser-session-status" hidden>
+        <div class="browser-session-status-row">
+            <div class="browser-session-status-copy">
+                <strong class="browser-session-status-account" data-role="browser-session-account">{{ cache_source.browser_empty_message }}</strong>
+                <p class="browser-session-status-message" data-role="browser-session-message" hidden></p>
+            </div>
+            <span class="suggestion-loading-spinner browser-session-status-spinner" data-role="browser-session-spinner" aria-hidden="true" hidden></span>
+            <span class="browser-session-status-checkmark" data-role="browser-session-checkmark" aria-label="Ready to download" hidden></span>
+        </div>
+    </div>
+</div>
+{%- endmacro %}
+
+
+{% macro render_metric(label, field, value, accent=false, element_id=None) -%}
+<div class="metric-card{% if accent %} metric-card-accent{% endif %}">
+    <span class="metric-label">{{ label }}</span>
+    <strong
+        {% if element_id %}id="{{ element_id }}"{% endif %}
+        data-status-field="{{ field }}"
+        data-status-format="number"
+    >{{ "{:,}".format(value) }}</strong>
+</div>
+{%- endmacro %}
+
+
+{% macro render_progress_metric(label, field, value, element_id=None, dynamic_label=false) -%}
+<div class="progress-metric-card">
+    <span
+        class="progress-metric-label"
+        {% if dynamic_label %}id="progress_processed_label" data-progress-unit-label{% endif %}
+    >{{ label }}</span>
+    <strong
+        {% if element_id %}id="{{ element_id }}"{% endif %}
+        data-status-field="{{ field }}"
+        data-status-format="number"
+    >{{ "{:,}".format(value) }}</strong>
+</div>
+{%- endmacro %}

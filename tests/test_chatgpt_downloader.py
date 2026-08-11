@@ -1,20 +1,26 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.8.0-codex.1
+# Code version: v1.13.0-codex.1
 
 from __future__ import annotations
 
 from contextlib import nullcontext
+from dataclasses import replace
+from io import BytesIO
 import json
 from pathlib import Path
+from threading import Event
 from unittest.mock import patch
 
 import pytest
+from PIL import Image
 
 from app.core.browser_sessions import probe_browser_session
 from app.core.chatgpt_downloader import (
+    ChatGPTImageSizeLimitError,
     ChatGPTImageCandidate,
     ChatGPTImageCatalog,
+    ChatGPTCatalogEntry,
     chatgpt_target_dir,
     collect_chatgpt_project_index_images,
     collect_conversation_images,
@@ -31,10 +37,13 @@ from app.core.chatgpt_downloader import (
 from app.core.chatgpt_downloader import (
     ChatGPTConversationWorkResult,
     ChatGPTImageDownloadWorkResult,
+    PlaywrightError,
     _chatgpt_file_download_url,
     _chatgpt_project_id,
     _extract_chatgpt_conversation_image_payloads,
+    _get_chatgpt_api_json,
     _is_unavailable_chatgpt_image_error,
+    _is_retryable_chatgpt_image_error,
     _is_recoverable_chatgpt_page_error,
     _iter_chatgpt_index_image_results,
     _iter_chatgpt_conversation_results,
@@ -46,6 +55,22 @@ from app.core.state import TaskState
 
 
 PNG_PAYLOAD = b"\x89PNG\r\n\x1a\n" + (b"cachelikes" * 8)
+
+
+def _visual_test_image_payload(image_format: str, *, quality: int | None = None) -> bytes:
+    """Create one deterministic image payload for visual-deduplication coverage."""
+    image = Image.new("RGB", (128, 96))
+    image.putdata(
+        [
+            ((column * 37 + row * 11) % 256, (column * 7 + row * 29) % 256, (column * 19 + row * 5) % 256)
+            for row in range(image.height)
+            for column in range(image.width)
+        ]
+    )
+    output = BytesIO()
+    save_options = {"quality": quality} if quality is not None else {}
+    image.save(output, format=image_format, **save_options)
+    return output.getvalue()
 
 
 class _FakeResponse:
@@ -112,6 +137,7 @@ def test_chatgpt_extracts_every_image_asset_from_the_current_conversation_branch
                     "author": {"role": "user"},
                     "content": {
                         "parts": [
+                            "**Keep the subject centered.**\n\n- Use soft studio light\n- Preserve the blue backdrop",
                             {
                                 "asset_pointer": "file-service://file_user_original",
                                 "content_type": "image/png",
@@ -174,6 +200,9 @@ def test_chatgpt_extracts_every_image_asset_from_the_current_conversation_branch
     assert by_file_id["file_user_original"]["messageRole"] == "user"
     assert by_file_id["file_user_original"]["width"] == 1_024
     assert by_file_id["file_assistant_original"]["messageRole"] == "assistant"
+    expected_prompt = "**Keep the subject centered.**\n\n- Use soft studio light\n- Preserve the blue backdrop"
+    assert by_file_id["file_user_original"]["promptMarkdown"] == expected_prompt
+    assert by_file_id["file_assistant_original"]["promptMarkdown"] == expected_prompt
 
 
 def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
@@ -203,6 +232,7 @@ def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
                                 "url": "https://chatgpt.com/backend-api/estuary/content?id=file_project_second&sig=two",
                                 "width": 1_536,
                                 "height": 1_024,
+                                "created_at": 1_786_362_721.382649,
                             }
                         ]
                     }
@@ -221,6 +251,7 @@ def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
                             "url": "https://chatgpt.com/backend-api/estuary/content?id=file_project_first&sig=one",
                             "width": 1_024,
                             "height": 1_536,
+                            "created_at": 1_786_362_700.25,
                         },
                     ],
                     "cursor": "next-page",
@@ -250,7 +281,56 @@ def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
         "file_project_second",
     }
     assert all(candidate.request_headers == request_headers for candidate in candidates)
+    assert {candidate.file_id: candidate.created_at for candidate in candidates} == {
+        "file_project_first": "1786362700.25",
+        "file_project_second": "1786362721.382649",
+    }
     assert any("after=next-page" in url for url in context.request.urls)
+
+
+def test_chatgpt_api_retries_transient_playwright_connection_errors() -> None:
+    class _JsonResponse:
+        ok = True
+        status = 200
+
+        @staticmethod
+        def text() -> str:
+            return '{"items": []}'
+
+    class _RetryingRequest:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        def get(self, _url: str, **_kwargs):
+            self.attempts += 1
+            if self.attempts < 3:
+                raise PlaywrightError("socket hang up")
+            return _JsonResponse()
+
+    class _RetryingContext:
+        def __init__(self) -> None:
+            self.request = _RetryingRequest()
+
+    context = _RetryingContext()
+    with patch("app.core.chatgpt_downloader.time.sleep") as sleep:
+        payload = _get_chatgpt_api_json(context, "https://chatgpt.com/backend-api/test", {})
+
+    assert payload == {"items": []}
+    assert context.request.attempts == 3
+    assert [call.args[0] for call in sleep.call_args_list] == [1.0, 2.0]
+
+
+@pytest.mark.parametrize(
+    "message",
+    (
+        "APIRequestContext.get: Client network socket disconnected before secure TLS connection was established",
+        "APIRequestContext.get: socket hang up",
+        "APIRequestContext.get: read ECONNRESET",
+        "APIRequestContext.get: connect ETIMEDOUT",
+    ),
+)
+def test_chatgpt_image_retries_platform_network_error_messages(message: str) -> None:
+    assert _is_retryable_chatgpt_image_error(PlaywrightError(message))
 
 
 def test_chatgpt_missing_image_assets_are_skipped_without_repeat_attempts(tmp_path: Path) -> None:
@@ -430,6 +510,7 @@ def test_chatgpt_catalog_registers_downloads_and_skips_complete_files(tmp_path: 
         file_id="file_demo",
         conversation_url=DEFAULT_CHATGPT_PROJECT_URL.replace("/project", "/c/demo"),
         alt_text="A generated image",
+        prompt_markdown="**Initial** prompt",
         width=1_024,
         height=1_536,
         message_role="assistant",
@@ -441,11 +522,174 @@ def test_chatgpt_catalog_registers_downloads_and_skips_complete_files(tmp_path: 
     assert not download_chatgpt_image(context, catalog, target_dir, candidate)
     assert len(context.request.urls) == 1
     assert catalog.summarize() == 1
+    refreshed_candidate = replace(
+        candidate,
+        conversation_title="A refreshed session",
+        created_at="1786362721.382649",
+        prompt_markdown="**Updated** prompt\n\n- Keep the pose",
+    )
+    assert catalog.update_metadata_batch((refreshed_candidate,)) == 1
+    assert catalog.update_metadata_batch((refreshed_candidate,)) == 0
 
     reloaded = ChatGPTImageCatalog.build(target_dir)
     entry = reloaded.entries_by_file_id["file_demo"]
     assert reloaded.complete_entry("file_demo") == entry
+    assert entry.conversation_title == "A refreshed session"
+    assert entry.created_at == "1786362721.382649"
+    assert entry.prompt_markdown == "**Updated** prompt\n\n- Keep the pose"
     assert (target_dir / entry.relative_path).read_bytes() == PNG_PAYLOAD
+
+
+def test_chatgpt_skips_images_above_the_universal_cache_size_limit(tmp_path: Path) -> None:
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_oversized",
+        file_id="file_oversized",
+        conversation_url="https://chatgpt.com/c/oversized",
+    )
+    catalog = ChatGPTImageCatalog.build(target_dir)
+
+    with pytest.raises(ChatGPTImageSizeLimitError, match="cache limit"):
+        download_chatgpt_image(
+            _FakeContext(),
+            catalog,
+            target_dir,
+            candidate,
+            max_file_size_bytes=len(PNG_PAYLOAD) - 1,
+        )
+
+    assert catalog.summarize() == 0
+    assert not list(target_dir.glob("img_*"))
+
+
+def test_chatgpt_catalog_removes_lower_quality_visual_duplicates(tmp_path: Path) -> None:
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir.mkdir(parents=True)
+    high_content = _visual_test_image_payload("JPEG", quality=90)
+    low_content = _visual_test_image_payload("JPEG", quality=20)
+    assert len(high_content) > len(low_content)
+    high_path = target_dir / "img_high.jpg"
+    low_path = target_dir / "img_low.jpg"
+    high_path.write_bytes(high_content)
+    low_path.write_bytes(low_content)
+    conversation_url = "https://chatgpt.com/g/project/c/visual-duplicate"
+    catalog = ChatGPTImageCatalog(
+        target_dir,
+        {
+            "file-high": ChatGPTCatalogEntry(
+                file_id="file-high",
+                relative_path=high_path.name,
+                content_sha256="high",
+                content_bytes=len(high_content),
+                source_url="https://chatgpt.com/backend-api/estuary/content?id=file-high",
+                conversation_url=conversation_url,
+                alt_text="High quality copy",
+                width=0,
+                height=0,
+                first_seen_at="2026-08-10T00:00:00Z",
+                last_seen_at="2026-08-10T00:00:00Z",
+            ),
+            "file-low": ChatGPTCatalogEntry(
+                file_id="file-low",
+                relative_path=low_path.name,
+                content_sha256="low",
+                content_bytes=len(low_content),
+                source_url="https://chatgpt.com/backend-api/estuary/content?id=file-low",
+                conversation_url=conversation_url,
+                alt_text="Citation thumbnail",
+                width=0,
+                height=0,
+                first_seen_at="2026-08-10T00:00:00Z",
+                last_seen_at="2026-08-10T00:00:00Z",
+            ),
+        },
+    )
+
+    result = catalog.deduplicate_visual_duplicates()
+
+    assert result.removed_file_ids == ("file-low",)
+    assert result.reclaimed_bytes == len(low_content)
+    assert high_path.exists()
+    assert not low_path.exists()
+    assert set(catalog.entries_by_file_id) == {"file-high"}
+
+
+def test_chatgpt_catalog_does_not_keep_an_incoming_lower_quality_duplicate(tmp_path: Path) -> None:
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir.mkdir(parents=True)
+    high_content = _visual_test_image_payload("JPEG", quality=90)
+    low_content = _visual_test_image_payload("JPEG", quality=20)
+    assert len(high_content) > len(low_content)
+    high_path = target_dir / "img_high.jpg"
+    low_path = target_dir / "img_low.jpg"
+    high_path.write_bytes(high_content)
+    low_path.write_bytes(low_content)
+    conversation_url = "https://chatgpt.com/g/project/c/visual-duplicate"
+    catalog = ChatGPTImageCatalog.build(target_dir)
+    high_candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file-high",
+        file_id="file-high",
+        conversation_url=conversation_url,
+    )
+    low_candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file-low",
+        file_id="file-low",
+        conversation_url=conversation_url,
+    )
+
+    assert catalog.register_download(
+        high_candidate,
+        high_path.name,
+        "high",
+        len(high_content),
+        "2026-08-10T00:00:00Z",
+    )
+    assert not catalog.register_download(
+        low_candidate,
+        low_path.name,
+        "low",
+        len(low_content),
+        "2026-08-10T00:00:01Z",
+    )
+    assert high_path.exists()
+    assert not low_path.exists()
+    assert set(catalog.entries_by_file_id) == {"file-high"}
+
+
+def test_chatgpt_retries_a_transient_direct_image_failure(tmp_path: Path) -> None:
+    class _TransientResponse:
+        ok = False
+        status = 503
+        headers: dict[str, str] = {}
+
+    class _RetryRequest:
+        def __init__(self) -> None:
+            self.urls: list[str] = []
+            self.responses = [_TransientResponse(), _FakeResponse()]
+
+        def get(self, url: str, **_kwargs):
+            self.urls.append(url)
+            return self.responses.pop(0)
+
+    class _RetryContext:
+        def __init__(self) -> None:
+            self.request = _RetryRequest()
+
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_retry",
+        file_id="file_retry",
+        conversation_url="https://chatgpt.com/g/project/c/retry",
+    )
+    context = _RetryContext()
+    catalog = ChatGPTImageCatalog.build(target_dir)
+
+    with patch("app.core.chatgpt_downloader.time.sleep") as sleep:
+        assert download_chatgpt_image(context, catalog, target_dir, candidate)
+
+    assert len(context.request.urls) == 2
+    sleep.assert_called_once_with(0.5)
+    assert catalog.summarize() == 1
 
 
 def test_chatgpt_reset_removes_only_the_dedicated_cache(tmp_path: Path) -> None:
@@ -579,6 +823,10 @@ def test_chatgpt_sync_uses_the_project_image_index_without_legacy_page_scans(tmp
 
     assert result.discovered_conversations == 1
     assert result.discovered_images == 1
+    snapshot = state.snapshot()
+    assert snapshot["queued_tweets"] == 1
+    assert snapshot["processed_tweets"] == 1
+    assert snapshot["progress_unit"] == "images"
     conversation_results.assert_not_called()
 
 
@@ -705,6 +953,42 @@ def test_chatgpt_project_index_iterator_partitions_direct_image_downloads(tmp_pa
     assert {file_id for assignment in assignments_seen for file_id in assignment} == {
         candidate.file_id for candidate in candidates
     }
+
+
+def test_chatgpt_project_index_iterator_bounds_worker_cleanup_wait(tmp_path: Path) -> None:
+    release_worker = Event()
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_index_cleanup",
+        file_id="file_index_cleanup",
+        conversation_url="https://chatgpt.com/c/project-conversation",
+    )
+
+    def lingering_worker(candidates, _descriptor, _catalog, _target_dir, _should_stop, result_queue) -> None:
+        result_queue.put(ChatGPTImageDownloadWorkResult(candidates[0].file_id, downloaded=True))
+        release_worker.wait(timeout=1)
+
+    try:
+        with patch(
+            "app.core.chatgpt_downloader._chatgpt_index_image_worker",
+            side_effect=lingering_worker,
+        ), patch(
+            "app.core.chatgpt_downloader.CHATGPT_WORKER_JOIN_TIMEOUT_SECONDS",
+            0.01,
+        ):
+            results = list(
+                _iter_chatgpt_index_image_results(
+                    [candidate],
+                    object(),
+                    ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
+                    tmp_path / "Studio208cm",
+                    lambda: False,
+                    worker_count=1,
+                )
+            )
+    finally:
+        release_worker.set()
+
+    assert [result.candidate_file_id for result in results] == [candidate.file_id]
 
 
 def test_chatgpt_project_startup_timeout_is_explicit() -> None:

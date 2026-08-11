@@ -1,4 +1,4 @@
-/* Code version: v1.5.0-codex.1 */
+/* Code version: v1.6.0-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v4:";
@@ -45,6 +45,7 @@
         const statusCard = panel.querySelector('[data-role="browser-session-status"]');
         const statusAccount = panel.querySelector('[data-role="browser-session-account"]');
         const statusMessage = panel.querySelector('[data-role="browser-session-message"]');
+        const statusSpinner = panel.querySelector('[data-role="browser-session-spinner"]');
         const statusCheckmark = panel.querySelector('[data-role="browser-session-checkmark"]');
         const startButton = startButtonSelector ? document.querySelector(startButtonSelector) : null;
         const startButtonInitiallyDisabled = startButton ? startButton.disabled : false;
@@ -106,6 +107,7 @@
                 statusMessage.textContent = payload.message || "";
                 statusMessage.hidden = !payload.message;
             }
+            if (statusSpinner) statusSpinner.hidden = true;
             statusCheckmark.hidden = !Boolean(payload.can_download);
             setStartButtonReady(Boolean(payload.can_download));
         }
@@ -119,6 +121,7 @@
                 statusMessage.textContent = "";
                 statusMessage.hidden = true;
             }
+            if (statusSpinner) statusSpinner.hidden = false;
             statusCheckmark.hidden = true;
             setStartButtonReady(false);
         }
@@ -131,6 +134,7 @@
                     statusMessage.textContent = "";
                     statusMessage.hidden = true;
                 }
+                if (statusSpinner) statusSpinner.hidden = true;
                 setStartButtonReady(false);
                 return;
             }

@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.11.1-codex.1
+# Code version: v1.13.0-codex.1
 
 from __future__ import annotations
 
@@ -125,6 +125,7 @@ class GrokSyncResult:
     cached_images: int = 0
     cached_videos: int = 0
     stopped: bool = False
+    skipped_size: int = 0
 
 
 @dataclass(slots=True)
@@ -169,6 +170,7 @@ class GrokDownloadOutcome:
     stopped: bool = False
     resumed: bool = False
     error: str = ""
+    skipped_size: bool = False
 
 
 @dataclass(slots=True)
@@ -208,6 +210,17 @@ class DownloadStoppedError(RuntimeError):
 
 class DownloadPayloadIntegrityError(RuntimeError):
     """Raised when an HTTP-successful response is not a complete media file."""
+
+
+class DownloadSizeLimitError(RuntimeError):
+    """Raised when a Grok asset exceeds the universal cache file-size limit."""
+
+
+def resolve_grok_download_worker_count(config: CrawlConfig, browser_engine: str) -> int:
+    """Return the shared worker setting within Grok's safe concurrency boundary."""
+    if browser_engine == "safari":
+        return 1
+    return max(1, min(int(config.download_workers), GROK_DOWNLOAD_WORKERS))
 
 
 def normalize_asset_name(raw_name: str) -> str:
@@ -1644,6 +1657,20 @@ class GrokDownloadManifest:
             self.dirty = True
         self.flush()
 
+    def mark_size_skipped(self, candidate: GrokMediaCandidate, temp_relative_path: str, error: str) -> None:
+        """Record an asset skipped by the cache size limit without retaining a partial file."""
+        with self._lock:
+            entry = self.entries_by_identity.get(candidate.identity)
+            if entry is None:
+                return
+            entry.status = "size_skipped"
+            entry.temp_relative_path = temp_relative_path
+            entry.last_error = error
+            entry.updated_at = utc_now()
+            self.entries_by_identity[candidate.identity] = entry
+            self.dirty = True
+        self.flush()
+
     def mark_completed(
         self,
         candidate: GrokMediaCandidate,
@@ -1842,7 +1869,7 @@ class GrokWorkQueue:
                 entry.expected_bytes = max(entry.expected_bytes, candidate.expected_bytes)
                 entry.created_at = preferred_seen_at(candidate, fallback=entry.created_at)
                 entry.updated_at = utc_now()
-                if entry.status in {"resolution_failed"}:
+                if entry.status in {"resolution_failed", "size_skipped"}:
                     entry.status = "discovered"
                 self.entries_by_asset_id[asset_id] = entry
                 self.dirty = True
@@ -1992,6 +2019,23 @@ class GrokWorkQueue:
             if entry is None:
                 return
             entry.status = "download_failed"
+            entry.last_error = error
+            entry.updated_at = utc_now()
+            self.entries_by_asset_id[normalized_asset_id] = entry
+            self.dirty = True
+        self.flush()
+
+    def mark_size_skipped(self, candidate: GrokMediaCandidate, error: str) -> None:
+        """Persist a size-limited asset as skipped until the next discovery pass."""
+        normalized_asset_id = str(candidate.asset_id or "").strip().lower()
+        if not normalized_asset_id:
+            return
+
+        with self._lock:
+            entry = self.entries_by_asset_id.get(normalized_asset_id)
+            if entry is None:
+                return
+            entry.status = "size_skipped"
             entry.last_error = error
             entry.updated_at = utc_now()
             self.entries_by_asset_id[normalized_asset_id] = entry
@@ -2597,18 +2641,35 @@ def stream_candidate_download(
     auth: GrokDownloadAuth,
     temp_path: Path,
     should_stop,
+    max_file_size_bytes: int = 0,
 ) -> tuple[str, bool]:
     """Download one verified asset, retrying transient and malformed HTTP responses."""
     temp_path.parent.mkdir(parents=True, exist_ok=True)
+    if max_file_size_bytes > 0 and candidate.expected_bytes > max_file_size_bytes:
+        raise DownloadSizeLimitError(
+            f"Grok asset {candidate.asset_id} is {candidate.expected_bytes:,} bytes, above the "
+            f"{max_file_size_bytes:,}-byte cache limit."
+        )
     resumed = False
     last_error: Exception | None = None
 
     for attempt_index in range(1, GROK_DOWNLOAD_RETRY_LIMIT + 1):
         existing_bytes = temp_path.stat().st_size if temp_path.exists() else 0
+        if max_file_size_bytes > 0 and existing_bytes > max_file_size_bytes:
+            raise DownloadSizeLimitError(
+                f"Grok asset {candidate.asset_id} has a partial file of {existing_bytes:,} bytes, above the "
+                f"{max_file_size_bytes:,}-byte cache limit."
+            )
         range_start = existing_bytes if existing_bytes > 0 else 0
         try:
             request = Request(candidate.source_url, headers=build_download_headers(candidate, auth, range_start))
             with urlopen(request, timeout=DOWNLOAD_TIMEOUT_MS / 1_000) as response:
+                advertised_total = response_expected_total_bytes(response.headers, range_start)
+                if max_file_size_bytes > 0 and advertised_total > max_file_size_bytes:
+                    raise DownloadSizeLimitError(
+                        f"Grok asset {candidate.asset_id} is advertised as {advertised_total:,} bytes, above the "
+                        f"{max_file_size_bytes:,}-byte cache limit."
+                    )
                 content_type, did_resume, restart_full_download, response_total_bytes = write_download_response(
                     response,
                     temp_path,
@@ -2621,6 +2682,12 @@ def stream_candidate_download(
                     temp_path.unlink()
                 request = Request(candidate.source_url, headers=build_download_headers(candidate, auth, 0))
                 with urlopen(request, timeout=DOWNLOAD_TIMEOUT_MS / 1_000) as response:
+                    advertised_total = response_expected_total_bytes(response.headers, 0)
+                    if max_file_size_bytes > 0 and advertised_total > max_file_size_bytes:
+                        raise DownloadSizeLimitError(
+                            f"Grok asset {candidate.asset_id} is advertised as {advertised_total:,} bytes, above the "
+                            f"{max_file_size_bytes:,}-byte cache limit."
+                        )
                     content_type, did_resume, restart_full_download, response_total_bytes = write_download_response(
                         response,
                         temp_path,
@@ -2639,9 +2706,17 @@ def stream_candidate_download(
             )
             if validation_error is not None:
                 raise DownloadPayloadIntegrityError(validation_error)
+            if max_file_size_bytes > 0 and temp_path.stat().st_size > max_file_size_bytes:
+                raise DownloadSizeLimitError(
+                    f"Grok asset {candidate.asset_id} exceeded the {max_file_size_bytes:,}-byte cache limit."
+                )
 
             return content_type, resumed or did_resume
         except DownloadStoppedError:
+            raise
+        except DownloadSizeLimitError:
+            with contextlib.suppress(FileNotFoundError):
+                temp_path.unlink()
             raise
         except DownloadPayloadIntegrityError as exc:
             last_error = exc
@@ -2685,6 +2760,7 @@ def download_candidate(
     auth: GrokDownloadAuth,
     should_stop,
     browser_streamer: Callable[[GrokMediaCandidate, Path, object], tuple[str, bool]] | None = None,
+    max_file_size_bytes: int = 0,
 ) -> tuple[bool, bool, bool]:
     """Download one Grok asset with resume, integrity checks, and manifest tracking."""
     if BrowserDeletionCatalog(target_dir.parent).is_excluded("grok", candidate.asset_id or candidate.identity):
@@ -2696,7 +2772,6 @@ def download_candidate(
             f"Refusing to cache preview-quality image for {candidate.asset_id}; "
             "resolve the original image URL first."
         )
-
     existing_entry = catalog.get_entry(candidate.identity)
     if existing_entry is not None:
         apply_preserved_file_timestamp(
@@ -2711,16 +2786,38 @@ def download_candidate(
         )
         return False, False, False
 
+    if max_file_size_bytes > 0 and candidate.expected_bytes > max_file_size_bytes:
+        raise DownloadSizeLimitError(
+            f"Grok asset {candidate.asset_id} is {candidate.expected_bytes:,} bytes, above the "
+            f"{max_file_size_bytes:,}-byte cache limit."
+        )
+
     temp_path = manifest.temp_path_for(candidate)
     temp_relative_path = temp_path.relative_to(target_dir).as_posix()
     manifest.mark_in_progress(candidate, temp_relative_path)
     try:
         if browser_streamer is None:
-            content_type, resumed = stream_candidate_download(candidate, auth, temp_path, should_stop)
+            stream_args = (candidate, auth, temp_path, should_stop)
+            if max_file_size_bytes > 0:
+                content_type, resumed = stream_candidate_download(
+                    *stream_args,
+                    max_file_size_bytes=max_file_size_bytes,
+                )
+            else:
+                content_type, resumed = stream_candidate_download(*stream_args)
         else:
             content_type, resumed = browser_streamer(candidate, temp_path, should_stop)
+            if max_file_size_bytes > 0 and temp_path.stat().st_size > max_file_size_bytes:
+                raise DownloadSizeLimitError(
+                    f"Grok asset {candidate.asset_id} exceeded the {max_file_size_bytes:,}-byte cache limit."
+                )
     except DownloadStoppedError as exc:
         manifest.mark_pending_resume(candidate, temp_relative_path, str(exc))
+        raise
+    except DownloadSizeLimitError as exc:
+        with contextlib.suppress(FileNotFoundError):
+            temp_path.unlink()
+        manifest.mark_size_skipped(candidate, temp_relative_path, str(exc))
         raise
     except Exception as exc:
         manifest.mark_failed(candidate, temp_relative_path, str(exc))
@@ -2752,11 +2849,13 @@ def repair_cached_preview_images(
     state: TaskState,
     should_stop,
     browser_streamer: Callable[[GrokMediaCandidate, Path, object], tuple[str, bool]] | None = None,
-) -> tuple[int, int, int]:
+    max_file_size_bytes: int = 0,
+) -> tuple[int, int, int, int]:
     """Replace cached preview-quality images with original-resolution assets."""
     repaired_count = 0
     deduped_count = 0
     failed_count = 0
+    size_skipped_count = 0
     deletion_catalog = BrowserDeletionCatalog(target_dir.parent)
     image_entries_by_asset_id: dict[str, list[GrokCatalogEntry]] = {}
     for entry in catalog.snapshot_entries():
@@ -2770,7 +2869,7 @@ def repair_cached_preview_images(
         image_entries_by_asset_id.setdefault(asset_id, []).append(entry)
 
     if not image_entries_by_asset_id:
-        return repaired_count, deduped_count, failed_count
+        return repaired_count, deduped_count, failed_count, size_skipped_count
 
     ordered_asset_ids = sorted(image_entries_by_asset_id)
     for index, asset_id in enumerate(ordered_asset_ids, start=1):
@@ -2824,9 +2923,17 @@ def repair_cached_preview_images(
                 auth,
                 should_stop,
                 browser_streamer=browser_streamer,
+                max_file_size_bytes=max_file_size_bytes,
             )
         except DownloadStoppedError:
             break
+        except DownloadSizeLimitError:
+            size_skipped_count += 1
+            state.append_event(
+                f"Skipped Grok image repair for {asset_id}: above the "
+                f"{max_file_size_bytes // (1024 * 1024):,} MiB cache limit."
+            )
+            continue
         except Exception as exc:  # pragma: no cover
             failed_count += 1
             state.append_event(f"Skipped Grok image repair for {asset_id}: {exc}")
@@ -2846,7 +2953,7 @@ def repair_cached_preview_images(
                 drop_catalog_entry(catalog, target_dir, entry.identity)
 
     catalog.flush()
-    return repaired_count, deduped_count, failed_count
+    return repaired_count, deduped_count, failed_count, size_skipped_count
 
 
 def extract_status_id_from_identity(identity: str) -> str:
@@ -2863,6 +2970,7 @@ def run_download_worker(
     auth: GrokDownloadAuth,
     should_stop,
     browser_streamer: Callable[[GrokMediaCandidate, Path, object], tuple[str, bool]] | None = None,
+    max_file_size_bytes: int = 0,
 ) -> GrokDownloadOutcome:
     """Execute one Grok download worker task."""
     try:
@@ -2874,6 +2982,7 @@ def run_download_worker(
             auth=auth,
             should_stop=should_stop,
             browser_streamer=browser_streamer,
+            max_file_size_bytes=max_file_size_bytes,
         )
         return GrokDownloadOutcome(
             candidate=candidate,
@@ -2883,6 +2992,8 @@ def run_download_worker(
         )
     except DownloadStoppedError:
         return GrokDownloadOutcome(candidate=candidate, stopped=True)
+    except DownloadSizeLimitError as exc:
+        return GrokDownloadOutcome(candidate=candidate, skipped_size=True, error=str(exc))
     except Exception as exc:  # pragma: no cover
         logger.exception(
             "Grok asset download failed.",
@@ -2956,7 +3067,7 @@ def sync_grok_media(
     download_auth = GrokDownloadAuth()
     browser_streamer: Callable[[GrokMediaCandidate, Path, object], tuple[str, bool]] | None = None
     max_library_pages = GROK_LIBRARY_PAGE_POOL_SIZE
-    download_worker_count = GROK_DOWNLOAD_WORKERS
+    download_worker_count = resolve_grok_download_worker_count(runtime_config, descriptor.engine)
 
     try:
         state.update(phase="collecting")
@@ -2965,7 +3076,6 @@ def sync_grok_media(
                 state.append_event("Opening an authenticated Safari window for Grok sync.")
                 context = browser_stack.enter_context(SafariContext(GROK_FILES_URL))
                 max_library_pages = 1
-                download_worker_count = 1
             else:
                 state.append_event(f"Launching {descriptor.label} in the background for Grok sync.")
                 playwright = browser_stack.enter_context(sync_playwright())
@@ -3021,7 +3131,7 @@ def sync_grok_media(
                 "Grok is slow, so this run may keep scrolling and open extra Grok tabs while downloads continue in parallel."
             )
 
-            repaired_images, deduped_repairs, failed_count = repair_cached_preview_images(
+            repaired_images, deduped_repairs, failed_count, repaired_size_skipped = repair_cached_preview_images(
                 context,
                 catalog,
                 manifest,
@@ -3030,6 +3140,7 @@ def sync_grok_media(
                 state,
                 should_stop,
                 browser_streamer=browser_streamer,
+                max_file_size_bytes=runtime_config.max_media_file_size_bytes,
             )
             cached_count, cached_images, cached_videos = catalog.summarize()
             state.update(
@@ -3048,6 +3159,7 @@ def sync_grok_media(
             downloaded_images = 0
             downloaded_videos = 0
             deduped_by_hash = 0
+            size_skipped_count = repaired_size_skipped
             completed_workers = 0
             queued_candidates = 0
             ordered_candidates: list[GrokMediaCandidate] = []
@@ -3068,6 +3180,7 @@ def sync_grok_media(
                 nonlocal downloaded_images
                 nonlocal downloaded_videos
                 nonlocal deduped_by_hash
+                nonlocal size_skipped_count
                 nonlocal failed_count
                 nonlocal completed_workers
 
@@ -3099,6 +3212,13 @@ def sync_grok_media(
                                 "Stop requested while downloading Grok media.",
                             )
                             stop_detected = True
+                        elif outcome.skipped_size:
+                            size_skipped_count += 1
+                            work_queue.mark_size_skipped(candidate, outcome.error)
+                            state.append_event(
+                                f"Skipped Grok asset {candidate.asset_id}/{candidate.asset_name}: "
+                                f"above the {runtime_config.max_media_file_size_mib:,} MiB cache limit."
+                            )
                         elif outcome.failed:
                             failed_count += 1
                             work_queue.mark_download_failed(candidate, outcome.error)
@@ -3133,7 +3253,7 @@ def sync_grok_media(
                             downloaded_tweets=cached_count,
                             downloaded_images=cached_images,
                             downloaded_videos=cached_videos,
-                            skipped_tweets=deduped_by_hash,
+                            skipped_tweets=deduped_by_hash + size_skipped_count,
                             failed_tweets=failed_count,
                         )
                     if not wait_for_all:
@@ -3232,6 +3352,7 @@ def sync_grok_media(
                                 download_auth,
                                 should_stop,
                                 browser_streamer,
+                                runtime_config.max_media_file_size_bytes,
                             )
                         ] = candidate
 
@@ -3308,6 +3429,7 @@ def sync_grok_media(
                     downloaded_videos=downloaded_videos,
                     skipped_known=max(0, len(ordered_candidates) - queued_candidates) + deduped_by_hash,
                     deduped_by_hash=deduped_by_hash,
+                    skipped_size=size_skipped_count,
                     failed_count=failed_count,
                     cached_count=cached_count,
                     cached_images=cached_images,
@@ -3323,6 +3445,7 @@ def sync_grok_media(
                 downloaded_videos=downloaded_videos,
                 skipped_known=max(0, len(ordered_candidates) - queued_candidates) + deduped_by_hash,
                 deduped_by_hash=deduped_by_hash,
+                skipped_size=size_skipped_count,
                 failed_count=failed_count,
                 cached_count=cached_count,
                 cached_images=cached_images,

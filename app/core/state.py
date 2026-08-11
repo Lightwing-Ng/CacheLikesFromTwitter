@@ -1,6 +1,6 @@
 """Shared task state for the web UI and worker."""
 
-# Code version: v1.2.3-codex.1
+# Code version: v1.2.4-codex.1
 
 from __future__ import annotations
 
@@ -64,6 +64,7 @@ class TaskSnapshot:
     discovered_images: int = 0
     queued_tweets: int = 0
     processed_tweets: int = 0
+    progress_unit: str = "items"
     discovery_complete: bool = False
     downloaded_tweets: int = 0
     downloaded_posts: int = 0

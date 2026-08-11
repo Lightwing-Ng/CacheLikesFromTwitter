@@ -1,12 +1,14 @@
-<!-- Code version: v1.12.0-codex.1 -->
+<!-- Code version: v1.22.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter Browser</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.19.0-codex.1') }}">
-    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.10.0-codex.1') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.25.0-codex.1') }}">
+    <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.14.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='browser-source-filter.js', v='browser-source-filter-v1.2.0-codex.1') }}"></script>
 </head>
 <body>
 <main class="page">
@@ -43,7 +45,13 @@
                     </div>
                     <span class="status-chip status-collecting">Manageable</span>
                 </div>
-                <form action="{{ url_for('browser') }}" method="get" class="sidebar-form browser-filter-form">
+                <form
+                    action="{{ url_for('browser') }}"
+                    method="get"
+                    class="sidebar-form browser-filter-form"
+                    data-wait-title="Updating media browser"
+                    data-wait-copy="Applying the selected filters to the local media catalog."
+                >
                     <label class="field browser-filter-field">
                         <span>Search</span>
                         <input
@@ -58,12 +66,80 @@
                     </label>
                     <label class="field browser-filter-field">
                         <span>Source</span>
-                        <select name="source" class="form-select" aria-label="Filter by source">
-                            <option value="all" {% if filters.source == "all" %}selected{% endif %}>All sources</option>
-                            <option value="x" {% if filters.source == "x" %}selected{% endif %}>X</option>
-                            <option value="grok" {% if filters.source == "grok" %}selected{% endif %}>Grok</option>
-                            <option value="chatgpt" {% if filters.source == "chatgpt" %}selected{% endif %}>ChatGPT</option>
-                        </select>
+                        {% set selected_source = namespace(label="All sources", icon="images/square.grid.2x2.fill.svg") %}
+                        {% for source in cache_sources %}
+                            {% if filters.source == source.key %}
+                                {% set selected_source.label = source.label %}
+                                {% set selected_source.icon = source.icon_filename %}
+                            {% endif %}
+                        {% endfor %}
+                        <div class="trade-strategy-combobox browser-source-filter-combobox" data-browser-source-filter>
+                            <input type="hidden" name="source" value="{{ filters.source }}" data-browser-source-filter-input>
+                            <button
+                                type="button"
+                                class="trade-strategy-select form-select trade-strategy-trigger browser-source-filter-trigger"
+                                data-browser-source-filter-trigger
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                                aria-controls="browser_source_filter_options"
+                                aria-label="Source: {{ selected_source.label }}"
+                                title="{{ selected_source.label }}"
+                            >
+                                <span class="browser-session-trigger-leading">
+                                    <span class="browser-picker-selected-icon-shell">
+                                        <span
+                                            class="cache-source-mark browser-source-filter-mark"
+                                            style="--cache-source-mark: url('{{ url_for('static', filename=selected_source.icon) }}');"
+                                            aria-hidden="true"
+                                            data-browser-source-filter-selected-icon
+                                        ></span>
+                                    </span>
+                                    <span class="trade-strategy-trigger-label browser-session-trigger-label" data-browser-source-filter-selected-label>{{ selected_source.label }}</span>
+                                </span>
+                                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                            </button>
+                            <div
+                                class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown browser-source-filter-dropdown"
+                                id="browser_source_filter_options"
+                                data-browser-source-filter-menu
+                                role="listbox"
+                                aria-label="Filter by source"
+                                hidden
+                            >
+                                <button
+                                    type="button"
+                                    id="browser_source_filter_option_all"
+                                    class="trade-strategy-dropdown-option browser-source-filter-option{% if filters.source == 'all' %} is-selected is-active{% endif %}"
+                                    data-browser-source-filter-option="all"
+                                    data-browser-source-filter-label="All sources"
+                                    data-browser-source-filter-icon="{{ url_for('static', filename='images/square.grid.2x2.fill.svg') }}"
+                                    role="option"
+                                    aria-selected="{{ 'true' if filters.source == 'all' else 'false' }}"
+                                    tabindex="-1"
+                                >
+                                    <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                    <span class="cache-source-mark browser-source-filter-mark" style="--cache-source-mark: url('{{ url_for('static', filename='images/square.grid.2x2.fill.svg') }}');" aria-hidden="true"></span>
+                                    <span class="trade-strategy-dropdown-text">All sources</span>
+                                </button>
+                                {% for source in cache_sources %}
+                                <button
+                                    type="button"
+                                    id="browser_source_filter_option_{{ source.key }}"
+                                    class="trade-strategy-dropdown-option browser-source-filter-option{% if filters.source == source.key %} is-selected is-active{% endif %}"
+                                    data-browser-source-filter-option="{{ source.key }}"
+                                    data-browser-source-filter-label="{{ source.label }}"
+                                    data-browser-source-filter-icon="{{ url_for('static', filename=source.icon_filename) }}"
+                                    role="option"
+                                    aria-selected="{{ 'true' if filters.source == source.key else 'false' }}"
+                                    tabindex="-1"
+                                >
+                                    <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                    <span class="cache-source-mark browser-source-filter-mark" style="--cache-source-mark: url('{{ url_for('static', filename=source.icon_filename) }}');" aria-hidden="true"></span>
+                                    <span class="trade-strategy-dropdown-text">{{ source.label }}</span>
+                                </button>
+                                {% endfor %}
+                            </div>
+                        </div>
                     </label>
                     <label class="field browser-filter-field">
                         <span>Media type</span>
@@ -74,16 +150,28 @@
                         </select>
                     </label>
                     <label class="field browser-filter-field">
-                        <span>Sort order</span>
-                        <select name="sort" class="form-select" aria-label="Sort cached media">
+                        <span>{{ "Image order in session" if filters.source == "chatgpt" else "Sort order" }}</span>
+                        <select name="sort" class="form-select" aria-label="{{ 'Order images in the current session' if filters.source == 'chatgpt' else 'Sort cached media' }}">
                             <option value="newest" {% if filters.sort == "newest" %}selected{% endif %}>Newest first</option>
                             <option value="oldest" {% if filters.sort == "oldest" %}selected{% endif %}>Oldest first</option>
                             <option value="name" {% if filters.sort == "name" %}selected{% endif %}>File name</option>
                         </select>
                     </label>
                     <div class="browser-filter-actions">
-                        <a href="{{ url_for('browser') }}" class="ghost-link browser-clear-link">Clear filters</a>
-                        <button type="submit" name="refresh" value="1" class="ghost-link browser-refresh-button">Refresh cache</button>
+                        <a
+                            href="{{ url_for('browser') }}"
+                            class="ghost-link browser-clear-link"
+                            data-wait-title="Clearing media filters"
+                            data-wait-copy="Restoring the complete local media catalog view."
+                        >Clear filters</a>
+                        <button
+                            type="submit"
+                            name="refresh"
+                            value="1"
+                            class="ghost-link browser-refresh-button"
+                            data-wait-title="Refreshing media catalog"
+                            data-wait-copy="Scanning the local cache for newly available and deleted resources."
+                        >Refresh cache</button>
                     </div>
                 </form>
             </section>
@@ -118,12 +206,22 @@
 
                     {% if media_page.items %}
                     <div class="browser-result-summary" aria-live="polite">
+                        {% if media_page.pagination_unit == "session" %}
+                        <p>
+                            <strong title="{{ media_page.current_session_label }}">{{ media_page.current_session_label }}</strong><br>
+                            Session {{ "{:,}".format(media_page.current_page) }} of {{ "{:,}".format(media_page.session_count) }}
+                            · {{ "{:,}".format(media_page.items|length) }} resources in this session
+                            · Latest image {{ format_captured_at_timestamp_label(media_page.current_session_latest_at) }}
+                        </p>
+                        <span class="status-chip browser-filter-chip">Session view</span>
+                        {% else %}
                         <p>
                             Showing page {{ "{:,}".format(media_page.current_page) }} of {{ "{:,}".format(media_page.total_pages) }}
                             · {{ "{:,}".format(media_page.total_count) }} results
                         </p>
                         {% if filters.q or filters.source != "all" or filters.kind != "all" %}
                         <span class="status-chip browser-filter-chip">Filtered view</span>
+                        {% endif %}
                         {% endif %}
                     </div>
                     <div class="browser-gallery" aria-label="Cached media gallery">
@@ -134,7 +232,7 @@
                             data-deleted="{{ 'true' if item.is_deleted else 'false' }}"
                         >
                             {% set original_link_label = {"x": "Open original post", "chatgpt": "Open original conversation", "grok": "Open original source"}.get(item.source, "Open original source") %}
-                            {% set attribution_label = "Project" if item.source == "chatgpt" else "Creator" %}
+                            {% set attribution_label = "Session" if item.source == "chatgpt" else "Creator" %}
                             <button
                                 type="button"
                                 class="browser-media-open"
@@ -162,7 +260,10 @@
                                     decoding="async"
                                 >
                                 {% endif %}
-                                <span class="browser-preview-status" data-preview-status>Loading preview</span>
+                                <span class="browser-preview-status" data-preview-status>
+                                    <span class="suggestion-loading-spinner browser-preview-spinner" data-preview-spinner aria-hidden="true"></span>
+                                    <span data-preview-status-copy>Loading preview</span>
+                                </span>
                                 <span class="browser-preview-kind">{{ item.media_kind.title() }}</span>
                             </span>
                             <span class="browser-media-card-body">
@@ -178,6 +279,33 @@
                                 </dl>
                             </span>
                             </button>
+                            {% if item.source == "chatgpt" %}
+                            <section class="browser-media-prompt" aria-label="Prompt for {{ item.filename }}">
+                                <div class="browser-media-prompt-heading">
+                                    <span class="browser-media-prompt-label">Prompt</span>
+                                    {% if item.prompt_markdown %}
+                                    <button
+                                        type="button"
+                                        class="browser-media-prompt-expand"
+                                        data-media-prompt-open
+                                        data-prompt-source="browser_prompt_{{ item.stable_id }}"
+                                        data-prompt-title="{{ item.filename }}"
+                                        aria-controls="browser_prompt_dialog"
+                                        aria-label="Expand prompt for {{ item.filename }}"
+                                    >Expand</button>
+                                    {% else %}
+                                    <span class="browser-media-prompt-state">Not indexed</span>
+                                    {% endif %}
+                                </div>
+                                <div class="browser-media-prompt-preview" id="browser_prompt_{{ item.stable_id }}" data-media-prompt-source>
+                                    {% if item.prompt_markdown %}
+                                    <div class="browser-media-prompt-markdown">{{ render_prompt_markdown(item.prompt_markdown) }}</div>
+                                    {% else %}
+                                    <p class="browser-media-prompt-unavailable">Run ChatGPT sync once to index this prompt.</p>
+                                    {% endif %}
+                                </div>
+                            </section>
+                            {% endif %}
                             {% if item.source_url %}
                             <div class="browser-media-source-actions">
                                 <a
@@ -199,6 +327,7 @@
                                     title="Copy URL"
                                 >
                                     <span class="icon browser-media-copy-source-url-icon" aria-hidden="true"></span>
+                                    <span class="browser-media-copy-feedback" data-media-copy-feedback aria-live="polite"></span>
                                 </button>
                             </div>
                             {% endif %}
@@ -236,7 +365,7 @@
                     {% if media_page.total_pages > 1 %}
                     <nav
                         class="browser-pagination local-store-pagination local-store-pagination--floating is-animated"
-                        aria-label="Media pages"
+                        aria-label="{{ 'ChatGPT sessions' if media_page.pagination_unit == 'session' else 'Media pages' }}"
                         style="--local-store-pagination-slots: {{ media_page.pagination_items|length }};"
                     >
                         <span class="local-store-pagination-indicator" aria-hidden="true"></span>
@@ -251,7 +380,9 @@
                             href="{{ url_for('browser', source=filters.source, kind=filters.kind, q=filters.q, sort=filters.sort, page=pagination_item.page) }}"
                             data-pagination-target="{{ pagination_item.page }}"
                             data-pagination-current="{{ '1' if pagination_item.is_active else '0' }}"
-                            aria-label="{% if pagination_item.kind == 'previous' %}Previous page{% elif pagination_item.kind == 'next' %}Next page{% else %}Page {{ pagination_item.page }}{% endif %}"
+                            data-wait-title="Loading media page"
+                            data-wait-copy="Opening the requested page from the local media catalog."
+                            aria-label="{% if media_page.pagination_unit == 'session' %}{% if pagination_item.kind == 'previous' %}Previous session group{% elif pagination_item.kind == 'next' %}Next session group{% else %}Session {{ pagination_item.page }}{% endif %}{% elif pagination_item.kind == 'previous' %}Previous page{% elif pagination_item.kind == 'next' %}Next page{% else %}Page {{ pagination_item.page }}{% endif %}"
                             {% if pagination_item.is_active %}aria-current="page"{% endif %}
                         >
                             {% if pagination_item.kind == "previous" %}
@@ -296,7 +427,17 @@
     </div>
 </dialog>
 
+<dialog class="browser-prompt-dialog" id="browser_prompt_dialog" aria-labelledby="browser_prompt_dialog_title">
+    <button type="button" class="browser-prompt-dialog-close dismiss-button" data-prompt-dialog-close aria-label="Close expanded prompt">×</button>
+    <div class="browser-prompt-dialog-body">
+        <p class="workspace-kicker">ChatGPT image prompt</p>
+        <h2 id="browser_prompt_dialog_title" data-prompt-dialog-title>Prompt</h2>
+        <div class="browser-prompt-dialog-content browser-media-prompt-markdown" data-prompt-dialog-content></div>
+    </div>
+</dialog>
+
+{% include "_waiting_modal.html" %}
 <script type="application/json" id="browser_media_data">{{ media_payload|tojson }}</script>
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.2.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.4.1-codex.1') }}"></script>
 </body>
 </html>

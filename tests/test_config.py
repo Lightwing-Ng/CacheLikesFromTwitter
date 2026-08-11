@@ -1,6 +1,6 @@
 """Focused regression tests for persisted crawler settings.
 
-Code version: v1.0.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ class ConfigPersistenceTests(unittest.TestCase):
             settings_path = Path(temp_dir) / "settings.json"
             config = CrawlConfig(
                 headless=True,
+                max_media_file_size_mib=128,
                 max_media_items=50_000,
                 max_scroll_rounds=5_000,
                 scroll_pause_seconds=1.0,
@@ -27,12 +28,18 @@ class ConfigPersistenceTests(unittest.TestCase):
                 chrome_user_data_dir=Path("/tmp/chrome-profile"),
                 chrome_profile_directory="Profile 2",
                 account_name_override="demo_override",
+                shadow_backup_enabled=True,
+                shadow_backup_auto_sync=True,
+                shadow_backup_mirror_deletions=True,
+                shadow_backup_destination=Path("/tmp/OneDrive/AICaches"),
             )
 
             save_config(config, settings_path)
             loaded = load_saved_config(settings_path)
 
         self.assertTrue(loaded.headless)
+        self.assertEqual(loaded.max_media_file_size_mib, 128)
+        self.assertEqual(loaded.max_media_file_size_bytes, 128 * 1024 * 1024)
         self.assertEqual(loaded.max_media_items, 50_000)
         self.assertEqual(loaded.max_scroll_rounds, 5_000)
         self.assertEqual(loaded.scroll_pause_seconds, 1.0)
@@ -40,6 +47,10 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded.chrome_user_data_dir, Path("/tmp/chrome-profile"))
         self.assertEqual(loaded.chrome_profile_directory, "Profile 2")
         self.assertEqual(loaded.account_name_override, "demo_override")
+        self.assertTrue(loaded.shadow_backup_enabled)
+        self.assertTrue(loaded.shadow_backup_auto_sync)
+        self.assertTrue(loaded.shadow_backup_mirror_deletions)
+        self.assertEqual(loaded.shadow_backup_destination, Path("/tmp/OneDrive/AICaches"))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,25 @@
+<!-- Code version: v1.0.0-codex.1 -->
+<div
+    id="cache_wait_modal"
+    class="workspace-modal-overlay cache-wait-modal"
+    role="dialog"
+    aria-modal="true"
+    aria-labelledby="cache_wait_modal_title"
+    aria-describedby="cache_wait_modal_copy"
+    aria-busy="true"
+    hidden
+>
+    <div class="workspace-modal-dialog">
+        <button
+            type="button"
+            class="workspace-modal-close cache-wait-modal-close"
+            data-wait-modal-close
+            aria-label="Close waiting notification"
+        >
+            <span class="cache-wait-modal-close-icon" aria-hidden="true"></span>
+        </button>
+        <span class="suggestion-loading-spinner workspace-modal-icon" aria-hidden="true"></span>
+        <p id="cache_wait_modal_title" class="workspace-modal-title">Working locally</p>
+        <p id="cache_wait_modal_copy" class="workspace-modal-copy">Please wait while the app completes your request on this Mac.</p>
+    </div>
+</div>

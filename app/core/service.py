@@ -1,6 +1,6 @@
 """Orchestration service for the cache job."""
 
-# Code version: v1.4.4-codex.1
+# Code version: v1.6.0-codex.1
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from .downloader import DownloadResult, LocalTweetCacheIndex, download_tweet_med
 from .job_lock import CacheTaskLock, SHARED_CACHE_TASK_LOCK
 from .logging_setup import reset_job_id, set_job_id
 from .scraper import collect_liked_tweet_urls
+from .shadow_backup import ShadowBackupService
 from .state import TaskState
 
 logger = logging.getLogger(__name__)
@@ -22,13 +23,19 @@ logger = logging.getLogger(__name__)
 class CacheLikesService:
     """Manage a single background cache job."""
 
-    def __init__(self, state: TaskState, task_lock: CacheTaskLock | None = None) -> None:
+    def __init__(
+        self,
+        state: TaskState,
+        task_lock: CacheTaskLock | None = None,
+        shadow_backup_service: ShadowBackupService | None = None,
+    ) -> None:
         self._state = state
         self._worker: Thread | None = None
         self._stop_requested = Event()
         self._lifecycle_lock = RLock()
         self._task_lock = task_lock or SHARED_CACHE_TASK_LOCK
         self._owns_task_lock = False
+        self._shadow_backup_service = shadow_backup_service
 
     def is_running(self) -> bool:
         """Return whether a job is active."""
@@ -125,6 +132,7 @@ class CacheLikesService:
             downloaded_videos = 0
             skipped = 0
             failed = 0
+            oversized_media = 0
             futures: dict[Future[DownloadResult], tuple[int, str]] = {}
             next_index = 0
             stop_requested = False
@@ -204,6 +212,7 @@ class CacheLikesService:
                             result = future.result()
                             if result.skipped:
                                 skipped += 1
+                                oversized_media += result.skipped_oversized_media_count
                                 logger.info(
                                     "Tweet skipped.",
                                     extra={
@@ -223,6 +232,7 @@ class CacheLikesService:
                                 downloaded_posts += downloaded_post_increment
                                 downloaded_images += result.downloaded_image_count
                                 downloaded_videos += result.downloaded_video_count
+                                oversized_media += result.skipped_oversized_media_count
                                 logger.info(
                                     "Tweet download completed.",
                                     extra={
@@ -278,11 +288,17 @@ class CacheLikesService:
                 )
                 return
 
-            self._state.finish_success(
+            completion_message = (
                 f"Finished. Discovered {len(tweet_urls)} posts, downloaded {downloaded_media} media files "
                 f"across {downloaded_posts} posts ({downloaded_images} images, {downloaded_videos} videos), "
-                f"skipped {skipped}, failed {failed}."
+                f"skipped {skipped}, exceeded the size limit {oversized_media}, failed {failed}."
             )
+            if self._shadow_backup_service is not None:
+                shadow_backup_message = self._shadow_backup_service.sync_after_cache_task(config)
+                if shadow_backup_message:
+                    self._state.append_event(shadow_backup_message)
+                    completion_message = f"{completion_message} {shadow_backup_message}"
+            self._state.finish_success(completion_message)
             logger.info(
                 "Cache job finished successfully.",
                 extra={

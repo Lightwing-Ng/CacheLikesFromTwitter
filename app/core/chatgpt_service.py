@@ -1,6 +1,6 @@
 """Background service for ChatGPT project image sync."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.2.0-codex.1
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from .chatgpt_downloader import sync_chatgpt_images
 from .config import CrawlConfig
 from .job_lock import CacheTaskLock, SHARED_CACHE_TASK_LOCK
 from .logging_setup import reset_job_id, set_job_id
+from .shadow_backup import ShadowBackupService
 from .state import TaskState
 
 
@@ -36,7 +37,12 @@ def summarize_chatgpt_error_for_status(error: Exception) -> str:
 class ChatGPTDownloadService:
     """Manage one ChatGPT project image sync worker."""
 
-    def __init__(self, state: TaskState, task_lock: CacheTaskLock | None = None) -> None:
+    def __init__(
+        self,
+        state: TaskState,
+        task_lock: CacheTaskLock | None = None,
+        shadow_backup_service: ShadowBackupService | None = None,
+    ) -> None:
         self._state = state
         self._worker: Thread | None = None
         self._stop_requested = Event()
@@ -44,6 +50,7 @@ class ChatGPTDownloadService:
         self._lifecycle_lock = RLock()
         self._task_lock = task_lock or SHARED_CACHE_TASK_LOCK
         self._owns_task_lock = False
+        self._shadow_backup_service = shadow_backup_service
 
     def is_running(self) -> bool:
         """Return whether a ChatGPT image sync is active."""
@@ -123,11 +130,18 @@ class ChatGPTDownloadService:
                 )
                 return
 
-            self._state.finish_success(
+            completion_message = (
                 f"Finished ChatGPT sync. Inspected {result.discovered_conversations:,} conversations, "
                 f"found {result.discovered_images:,} original images, added {result.downloaded_count:,} new files, "
+                f"skipped over size limit {result.skipped_size:,}, "
                 f"failed {result.failed_count:,}; cached total {result.cached_count:,} images."
             )
+            if self._shadow_backup_service is not None:
+                shadow_backup_message = self._shadow_backup_service.sync_after_cache_task(self._config)
+                if shadow_backup_message:
+                    self._state.append_event(shadow_backup_message)
+                    completion_message = f"{completion_message} {shadow_backup_message}"
+            self._state.finish_success(completion_message)
             logger.info(
                 "ChatGPT sync finished successfully.",
                 extra={

@@ -1,6 +1,6 @@
 """Tests for durable settings and thread-safe task state.
 
-Code version: v1.0.0-codex.2
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -32,6 +32,10 @@ def test_settings_round_trip_and_invalid_payload_fall_back_to_defaults(tmp_path:
         chrome_user_data_dir=tmp_path / "Chrome",
         chrome_profile_directory="Profile 4",
         account_name_override="demo",
+        shadow_backup_enabled=True,
+        shadow_backup_auto_sync=True,
+        shadow_backup_mirror_deletions=True,
+        shadow_backup_destination=tmp_path / "OneDrive" / "AICaches",
     )
 
     save_config(expected, settings_path)
@@ -54,6 +58,21 @@ def test_settings_clamp_workers_and_normalize_browser_names(tmp_path: Path) -> N
     assert loaded.download_workers == 1
     assert loaded.x_browser == "edge"
     assert loaded.grok_browser == CrawlConfig().grok_browser
+
+
+def test_settings_clamp_universal_media_file_size(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        '{"max_media_file_size_mib": 0}',
+        encoding="utf-8",
+    )
+    assert load_saved_config(settings_path).max_media_file_size_mib == 1
+
+    settings_path.write_text(
+        '{"max_media_file_size_mib": 999999}',
+        encoding="utf-8",
+    )
+    assert load_saved_config(settings_path).max_media_file_size_mib == 10_240
 
 
 def test_settings_clamp_chatgpt_timeout_and_scan_wait_seconds(tmp_path: Path) -> None:

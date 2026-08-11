@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.2.0-codex.1
+Code version: v1.5.0-codex.1
 """
 
 from pathlib import Path
@@ -153,7 +153,10 @@ def test_cache_dock_menu_and_gallery_use_shared_tokens() -> None:
         ".sidebar-dock-cache-menu.is-cache-source-menu-open .sidebar-dock-cache-dropdown {",
         "width: min(248px, calc(100vw - 24px));",
         ".sidebar-dock-cache-dropdown .sidebar-dock-cache-option",
-        ".sidebar-dock-cache-option .browser-picker-option-icon",
+        ".sidebar-dock-cache-option .cache-source-mark",
+        ".cache-source-mark::before",
+        "mask-image: var(--cache-source-mark);",
+        "background-color: currentColor;",
         ".sidebar-dock-cache-current",
         ".dock-icon-cache",
         "mask: url(\"/static/images/externaldrive.fill.badge.checkmark.svg\")",
@@ -176,3 +179,67 @@ def test_cache_dock_menu_and_gallery_use_shared_tokens() -> None:
 
     for token in expected_tokens:
         assert token in stylesheet
+
+
+def test_waiting_feedback_uses_the_sibling_vector_spinner_and_modal() -> None:
+    """Keep waiting states informative and aligned with the sibling workspace dialog."""
+    stylesheet = _stylesheet()
+
+    expected_tokens = (
+        ".suggestion-loading-spinner {",
+        'mask: url("/static/images/loading.spinner.svg") center/contain no-repeat;',
+        "animation: ticker-suggestion-loading 700ms linear infinite;",
+        ".workspace-modal-overlay {",
+        "place-items: center;",
+        ".workspace-modal-dialog {",
+        "grid-template-columns: var(--workspace-modal-icon-size) minmax(0, 1fr);",
+        ".workspace-modal-copy {",
+        ".browser-media-loading-notice {",
+        ".shadow-backup-status-spinner {",
+    )
+
+    for token in expected_tokens:
+        assert token in stylesheet
+
+
+def test_chatgpt_prompt_preview_stays_fixed_while_the_dialog_expands() -> None:
+    """Keep long Markdown prompts from changing neighboring card heights."""
+    stylesheet = _stylesheet()
+
+    expected_tokens = (
+        ".browser-media-prompt {",
+        ".browser-media-prompt-preview {",
+        "height: 4.2em;",
+        ".browser-media-prompt-markdown blockquote {",
+        ".browser-media-prompt-markdown pre {",
+        ".browser-prompt-dialog {",
+        "max-height: calc(100svh - 48px);",
+        ".browser-prompt-dialog-content {",
+    )
+
+    for token in expected_tokens:
+        assert token in stylesheet
+
+
+def test_browser_pagination_matches_the_sibling_floating_control_states() -> None:
+    """Keep unselected browser pagination controls visually transparent by default."""
+    stylesheet = _stylesheet()
+    button_start = stylesheet.index(".browser-pagination .local-store-page-button {")
+    button_rule = stylesheet[button_start:stylesheet.index("\n}", button_start)]
+    hover_start = stylesheet.index(
+        ".browser-pagination .local-store-page-button:not(.is-active):not(.local-store-page-placeholder):hover,"
+    )
+    hover_rule = stylesheet[hover_start:stylesheet.index("\n}", hover_start)]
+
+    for token in (
+        "border-radius: 50%;",
+        "border-color: transparent;",
+        "background: transparent;",
+        "box-shadow: none;",
+        "backdrop-filter: none;",
+        "color: var(--theme-text);",
+    ):
+        assert token in button_rule
+
+    assert "border: var(--frosted-glass-border);" in hover_rule
+    assert "transform:" not in hover_rule

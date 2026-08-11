@@ -1,0 +1,42 @@
+{# Code version: v1.1.0-codex.1 #}
+{% macro render_cache_common_config(saved_config, id_prefix) -%}
+<section
+    class="cache-common-config"
+    aria-labelledby="{{ id_prefix }}_cache_common_config_heading"
+>
+    <div class="cache-common-config-heading">
+        <p class="cache-common-config-title" id="{{ id_prefix }}_cache_common_config_heading">
+            Shared cache configuration
+        </p>
+        <span class="cache-common-config-scope">All cache sources</span>
+    </div>
+    <div class="field-grid compact-config-grid">
+        <label class="field compact-config-field">
+            <span>Download workers</span>
+            <input
+                type="text"
+                inputmode="numeric"
+                class="formatted-number-input"
+                data-number-format="integer"
+                name="download_workers"
+                value="{{ saved_config.download_workers }}"
+            >
+        </label>
+        <label class="field compact-config-field">
+            <span>Max cached file size (MiB)</span>
+            <input
+                type="text"
+                inputmode="numeric"
+                class="formatted-number-input"
+                data-number-format="integer"
+                name="max_media_file_size_mib"
+                value="{{ saved_config.max_media_file_size_mib }}"
+                aria-describedby="{{ id_prefix }}_cache_common_config_help"
+            >
+        </label>
+    </div>
+    <p class="settings-field-help" id="{{ id_prefix }}_cache_common_config_help">
+        Shared by all cache sources. Existing files are kept; oversized new files are skipped.
+    </p>
+</section>
+{%- endmacro %}

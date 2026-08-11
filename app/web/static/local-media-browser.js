@@ -1,4 +1,4 @@
-/* Code version: v1.10.0-codex.1 */
+/* Code version: v1.14.0-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -40,7 +40,14 @@
     );
     const previewElements = Array.from(document.querySelectorAll("[data-preview]"));
     const mediaCards = Array.from(document.querySelectorAll("[data-media-id]"));
+    const mediaGallery = document.querySelector(".browser-gallery");
     const sourceCopyButtons = Array.from(document.querySelectorAll("[data-media-copy-source-url]"));
+    const promptDialog = document.getElementById("browser_prompt_dialog");
+    const promptDialogTitle = promptDialog?.querySelector("[data-prompt-dialog-title]");
+    const promptDialogContent = promptDialog?.querySelector("[data-prompt-dialog-content]");
+    const promptDialogClose = promptDialog?.querySelector("[data-prompt-dialog-close]");
+    const promptOpenButtons = Array.from(document.querySelectorAll("[data-media-prompt-open]"));
+    let activePromptTrigger = null;
     const previewObserver = "IntersectionObserver" in window
         ? new IntersectionObserver((entries, observer) => {
             entries.forEach((entry) => {
@@ -55,12 +62,19 @@
         return element.closest("[data-preview-shell]");
     }
 
-    function setPreviewStatus(element, message, failed = false) {
+    function setPreviewStatus(element, message, { failed = false, loading = false } = {}) {
         const shell = previewShell(element);
         const status = shell?.querySelector("[data-preview-status]");
         if (!status) return;
-        status.textContent = message;
+        const statusCopy = status.querySelector("[data-preview-status-copy]");
+        const spinner = status.querySelector("[data-preview-spinner]");
+        if (statusCopy) {
+            statusCopy.textContent = message;
+        } else {
+            status.textContent = message;
+        }
         status.hidden = !message;
+        if (spinner) spinner.hidden = !loading;
         shell.classList.toggle("is-load-failed", failed);
         shell.classList.toggle("is-ready", !failed && !message);
     }
@@ -69,15 +83,16 @@
         if (!element || element.dataset.previewLoaded === "1") return;
         const source = element.dataset.mediaSrc;
         if (!source) {
-            setPreviewStatus(element, "Preview unavailable", true);
+            setPreviewStatus(element, "Preview unavailable", { failed: true });
             return;
         }
 
         element.dataset.previewLoaded = "1";
+        setPreviewStatus(element, "Loading preview", { loading: true });
         const onReady = () => setPreviewStatus(element, "");
         const onError = () => {
             element.hidden = true;
-            setPreviewStatus(element, "Preview unavailable", true);
+            setPreviewStatus(element, "Preview unavailable", { failed: true });
         };
         element.addEventListener("load", onReady, { once: true });
         element.addEventListener("loadeddata", onReady, { once: true });
@@ -122,20 +137,82 @@
         return didCopy;
     }
 
+    const copyFeedbackTimers = new WeakMap();
+
+    function setCopyFeedback(button, didCopy) {
+        const activeTimer = copyFeedbackTimers.get(button);
+        if (activeTimer) window.clearTimeout(activeTimer);
+
+        const feedback = button.querySelector("[data-media-copy-feedback]");
+        button.classList.remove("is-copied", "is-copy-failed");
+        void button.offsetWidth;
+        button.classList.add(didCopy ? "is-copied" : "is-copy-failed");
+        button.setAttribute("aria-label", didCopy ? "Original URL copied" : "Unable to copy original URL");
+        button.title = didCopy ? "URL copied" : "Unable to copy URL";
+        if (feedback) feedback.textContent = didCopy ? "Original URL copied." : "Unable to copy original URL.";
+
+        const timer = window.setTimeout(() => {
+            button.classList.remove("is-copied", "is-copy-failed");
+            button.setAttribute("aria-label", "Copy original URL");
+            button.title = "Copy URL";
+            if (feedback) feedback.textContent = "";
+            copyFeedbackTimers.delete(button);
+        }, 1_600);
+        copyFeedbackTimers.set(button, timer);
+    }
+
     sourceCopyButtons.forEach((button) => {
         button.addEventListener("click", async () => {
             const sourceLink = button.parentElement?.querySelector("[data-media-source-link]");
             const url = sourceLink instanceof HTMLAnchorElement ? sourceLink.href : "";
             const didCopy = await copyText(url);
-            button.classList.toggle("is-copied", didCopy);
-            button.setAttribute("aria-label", didCopy ? "Original URL copied" : "Unable to copy original URL");
-            button.title = didCopy ? "URL copied" : "Unable to copy URL";
-            window.setTimeout(() => {
-                button.classList.remove("is-copied");
-                button.setAttribute("aria-label", "Copy original URL");
-                button.title = "Copy URL";
-            }, 1_600);
+            setCopyFeedback(button, didCopy);
         });
+    });
+
+    function closePromptDialog() {
+        if (!promptDialog) return;
+        if (promptDialog.open && typeof promptDialog.close === "function") {
+            promptDialog.close();
+        } else {
+            promptDialog.removeAttribute("open");
+        }
+    }
+
+    function openPromptDialog(button) {
+        if (!promptDialog || !promptDialogContent) return;
+        const sourceId = button.dataset.promptSource || "";
+        const source = sourceId ? document.getElementById(sourceId) : null;
+        if (!source) return;
+
+        activePromptTrigger = button;
+        if (promptDialogTitle) {
+            const filename = button.dataset.promptTitle || "";
+            promptDialogTitle.textContent = filename ? `Prompt · ${filename}` : "Prompt";
+        }
+        promptDialogContent.replaceChildren(
+            ...Array.from(source.childNodes).map((node) => node.cloneNode(true)),
+        );
+        if (!promptDialog.open && typeof promptDialog.showModal === "function") {
+            promptDialog.showModal();
+        } else {
+            promptDialog.setAttribute("open", "");
+        }
+        promptDialogClose?.focus({ preventScroll: true });
+    }
+
+    promptOpenButtons.forEach((button) => {
+        button.addEventListener("click", () => openPromptDialog(button));
+    });
+    promptDialogClose?.addEventListener("click", closePromptDialog);
+    promptDialog?.addEventListener("click", (event) => {
+        if (event.target === promptDialog) closePromptDialog();
+    });
+    promptDialog?.addEventListener("close", () => {
+        if (activePromptTrigger?.isConnected) {
+            activePromptTrigger.focus({ preventScroll: true });
+        }
+        activePromptTrigger = null;
     });
 
     const pagination = document.querySelector(".browser-pagination");
@@ -276,6 +353,20 @@
         dialog.style.setProperty("--browser-media-frame-radius", `${frameRadius}px`);
     }
 
+    function createMediaLoadingNotice(message) {
+        const notice = document.createElement("p");
+        notice.className = "browser-media-loading-notice";
+
+        const spinner = document.createElement("span");
+        spinner.className = "suggestion-loading-spinner";
+        spinner.setAttribute("aria-hidden", "true");
+
+        const copy = document.createElement("span");
+        copy.textContent = message;
+        notice.append(spinner, copy);
+        return notice;
+    }
+
     function createImagePlayer(item) {
         const player = document.createElement("div");
         player.className = "browser-media-frame browser-image-player";
@@ -285,8 +376,8 @@
         image.className = "browser-dialog-media-element browser-dialog-image-element";
         image.alt = item.alt_text || item.title || item.filename;
         image.decoding = "async";
-        image.src = item.media_url;
-        player.appendChild(image);
+        const loadingNotice = createMediaLoadingNotice("Loading image…");
+        player.append(image, loadingNotice);
 
         const resizePlayer = () => resizeViewerFrame(
             player,
@@ -294,7 +385,13 @@
             image.naturalHeight,
             1,
         );
-        image.addEventListener("load", resizePlayer, { once: true });
+        const finishLoading = () => {
+            loadingNotice.hidden = true;
+            resizePlayer();
+        };
+        image.addEventListener("load", finishLoading, { once: true });
+        image.src = item.media_url;
+        if (image.complete && image.naturalWidth > 0) finishLoading();
         resizePlayer();
         window.addEventListener("resize", resizePlayer, { passive: true });
         return { player, image, resizeHandler: resizePlayer };
@@ -312,8 +409,8 @@
         video.setAttribute("webkit-playsinline", "");
         video.preload = "metadata";
         video.controls = true;
-        video.src = item.media_url;
         video.setAttribute("aria-label", "Video preview");
+        const loadingNotice = createMediaLoadingNotice("Loading video…");
 
         const navigation = document.createElement("div");
         navigation.className = "browser-video-navigation";
@@ -322,7 +419,7 @@
             createVideoNavigationButton(-1, item),
             createVideoNavigationButton(1, item),
         );
-        player.appendChild(video);
+        player.append(video, loadingNotice);
 
         const resizePlayer = () => resizeViewerFrame(
             player,
@@ -331,6 +428,10 @@
             16 / 9,
         );
         video.addEventListener("loadedmetadata", resizePlayer, { once: true });
+        video.addEventListener("loadeddata", () => {
+            loadingNotice.hidden = true;
+        }, { once: true });
+        video.src = item.media_url;
         resizePlayer();
         window.addEventListener("resize", resizePlayer, { passive: true });
         return { player, video, navigation, resizeHandler: resizePlayer };
@@ -466,6 +567,24 @@
         setCardPreviewSource(card, item);
     }
 
+    function moveDeletedCardToListEnd(card, item) {
+        if (!item?.is_deleted || !mediaGallery || !mediaGallery.contains(card)) return;
+        mediaGallery.appendChild(card);
+    }
+
+    function updateMediaItems(item) {
+        const index = mediaItems.findIndex((candidate) => candidate?.id === item.id);
+        if (index >= 0) {
+            mediaItems[index] = item;
+        } else {
+            mediaItems.push(item);
+        }
+        if (item.is_deleted) {
+            mediaItems = mediaItems.filter((candidate) => candidate?.id !== item.id);
+            mediaItems.push(item);
+        }
+    }
+
     async function updateMedia(card, action) {
         const item = mediaById.get(card.dataset.mediaId);
         if (!item) return;
@@ -473,6 +592,13 @@
             ? card.querySelector("[data-media-delete]")
             : card.querySelector("[data-media-restore]");
         if (button) button.disabled = true;
+        const wait = window.CacheWaitModal?.begin?.({
+            title: action === "delete" ? "Deleting local cache entry" : "Restoring local cache entry",
+            copy: action === "delete"
+                ? "Removing this resource from local storage and stopping future tracking for it."
+                : "Restoring this resource to local storage and resuming future tracking for it.",
+            delay: 120,
+        });
         try {
             const response = await fetch(`/api/browser/media/${encodeURIComponent(item.id)}/${action}`, {
                 method: "POST",
@@ -483,10 +609,14 @@
                 throw new Error(payload.error || "The cache action failed.");
             }
             mediaById.set(payload.item.id, payload.item);
+            updateMediaItems(payload.item);
             setCardState(card, payload.item);
+            moveDeletedCardToListEnd(card, payload.item);
         } catch (error) {
             if (button) button.disabled = false;
             window.alert(error instanceof Error ? error.message : "The cache action failed.");
+        } finally {
+            wait?.finish?.();
         }
     }
 
