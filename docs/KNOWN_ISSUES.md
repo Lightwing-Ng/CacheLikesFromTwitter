@@ -1,6 +1,23 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.0.0-codex.1`
+Documentation version: `v1.1.0-codex.1`
+
+## Touch-safe iPad sidebar contract established on 12 Aug 2026
+
+- Sidebar overlay behavior now extends through `900 px`, while compact content remains limited to
+  `600 px`. iPad portrait layouts therefore use the overlay interaction without inheriting the
+  phone content layout.
+- CSS and JavaScript consume one semantic breakpoint registry. A new overlay session starts with
+  the sidebar closed, while an explicit `sessionStorage` choice remains stable across viewport
+  transitions.
+- The overlay sidebar and 44 × 44 CSS px toggle use safe-area-aware fixed geometry. The toggle is
+  above the transparent backdrop, fixed notices, sidebar title, and dock; closed sidebar and
+  backdrop states cannot receive pointer input.
+- `[hidden] { display: none !important; }` is now a global contract. A hidden backdrop cannot be
+  reactivated by a later responsive `display` declaration and therefore leaves layout, paint, and
+  hit testing together.
+- The quality gate now runs a seeded local Chromium E2E suite in a disposable browser context. It
+  validates target phone, iPad, and desktop viewports without reading an authenticated profile.
 
 ## Current operating constraints
 
@@ -14,9 +31,8 @@ Documentation version: `v1.0.0-codex.1`
   that state and cached media, so it is intentionally an explicit operator action.
 - Browser deletion is recoverable only while its retained preview exists in `.browser-trash/`.
   Removing that preview outside the application prevents restoration.
-- The default quality gate is fully offline and does not run an authenticated browser E2E test.
-  Flask integration tests and JavaScript syntax checks protect the current baseline; a future E2E
-  layer must use a seeded disposable runtime before it can enter CI.
+- The default quality gate remains local-only and does not use authenticated browser state. Its
+  sidebar E2E layer requires Playwright-managed Chromium, Chrome, or Edge to be installed.
 
 ## Quality and isolation foundation established on 9 Aug 2026
 

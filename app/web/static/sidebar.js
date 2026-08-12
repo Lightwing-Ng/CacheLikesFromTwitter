@@ -1,4 +1,4 @@
-/* Code version: v1.7.1-codex.1 */
+/* Code version: v1.8.0-codex.1 */
 
 (function initializeSidebar() {
     "use strict";
@@ -10,7 +10,7 @@
     const sidebarDock = document.querySelector(".sidebar-dock");
     if (!appShell || !appSidebar || !sidebarToggle) return;
 
-    const sidebarOverlayMedia = window.matchMedia("(max-width: 900px)");
+    const sidebarOverlayMedia = window.CACHELIKES_RESPONSIVE.media("sidebarOverlayMax");
     const sidebarMemoryKey = "cachelikes:sidebar-open";
     const dockLocationMemoryPrefix = "cachelikes:dock-location:v1:";
     const dockSections = new Set(["cache", "browser", "settings"]);

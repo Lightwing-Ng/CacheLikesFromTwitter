@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.43.3-codex.1
+# Code version: v1.44.0-codex.1
 
 from __future__ import annotations
 
@@ -185,7 +185,9 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('aria-haspopup', dock_markup)
                 self.assertNotIn('aria-expanded', dock_markup)
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
-                self.assertIn('src="/static/sidebar.js?v=sidebar-v1.7.1-codex.1"', body)
+                self.assertIn('src="/static/sidebar.js?v=sidebar-v1.8.0-codex.1"', body)
+                self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
+                self.assertIn("style-v2.47.0-codex.1", body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
                 self.assertIn('class="global-quick-action-button global-theme-toggle"', body)
@@ -198,7 +200,7 @@ class WebAppTests(unittest.TestCase):
 
         sidebar_script = SIDEBAR_SCRIPT_PATH.read_text(encoding="utf-8")
         for fragment in (
-            'const sidebarOverlayMedia = window.matchMedia("(max-width: 900px)");',
+            'const sidebarOverlayMedia = window.CACHELIKES_RESPONSIVE.media("sidebarOverlayMax");',
             "const shouldShowBackdrop = sidebarOverlayMedia.matches && isSidebarOpen;",
             'const dockLocationMemoryPrefix = "cachelikes:dock-location:v1:";',
             'const browserFilterNames = ["source", "kind", "q", "sort", "session_view"];',
@@ -220,7 +222,7 @@ class WebAppTests(unittest.TestCase):
             'const browserFilterNames = ["source", "kind", "q", "sort", "page"]',
             sidebar_script,
         )
-        self.assertNotIn('window.matchMedia("(max-width: 600px)")', sidebar_script)
+        self.assertNotIn('window.matchMedia("(max-width:', sidebar_script)
         for body, sidebar_title in (
             (index_body, "Caches"),
             (grok_body, "Caches"),
@@ -344,7 +346,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('aria-label="Settings categories"', body)
         self.assertIn(
-            'settings-navigation.js?v=settings-navigation-v1.0.0-codex.1',
+            'settings-navigation.js?v=settings-navigation-v1.1.0-codex.1',
             body,
         )
         self.assertIn(
@@ -369,7 +371,7 @@ class WebAppTests(unittest.TestCase):
             'window.addEventListener("hashchange"',
             'link.setAttribute("aria-current", "page")',
             "panel.hidden = !isActive;",
-            'window.matchMedia("(max-width: 900px)").matches',
+            'window.CACHELIKES_RESPONSIVE.media("sidebarOverlayMax").matches',
             "window.setSidebarOpen?.(false, { animate: true });",
         ):
             with self.subTest(fragment=fragment):
@@ -562,7 +564,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.46.2-codex.1", body)
+            self.assertIn("style-v2.47.0-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.21.2-codex.1', body)
             self.assertIn('data-media-source-link', body)

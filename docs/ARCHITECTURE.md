@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.0.2-codex.1`
+Documentation version: `v1.1.0-codex.1`
 
 ## Runtime flow
 
@@ -38,6 +38,24 @@ registers the local-media browser, and serves the Flask routes.
 Web routes may orchestrate core services and present serialized state. Core modules must not
 depend on templates or browser DOM details. Source-specific automation belongs at a browser or
 transport boundary, while durable cache and state rules stay in core modules.
+
+## Responsive application-shell contract
+
+The browser shell has two independent responsive boundaries. Content enters its compact phone
+layout at `600 px` and below. The sidebar enters a fixed overlay at `900 px` and below, which
+covers current iPad portrait widths without forcing tablet content into the phone layout.
+
+`style.css` publishes both semantic values as CSS custom properties. `responsive.js` reads those
+tokens and is the only first-party JavaScript module allowed to construct width-based media
+queries. The templates load it before the sidebar bootstrap, which applies the stored
+`cachelikes:sidebar-open` session state or defaults a new overlay session to collapsed. The main
+sidebar controller owns the open and collapsed classes, `aria-expanded`, sidebar inertness, and
+the backdrop's `hidden`, `aria-hidden`, inert, and tab-index states.
+
+In overlay mode, safe-area-aware fixed geometry keeps the sidebar and toggle inside the viewport.
+The backdrop sits below the sidebar, dock, and toggle. A global `[hidden]` rule makes hidden state
+authoritative over responsive display rules, while closed sidebar and backdrop states also disable
+pointer events explicitly.
 
 ## Source flows
 

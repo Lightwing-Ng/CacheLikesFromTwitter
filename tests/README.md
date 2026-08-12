@@ -1,6 +1,6 @@
 # Test Suite
 
-Test-suite version: `v1.1.0-codex.1`
+Test-suite version: `v1.2.0-codex.1`
 
 The authoritative test workflow, coverage baseline, isolation contract, and CI behavior are
 documented in [docs/TESTING.md](../docs/TESTING.md). Use `./scripts/test.sh` for the normal
@@ -24,12 +24,17 @@ offline suite and `./scripts/check.sh` for the full quality gate.
 - `test_logging_setup.py`: structured logging setup and JSON line output.
 - `test_runtime_isolation.py`: process-wide pytest runtime redirection and the Grok
   snapshot default-path regression.
+- `test_responsive_contract.py`: shared CSS and JavaScript breakpoints, independent compact-content
+  and sidebar-overlay boundaries, global hidden behavior, and bootstrap load order.
+- `test_sidebar_e2e.py`: disposable Chromium coverage for target iPhone, iPad, and desktop
+  viewports, touch dismissal, viewport transitions, horizontal overflow, and toggle hit testing.
 
 ## Isolation Rules
 
 `conftest.py` changes `HOME`, `CACHELIKES_RUNTIME_ROOT`, and `CACHELIKES_SETTINGS_PATH` before
-application modules load. Filesystem tests use pytest temporary paths. Browser, Playwright,
-yt-dlp, X, Grok, and network transport are replaced by fakes or mocks; no authenticated session
-or user-owned local media cache is touched.
+application modules load. Filesystem tests use pytest temporary paths. The sidebar E2E suite uses
+a clean disposable browser context against a local isolated Flask server. Authenticated browser
+profiles, yt-dlp, X, Grok, remote network transport, and user-owned local media remain outside the
+test boundary.
 
 Run the full suite with `./scripts/test.sh`.

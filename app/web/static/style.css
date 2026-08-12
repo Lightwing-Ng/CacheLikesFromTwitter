@@ -1,4 +1,4 @@
-/* Code version: v2.46.2-codex.1 */
+/* Code version: v2.47.0-codex.1 */
 :root {
     color-scheme: light;
     --color-scheme: light;
@@ -78,6 +78,13 @@
     --radius-soft: 20px;
     --radius-pill: 999px;
     --page-edge-pad: 10px;
+    /*
+     * Responsive breakpoint registry. CSS repeats these values in media
+     * conditions because custom properties are not valid there without a
+     * build step. JavaScript reads the same registry through responsive.js.
+     */
+    --responsive-breakpoint-compact-content-max: 600px;
+    --responsive-breakpoint-sidebar-overlay-max: 900px;
     --sidebar-width: 312px;
     --sidebar-toggle-top: var(--page-edge-pad);
     --sidebar-toggle-left: var(--page-edge-pad);
@@ -136,6 +143,11 @@
     --app-shell-gap: 14px;
     --viewport-block-size: 100vh;
     --sidebar-motion-duration: 500ms;
+    --sidebar-overlay-inset-top: max(var(--page-edge-pad), env(safe-area-inset-top, 0px));
+    --sidebar-overlay-inset-right: max(var(--page-edge-pad), env(safe-area-inset-right, 0px));
+    --sidebar-overlay-inset-bottom: max(var(--page-edge-pad), env(safe-area-inset-bottom, 0px));
+    --sidebar-overlay-inset-left: max(var(--page-edge-pad), env(safe-area-inset-left, 0px));
+    --sidebar-overlay-available-inline-size: calc(100vw - var(--sidebar-overlay-inset-left) - var(--sidebar-overlay-inset-right));
 
     --color-white-adaptive: var(--theme-color-white-adaptive);
     --glass-surface-background-soft: var(--theme-glass-surface-background-soft);
@@ -182,8 +194,10 @@
     --layer-hover-card: 10;
     --layer-global-popover: 130;
     --layer-fixed-dock: 120;
+    --layer-global-notice: 190;
     --layer-modal-overlay: 200;
     --layer-modal-dialog: 210;
+    --layer-sidebar-toggle: 220;
 
     --motion-standard: ease;
     --motion-emphasized: cubic-bezier(0.22, 1, 0.36, 1);
@@ -255,6 +269,10 @@
     box-sizing: border-box;
     scrollbar-width: none;
     -ms-overflow-style: none;
+}
+
+[hidden] {
+    display: none !important;
 }
 
 *::-webkit-scrollbar {
@@ -548,18 +566,18 @@ button {
 
 .sidebar-backdrop {
     display: none;
+    visibility: hidden;
+    pointer-events: none;
 }
 
-.sidebar-backdrop[hidden] {
-    display: none !important;
-}
-
-.app-shell.is-sidebar-collapsed {
+.app-shell.is-sidebar-collapsed,
+html.sidebar-memory-collapsed .app-shell {
     --sidebar-toggle-x: 0px;
     grid-template-columns: 0 minmax(0, 1fr);
 }
 
-.app-shell.is-sidebar-collapsed .sidebar {
+.app-shell.is-sidebar-collapsed .sidebar,
+html.sidebar-memory-collapsed .app-shell .sidebar {
     margin-left: 0;
     opacity: 0;
     transform: scale(0.95);
@@ -2234,7 +2252,7 @@ a.ghost-link[href$="/settings"] {
     margin: 0;
     width: min(420px, calc(100vw - (var(--page-edge-pad) * 2)));
     max-width: calc(100vw - (var(--page-edge-pad) * 2));
-    z-index: 9999;
+    z-index: var(--layer-global-notice);
     pointer-events: auto;
     animation: noticeFloatingBannerDropIn 720ms both;
     animation-timing-function: var(--motion-overshoot);
@@ -2630,80 +2648,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     }
 }
 
-@media (max-width: 720px) {
-    .page {
-        overflow: visible;
-    }
-
-    .app-shell {
-        display: block;
-        overflow: visible;
-    }
-
-    .sidebar {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        width: min(var(--sidebar-width), calc(100vw - 20px));
-        height: calc(var(--viewport-block-size) - 20px - env(safe-area-inset-bottom, 0px));
-        max-height: calc(var(--viewport-block-size) - 20px - env(safe-area-inset-bottom, 0px));
-        padding: 56px 18px calc(18px + var(--sidebar-dock-bottom-gap) + var(--sidebar-dock-hit-size));
-        scroll-padding-bottom: calc(var(--sidebar-dock-bottom-gap) + var(--sidebar-dock-hit-size) + 8px);
-        border-radius: var(--radius-panel);
-        margin: 0;
-        z-index: calc(var(--layer-fixed-dock) - 2);
-        transform: translate3d(0, 0, 0);
-        opacity: 1;
-        visibility: visible;
-        border: var(--frosted-glass-border);
-        box-shadow: var(--frosted-glass-shadow);
-        background: var(--frosted-glass-background);
-        backdrop-filter: var(--frosted-glass-blur);
-        -webkit-backdrop-filter: var(--frosted-glass-blur);
-        overflow-y: auto;
-    }
-
-    .workspace {
-        height: calc(var(--viewport-block-size) - (var(--page-edge-pad) * 2));
-        min-height: calc(var(--viewport-block-size) - (var(--page-edge-pad) * 2));
-        padding-top: 56px;
-    }
-
-    .sidebar-backdrop {
-        position: fixed;
-        inset: 0;
-        display: block;
-        padding: 0;
-        border: 0;
-        background: transparent;
-        cursor: pointer;
-        z-index: calc(var(--layer-fixed-dock) - 3);
-    }
-
-    .app-shell.is-sidebar-collapsed .sidebar {
-        transform: translate3d(-120%, 0, 0);
-        opacity: 0;
-        visibility: hidden;
-        margin: 0;
-        padding: 16px;
-        pointer-events: none;
-        max-height: none;
-        border-width: 0;
-    }
-
-    .sidebar-toggle {
-        display: inline-flex;
-        position: fixed;
-        top: var(--sidebar-toggle-top);
-        left: var(--sidebar-toggle-left);
-        margin: 0;
-        z-index: calc(var(--layer-modal-overlay) + 1);
-    }
-
-    .app-shell.is-sidebar-collapsed .sidebar-backdrop {
-        display: none;
-    }
-
+@media (max-width: 600px) {
     .workspace-grid {
         grid-template-columns: 1fr;
         grid-template-rows: auto auto minmax(0, 1fr);
@@ -2721,26 +2666,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 
-    .sidebar-dock {
-        left: calc(10px + (min(var(--sidebar-width), calc(100vw - 20px)) / 2));
-        right: auto;
-        bottom: calc(var(--page-edge-pad) + var(--sidebar-dock-bottom-gap) + env(safe-area-inset-bottom, 0px));
-        transform: translateX(-50%);
-        margin: 0;
-        width: fit-content;
-        max-width: calc(min(var(--sidebar-width), calc(100vw - 20px)) - 20px);
-        z-index: var(--layer-fixed-dock);
-        box-shadow: var(--sidebar-dock-mobile-shadow);
-        opacity: 1;
-        pointer-events: auto;
-    }
-
-    .app-shell.is-sidebar-collapsed ~ .sidebar-dock,
-    html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
-        transform: translateX(-50%) translateY(8px) scale(0.95);
-        opacity: 0;
-        pointer-events: none;
-    }
 }
 
 @media (max-width: 560px) {
@@ -2771,17 +2696,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
         width: calc(100vw - 16px);
         max-width: calc(100vw - 16px);
         right: 8px;
-    }
-
-    .sidebar {
-        width: calc(100vw - 16px);
-        left: 8px;
-        top: 8px;
-    }
-
-    .sidebar-dock {
-        left: 50%;
-        max-width: calc(100vw - 16px);
     }
 
     .sidebar-dock::before {
@@ -3033,7 +2947,8 @@ body::before,
     padding-top: max(10px, var(--workspace-title-safe-top));
 }
 
-.app-shell.is-sidebar-collapsed .sidebar {
+.app-shell.is-sidebar-collapsed .sidebar,
+html.sidebar-memory-collapsed .app-shell .sidebar {
     margin-left: calc(-1 * (var(--sidebar-width) + var(--app-shell-gap)));
 }
 
@@ -3074,26 +2989,33 @@ body::before,
 
 @media (max-width: 900px) {
     .page {
-        overflow: visible;
+        overflow: hidden;
     }
 
     .app-shell {
         display: block;
         overflow: visible;
+        z-index: auto;
     }
 
     .sidebar {
         position: fixed;
-        top: 10px;
-        left: 10px;
-        width: min(var(--sidebar-width), calc(100vw - 20px));
-        height: calc(var(--viewport-block-size) - 20px - env(safe-area-inset-bottom, 0px));
-        max-height: calc(var(--viewport-block-size) - 20px - env(safe-area-inset-bottom, 0px));
+        top: var(--sidebar-overlay-inset-top);
+        right: auto;
+        bottom: var(--sidebar-overlay-inset-bottom);
+        left: var(--sidebar-overlay-inset-left);
+        width: min(var(--sidebar-width), var(--sidebar-overlay-available-inline-size));
+        height: auto;
+        max-height: none;
         flex: none;
         margin: 0;
         padding: 56px 18px calc(18px + var(--sidebar-dock-bottom-gap) + var(--sidebar-dock-hit-size));
         overflow-y: auto;
         z-index: calc(var(--layer-fixed-dock) - 2);
+        transform: translate3d(0, 0, 0);
+        opacity: 1;
+        visibility: visible;
+        pointer-events: auto;
     }
 
     .workspace {
@@ -3105,7 +3027,6 @@ body::before,
     .sidebar-backdrop {
         position: fixed;
         inset: 0;
-        display: block;
         padding: 0;
         border: 0;
         background: transparent;
@@ -3113,7 +3034,14 @@ body::before,
         z-index: calc(var(--layer-fixed-dock) - 3);
     }
 
-    .app-shell.is-sidebar-collapsed .sidebar {
+    .app-shell.is-sidebar-open .sidebar-backdrop:not([hidden]) {
+        display: block;
+        visibility: visible;
+        pointer-events: auto;
+    }
+
+    .app-shell.is-sidebar-collapsed .sidebar,
+    html.sidebar-memory-collapsed .app-shell .sidebar {
         margin: 0;
         padding: 16px;
         max-height: none;
@@ -3124,41 +3052,44 @@ body::before,
         border-width: 0;
     }
 
-    .app-shell.is-sidebar-collapsed .sidebar-backdrop {
+    .app-shell.is-sidebar-collapsed .sidebar-backdrop,
+    html.sidebar-memory-collapsed .app-shell .sidebar-backdrop {
         display: none;
+        visibility: hidden;
+        pointer-events: none;
     }
 
     .sidebar-toggle {
         position: fixed;
-        top: var(--sidebar-toggle-top);
-        left: var(--sidebar-toggle-left);
+        top: var(--sidebar-overlay-inset-top);
+        left: var(--sidebar-overlay-inset-left);
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
+        min-height: 44px;
         margin: 0;
-        z-index: calc(var(--layer-modal-overlay) + 1);
+        z-index: var(--layer-sidebar-toggle);
+        touch-action: manipulation;
     }
 
-    .workspace-grid {
-        grid-template-columns: 1fr;
-        grid-template-rows: auto auto minmax(0, 1fr);
+    .global-quick-actions {
+        top: var(--sidebar-overlay-inset-top);
     }
 
-    .log-card {
-        grid-column: auto;
-    }
-
-    .metric-grid,
-    .progress-metric-grid {
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+    .notice-floating-banner-global {
+        top: calc(var(--sidebar-overlay-inset-top) + 52px);
     }
 
     .sidebar-dock {
-        left: calc(10px + (min(var(--sidebar-width), calc(100vw - 20px)) / 2));
+        left: calc(var(--sidebar-overlay-inset-left) + (min(var(--sidebar-width), var(--sidebar-overlay-available-inline-size)) / 2));
         right: auto;
-        bottom: calc(var(--page-edge-pad) + var(--sidebar-dock-bottom-gap) + env(safe-area-inset-bottom, 0px));
+        bottom: calc(var(--sidebar-overlay-inset-bottom) + var(--sidebar-dock-bottom-gap));
         transform: translateX(-50%);
         margin: 0;
         width: fit-content;
-        max-width: calc(min(var(--sidebar-width), calc(100vw - 20px)) - 20px);
+        max-width: calc(min(var(--sidebar-width), var(--sidebar-overlay-available-inline-size)) - 20px);
         z-index: var(--layer-fixed-dock);
+        box-shadow: var(--sidebar-dock-mobile-shadow);
         opacity: 1;
         pointer-events: auto;
     }
@@ -3173,14 +3104,12 @@ body::before,
 
 @media (max-width: 560px) {
     .sidebar {
-        width: calc(100vw - 16px);
-        left: 8px;
-        top: 8px;
+        width: var(--sidebar-overlay-available-inline-size);
     }
 
     .sidebar-dock {
-        left: 50%;
-        max-width: calc(100vw - 16px);
+        left: calc(var(--sidebar-overlay-inset-left) + (var(--sidebar-overlay-available-inline-size) / 2));
+        max-width: calc(var(--sidebar-overlay-available-inline-size) - 16px);
     }
 }
 

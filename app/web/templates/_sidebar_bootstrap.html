@@ -1,0 +1,14 @@
+{# Code version: v1.0.0-codex.1 #}
+<script>
+    let storedSidebarState = null;
+    try {
+        storedSidebarState = window.sessionStorage.getItem("cachelikes:sidebar-open");
+    } catch (_error) {
+    }
+    const sidebarOverlayMedia = window.CACHELIKES_RESPONSIVE?.media?.("sidebarOverlayMax");
+    const shouldStartSidebarCollapsed = storedSidebarState === "false"
+        || (storedSidebarState === null && Boolean(sidebarOverlayMedia?.matches));
+    if (shouldStartSidebarCollapsed) {
+        document.documentElement.classList.add("sidebar-memory-collapsed");
+    }
+</script>

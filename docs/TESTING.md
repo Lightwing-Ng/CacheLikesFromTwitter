@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.0.3-codex.1`
+Documentation version: `v1.1.0-codex.1`
 
 ## Supported commands
 
@@ -32,6 +32,13 @@ Run the complete quality gate:
 ./scripts/check.sh
 ```
 
+Run the responsive contract and sidebar browser layers independently with:
+
+```bash
+./scripts/test.sh tests/test_responsive_contract.py
+./scripts/test.sh tests/test_sidebar_e2e.py
+```
+
 `CACHELIKES_PYTHON` may override the interpreter only when it resolves to Python 3.13 or 3.14.
 The resolver prefers the supported host `python3`, then falls back to known macOS Python
 installations.
@@ -42,19 +49,20 @@ installations.
 
 1. Ruff static checks over `main.py`, `app/`, and `tests/`.
 2. `node --check` for every first-party JavaScript file in `app/web/static/`.
-3. The full pytest suite with branch coverage for `app/`.
+3. The full pytest suite with branch coverage for `app/`, including the disposable-browser
+   responsive sidebar E2E flow.
 
 The coverage report is written to `test-results/coverage.json`; all generated test artifacts are
 ignored by Git. The gate currently enforces a 55% combined statement-and-branch coverage floor.
 Override `CACHELIKES_COVERAGE_MINIMUM` only for an intentional local diagnostic, never to make a
 regression pass.
 
-Baseline measured on 9 Aug 2026 with a supported Python 3.13/3.14 runtime, pytest 9.0.3,
+Baseline measured on 12 Aug 2026 with a supported Python 3.13/3.14 runtime, pytest 9.0.3,
 pytest-cov 7.1.0, and Ruff 0.15.21:
 
-- 120 tests passed, with 13 unittest subtests passed.
-- Combined coverage for `app/` was approximately 59% using branch coverage.
-- All four first-party JavaScript files passed syntax checks.
+- 262 tests passed, with 149 unittest subtests passed.
+- Combined coverage for `app/` was 64.46% using branch coverage.
+- All 12 first-party JavaScript files passed syntax checks.
 
 Raise the coverage floor only after adding behavior-level tests. Do not exclude production modules
 or lower the threshold to mask a gap.
@@ -67,7 +75,10 @@ or lower the threshold to mask a gap.
   media files, deleted previews, and settings.
 - Flask integration tests use `create_app()` plus `test_client()` and assert route contracts
   without starting a web server.
-- Style-token and template tests protect durable UI contracts without requiring a browser runtime.
+- Style-token, template, and responsive-contract tests protect durable UI boundaries directly.
+- Sidebar E2E tests start an isolated local Flask server and a clean headless Chromium context.
+  They cover touch input, backdrop dismissal, viewport transitions, and real hit testing through
+  `document.elementFromPoint()`.
 
 The current detailed module-to-behavior map is maintained in [tests/README.md](../tests/README.md).
 
@@ -82,7 +93,7 @@ runtime locations to process-scoped temporary directories:
 
 Default tests must not:
 
-- start Chrome, Edge, Safari, or an authenticated Playwright context;
+- open an authenticated Chrome, Edge, Safari, or Playwright profile;
 - make X, Grok, ChatGPT, yt-dlp, or general network requests;
 - read, copy, delete, reset, or restore a user-owned cache, log, setting, or browser profile;
 - submit a real background cache job.
@@ -99,11 +110,10 @@ boundary is the behavior being tested.
 - `live`: Explicit manual checks that require a signed-in browser or a remote service. These never
   belong in CI or the default quality gate.
 
-The project intentionally does not yet run Playwright browser E2E checks in CI. The current
-JavaScript files are DOM-oriented scripts rather than importable pure modules, so the first
-baseline uses syntax validation and Flask route contracts. Add browser E2E only after creating a
-seeded, disposable runtime and proving that it cannot access authenticated profiles or production
-cache data.
+The sidebar E2E layer may use Playwright-managed Chromium or an installed Chrome or Edge binary,
+but always launches a clean browser context without a user-data directory. Its Flask server uses
+the same process-scoped temporary runtime as the rest of pytest. Browser tests must retain both
+isolation properties and must never navigate to an external service.
 
 ## Writing a new test
 

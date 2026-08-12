@@ -1,6 +1,6 @@
 # CacheLikesFromTwitter
 
-Documentation version: `v1.4.2`
+Documentation version: `v1.5.0`
 
 CacheLikesFromTwitter is a local Flask web console that caches media from the
 currently signed-in X account's Likes timeline, Grok's Files library, and a
@@ -60,9 +60,10 @@ Run the complete local quality gate with:
 ./scripts/check.sh
 ```
 
-The quality gate runs Ruff, JavaScript syntax checks, and the Python suite with branch
-coverage. It is the same command executed by GitHub Actions. The suite never opens an
-authenticated browser, downloads media, or writes to user-owned caches, logs, or settings.
+The quality gate runs Ruff, JavaScript syntax checks, the Python suite with branch coverage,
+and a disposable Chromium sidebar E2E flow. It is the same command executed by GitHub Actions.
+The browser flow uses a clean context against an isolated local server; the suite never opens
+an authenticated profile, downloads media, or writes to user-owned caches, logs, or settings.
 
 ## Documentation
 

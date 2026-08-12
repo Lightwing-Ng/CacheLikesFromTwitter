@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.24.2-codex.1
+Code version: v1.25.0-codex.1
 """
 
 from pathlib import Path
@@ -165,7 +165,7 @@ def test_sidebar_shell_and_dock_consume_frosted_glass_tokens() -> None:
         "color: var(--accent-text);",
         ".sidebar-toggle {",
         "border: var(--settings-round-icon-button-border);",
-        ".sidebar-backdrop[hidden] {",
+        "[hidden] {",
         "display: none !important;",
         ".sidebar-section > .section-heading {",
         "position: relative;",

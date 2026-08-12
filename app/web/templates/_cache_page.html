@@ -1,12 +1,13 @@
-{# Code version: v1.6.8-codex.1 #}
+{# Code version: v1.7.0-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>{{ cache_source.document_title }}</title>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.45.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.47.0-codex.1') }}">
+    <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.7.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
@@ -14,6 +15,7 @@
     {% block head %}{% endblock %}
 </head>
 <body>
+{% include "_sidebar_bootstrap.html" %}
 {% from "_cache_common_config.html" import render_cache_common_config %}
 {% from "_cache_page_components.html" import render_browser_session, render_metric, render_progress_metric %}
 {% set current_phase = snapshot.phase or "idle" %}
@@ -266,7 +268,7 @@
 </main>
 
 {% include "_waiting_modal.html" %}
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.7.1-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.8.0-codex.1') }}"></script>
 {% block tail %}{% endblock %}
 </body>
 </html>

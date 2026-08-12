@@ -1,4 +1,4 @@
-/* Code version: v1.0.0-codex.1 */
+/* Code version: v1.1.0-codex.1 */
 
 (function initializeSettingsNavigation() {
     "use strict";
@@ -48,7 +48,7 @@
         link.addEventListener("click", (event) => {
             event.preventDefault();
             activateCategory(link.dataset.settingsCategory, { updateHistory: true });
-            if (window.matchMedia("(max-width: 900px)").matches) {
+            if (window.CACHELIKES_RESPONSIVE.media("sidebarOverlayMax").matches) {
                 window.setSidebarOpen?.(false, { animate: true });
             }
         });
