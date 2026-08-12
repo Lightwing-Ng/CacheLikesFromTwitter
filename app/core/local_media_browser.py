@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.10.0-codex.1
+# Code version: v1.14.0-codex.1
 
 from __future__ import annotations
 
@@ -9,6 +9,8 @@ import json
 import os
 import re
 import shutil
+import subprocess
+import sys
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -18,6 +20,20 @@ from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
 
 from . import config
+from .cache_catalog import LocalTweetCacheIndex
+from .resource_persistence import (
+    CHATGPT_CATALOG_FILENAME,
+    DELETED_MEDIA_FILENAME,
+    DELETED_MEDIA_SCHEMA,
+    DELETED_MEDIA_SCHEMA_VERSION,
+    GROK_CATALOG_FILENAME,
+    LEGACY_CHATGPT_CATALOG_FILENAME,
+    LEGACY_DELETED_MEDIA_FILENAME,
+    LEGACY_GROK_CATALOG_FILENAME,
+    read_parquet_rows,
+    retire_legacy_file,
+    write_parquet_rows_atomic,
+)
 
 
 IMAGE_SUFFIXES = frozenset({".avif", ".gif", ".heic", ".jpeg", ".jpg", ".png", ".webp"})
@@ -104,6 +120,7 @@ class LocalMediaPage:
     current_session_key: str = ""
     current_session_label: str = ""
     current_session_latest_at: str = ""
+    current_session_url: str = ""
 
     @property
     def pagination_items(self) -> tuple[LocalMediaPaginationItem, ...]:
@@ -140,7 +157,7 @@ def format_captured_at_timestamp_label(value: str | datetime | None) -> str:
     if parsed is None:
         return "Unknown date"
     return (
-        f"{parsed.day} {_ENGLISH_MONTHS[parsed.month - 1]} {parsed.year}, "
+        f"{parsed.day} {_ENGLISH_MONTHS[parsed.month - 1]} {parsed.year} "
         f"{parsed.hour:02d}:{parsed.minute:02d}"
     )
 
@@ -178,7 +195,45 @@ def resolve_local_media_path(local_store_root: Path | str, relative_path: str) -
     return resolved
 
 
-DELETED_MEDIA_FILENAME = ".browser_deleted.json"
+def local_file_manager_label(*, platform_name: str | None = None, os_name: str | None = None) -> str:
+    """Return the platform-native file manager name for interface copy."""
+    resolved_platform = sys.platform if platform_name is None else platform_name
+    resolved_os_name = os.name if os_name is None else os_name
+    if resolved_platform == "darwin":
+        return "Finder"
+    if resolved_os_name == "nt":
+        return "File Explorer"
+    return "file manager"
+
+
+def file_manager_reveal_command(
+    media_path: Path | str,
+    *,
+    platform_name: str | None = None,
+    os_name: str | None = None,
+) -> list[str]:
+    """Build the native command that reveals one trusted local media path."""
+    resolved_path = Path(media_path).expanduser().resolve(strict=True)
+    resolved_platform = sys.platform if platform_name is None else platform_name
+    resolved_os_name = os.name if os_name is None else os_name
+    if resolved_platform == "darwin":
+        return ["open", "-R", str(resolved_path)]
+    if resolved_os_name == "nt":
+        return ["explorer.exe", f"/select,{resolved_path}"]
+    return ["xdg-open", str(resolved_path.parent)]
+
+
+def reveal_media_path(media_path: Path | str) -> None:
+    """Open a trusted media path in the host operating system's file manager."""
+    subprocess.Popen(
+        file_manager_reveal_command(media_path),
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
 DELETED_MEDIA_DIRNAME = ".browser-trash"
 
 
@@ -321,27 +376,109 @@ class BrowserDeletionCatalog:
             return items
 
     def _load_entries(self) -> dict[str, dict[str, Any]]:
-        try:
-            payload = json.loads(self.catalog_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError, UnicodeError):
-            return {}
-        raw_entries = payload.get("entries", {}) if isinstance(payload, dict) else {}
-        if not isinstance(raw_entries, dict):
-            return {}
-        return {
-            str(stable_id): entry
-            for stable_id, entry in raw_entries.items()
-            if isinstance(entry, dict) and str(stable_id).strip()
-        }
+        rows = read_parquet_rows(self.catalog_path)
+        legacy_path = self.local_store_root / LEGACY_DELETED_MEDIA_FILENAME
+        if rows is None and legacy_path.exists():
+            try:
+                payload = json.loads(legacy_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError, UnicodeError):
+                payload = None
+            raw_entries = payload.get("entries") if isinstance(payload, dict) else None
+            if isinstance(raw_entries, dict):
+                entries = {
+                    str(stable_id): dict(entry)
+                    for stable_id, entry in raw_entries.items()
+                    if isinstance(entry, dict) and str(stable_id).strip()
+                }
+                self._entries = entries
+                self._save_entries()
+                retire_legacy_file(legacy_path)
+                return entries
+
+        entries: dict[str, dict[str, Any]] = {}
+        for row in rows or []:
+            stable_id = str(row.get("stable_id") or "").strip()
+            if not stable_id:
+                continue
+            original_relative_path = str(row.get("original_relative_path") or "")
+            resource_key = str(row.get("resource_key") or "")
+            deleted_at = str(row.get("deleted_at") or "")
+            preview_relative_path = str(row.get("preview_relative_path") or "")
+            item_payload = {
+                "stable_id": stable_id,
+                "source": str(row.get("source") or ""),
+                "media_kind": str(row.get("media_kind") or ""),
+                "relative_path": original_relative_path,
+                "filename": str(row.get("filename") or ""),
+                "title": str(row.get("title") or ""),
+                "description": str(row.get("description") or ""),
+                "creator": str(row.get("creator") or ""),
+                "source_url": str(row.get("source_url") or ""),
+                "captured_at": str(row.get("captured_at") or ""),
+                "captured_at_label": str(row.get("captured_at_label") or ""),
+                "content_bytes": int(row.get("content_bytes") or 0),
+                "project_name": str(row.get("project_name") or ""),
+                "alt_text": str(row.get("alt_text") or ""),
+                "prompt_markdown": str(row.get("prompt_markdown") or ""),
+                "width": int(row.get("width") or 0),
+                "height": int(row.get("height") or 0),
+                "resource_key": resource_key,
+                "chatgpt_session_key": str(row.get("chatgpt_session_key") or ""),
+                "chatgpt_branch_key": str(row.get("chatgpt_branch_key") or ""),
+                "is_deleted": True,
+                "deleted_at": deleted_at,
+                "preview_relative_path": preview_relative_path,
+            }
+            entries[stable_id] = {
+                "stable_id": stable_id,
+                "source": item_payload["source"],
+                "resource_key": resource_key,
+                "original_relative_path": original_relative_path,
+                "preview_relative_path": preview_relative_path,
+                "item": item_payload,
+                "deleted_at": deleted_at,
+            }
+        return entries
 
     def _save_entries(self) -> None:
-        self.local_store_root.mkdir(parents=True, exist_ok=True)
-        temporary_path = self.catalog_path.with_name(f"{self.catalog_path.name}.tmp")
-        temporary_path.write_text(
-            json.dumps({"version": 1, "entries": self._entries}, indent=2, sort_keys=True),
-            encoding="utf-8",
+        rows: list[dict[str, Any]] = []
+        for entry in sorted(self._entries.values(), key=lambda item: str(item.get("stable_id") or "")):
+            item_payload = dict(entry.get("item") or {})
+            rows.append(
+                {
+                    "schema_version": DELETED_MEDIA_SCHEMA_VERSION,
+                    "stable_id": str(entry.get("stable_id") or item_payload.get("stable_id") or ""),
+                    "source": str(entry.get("source") or item_payload.get("source") or ""),
+                    "resource_key": str(entry.get("resource_key") or item_payload.get("resource_key") or ""),
+                    "original_relative_path": str(
+                        entry.get("original_relative_path") or item_payload.get("relative_path") or ""
+                    ),
+                    "preview_relative_path": str(entry.get("preview_relative_path") or ""),
+                    "deleted_at": str(entry.get("deleted_at") or item_payload.get("deleted_at") or ""),
+                    "media_kind": str(item_payload.get("media_kind") or ""),
+                    "filename": str(item_payload.get("filename") or ""),
+                    "title": str(item_payload.get("title") or ""),
+                    "description": str(item_payload.get("description") or ""),
+                    "creator": str(item_payload.get("creator") or ""),
+                    "source_url": str(item_payload.get("source_url") or ""),
+                    "captured_at": str(item_payload.get("captured_at") or ""),
+                    "captured_at_label": str(item_payload.get("captured_at_label") or ""),
+                    "content_bytes": int(item_payload.get("content_bytes") or 0),
+                    "project_name": str(item_payload.get("project_name") or ""),
+                    "alt_text": str(item_payload.get("alt_text") or ""),
+                    "prompt_markdown": str(item_payload.get("prompt_markdown") or ""),
+                    "width": int(item_payload.get("width") or 0),
+                    "height": int(item_payload.get("height") or 0),
+                    "chatgpt_session_key": str(item_payload.get("chatgpt_session_key") or ""),
+                    "chatgpt_branch_key": str(item_payload.get("chatgpt_branch_key") or ""),
+                }
+            )
+        write_parquet_rows_atomic(
+            self.catalog_path,
+            rows,
+            DELETED_MEDIA_SCHEMA,
         )
-        os.replace(temporary_path, self.catalog_path)
+        retire_legacy_file(self.local_store_root / LEGACY_DELETED_MEDIA_FILENAME)
 
     def _resolve_storage_path(self, relative_path: str, *, allow_hidden: bool) -> Path | None:
         decoded_path = _decode_relative_path(relative_path)
@@ -382,18 +519,23 @@ def normalize_browser_filters(
     query: str | None = None,
     sort: str | None = None,
     page: object = 1,
+    session: str | None = None,
+    session_view: object = None,
 ) -> dict[str, Any]:
     """Normalize user-controlled browser filters to safe allowlisted values."""
     normalized_source = str(source or "").strip().lower()
     normalized_kind = str(media_kind or "").strip().lower()
     normalized_sort = str(sort or "").strip().lower()
     normalized_query = str(query or "").strip()[:120]
+    normalized_session_view = str(session_view or "").strip().lower()
     return {
         "source": normalized_source if normalized_source in SOURCE_VALUES else "all",
         "kind": normalized_kind if normalized_kind in MEDIA_KIND_VALUES else "all",
         "q": normalized_query,
         "sort": normalized_sort if normalized_sort in SORT_VALUES else "newest",
         "page": _coerce_positive_page(page),
+        "session": str(session or "").strip()[:160],
+        "session_view": normalized_session_view not in {"0", "false", "off"},
     }
 
 
@@ -474,6 +616,23 @@ def sort_media_items(items: Iterable[LocalMediaItem], sort: str = "newest") -> t
     return tuple(sorted_active_items + sorted(deleted_items, key=deleted_key))
 
 
+def sort_media_items_absolute(items: Iterable[LocalMediaItem], sort: str = "newest") -> tuple[LocalMediaItem, ...]:
+    """Sort media independently by absolute generation time without session grouping."""
+    materialized = tuple(items)
+    normalized_sort = str(sort or "").strip().lower()
+    if normalized_sort == "name":
+        return tuple(sorted(materialized, key=lambda item: (item.filename.casefold(), item.relative_path)))
+
+    direction = 1 if normalized_sort == "oldest" else -1
+
+    def key(item: LocalMediaItem) -> tuple[float, str]:
+        timestamp = _parse_datetime(item.captured_at)
+        timestamp_value = timestamp.timestamp() if timestamp is not None else 0.0
+        return (direction * timestamp_value, item.relative_path)
+
+    return tuple(sorted(materialized, key=key))
+
+
 def paginate_media_items(
     items: Iterable[LocalMediaItem],
     page: object = 1,
@@ -502,6 +661,7 @@ def paginate_chatgpt_sessions(
     items: Iterable[LocalMediaItem],
     page: object = 1,
     sort: str = "newest",
+    target_session_key: str = "",
 ) -> LocalMediaPage:
     """Return one whole ChatGPT session per page, ordered by its latest image."""
     materialized = tuple(items)
@@ -528,17 +688,30 @@ def paginate_chatgpt_sessions(
     session_count = len(ordered_groups)
     total_pages = max(1, session_count)
     current_page = min(total_pages, _coerce_positive_page(page))
+    normalized_target = str(target_session_key or "").strip()
+    if normalized_target:
+        current_page = next(
+            (
+                index
+                for index, (session_key, group) in enumerate(ordered_groups, start=1)
+                if session_key == normalized_target
+                or any(item.chatgpt_session_key == normalized_target for item in group)
+            ),
+            current_page,
+        )
     if ordered_groups:
         current_session_key, current_group = ordered_groups[current_page - 1]
         latest = latest_image(current_group)
         page_items = sort_media_items(current_group, sort)
         current_session_label = latest.creator or latest.project_name or "Unknown session"
         current_session_latest_at = latest.captured_at
+        current_session_url = latest.source_url
     else:
         current_session_key = ""
         page_items = ()
         current_session_label = ""
         current_session_latest_at = ""
+        current_session_url = ""
 
     return LocalMediaPage(
         items=tuple(page_items),
@@ -552,6 +725,7 @@ def paginate_chatgpt_sessions(
         current_session_key=current_session_key,
         current_session_label=current_session_label,
         current_session_latest_at=current_session_latest_at,
+        current_session_url=current_session_url,
     )
 
 
@@ -611,6 +785,7 @@ class LocalMediaCatalog:
         self._has_snapshot = False
         self._refreshing = False
         self._generation = 0
+        self._x_cache_index: LocalTweetCacheIndex | None = None
 
     def snapshot(self, force_refresh: bool = False) -> tuple[LocalMediaItem, ...]:
         """Return a short-lived, thread-safe snapshot of readable local media."""
@@ -767,6 +942,18 @@ class LocalMediaCatalog:
         """Return the retained preview path for one deleted media item."""
         return self._deletion_catalog.preview_path(stable_id)
 
+    def resolved_media_path(self, stable_id: str) -> Path | None:
+        """Resolve one active media file or retained deleted preview by stable identifier."""
+        item = next(
+            (candidate for candidate in self.snapshot(force_refresh=True) if candidate.stable_id == stable_id),
+            None,
+        )
+        if item is None:
+            return None
+        if item.is_deleted:
+            return self.deleted_preview_path(stable_id)
+        return resolve_local_media_path(self.local_store_root, item.relative_path)
+
     def is_excluded(self, source: str, resource_key: str) -> bool:
         """Return whether a source resource is persistently excluded from downloads."""
         return self._deletion_catalog.is_excluded(source, resource_key)
@@ -780,6 +967,8 @@ class LocalMediaCatalog:
         sort: str = "newest",
         page: object = 1,
         force_refresh: bool = False,
+        chatgpt_session_key: str = "",
+        chatgpt_session_view: bool = True,
     ) -> LocalMediaPage:
         """Return a safe filtered, sorted, and paginated view of the snapshot."""
         filters = normalize_browser_filters(source, media_kind, query, sort, page)
@@ -789,41 +978,55 @@ class LocalMediaCatalog:
             media_kind=filters["kind"],
             query=filters["q"],
         )
+        if filters["source"] == "chatgpt" and chatgpt_session_view:
+            return paginate_chatgpt_sessions(
+                filtered,
+                filters["page"],
+                filters["sort"],
+                chatgpt_session_key,
+            )
         if filters["source"] == "chatgpt":
-            return paginate_chatgpt_sessions(filtered, filters["page"], filters["sort"])
+            return paginate_media_items(
+                sort_media_items_absolute(filtered, filters["sort"]),
+                filters["page"],
+            )
         return paginate_media_items(sort_media_items(filtered, filters["sort"]), filters["page"])
 
     def _scan_x(self) -> list[LocalMediaItem]:
         root = self.local_store_root / "x"
+        self._x_cache_index = LocalTweetCacheIndex.build(root)
         items: list[LocalMediaItem] = []
         metadata_by_directory: dict[Path, Mapping[str, Any]] = {}
-        for media_path in self._iter_media_files(root):
-            file_info = _stat_media_file(media_path)
-            if file_info is None:
-                continue
-            directory = media_path.parent
-            if directory not in metadata_by_directory:
-                metadata_by_directory[directory] = self._load_x_metadata(directory)
-            metadata = metadata_by_directory[directory]
-            uploader = _display_text(metadata.get("uploader") or metadata.get("uploader_id"))
-            uploader_id = _display_text(metadata.get("uploader_id"))
-            display_id = _display_text(metadata.get("display_id"))
-            source_url = _safe_source_url(metadata.get("webpage_url"))
-            if not source_url and uploader_id and display_id:
-                source_url = f"https://x.com/{uploader_id}/status/{display_id}"
-            items.append(
-                self._build_item(
-                    media_path,
-                    source="x",
-                    title=metadata.get("title"),
-                    description=metadata.get("description"),
-                    creator=uploader or "X",
-                    source_url=source_url,
-                    resource_key=source_url,
-                    captured_value=metadata.get("timestamp") or metadata.get("upload_date"),
-                    stat_result=file_info,
+        try:
+            for media_path in self._iter_media_files(root):
+                file_info = _stat_media_file(media_path)
+                if file_info is None:
+                    continue
+                directory = media_path.parent
+                if directory not in metadata_by_directory:
+                    metadata_by_directory[directory] = self._load_x_metadata(directory)
+                metadata = metadata_by_directory[directory]
+                uploader = _display_text(metadata.get("uploader") or metadata.get("uploader_id"))
+                uploader_id = _display_text(metadata.get("uploader_id"))
+                display_id = _display_text(metadata.get("display_id"))
+                source_url = _safe_source_url(metadata.get("webpage_url"))
+                if not source_url and uploader_id and display_id:
+                    source_url = f"https://x.com/{uploader_id}/status/{display_id}"
+                items.append(
+                    self._build_item(
+                        media_path,
+                        source="x",
+                        title=metadata.get("title"),
+                        description=metadata.get("description"),
+                        creator=uploader or "X",
+                        source_url=source_url,
+                        resource_key=source_url,
+                        captured_value=metadata.get("timestamp") or metadata.get("upload_date"),
+                        stat_result=file_info,
+                    )
                 )
-            )
+        finally:
+            self._x_cache_index = None
         return items
 
     def _scan_grok(self) -> list[LocalMediaItem]:
@@ -1034,31 +1237,20 @@ class LocalMediaCatalog:
         return resolved
 
     def _load_x_metadata(self, directory: Path) -> Mapping[str, Any]:
-        candidates: list[Path] = []
-        try:
-            children = sorted(directory.iterdir(), key=lambda item: (item.name.casefold(), item.name))
-        except OSError:
-            return {}
-        for child in children:
-            if child.name.startswith(".") or not child.name.endswith(".info.json") and not child.name.endswith(
-                ".info.json.info.json"
-            ):
-                continue
-            if self._resolve_inside(child) is not None:
-                candidates.append(child)
-        for candidate in candidates:
-            payload = _read_json_object(candidate, self.local_store_root)
-            if payload:
-                return payload
-        return {}
+        """Read X display metadata from the account-level Parquet catalog."""
+        cache_index = self._x_cache_index or LocalTweetCacheIndex.build(self.local_store_root / "x")
+        return cache_index.metadata_for_directory(directory)
 
     def _load_grok_catalog(self, root: Path) -> dict[str, Mapping[str, Any]]:
-        payload = _read_json_object(root / ".grok_catalog.json", self.local_store_root, allow_hidden=True)
-        if not payload:
-            return {}
-        raw_entries = payload.get("entries")
-        if isinstance(raw_entries, Mapping):
-            raw_entries = list(raw_entries.values())
+        raw_entries: object = read_parquet_rows(root / GROK_CATALOG_FILENAME)
+        legacy_path = root / LEGACY_GROK_CATALOG_FILENAME
+        if raw_entries is None and legacy_path.exists():
+            payload = _read_json_object(legacy_path, self.local_store_root, allow_hidden=True)
+            legacy_entries = payload.get("entries") if payload else None
+            if isinstance(legacy_entries, Mapping):
+                legacy_entries = list(legacy_entries.values())
+            if isinstance(legacy_entries, list):
+                raw_entries = legacy_entries
         if not isinstance(raw_entries, list):
             return {}
         entries: dict[str, Mapping[str, Any]] = {}
@@ -1084,14 +1276,17 @@ class LocalMediaCatalog:
         *,
         include_missing: bool = False,
     ) -> dict[str, Mapping[str, Any]]:
-        payload = _read_json_object(project_dir / ".chatgpt_catalog.json", self.local_store_root, allow_hidden=True)
-        if not payload:
-            return {}
-        raw_entries = payload.get("entries")
-        if not isinstance(raw_entries, Mapping):
+        raw_entries: object = read_parquet_rows(project_dir / CHATGPT_CATALOG_FILENAME)
+        legacy_path = project_dir / LEGACY_CHATGPT_CATALOG_FILENAME
+        if raw_entries is None and legacy_path.exists():
+            payload = _read_json_object(legacy_path, self.local_store_root, allow_hidden=True)
+            legacy_entries = payload.get("entries") if payload else None
+            if isinstance(legacy_entries, Mapping):
+                raw_entries = list(legacy_entries.values())
+        if not isinstance(raw_entries, list):
             return {}
         entries: dict[str, Mapping[str, Any]] = {}
-        for raw_entry in raw_entries.values():
+        for raw_entry in raw_entries:
             if not isinstance(raw_entry, Mapping):
                 continue
             relative_path = _safe_catalog_relative_path(raw_entry.get("relative_path"))

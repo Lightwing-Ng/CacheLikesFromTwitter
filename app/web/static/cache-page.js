@@ -1,4 +1,4 @@
-/* Code version: v1.0.0-codex.1 */
+/* Code version: v1.5.0-codex.1 */
 
 (() => {
     "use strict";
@@ -12,6 +12,7 @@
     const progressStrategyName = page.dataset.cacheProgressStrategy || "queue";
     const statusBannerStorageKey = page.dataset.cacheBannerStorageKey || `cachelikes:${sourceKey}:status-banner-dismissed`;
     const recentEventsPageSize = 12;
+    const statusPollIntervalMs = 3_000;
     const terminalPhases = new Set(["finished", "completed", "success", "stopped"]);
     const numberFormatter = new Intl.NumberFormat("en-US");
 
@@ -31,15 +32,25 @@
     const statusProgressDetail = document.getElementById("status_progress_detail");
     const progressProcessedLabel = document.querySelector("[data-progress-unit-label]");
     const recentEventsBody = document.getElementById("recent_events_body");
-    const recentEventsPrev = document.getElementById("recent_events_prev");
-    const recentEventsNext = document.getElementById("recent_events_next");
-    const recentEventsPage = document.getElementById("recent_events_page");
+    const recentEventsPagination = document.getElementById("recent_events_pagination");
+    const cacheSourceSwitcher = document.querySelector("[data-cache-source-switcher]");
     const sectionLinks = Array.from(document.querySelectorAll("[data-section-link]"));
     const statusFields = Array.from(document.querySelectorAll("[data-status-field]"));
     const initialStateNode = document.getElementById("cache_page_initial_state");
 
     let recentEvents = [];
     let recentEventsCurrentPage = 1;
+    let recentEventsSignature = "";
+    let lastRenderedStatusSignature = "";
+    let statusPollTimer = 0;
+    let statusRefreshInFlight = false;
+    let statusRefreshFailed = false;
+
+    function setTextIfChanged(element, value) {
+        if (!element) return;
+        const normalizedValue = String(value ?? "");
+        if (element.textContent !== normalizedValue) element.textContent = normalizedValue;
+    }
 
     function clampPercent(value) {
         return Math.min(Math.max(Math.round(Number(value) || 0), 0), 100);
@@ -73,20 +84,117 @@
 
     function setPhaseState(phase) {
         const normalizedPhase = String(phase || "idle");
-        [phaseChip, bannerPhase].forEach((chip) => {
-            if (!chip) return;
-            chip.textContent = normalizedPhase;
-            chip.className = `status-chip status-${normalizedPhase}`;
-        });
-        if (phaseValue) phaseValue.textContent = normalizedPhase;
+        if (phaseChip) {
+            const phaseDescription = `Cache phase: ${normalizedPhase}`;
+            if (phaseChip.dataset.phase !== normalizedPhase) phaseChip.dataset.phase = normalizedPhase;
+            if (phaseChip.getAttribute("aria-label") !== phaseDescription) {
+                phaseChip.setAttribute("aria-label", phaseDescription);
+            }
+            if (phaseChip.title !== phaseDescription) phaseChip.title = phaseDescription;
+        }
+        if (bannerPhase) {
+            setTextIfChanged(bannerPhase, normalizedPhase);
+            const nextClassName = `status-chip status-${normalizedPhase}`;
+            if (bannerPhase.className !== nextClassName) bannerPhase.className = nextClassName;
+        }
+        setTextIfChanged(phaseValue, normalizedPhase);
     }
 
     function recentEventsTotalPages() {
         return Math.max(1, Math.ceil(recentEvents.length / recentEventsPageSize));
     }
 
+    function buildRecentEventsPaginationItems(totalPages, currentPage) {
+        const chunkSize = 5;
+        const startPage = Math.floor((currentPage - 1) / chunkSize) * chunkSize + 1;
+        const endPage = Math.min(startPage + chunkSize - 1, totalPages);
+        const items = [];
+
+        if (startPage > 1) {
+            items.push({ kind: "previous", page: startPage - 1 });
+            items.push({ kind: "page", page: 1 });
+            items.push({ kind: "ellipsis" });
+        }
+        for (let pageNumber = startPage; pageNumber <= endPage; pageNumber += 1) {
+            items.push({ kind: "page", page: pageNumber, isActive: pageNumber === currentPage });
+        }
+        if (endPage < totalPages) {
+            items.push({ kind: "ellipsis" });
+            items.push({ kind: "page", page: totalPages });
+            items.push({ kind: "next", page: endPage + 1 });
+        }
+        return items;
+    }
+
+    function positionRecentEventsPaginationIndicator() {
+        if (!recentEventsPagination) return;
+        const indicator = recentEventsPagination.querySelector(".local-store-pagination-indicator");
+        const target = recentEventsPagination.querySelector(".local-store-page-button.is-active");
+        if (!indicator || !target) return;
+
+        const paginationRect = recentEventsPagination.getBoundingClientRect();
+        const targetRect = target.getBoundingClientRect();
+        const x = targetRect.left - paginationRect.left - recentEventsPagination.clientLeft;
+        const y = targetRect.top - paginationRect.top - recentEventsPagination.clientTop;
+        indicator.style.width = `${targetRect.width}px`;
+        indicator.style.height = `${targetRect.height}px`;
+        indicator.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+        recentEventsPagination.classList.add("is-animated");
+    }
+
+    function renderRecentEventsPagination(totalPages) {
+        if (!recentEventsPagination) return;
+        const indicator = recentEventsPagination.querySelector(".local-store-pagination-indicator")
+            || document.createElement("span");
+        indicator.className = "local-store-pagination-indicator";
+        indicator.setAttribute("aria-hidden", "true");
+        const items = buildRecentEventsPaginationItems(totalPages, recentEventsCurrentPage);
+        const controls = items.map((item) => {
+            if (item.kind === "ellipsis") {
+                const ellipsis = document.createElement("span");
+                ellipsis.className = "local-store-page-ellipsis";
+                ellipsis.setAttribute("aria-hidden", "true");
+                const dots = document.createElement("span");
+                dots.className = "local-store-page-ellipsis-dots";
+                ellipsis.appendChild(dots);
+                return ellipsis;
+            }
+
+            const button = document.createElement("button");
+            button.type = "button";
+            button.className = `local-store-page-button${item.isActive ? " is-active" : ""}${item.kind === "page" ? "" : " local-store-page-nav"}`;
+            button.dataset.paginationTarget = String(item.page);
+            button.dataset.paginationCurrent = item.isActive ? "1" : "0";
+            if (item.isActive) {
+                button.setAttribute("aria-current", "page");
+            }
+
+            if (item.kind === "page") {
+                button.textContent = String(item.page);
+                button.setAttribute("aria-label", `Event page ${item.page}`);
+            } else {
+                const isPrevious = item.kind === "previous";
+                button.setAttribute("aria-label", isPrevious ? "Previous event page group" : "Next event page group");
+                const icon = document.createElement("span");
+                icon.className = `icon ${isPrevious ? "icon-page-prev" : "icon-page-next"}`;
+                icon.setAttribute("aria-hidden", "true");
+                button.appendChild(icon);
+            }
+
+            button.addEventListener("click", () => {
+                recentEventsCurrentPage = item.page;
+                renderRecentEventsPage();
+            });
+            return button;
+        });
+
+        recentEventsPagination.style.setProperty("--local-store-pagination-slots", String(items.length));
+        recentEventsPagination.replaceChildren(indicator, ...controls);
+        window.requestAnimationFrame(positionRecentEventsPaginationIndicator);
+    }
+
     function renderRecentEventsPage() {
-        if (!recentEventsBody || !recentEventsPage || !recentEventsPrev || !recentEventsNext) return;
+        if (!recentEventsBody || !recentEventsPagination) return;
         const totalPages = recentEventsTotalPages();
         recentEventsCurrentPage = Math.min(Math.max(recentEventsCurrentPage, 1), totalPages);
         const pageStartIndex = (recentEventsCurrentPage - 1) * recentEventsPageSize;
@@ -115,14 +223,17 @@
             });
         }
 
-        recentEventsPage.textContent = `${recentEventsCurrentPage} / ${totalPages}`;
-        recentEventsPrev.disabled = recentEventsCurrentPage <= 1;
-        recentEventsNext.disabled = recentEventsCurrentPage >= totalPages;
+        renderRecentEventsPagination(totalPages);
     }
 
     function setRecentEvents(events) {
-        recentEvents = (Array.isArray(events) ? events : [])
-            .filter((eventText) => String(eventText || "").trim().length > 0);
+        const nextEvents = (Array.isArray(events) ? events : [])
+            .map((eventText) => String(eventText || ""))
+            .filter((eventText) => eventText.trim().length > 0);
+        const nextSignature = JSON.stringify(nextEvents);
+        if (nextSignature === recentEventsSignature) return;
+        recentEvents = nextEvents;
+        recentEventsSignature = nextSignature;
         recentEventsCurrentPage = recentEventsTotalPages();
         renderRecentEventsPage();
     }
@@ -156,19 +267,127 @@
         observedSections.forEach((section) => sectionObserver.observe(section));
     }
 
+    function initializeCacheSourceSwitcher() {
+        if (!cacheSourceSwitcher) return;
+        const trigger = cacheSourceSwitcher.querySelector("[data-cache-source-switcher-trigger]");
+        const menu = cacheSourceSwitcher.querySelector("[data-cache-source-switcher-menu]");
+        const options = Array.from(cacheSourceSwitcher.querySelectorAll("[data-cache-source-switcher-option]"));
+        if (!trigger || !menu || !options.length) return;
+
+        function selectedOption() {
+            return options.find((option) => option.getAttribute("aria-selected") === "true") || options[0];
+        }
+
+        function setActiveOption(option) {
+            options.forEach((candidate) => candidate.classList.toggle("is-active", candidate === option));
+            if (option?.id) {
+                trigger.setAttribute("aria-activedescendant", option.id);
+                option.scrollIntoView({ block: "nearest" });
+            }
+        }
+
+        function setMenuOpen(isOpen) {
+            cacheSourceSwitcher.classList.toggle("is-cache-source-menu-open", isOpen);
+            trigger.setAttribute("aria-expanded", String(isOpen));
+            menu.hidden = !isOpen;
+            if (isOpen) {
+                setActiveOption(selectedOption());
+            } else {
+                trigger.removeAttribute("aria-activedescendant");
+            }
+        }
+
+        function navigateToOption(option) {
+            const targetPath = option.dataset.cacheSourceSwitcherPath || "";
+            if (!targetPath) return;
+
+            const targetUrl = new URL(targetPath, window.location.origin);
+            if (targetUrl.origin !== window.location.origin || targetUrl.pathname === window.location.pathname) {
+                setMenuOpen(false);
+                trigger.focus({ preventScroll: true });
+                return;
+            }
+            window.location.assign(targetUrl.href);
+        }
+
+        trigger.addEventListener("click", () => {
+            setMenuOpen(menu.hidden);
+        });
+        trigger.addEventListener("keydown", (event) => {
+            if (event.key === "Escape") {
+                if (menu.hidden) return;
+                event.preventDefault();
+                setMenuOpen(false);
+                return;
+            }
+            if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+            event.preventDefault();
+            setMenuOpen(true);
+            const selectedIndex = Math.max(options.indexOf(selectedOption()), 0);
+            const targetIndex = event.key === "Home"
+                ? 0
+                : event.key === "End"
+                    ? options.length - 1
+                    : Math.min(
+                        Math.max(selectedIndex + (event.key === "ArrowDown" ? 1 : -1), 0),
+                        options.length - 1,
+                    );
+            setActiveOption(options[targetIndex]);
+            options[targetIndex].focus({ preventScroll: true });
+        });
+
+        options.forEach((option, index) => {
+            option.addEventListener("click", () => navigateToOption(option));
+            option.addEventListener("keydown", (event) => {
+                if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+                    event.preventDefault();
+                    const nextIndex = event.key === "Home"
+                        ? 0
+                        : event.key === "End"
+                            ? options.length - 1
+                            : Math.min(
+                                Math.max(index + (event.key === "ArrowDown" ? 1 : -1), 0),
+                                options.length - 1,
+                            );
+                    setActiveOption(options[nextIndex]);
+                    options[nextIndex].focus({ preventScroll: true });
+                } else if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    navigateToOption(option);
+                } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    setMenuOpen(false);
+                    trigger.focus({ preventScroll: true });
+                } else if (event.key === "Tab") {
+                    setMenuOpen(false);
+                }
+            });
+        });
+
+        document.addEventListener("click", (event) => {
+            if (!cacheSourceSwitcher.contains(event.target)) setMenuOpen(false);
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && !menu.hidden) {
+                setMenuOpen(false);
+                trigger.focus({ preventScroll: true });
+            }
+        });
+    }
+
     function updateStatusFields(data) {
         statusFields.forEach((element) => {
             const fieldName = element.dataset.statusField;
             if (!fieldName) return;
             const rawValue = data[fieldName];
             if (element.dataset.statusFormat === "number") {
-                element.textContent = formatMetricNumber(rawValue);
+                setTextIfChanged(element, formatMetricNumber(rawValue));
                 return;
             }
             const fallback = element.dataset.statusFallback || "";
-            element.textContent = rawValue === null || rawValue === undefined || rawValue === ""
+            setTextIfChanged(element, rawValue === null || rawValue === undefined || rawValue === ""
                 ? fallback
-                : String(rawValue);
+                : String(rawValue));
         });
     }
 
@@ -187,8 +406,8 @@
         } else {
             statusProgress.setAttribute("aria-valuenow", String(Math.max(completePercent, auditPercent)));
         }
-        if (statusProgressValue && state.label) statusProgressValue.textContent = state.label;
-        if (statusProgressDetail && state.detail) statusProgressDetail.textContent = state.detail;
+        if (state.label) setTextIfChanged(statusProgressValue, state.label);
+        if (state.detail) setTextIfChanged(statusProgressDetail, state.detail);
     }
 
     function discoveryProgress(data) {
@@ -324,66 +543,59 @@
             conversations: "Conversations processed",
             resources: "Resources processed",
         };
-        progressProcessedLabel.textContent = labels[data.progress_unit] || "Work items processed";
+        setTextIfChanged(progressProcessedLabel, labels[data.progress_unit] || "Work items processed");
     }
 
     function updateActionState(data) {
         const browserDownloadReady = browserSessionPanel
             ? browserSessionPanel.dataset.browserDownloadReady !== "false"
             : true;
-        if (startButton) startButton.disabled = Boolean(data.running) || !browserDownloadReady;
-        if (stopButton) stopButton.disabled = !Boolean(data.running);
+        const shouldDisableStart = Boolean(data.running) || !browserDownloadReady;
+        const shouldDisableStop = !Boolean(data.running);
+        if (startButton && startButton.disabled !== shouldDisableStart) startButton.disabled = shouldDisableStart;
+        if (stopButton && stopButton.disabled !== shouldDisableStop) stopButton.disabled = shouldDisableStop;
+    }
+
+    function renderStatus(data) {
+        const nextSignature = JSON.stringify(data);
+        if (nextSignature === lastRenderedStatusSignature && !statusRefreshFailed) return;
+        lastRenderedStatusSignature = nextSignature;
+        statusRefreshFailed = false;
+        updateStatusFields(data);
+        setTextIfChanged(bannerMessage, data.message || "");
+        setPhaseState(data.phase);
+        setRecentEvents(data.recent_events || []);
+        updateProgressUnitLabel(data);
+        updateProgress(data);
+        updateActionState(data);
+    }
+
+    function scheduleStatusRefresh(delayMs = statusPollIntervalMs) {
+        window.clearTimeout(statusPollTimer);
+        if (!statusUrl || document.hidden) return;
+        statusPollTimer = window.setTimeout(() => void refreshStatus(), delayMs);
     }
 
     async function refreshStatus() {
-        if (!statusUrl) return;
+        if (!statusUrl || statusRefreshInFlight || document.hidden) return;
+        statusRefreshInFlight = true;
         try {
             const response = await fetch(statusUrl, { cache: "no-store" });
             if (!response.ok) throw new Error(`Status request failed with ${response.status}`);
             const data = await response.json();
-            updateStatusFields(data);
-            if (bannerMessage) bannerMessage.textContent = data.message || "";
-            setPhaseState(data.phase);
-            setRecentEvents(data.recent_events || []);
-            updateProgressUnitLabel(data);
-            updateProgress(data);
-            updateActionState(data);
+            renderStatus(data);
         } catch (_error) {
-            if (statusProgressDetail) statusProgressDetail.textContent = "Status refresh temporarily unavailable.";
+            statusRefreshFailed = true;
+            setTextIfChanged(statusProgressDetail, "Status refresh temporarily unavailable.");
+        } finally {
+            statusRefreshInFlight = false;
+            scheduleStatusRefresh();
         }
     }
 
-    function initializeNumberSteppers() {
-        document.querySelectorAll("[data-cache-number-field]").forEach((field) => {
-            const input = field.querySelector("input[type='number']");
-            if (!input) return;
-            const step = Number.parseFloat(input.step);
-            const minimum = Number.parseFloat(input.min);
-            const maximum = Number.parseFloat(input.max);
-            const decimalPlaces = (input.step.split(".")[1] || "").length;
-            field.querySelectorAll("[data-cache-number-stepper]").forEach((button) => {
-                button.addEventListener("click", () => {
-                    const current = Number.parseFloat(input.value);
-                    const baseValue = Number.isFinite(current)
-                        ? current
-                        : Number.isFinite(minimum)
-                            ? minimum
-                            : 0;
-                    const direction = button.dataset.cacheNumberStepper === "decrement" ? -1 : 1;
-                    const nextValue = Math.min(
-                        Number.isFinite(maximum) ? maximum : Number.POSITIVE_INFINITY,
-                        Math.max(
-                            Number.isFinite(minimum) ? minimum : Number.NEGATIVE_INFINITY,
-                            baseValue + direction * (Number.isFinite(step) && step > 0 ? step : 1),
-                        ),
-                    );
-                    input.value = nextValue.toFixed(decimalPlaces);
-                    input.dispatchEvent(new Event("input", { bubbles: true }));
-                    input.dispatchEvent(new Event("change", { bubbles: true }));
-                    input.focus({ preventScroll: true });
-                });
-            });
-        });
+    function handleVisibilityChange() {
+        window.clearTimeout(statusPollTimer);
+        if (!document.hidden) void refreshStatus();
     }
 
     function readInitialEvents() {
@@ -397,19 +609,13 @@
     }
 
     statusBannerDismiss?.addEventListener("click", () => setStatusBannerVisible(false));
-    recentEventsPrev?.addEventListener("click", () => {
-        recentEventsCurrentPage -= 1;
-        renderRecentEventsPage();
-    });
-    recentEventsNext?.addEventListener("click", () => {
-        recentEventsCurrentPage += 1;
-        renderRecentEventsPage();
-    });
+    window.addEventListener("resize", positionRecentEventsPaginationIndicator, { passive: true });
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", () => window.clearTimeout(statusPollTimer), { once: true });
 
     restoreStatusBannerState();
-    initializeNumberSteppers();
+    initializeCacheSourceSwitcher();
     initializeSectionTracking();
     setRecentEvents(readInitialEvents());
-    refreshStatus();
-    window.setInterval(refreshStatus, 3_000);
+    scheduleStatusRefresh();
 })();

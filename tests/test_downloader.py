@@ -1,10 +1,11 @@
 """Tests for yt-dlp output classification and retry boundaries.
 
-Code version: v1.2.0-codex.1
+Code version: v1.3.0-codex.1
 """
 
 from __future__ import annotations
 
+import json
 import subprocess
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ import pytest
 from app.core.config import CrawlConfig
 from app.core.downloader import (
     MEDIA_MARKER_PREFIX,
+    METADATA_MARKER_PREFIX,
     build_cookies_from_browser_arg,
     count_downloaded_media_types,
     discard_oversized_downloads,
@@ -25,6 +27,8 @@ from app.core.downloader import (
     is_transient_retryable_output,
     is_unsupported_external_url_skip_output,
     parse_downloaded_paths,
+    parse_download_metadata,
+    metadata_for_downloaded_path,
     download_tweet_media,
     run_yt_dlp_with_retries,
 )
@@ -51,6 +55,22 @@ def test_output_parsing_counts_media_and_classifies_skips() -> None:
     assert is_suspended_skip_output("account: suspended")
     assert is_existing_file_conflict("unable to rename because the file exists")
     assert is_max_file_size_skip_output("File is larger than max-filesize")
+
+
+def test_output_parsing_matches_metadata_without_json_sidecars(tmp_path) -> None:
+    media_path = tmp_path / "demo" / "123" / "123.jpg"
+    metadata = {
+        "filepath": str(media_path),
+        "display_id": "123",
+        "title": "Cached post",
+        "webpage_url": "https://x.com/demo/status/123",
+    }
+    output = f"{METADATA_MARKER_PREFIX}{json.dumps(metadata)}"
+
+    rows = parse_download_metadata(output)
+
+    assert rows == [metadata]
+    assert metadata_for_downloaded_path(media_path, rows) == metadata
 
 
 def test_discard_oversized_downloads_removes_only_files_above_limit(tmp_path) -> None:
@@ -90,6 +110,8 @@ def test_download_tweet_media_passes_the_universal_size_limit_to_yt_dlp(tmp_path
     command = run_yt_dlp.call_args.args[0]
     limit_index = command.index("--max-filesize")
     assert command[limit_index + 1] == str(1 * 1024 * 1024)
+    assert "--write-info-json" not in command
+    assert f"after_move:{METADATA_MARKER_PREFIX}%()j" in command
     assert result.skipped
     assert result.skipped_oversized_media_count == 1
 

@@ -1,11 +1,11 @@
 """Flask application for the local web console."""
 
-# Code version: v1.16.0-codex.1
+# Code version: v1.21.1-codex.1
 
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any
 
@@ -14,7 +14,12 @@ from markdown_it import MarkdownIt
 from markupsafe import Markup
 
 from app.core.browser_sessions import browser_descriptors, build_browser_options, probe_browser_session
-from app.core.chatgpt_downloader import build_chatgpt_initial_snapshot, reset_chatgpt_state
+from app.core.chatgpt_downloader import (
+    build_chatgpt_initial_snapshot,
+    chatgpt_conversation_id,
+    is_chatgpt_conversation_url,
+    reset_chatgpt_state,
+)
 from app.core.chatgpt_service import ChatGPTDownloadService
 from app.core.config import (
     DEFAULT_HOST,
@@ -36,13 +41,16 @@ from app.core.logging_setup import configure_logging, get_log_file_path
 from app.core.local_media_browser import (
     LocalMediaCatalog,
     format_captured_at_timestamp_label,
+    local_file_manager_label,
     normalize_browser_filters,
+    reveal_media_path,
     resolve_local_media_path,
 )
 from app.core.service import CacheLikesService
 from app.core.shadow_backup import (
     ShadowBackupError,
     ShadowBackupService,
+    choose_settings_directory,
     choose_shadow_backup_destination,
 )
 from app.core.state import TaskState, build_initial_snapshot, utc_now
@@ -77,15 +85,19 @@ def reconcile_cached_snapshot(snapshot: dict[str, Any], hydrated_payload: dict[s
     if snapshot.get("running") or snapshot.get("phase") not in CACHE_RECONCILE_PHASES:
         return snapshot
 
+    is_idle = snapshot.get("phase") == "idle"
     snapshot["account_name"] = hydrated_payload["account_name"]
     snapshot["output_dir"] = hydrated_payload["output_dir"]
     snapshot["downloaded_posts"] = hydrated_payload["downloaded_posts"]
     snapshot["downloaded_tweets"] = hydrated_payload["downloaded_tweets"]
-    if "discovered_images" in hydrated_payload:
+    if "discovered_images" in hydrated_payload and (
+        is_idle or "discovered_images" not in snapshot
+    ):
         snapshot["discovered_images"] = hydrated_payload["discovered_images"]
     snapshot["downloaded_images"] = hydrated_payload["downloaded_images"]
     snapshot["downloaded_videos"] = hydrated_payload["downloaded_videos"]
-    snapshot["message"] = hydrated_payload["message"]
+    if is_idle:
+        snapshot["message"] = hydrated_payload["message"]
     return snapshot
 
 
@@ -108,6 +120,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     grok_service = GrokDownloadService(grok_state, shadow_backup_service=shadow_backup_service)
     chatgpt_state = TaskState(version=APP_VERSION, snapshot_factory=build_chatgpt_initial_snapshot)
     chatgpt_service = ChatGPTDownloadService(chatgpt_state, shadow_backup_service=shadow_backup_service)
+    app.extensions["chatgpt_service"] = chatgpt_service
     saved_config = load_saved_config()
     cache_runtimes = {
         "x": CacheRuntimeAdapter(
@@ -302,12 +315,25 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         cache_source = get_cache_source_view(source_key)
         if cache_source is None or source_key not in cache_runtimes:
             abort(404)
+        browser_options = build_browser_options(saved_config)
+        selected_browser_id = str(
+            getattr(saved_config, cache_source.browser_config_field, "") or ""
+        )
+        selected_browser_label = next(
+            (
+                option["label"]
+                for option in browser_options
+                if option["id"] == selected_browser_id
+            ),
+            "background browser",
+        )
         return render_template(
             cache_source.template_name,
             cache_source=cache_source,
             snapshot=build_reconciled_cache_snapshot(source_key),
             saved_config=saved_config,
-            browser_options=build_browser_options(saved_config),
+            browser_options=browser_options,
+            selected_browser_label=selected_browser_label,
             version=APP_VERSION,
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,
@@ -353,6 +379,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             query=request.args.get("q"),
             sort=request.args.get("sort"),
             page=request.args.get("page"),
+            session=request.args.get("session"),
+            session_view=request.args.get("session_view"),
         )
         force_refresh = request.args.get("refresh") == "1"
         all_items = media_catalog.snapshot(force_refresh=force_refresh)
@@ -362,6 +390,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             query=filters["q"],
             sort=filters["sort"],
             page=filters["page"],
+            chatgpt_session_key=filters["session"],
+            chatgpt_session_view=filters["session_view"],
         )
         media_payload = [serialize_media_item(item) for item in media_page.items]
         return render_template(
@@ -373,6 +403,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             format_captured_at_timestamp_label=format_captured_at_timestamp_label,
             format_media_size=format_media_size,
             render_prompt_markdown=render_prompt_markdown,
+            file_manager_label=local_file_manager_label(),
             version=APP_VERSION,
         )
 
@@ -413,6 +444,49 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         except (OSError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify({"item": serialize_media_item(item)})
+
+    @app.post("/api/browser/media/<stable_id>/reveal")
+    def reveal_browser_media(stable_id: str):
+        if request.remote_addr not in {"127.0.0.1", "::1"}:
+            return jsonify({"error": "Local files can only be revealed from this computer."}), 403
+
+        resolved_path = media_catalog.resolved_media_path(stable_id)
+        if resolved_path is None:
+            return jsonify({"error": "Cached media is no longer available."}), 404
+        try:
+            reveal_media_path(resolved_path)
+        except OSError as exc:
+            return jsonify({"error": f"Unable to open {local_file_manager_label()}: {exc}"}), 500
+        return jsonify({"revealed": True, "file_manager": local_file_manager_label()})
+
+    @app.post("/api/browser/chatgpt/session/refresh")
+    def refresh_browser_chatgpt_session():
+        """Start a targeted ChatGPT refresh for one valid conversation URL."""
+        payload = request.get_json(silent=True) or {}
+        conversation_url = str(payload.get("conversation_url") or "").strip()
+        if not is_chatgpt_conversation_url(conversation_url):
+            return jsonify({"error": "A valid ChatGPT session URL is required."}), 400
+
+        resource_count = sum(
+            item.source == "chatgpt"
+            for item in media_catalog.snapshot(force_refresh=True)
+        )
+        session_config = replace(saved_config, chatgpt_project_url=conversation_url)
+        try:
+            chatgpt_service.start(session_config)
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 409
+        return (
+            jsonify(
+                {
+                    "started": True,
+                    "session_key": chatgpt_conversation_id(conversation_url),
+                    "resource_count": resource_count,
+                    "status_url": url_for("api_chatgpt_status"),
+                }
+            ),
+            202,
+        )
 
     def start_cache_source_runtime(source_key: str):
         """Persist shared form values and start one registered runtime."""
@@ -566,6 +640,45 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         if selected_path is None:
             return jsonify({"cancelled": True})
         return jsonify({"destination": str(selected_path)})
+
+    @app.post("/api/settings/directory")
+    def choose_settings_directory_route():
+        if request.remote_addr not in {"127.0.0.1", "::1"}:
+            return jsonify({"error": "The folder picker is only available from this Mac."}), 403
+
+        directory_options = {
+            "chrome_user_data_dir": (
+                saved_config.chrome_user_data_dir,
+                "Select Chrome user data directory",
+            ),
+            "shadow_backup_destination": (
+                saved_config.shadow_backup_destination,
+                "Select shadow cloud backup destination",
+            ),
+        }
+        payload = request.get_json(silent=True) or {}
+        field_name = payload.get("field")
+        if field_name not in directory_options:
+            return jsonify({"error": "Unknown Settings directory field."}), 400
+
+        default_path, picker_prompt = directory_options[field_name]
+        requested_initial_path = payload.get("initial_path")
+        initial_value = (
+            requested_initial_path.strip()
+            if isinstance(requested_initial_path, str)
+            else str(default_path)
+        )
+        try:
+            selected_path = choose_settings_directory(
+                Path(initial_value or str(default_path)),
+                picker_prompt,
+            )
+        except ShadowBackupError as exc:
+            return jsonify({"error": str(exc)}), 500
+
+        if selected_path is None:
+            return jsonify({"cancelled": True})
+        return jsonify({"directory": str(selected_path)})
 
     @app.get("/api/status")
     def api_status():

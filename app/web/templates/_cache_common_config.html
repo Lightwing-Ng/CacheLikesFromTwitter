@@ -1,4 +1,5 @@
-{# Code version: v1.1.0-codex.1 #}
+{# Code version: v1.2.0-codex.1 #}
+{% from "_number_field.html" import render_number_field %}
 {% macro render_cache_common_config(saved_config, id_prefix) -%}
 <section
     class="cache-common-config"
@@ -11,29 +12,15 @@
         <span class="cache-common-config-scope">All cache sources</span>
     </div>
     <div class="field-grid compact-config-grid">
-        <label class="field compact-config-field">
-            <span>Download workers</span>
-            <input
-                type="text"
-                inputmode="numeric"
-                class="formatted-number-input"
-                data-number-format="integer"
-                name="download_workers"
-                value="{{ saved_config.download_workers }}"
-            >
-        </label>
-        <label class="field compact-config-field">
-            <span>Max cached file size (MiB)</span>
-            <input
-                type="text"
-                inputmode="numeric"
-                class="formatted-number-input"
-                data-number-format="integer"
-                name="max_media_file_size_mib"
-                value="{{ saved_config.max_media_file_size_mib }}"
-                aria-describedby="{{ id_prefix }}_cache_common_config_help"
-            >
-        </label>
+        {{ render_number_field("Download workers", "download_workers", saved_config.download_workers, minimum="1") }}
+        {{ render_number_field(
+            "Max cached file size (MiB)",
+            "max_media_file_size_mib",
+            saved_config.max_media_file_size_mib,
+            minimum="1",
+            maximum="10240",
+            describedby=id_prefix ~ "_cache_common_config_help"
+        ) }}
     </div>
     <p class="settings-field-help" id="{{ id_prefix }}_cache_common_config_help">
         Shared by all cache sources. Existing files are kept; oversized new files are skipped.

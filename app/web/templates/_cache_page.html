@@ -1,15 +1,16 @@
-{# Code version: v1.0.2-codex.1 #}
+{# Code version: v1.6.8-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{{ cache_source.document_title }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.25.0-codex.1') }}">
+    <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.45.0-codex.1') }}">
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.6.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='numeric-input-format.js') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.7.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.5.0-codex.1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -41,6 +42,7 @@
         <button type="button" class="sidebar-toggle" id="sidebar_toggle" aria-label="Toggle sidebar" aria-expanded="true">
             <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
         </button>
+        {% include "_theme_toggle.html" %}
         <button
             type="button"
             class="sidebar-backdrop"
@@ -52,13 +54,75 @@
         ></button>
 
         <aside class="panel sidebar" id="app_sidebar">
+            <section class="hero">
+                <h1>Caches</h1>
+            </section>
             <section class="sidebar-section">
                 <div class="section-heading">
-                    <div>
-                        <p class="section-kicker">Download</p>
-                        <h2>{{ cache_source.label }}</h2>
+                    <div
+                        class="trade-strategy-combobox browser-session-combobox cache-source-switcher-combobox"
+                        data-cache-source-switcher
+                    >
+                        <button
+                            type="button"
+                            class="trade-strategy-select form-select trade-strategy-trigger browser-session-trigger cache-source-switcher-trigger"
+                            data-cache-source-switcher-trigger
+                            aria-haspopup="listbox"
+                            aria-expanded="false"
+                            aria-controls="cache_source_switcher_options"
+                            aria-label="Cache source: {{ cache_source.label }}"
+                            title="{{ cache_source.label }}"
+                        >
+                            <span class="browser-session-trigger-leading">
+                                <span class="browser-picker-selected-icon-shell">
+                                    <span
+                                        class="cache-source-mark browser-source-filter-mark"
+                                        style="--cache-source-mark: url('{{ url_for('static', filename=cache_source.icon_filename) }}');"
+                                        aria-hidden="true"
+                                    ></span>
+                                </span>
+                                <span class="trade-strategy-trigger-label browser-session-trigger-label">{{ cache_source.label }}</span>
+                            </span>
+                            <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                        </button>
+                        <div
+                            class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown cache-source-switcher-dropdown"
+                            id="cache_source_switcher_options"
+                            data-cache-source-switcher-menu
+                            role="listbox"
+                            aria-label="Switch cache source"
+                            hidden
+                        >
+                            {% for source in cache_sources %}
+                            <button
+                                type="button"
+                                id="cache_source_switcher_option_{{ source.key }}"
+                                class="trade-strategy-dropdown-option browser-source-filter-option{% if source.key == cache_source.key %} is-selected is-active{% endif %}"
+                                data-cache-source-switcher-option="{{ source.key }}"
+                                data-cache-source-switcher-path="{{ url_for(source.view_endpoint) }}"
+                                role="option"
+                                aria-selected="{{ 'true' if source.key == cache_source.key else 'false' }}"
+                                tabindex="-1"
+                            >
+                                <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                <span
+                                    class="cache-source-mark browser-source-filter-mark"
+                                    style="--cache-source-mark: url('{{ url_for('static', filename=source.icon_filename) }}');"
+                                    aria-hidden="true"
+                                ></span>
+                                <span class="trade-strategy-dropdown-text">{{ source.label }}</span>
+                            </button>
+                            {% endfor %}
+                        </div>
                     </div>
-                    <span class="status-chip status-{{ current_phase }}" id="phase_chip">{{ current_phase }}</span>
+                    <span
+                        class="cache-phase-live-marker"
+                        id="phase_chip"
+                        data-phase="{{ current_phase }}"
+                        role="status"
+                        aria-label="Cache phase: {{ current_phase }}"
+                        title="Cache phase: {{ current_phase }}"
+                    ></span>
                 </div>
 
                 {{ render_browser_session(cache_source, browser_options) }}
@@ -181,11 +245,14 @@
                                     <tbody id="recent_events_body"></tbody>
                                 </table>
                             </div>
-                            <div class="events-pagination">
-                                <button type="button" class="events-page-button" id="recent_events_prev" aria-label="Previous page">Prev</button>
-                                <span class="events-page-indicator" id="recent_events_page">1 / 1</span>
-                                <button type="button" class="events-page-button" id="recent_events_next" aria-label="Next page">Next</button>
-                            </div>
+                            <nav
+                                class="browser-pagination local-store-pagination local-store-pagination--floating events-pagination is-animated"
+                                id="recent_events_pagination"
+                                aria-label="Recent event pages"
+                                style="--local-store-pagination-slots: 1;"
+                            >
+                                <span class="local-store-pagination-indicator" aria-hidden="true"></span>
+                            </nav>
                         </div>
                     </div>
                 </section>
@@ -199,7 +266,7 @@
 </main>
 
 {% include "_waiting_modal.html" %}
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.4.1-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.7.1-codex.1') }}"></script>
 {% block tail %}{% endblock %}
 </body>
 </html>

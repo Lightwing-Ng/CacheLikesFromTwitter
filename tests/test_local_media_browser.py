@@ -1,6 +1,6 @@
 """Read-only local media browser tests.
 
-Code version: v1.5.0-codex.1
+Code version: v1.9.0-codex.1
 """
 
 from __future__ import annotations
@@ -18,12 +18,22 @@ from app.core.local_media_browser import (
     LocalMediaCatalog,
     LocalMediaItem,
     build_local_store_pagination,
+    file_manager_reveal_command,
     format_captured_at_label,
     format_captured_at_timestamp_label,
+    local_file_manager_label,
     paginate_chatgpt_sessions,
     paginate_media_items,
+    reveal_media_path,
     resolve_local_media_path,
     sort_media_items,
+    sort_media_items_absolute,
+)
+from app.core.resource_persistence import (
+    DELETED_MEDIA_FILENAME,
+    DELETED_MEDIA_SCHEMA,
+    read_parquet_rows,
+    write_parquet_rows_atomic,
 )
 
 
@@ -177,6 +187,7 @@ def test_browser_deletion_keeps_preview_and_blocks_future_source_downloads(tmp_p
     assert deleted.deleted_at
     assert not media_path.exists()
     assert catalog.deleted_preview_path(item.stable_id).read_bytes() == b"jpeg-bytes"
+    assert catalog.resolved_media_path(item.stable_id) == catalog.deleted_preview_path(item.stable_id)
     assert catalog.is_excluded("x", "https://twitter.com/uploader/status/123")
     deleted_snapshot_item = catalog.snapshot(force_refresh=True)[0]
     assert deleted_snapshot_item.is_deleted
@@ -189,6 +200,41 @@ def test_browser_deletion_keeps_preview_and_blocks_future_source_downloads(tmp_p
     assert media_path.read_bytes() == b"jpeg-bytes"
     assert not catalog.is_excluded("x", item.source_url)
     assert catalog.deleted_preview_path(item.stable_id) is None
+    assert catalog.resolved_media_path(item.stable_id) == media_path.resolve()
+
+
+def test_file_manager_reveal_uses_platform_native_commands(tmp_path: Path, monkeypatch) -> None:
+    media_path = tmp_path / "asset.png"
+    _write_media(media_path)
+
+    assert local_file_manager_label(platform_name="darwin", os_name="posix") == "Finder"
+    assert local_file_manager_label(platform_name="win32", os_name="nt") == "File Explorer"
+    assert local_file_manager_label(platform_name="linux", os_name="posix") == "file manager"
+    assert file_manager_reveal_command(
+        media_path,
+        platform_name="darwin",
+        os_name="posix",
+    ) == ["open", "-R", str(media_path.resolve())]
+    assert file_manager_reveal_command(
+        media_path,
+        platform_name="win32",
+        os_name="nt",
+    ) == ["explorer.exe", f"/select,{media_path.resolve()}"]
+    assert file_manager_reveal_command(
+        media_path,
+        platform_name="linux",
+        os_name="posix",
+    ) == ["xdg-open", str(tmp_path.resolve())]
+
+    popen_calls = []
+    monkeypatch.setattr(
+        "app.core.local_media_browser.subprocess.Popen",
+        lambda command, **kwargs: popen_calls.append((command, kwargs)),
+    )
+    reveal_media_path(media_path)
+
+    assert popen_calls[0][0] == ["open", "-R", str(media_path.resolve())]
+    assert popen_calls[0][1]["start_new_session"] is True
 
 
 def test_browser_deletion_catalog_normalizes_source_keys(tmp_path: Path) -> None:
@@ -368,12 +414,13 @@ def test_legacy_chatgpt_tombstone_hydrates_source_metadata_from_catalog(tmp_path
     active_item = media_catalog.snapshot(force_refresh=True)[0]
     media_catalog.delete(active_item.stable_id)
 
-    deletion_path = root / ".browser_deleted.json"
-    deletion_payload = json.loads(deletion_path.read_text(encoding="utf-8"))
-    tombstone_item = deletion_payload["entries"][active_item.stable_id]["item"]
-    tombstone_item.pop("chatgpt_session_key", None)
-    tombstone_item["creator"] = "Studio208cm"
-    deletion_path.write_text(json.dumps(deletion_payload), encoding="utf-8")
+    deletion_path = root / DELETED_MEDIA_FILENAME
+    deletion_rows = read_parquet_rows(deletion_path)
+    assert deletion_rows is not None
+    tombstone_row = next(row for row in deletion_rows if row["stable_id"] == active_item.stable_id)
+    tombstone_row["chatgpt_session_key"] = ""
+    tombstone_row["creator"] = "Studio208cm"
+    write_parquet_rows_atomic(deletion_path, deletion_rows, DELETED_MEDIA_SCHEMA)
     catalog_payload["entries"]["file-123"].update(
         {
             "conversation_title": "Updated session",
@@ -487,6 +534,38 @@ def test_chatgpt_branch_families_stay_contiguous_for_every_sort(
     assert [item.filename for item in sort_media_items(items, sort)] == expected
 
 
+def test_chatgpt_absolute_sort_ignores_session_grouping() -> None:
+    branch_family = "studio208cm:master:0810a"
+    items = (
+        replace(
+            _item("first-session-new.png", "2026-08-10T12:00:00Z"),
+            source="chatgpt",
+            project_name="Studio208cm",
+            chatgpt_session_key="first-session",
+            chatgpt_branch_key=branch_family,
+        ),
+        replace(
+            _item("second-session-middle.png", "2026-08-09T12:00:00Z"),
+            source="chatgpt",
+            project_name="Studio208cm",
+            chatgpt_session_key="second-session",
+        ),
+        replace(
+            _item("first-session-old.png", "2026-08-08T12:00:00Z"),
+            source="chatgpt",
+            project_name="Studio208cm",
+            chatgpt_session_key="first-session",
+            chatgpt_branch_key=branch_family,
+        ),
+    )
+
+    assert [item.filename for item in sort_media_items_absolute(items, "newest")] == [
+        "first-session-new.png",
+        "second-session-middle.png",
+        "first-session-old.png",
+    ]
+
+
 def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() -> None:
     shared_branch = "studio208cm:master:0810a"
     items = (
@@ -511,6 +590,7 @@ def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() 
             source="chatgpt",
             creator="Newest session",
             project_name="Studio208cm",
+            source_url="https://chatgpt.com/c/new-session",
             chatgpt_session_key="new-session",
             chatgpt_branch_key=shared_branch,
         ),
@@ -526,6 +606,12 @@ def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() 
 
     first_page = paginate_chatgpt_sessions(items, page=1, sort="oldest")
     second_page = paginate_chatgpt_sessions(items, page=2, sort="newest")
+    targeted_page = paginate_chatgpt_sessions(
+        items,
+        page=1,
+        sort="newest",
+        target_session_key="older-session",
+    )
 
     assert first_page.pagination_unit == "session"
     assert first_page.session_count == 2
@@ -533,6 +619,7 @@ def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() 
     assert first_page.total_count == 4
     assert first_page.current_session_label == "Newest session"
     assert first_page.current_session_latest_at == "2026-08-09T12:00:00Z"
+    assert first_page.current_session_url == "https://chatgpt.com/c/new-session"
     assert [item.filename for item in first_page.items] == [
         "new-session-old.png",
         "new-session-latest.png",
@@ -542,6 +629,9 @@ def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() 
         "older-session-latest.png",
         "older-session-old.png",
     ]
+    assert targeted_page.current_page == 2
+    assert targeted_page.current_session_key == "chatgpt:session:studio208cm:older-session"
+    assert targeted_page.current_session_label == "Older session"
 
 
 def test_chatgpt_pagination_recovers_legacy_tombstone_session_from_url() -> None:
@@ -594,11 +684,17 @@ def test_catalog_query_uses_session_pagination_only_for_the_chatgpt_filter(
     monkeypatch.setattr(catalog, "snapshot", lambda force_refresh=False: items)
 
     chatgpt_page = catalog.query(source="chatgpt", page=1)
+    chronological_page = catalog.query(source="chatgpt", page=1, chatgpt_session_view=False)
     all_sources_page = catalog.query(source="all", page=1)
 
     assert chatgpt_page.pagination_unit == "session"
     assert chatgpt_page.session_count == 2
     assert len(chatgpt_page.items) == 1
+    assert chronological_page.pagination_unit == "media"
+    assert [item.filename for item in chronological_page.items] == [
+        "chatgpt-one.png",
+        "chatgpt-two.png",
+    ]
     assert all_sources_page.pagination_unit == "media"
     assert all_sources_page.total_count == 3
 
@@ -617,7 +713,7 @@ def test_chatgpt_catalog_missing_falls_back_to_filename(tmp_path: Path) -> None:
 
 
 def test_formats_captured_timestamp_with_minute_precision() -> None:
-    assert format_captured_at_timestamp_label("2026-08-09T07:09:50Z") == "9 Aug 2026, 07:09"
+    assert format_captured_at_timestamp_label("2026-08-09T07:09:50Z") == "9 Aug 2026 07:09"
 
 
 def test_chatgpt_for_prompts_is_exempt_from_regular_inventory(tmp_path: Path) -> None:

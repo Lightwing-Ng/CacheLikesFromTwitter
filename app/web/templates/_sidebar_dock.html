@@ -1,55 +1,22 @@
-{# Code version: v1.3.0-codex.1 #}
+{# Code version: v1.4.1-codex.1 #}
 {% set cache_source_keys = cache_sources | map(attribute="key") | list %}
 <nav class="sidebar-dock" aria-label="Workspace sections">
-    <div class="sidebar-dock-cache-menu" data-cache-source-menu>
-        <button
-            type="button"
-            class="sidebar-dock-item sidebar-dock-cache-trigger{% if dock_section in cache_source_keys %} is-active{% endif %}"
-            data-section-link="{{ dock_section if dock_section in cache_source_keys else 'cache' }}"
-            data-tooltip="Caches"
-            aria-label="Switch cache source"
-            aria-haspopup="listbox"
-            aria-expanded="false"
-            aria-controls="cache_source_menu"
-        >
-            <span class="icon dock-icon dock-icon-cache" aria-hidden="true"></span>
-            <span class="sidebar-dock-label" aria-hidden="true">Caches</span>
-        </button>
-        <div
-            id="cache_source_menu"
-            class="trade-strategy-dropdown backtest-shared-select-dropdown sidebar-dock-cache-dropdown"
-            data-role="cache-source-menu"
-            role="listbox"
-            aria-label="Choose cache source"
-            hidden
-        >
-            {% for source in cache_sources %}
-            <a
-                id="cache_source_option_{{ source.key }}"
-                href="{{ url_for(source.view_endpoint) }}"
-                class="trade-strategy-dropdown-option sidebar-dock-cache-option{% if dock_section == source.key %} is-selected is-active{% endif %}"
-                data-cache-source-option="{{ source.key }}"
-                role="option"
-                aria-selected="{{ 'true' if dock_section == source.key else 'false' }}"
-                {% if dock_section == source.key %}aria-current="page"{% endif %}
-            >
-                <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                <span
-                    class="cache-source-mark"
-                    style="--cache-source-mark: url('{{ url_for('static', filename=source.icon_filename) }}');"
-                    aria-hidden="true"
-                ></span>
-                <span class="sidebar-dock-cache-option-copy">
-                    <span class="trade-strategy-dropdown-text">{{ source.dock_label }}</span>
-                    {% if dock_section == source.key %}<span class="sidebar-dock-cache-current" aria-hidden="true">Current</span>{% endif %}
-                </span>
-            </a>
-            {% endfor %}
-        </div>
-    </div>
+    <a
+        href="{{ url_for('index') }}"
+        class="sidebar-dock-item{% if dock_section in cache_source_keys %} is-active{% endif %}"
+        data-dock-section="cache"
+        data-section-link="{{ dock_section if dock_section in cache_source_keys else 'cache' }}"
+        data-tooltip="Caches"
+        aria-label="Caches"
+        {% if dock_section in cache_source_keys %}aria-current="page"{% endif %}
+    >
+        <span class="icon dock-icon dock-icon-cache" aria-hidden="true"></span>
+        <span class="sidebar-dock-label" aria-hidden="true">Caches</span>
+    </a>
     <a
         href="{{ url_for('browser') }}"
         class="sidebar-dock-item{% if dock_section == 'browser' %} is-active{% endif %}"
+        data-dock-section="browser"
         data-section-link="browser"
         data-tooltip="Browser"
         aria-label="Browser"
@@ -61,6 +28,7 @@
     <a
         href="{{ url_for('settings') }}"
         class="sidebar-dock-item{% if dock_section == 'settings' %} is-active{% endif %}"
+        data-dock-section="settings"
         data-section-link="settings"
         data-tooltip="Settings"
         aria-label="Settings"

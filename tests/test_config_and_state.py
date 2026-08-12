@@ -1,6 +1,6 @@
 """Tests for durable settings and thread-safe task state.
 
-Code version: v1.2.0-codex.1
+Code version: v1.3.0-codex.1
 """
 
 from __future__ import annotations
@@ -121,3 +121,4 @@ def test_task_state_stop_and_error_transitions() -> None:
     snapshot = state.snapshot()
     assert snapshot["phase"] == "failed"
     assert snapshot["last_error"] == "Failure."
+    assert snapshot["task_failures"] == 1

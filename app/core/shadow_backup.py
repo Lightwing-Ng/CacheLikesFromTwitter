@@ -1,6 +1,6 @@
 """One-way shadow cloud backup for the local cache.
 
-Code version: v1.0.1-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -121,15 +121,15 @@ def sync_shadow_backup(
     )
 
 
-def choose_shadow_backup_destination(initial_path: Path) -> Path | None:
-    """Open the macOS native folder picker and return the selected path.
+def choose_settings_directory(initial_path: Path, prompt: str) -> Path | None:
+    """Open the macOS native folder picker and return the selected directory.
 
     ``None`` represents a user-cancelled dialog. The app only invokes this from its
     local Settings page, where the browser and filesystem belong to the same Mac.
     """
     default_location = _nearest_existing_directory(initial_path)
     applescript = (
-        'set selectedFolder to choose folder with prompt "Select shadow cloud backup destination" '
+        f"set selectedFolder to choose folder with prompt {json.dumps(prompt)} "
         f"default location POSIX file {json.dumps(default_location.as_posix())}\n"
         "return POSIX path of selectedFolder"
     )
@@ -149,6 +149,14 @@ def choose_shadow_backup_destination(initial_path: Path) -> Path | None:
     if "User canceled" in error_text or "-128" in error_text:
         return None
     raise ShadowBackupError(error_text or "macOS could not open the folder picker.")
+
+
+def choose_shadow_backup_destination(initial_path: Path) -> Path | None:
+    """Open the native picker for the shadow backup destination."""
+    return choose_settings_directory(
+        initial_path,
+        "Select shadow cloud backup destination",
+    )
 
 
 class ShadowBackupService:

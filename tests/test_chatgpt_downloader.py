@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.13.0-codex.1
+# Code version: v1.30.0-codex.1
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ from dataclasses import replace
 from io import BytesIO
 import json
 from pathlib import Path
-from threading import Event
+from queue import Queue
+from threading import Event, Lock
 from unittest.mock import patch
 
 import pytest
@@ -21,11 +22,13 @@ from app.core.chatgpt_downloader import (
     ChatGPTImageCandidate,
     ChatGPTImageCatalog,
     ChatGPTCatalogEntry,
+    chatgpt_conversation_id,
     chatgpt_target_dir,
     collect_chatgpt_project_index_images,
     collect_conversation_images,
     collect_project_conversation_urls,
     download_chatgpt_image,
+    enrich_chatgpt_project_index_prompts,
     extract_chatgpt_file_id,
     infer_image_extension,
     is_chatgpt_conversation_url,
@@ -34,23 +37,29 @@ from app.core.chatgpt_downloader import (
     should_cache_chatgpt_candidate,
     sync_chatgpt_images,
 )
+from app.core.resource_persistence import read_parquet_rows
 from app.core.chatgpt_downloader import (
     ChatGPTConversationWorkResult,
     ChatGPTImageDownloadWorkResult,
     PlaywrightError,
     _chatgpt_file_download_url,
+    _chatgpt_index_image_worker,
     _chatgpt_project_id,
     _extract_chatgpt_conversation_image_payloads,
     _get_chatgpt_api_json,
+    _get_chatgpt_api_json_via_page,
     _is_unavailable_chatgpt_image_error,
     _is_retryable_chatgpt_image_error,
     _is_recoverable_chatgpt_page_error,
     _iter_chatgpt_index_image_results,
     _iter_chatgpt_conversation_results,
+    _iter_parallel_safari_prompt_metadata_results,
+    _load_chatgpt_session_request_headers,
     _merge_current_conversation_images,
     _wait_for_project_conversation_links,
 )
 from app.core.config import CrawlConfig, DEFAULT_CHATGPT_PROJECT_NAME, DEFAULT_CHATGPT_PROJECT_URL
+from app.core.safari_automation import SafariContext, SafariPage
 from app.core.state import TaskState
 
 
@@ -127,7 +136,7 @@ def test_chatgpt_keeps_original_images_from_every_message_role() -> None:
     assert not should_cache_chatgpt_candidate(ChatGPTImageCandidate(**dict(base, source_url="")))
 
 
-def test_chatgpt_extracts_every_image_asset_from_the_current_conversation_branch() -> None:
+def test_chatgpt_extracts_every_image_asset_and_prompt_from_all_conversation_branches() -> None:
     payload = {
         "current_node": "assistant-message",
         "mapping": {
@@ -182,6 +191,10 @@ def test_chatgpt_extracts_every_image_asset_from_the_current_conversation_branch
                             {
                                 "asset_pointer": "sediment://file_stale_branch",
                                 "content_type": "image_asset_pointer",
+                            },
+                            {
+                                "asset_pointer": "file-service://file_branch_original",
+                                "content_type": "image_asset_pointer",
                             }
                         ]
                     },
@@ -195,6 +208,7 @@ def test_chatgpt_extracts_every_image_asset_from_the_current_conversation_branch
     assert {candidate["fileId"] for candidate in candidates} == {
         "file_user_original",
         "file_assistant_original",
+        "file_branch_original",
     }
     by_file_id = {candidate["fileId"]: candidate for candidate in candidates}
     assert by_file_id["file_user_original"]["messageRole"] == "user"
@@ -203,6 +217,7 @@ def test_chatgpt_extracts_every_image_asset_from_the_current_conversation_branch
     expected_prompt = "**Keep the subject centered.**\n\n- Use soft studio light\n- Preserve the blue backdrop"
     assert by_file_id["file_user_original"]["promptMarkdown"] == expected_prompt
     assert by_file_id["file_assistant_original"]["promptMarkdown"] == expected_prompt
+    assert by_file_id["file_branch_original"]["promptMarkdown"] == expected_prompt
 
 
 def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
@@ -249,6 +264,11 @@ def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
                             "conversation_id": "project-first",
                             "asset_pointer": "file-service://file_project_first",
                             "url": "https://chatgpt.com/backend-api/estuary/content?id=file_project_first&sig=one",
+                            "encodings": {
+                                "thumbnail": {
+                                    "path": "https://chatgpt.com/backend-api/estuary/content?id=file_project_first&sig=thumb"
+                                }
+                            },
                             "width": 1_024,
                             "height": 1_536,
                             "created_at": 1_786_362_700.25,
@@ -274,6 +294,10 @@ def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
         request_headers,
         TaskState("test"),
         should_stop=lambda: False,
+        conversation_titles_by_id={
+            "project-first": "master 21",
+            "project-second": "master 22",
+        },
     )
 
     assert {candidate.file_id for candidate in candidates} == {
@@ -285,10 +309,337 @@ def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
         "file_project_first": "1786362700.25",
         "file_project_second": "1786362721.382649",
     }
+    assert {candidate.file_id: candidate.conversation_title for candidate in candidates} == {
+        "file_project_first": "master 21",
+        "file_project_second": "master 22",
+    }
+    assert next(
+        candidate.fallback_source_url
+        for candidate in candidates
+        if candidate.file_id == "file_project_first"
+    ).endswith("sig=thumb")
     assert any("after=next-page" in url for url in context.request.urls)
 
 
-def test_chatgpt_api_retries_transient_playwright_connection_errors() -> None:
+def test_chatgpt_project_index_rejects_partial_results_after_retries() -> None:
+    class _JsonResponse:
+        ok = True
+        status = 200
+
+        @staticmethod
+        def text() -> str:
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "conversation_id": "project-first",
+                            "asset_pointer": "file-service://file_project_first",
+                            "url": "https://chatgpt.com/backend-api/estuary/content?id=file_project_first",
+                        }
+                    ],
+                    "cursor": "next-page",
+                }
+            )
+
+    class _InterruptedRequest:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, _url: str, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return _JsonResponse()
+            raise RuntimeError("Safari request failed: Load failed")
+
+    context = type("InterruptedContext", (), {"request": _InterruptedRequest()})()
+    state = TaskState("test")
+
+    with patch("app.core.chatgpt_downloader.time.sleep") as sleep, pytest.raises(
+        RuntimeError,
+        match="stopped before pagination completed",
+    ):
+        collect_chatgpt_project_index_images(
+            context,
+            DEFAULT_CHATGPT_PROJECT_URL,
+            ["https://chatgpt.com/c/project-first"],
+            {"authorization": "Bearer test-token"},
+            state,
+            should_stop=lambda: False,
+        )
+
+    assert context.request.calls == 4
+    assert len(sleep.call_args_list) == 2
+    assert state.snapshot()["discovered_images"] == 1
+
+
+def test_chatgpt_project_index_backfills_prompts_from_conversation_mappings() -> None:
+    conversation_url = "https://chatgpt.com/c/project-first"
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_project_first&sig=one",
+        file_id="file_project_first",
+        conversation_url=conversation_url,
+        request_headers={"authorization": "Bearer test-token"},
+    )
+    payload = {
+        "title": "Prompt metadata conversation",
+        "current_node": "assistant-message",
+        "mapping": {
+            "user-message": {
+                "parent": None,
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"parts": ["**Create this image.**\n\n- Preserve the framing"]},
+                },
+            },
+            "assistant-message": {
+                "parent": "user-message",
+                "message": {
+                    "author": {"role": "assistant"},
+                    "content": {
+                        "parts": [
+                            {
+                                "asset_pointer": "sediment://file_project_first",
+                                "content_type": "image_asset_pointer",
+                            }
+                        ]
+                    },
+                },
+            },
+        },
+    }
+    state = TaskState("test")
+    persisted: list[ChatGPTImageCandidate] = []
+
+    def persist_batch(candidates) -> int:
+        persisted.extend(candidates)
+        return len(candidates)
+
+    with patch(
+        "app.core.chatgpt_downloader._get_chatgpt_api_json",
+        return_value=payload,
+    ) as api_get:
+        enriched = enrich_chatgpt_project_index_prompts(
+            object(),
+            DEFAULT_CHATGPT_PROJECT_URL,
+            [candidate],
+            {"authorization": "Bearer test-token"},
+            state,
+            should_stop=lambda: False,
+            persist_batch=persist_batch,
+        )
+
+    assert enriched[0].source_url == candidate.source_url
+    assert enriched[0].request_headers == candidate.request_headers
+    assert enriched[0].prompt_markdown == "**Create this image.**\n\n- Preserve the framing"
+    assert enriched[0].conversation_title == "Prompt metadata conversation"
+    assert [item.file_id for item in persisted] == [candidate.file_id]
+    assert api_get.call_count == 1
+    assert api_get.call_args.args[1] == "https://chatgpt.com/backend-api/conversation/project-first"
+    assert any("matched 1/1 images" in event for event in state.snapshot()["recent_events"])
+
+
+def test_chatgpt_conversation_mapping_replaces_a_stale_project_index_prompt() -> None:
+    conversation_url = "https://chatgpt.com/c/project-first"
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_project_first&sig=one",
+        file_id="file_project_first",
+        conversation_url=conversation_url,
+        prompt_markdown="Short stale project-index prompt",
+        conversation_title="master 37",
+        request_headers={"authorization": "Bearer test-token"},
+    )
+    authoritative_prompt = "**Keep this pose.**\n\n- Preserve the exact proportions\n- Use a white studio"
+    payload = {
+        "title": "master 37",
+        "mapping": {
+            "user-message": {
+                "parent": None,
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"parts": [authoritative_prompt]},
+                },
+            },
+            "assistant-message": {
+                "parent": "user-message",
+                "message": {
+                    "author": {"role": "assistant"},
+                    "content": {
+                        "parts": [
+                            {
+                                "asset_pointer": "sediment://file_project_first",
+                                "content_type": "image_asset_pointer",
+                            }
+                        ]
+                    },
+                },
+            },
+        },
+    }
+
+    with patch(
+        "app.core.chatgpt_downloader._get_chatgpt_api_json",
+        return_value=payload,
+    ) as api_get:
+        enriched = enrich_chatgpt_project_index_prompts(
+            object(),
+            DEFAULT_CHATGPT_PROJECT_URL,
+            [candidate],
+            {"authorization": "Bearer test-token"},
+            TaskState("test"),
+            should_stop=lambda: False,
+        )
+
+    assert enriched[0].prompt_markdown == authoritative_prompt
+    api_get.assert_called_once()
+
+
+def test_chatgpt_project_index_backfills_a_missing_session_title_even_with_a_prompt() -> None:
+    conversation_url = "https://chatgpt.com/c/project-first"
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_project_first",
+        file_id="file_project_first",
+        conversation_url=conversation_url,
+        prompt_markdown="Already cached prompt",
+    )
+    payload = {
+        "title": "master 21",
+        "mapping": {},
+    }
+
+    with patch(
+        "app.core.chatgpt_downloader._get_chatgpt_api_json",
+        return_value=payload,
+    ) as api_get:
+        enriched = enrich_chatgpt_project_index_prompts(
+            object(),
+            DEFAULT_CHATGPT_PROJECT_URL,
+            [candidate],
+            {"authorization": "Bearer test-token"},
+            TaskState("test"),
+            should_stop=lambda: False,
+        )
+
+    assert enriched[0].prompt_markdown == "Already cached prompt"
+    assert enriched[0].conversation_title == "master 21"
+    api_get.assert_called_once()
+
+
+def test_chatgpt_prompt_backfill_skips_conversations_with_complete_catalog_metadata() -> None:
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_complete",
+        file_id="file_complete",
+        conversation_url="https://chatgpt.com/c/complete",
+        prompt_markdown="Authoritative cached prompt",
+        conversation_title="master 21",
+    )
+    state = TaskState("test")
+
+    with patch("app.core.chatgpt_downloader._get_chatgpt_api_json") as api_get:
+        enriched = enrich_chatgpt_project_index_prompts(
+            object(),
+            DEFAULT_CHATGPT_PROJECT_URL,
+            [candidate],
+            {"authorization": "Bearer test-token"},
+            state,
+            should_stop=lambda: False,
+            skip_complete_conversations=True,
+        )
+
+    assert enriched == [candidate]
+    api_get.assert_not_called()
+    assert any(
+        "Reused complete cached prompt metadata for 1 ChatGPT conversations" in event
+        for event in state.snapshot()["recent_events"]
+    )
+
+
+def test_chatgpt_prompt_rate_limit_defers_metadata_without_blocking_image_sync() -> None:
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_rate_limited",
+        file_id="file_rate_limited",
+        conversation_url="https://chatgpt.com/c/rate-limited",
+        request_headers={"authorization": "Bearer test-token"},
+    )
+    state = TaskState("test")
+
+    with patch(
+        "app.core.chatgpt_downloader._get_chatgpt_api_json",
+        side_effect=RuntimeError("ChatGPT API request returned HTTP 429."),
+    ) as api_get, patch("app.core.chatgpt_downloader.time.sleep") as sleep:
+        enriched = enrich_chatgpt_project_index_prompts(
+            object(),
+            DEFAULT_CHATGPT_PROJECT_URL,
+            [candidate],
+            {"authorization": "Bearer test-token"},
+            state,
+            should_stop=lambda: False,
+        )
+
+    assert enriched == [candidate]
+    assert api_get.call_count == 1
+    sleep.assert_not_called()
+    assert any(
+        "deferring the remaining prompt metadata and continuing the image sync" in event
+        for event in state.snapshot()["recent_events"]
+    )
+
+
+def test_chatgpt_prompt_metadata_uses_three_isolated_safari_pages_concurrently() -> None:
+    context = SafariContext(DEFAULT_CHATGPT_PROJECT_URL)
+
+    class _Page:
+        def __init__(self) -> None:
+            self.context = context
+            self.closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    pages = [_Page(), _Page(), _Page()]
+    active_lock = Lock()
+    all_started = Event()
+    active_calls = 0
+    maximum_active_calls = 0
+
+    def fetch_mapping(_page, _url, _headers):
+        nonlocal active_calls, maximum_active_calls
+        with active_lock:
+            active_calls += 1
+            maximum_active_calls = max(maximum_active_calls, active_calls)
+            if active_calls == 3:
+                all_started.set()
+        assert all_started.wait(timeout=1)
+        with active_lock:
+            active_calls -= 1
+        return {"mapping": {}}
+
+    conversation_urls = [f"https://chatgpt.com/c/parallel-{index}" for index in range(3)]
+    with patch.object(context, "new_page", side_effect=pages[1:]), patch(
+        "app.core.chatgpt_downloader.open_chatgpt_page"
+    ), patch(
+        "app.core.chatgpt_downloader._get_chatgpt_api_json_via_page",
+        side_effect=fetch_mapping,
+    ):
+        results = list(
+            _iter_parallel_safari_prompt_metadata_results(
+                pages[0],
+                DEFAULT_CHATGPT_PROJECT_URL,
+                conversation_urls,
+                {"authorization": "Bearer test-token"},
+                should_stop=lambda: False,
+                worker_count=3,
+            )
+        )
+
+    assert maximum_active_calls == 3
+    assert {result.conversation_url for result in results} == set(conversation_urls)
+    assert pages[0].closed is False
+    assert pages[1].closed is True
+    assert pages[2].closed is True
+
+
+@pytest.mark.parametrize("error_type", (PlaywrightError, RuntimeError))
+def test_chatgpt_api_retries_transient_browser_connection_errors(error_type) -> None:
     class _JsonResponse:
         ok = True
         status = 200
@@ -304,7 +655,7 @@ def test_chatgpt_api_retries_transient_playwright_connection_errors() -> None:
         def get(self, _url: str, **_kwargs):
             self.attempts += 1
             if self.attempts < 3:
-                raise PlaywrightError("socket hang up")
+                raise error_type("socket hang up")
             return _JsonResponse()
 
     class _RetryingContext:
@@ -318,6 +669,62 @@ def test_chatgpt_api_retries_transient_playwright_connection_errors() -> None:
     assert payload == {"items": []}
     assert context.request.attempts == 3
     assert [call.args[0] for call in sleep.call_args_list] == [1.0, 2.0]
+
+
+def test_chatgpt_browser_page_api_uses_authorized_fetch_headers() -> None:
+    class _AuthorizedPage:
+        def __init__(self) -> None:
+            self.argument: dict[str, object] = {}
+
+        def evaluate(self, _script: str, argument: dict[str, object]) -> dict[str, object]:
+            self.argument = argument
+            return {"status": 200, "payload": {"mapping": {"node": {}}}}
+
+    page = _AuthorizedPage()
+    payload = _get_chatgpt_api_json_via_page(
+        page,
+        "https://chatgpt.com/backend-api/conversation/project-first",
+        {
+            "authorization": "Bearer test-token",
+            "oai-device-id": "device-id",
+            "cookie": "must-not-be-forwarded",
+        },
+    )
+
+    assert payload == {"mapping": {"node": {}}}
+    assert page.argument["headers"] == {
+        "authorization": "Bearer test-token",
+        "oai-device-id": "device-id",
+        "Accept": "application/json",
+    }
+
+
+def test_chatgpt_loads_and_reuses_safari_session_authorization() -> None:
+    class _SessionResponse:
+        ok = True
+        status = 200
+
+        @staticmethod
+        def text() -> str:
+            return '{"accessToken":"test-token"}'
+
+    class _SessionRequest:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, dict[str, object]]] = []
+
+        def get(self, url: str, **kwargs) -> _SessionResponse:
+            self.calls.append((url, kwargs))
+            return _SessionResponse()
+
+    context = SafariContext("https://chatgpt.com/")
+    context.request = _SessionRequest()
+
+    first = _load_chatgpt_session_request_headers(context, "https://chatgpt.com/")
+    second = _load_chatgpt_session_request_headers(context, "https://chatgpt.com/")
+
+    assert first == second == {"authorization": "Bearer test-token"}
+    assert len(context.request.calls) == 1
+    assert context.request.calls[0][0] == "https://chatgpt.com/api/auth/session"
 
 
 @pytest.mark.parametrize(
@@ -480,6 +887,8 @@ def test_chatgpt_prefers_a_rendered_original_url_over_an_unresolved_api_asset() 
             source_url=_chatgpt_file_download_url(file_id, conversation_url),
             file_id=file_id,
             conversation_url=conversation_url,
+            conversation_title="master 30",
+            prompt_markdown="Authoritative conversation-mapping prompt",
             width=2_048,
             height=2_048,
             request_headers={"authorization": "Bearer test-token"},
@@ -488,6 +897,7 @@ def test_chatgpt_prefers_a_rendered_original_url_over_an_unresolved_api_asset() 
     raw_candidate = {
         "sourceUrl": f"https://chatgpt.com/backend-api/estuary/content?id={file_id}&sig=temporary",
         "fileId": file_id,
+        "promptMarkdown": "Incorrect nearest rendered prompt",
         "width": 1_024,
         "height": 1_024,
     }
@@ -501,6 +911,11 @@ def test_chatgpt_prefers_a_rendered_original_url_over_an_unresolved_api_asset() 
         )
 
     assert candidates_by_file_id[file_id].source_url == raw_candidate["sourceUrl"]
+    assert candidates_by_file_id[file_id].conversation_title == "master 30"
+    assert (
+        candidates_by_file_id[file_id].prompt_markdown
+        == "Authoritative conversation-mapping prompt"
+    )
 
 
 def test_chatgpt_catalog_registers_downloads_and_skips_complete_files(tmp_path: Path) -> None:
@@ -538,6 +953,68 @@ def test_chatgpt_catalog_registers_downloads_and_skips_complete_files(tmp_path: 
     assert entry.created_at == "1786362721.382649"
     assert entry.prompt_markdown == "**Updated** prompt\n\n- Keep the pose"
     assert (target_dir / entry.relative_path).read_bytes() == PNG_PAYLOAD
+
+
+def test_chatgpt_catalog_merges_known_prompt_metadata_into_current_candidates(tmp_path: Path) -> None:
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    catalog = ChatGPTImageCatalog.build(target_dir)
+    cached_candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_known",
+        file_id="file_known",
+        conversation_url="https://chatgpt.com/c/known",
+        prompt_markdown="Cached prompt",
+        conversation_title="Cached session title",
+        created_at="2026-08-11T00:00:00Z",
+    )
+    assert download_chatgpt_image(_FakeContext(), catalog, target_dir, cached_candidate)
+
+    current_candidate = replace(
+        cached_candidate,
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_known&sig=current",
+        prompt_markdown="",
+        conversation_title="Current session title",
+        created_at="",
+    )
+    merged = catalog.merge_known_metadata((current_candidate,))[0]
+
+    assert merged.source_url == current_candidate.source_url
+    assert merged.prompt_markdown == "Cached prompt"
+    assert merged.conversation_title == "Current session title"
+    assert merged.created_at == "2026-08-11T00:00:00Z"
+
+
+def test_chatgpt_catalog_prunes_missing_entries_during_load(tmp_path: Path) -> None:
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_valid",
+        file_id="file_valid",
+        conversation_url="https://chatgpt.com/c/valid",
+    )
+    catalog = ChatGPTImageCatalog.build(target_dir)
+    assert download_chatgpt_image(_FakeContext(), catalog, target_dir, candidate)
+    catalog.entries_by_file_id["file_missing"] = ChatGPTCatalogEntry(
+        file_id="file_missing",
+        relative_path="img_file_missing.png",
+        content_sha256="missing",
+        content_bytes=1_024,
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_missing",
+        conversation_url="https://chatgpt.com/c/missing",
+        alt_text="",
+        width=1_024,
+        height=1_024,
+        first_seen_at="2026-08-11T00:00:00Z",
+        last_seen_at="2026-08-11T00:00:00Z",
+    )
+    catalog.save()
+
+    repaired = ChatGPTImageCatalog.build(target_dir)
+
+    assert repaired.repair_result.removed_file_ids == ("file_missing",)
+    assert repaired.summarize() == 1
+    assert set(repaired.entries_by_file_id) == {"file_valid"}
+    persisted = read_parquet_rows(repaired.catalog_path)
+    assert persisted is not None
+    assert {str(row["file_id"]) for row in persisted} == {"file_valid"}
 
 
 def test_chatgpt_skips_images_above_the_universal_cache_size_limit(tmp_path: Path) -> None:
@@ -692,6 +1169,77 @@ def test_chatgpt_retries_a_transient_direct_image_failure(tmp_path: Path) -> Non
     assert catalog.summarize() == 1
 
 
+def test_chatgpt_streams_first_party_original_through_safari(tmp_path: Path) -> None:
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_safari",
+        file_id="file_safari",
+        conversation_url="https://chatgpt.com/c/safari",
+        request_headers={"authorization": "Bearer test-token"},
+    )
+    context = SafariContext(candidate.conversation_url)
+    page = SafariPage(context, window_id=123)
+    context.pages.append(page)
+    catalog = ChatGPTImageCatalog.build(target_dir)
+    streamed_headers: list[dict[str, str]] = []
+
+    def stream_to_path(_url, destination_path, _should_stop, headers=None):
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        destination_path.write_bytes(PNG_PAYLOAD)
+        streamed_headers.append(dict(headers or {}))
+        return "image/png", False
+
+    with patch.object(page, "download_to_path", side_effect=stream_to_path):
+        assert download_chatgpt_image(context, catalog, target_dir, candidate)
+
+    assert streamed_headers[0]["authorization"] == "Bearer test-token"
+    assert (target_dir / "img_file_safari.png").read_bytes() == PNG_PAYLOAD
+    assert catalog.summarize() == 1
+
+
+def test_chatgpt_uses_index_thumbnail_when_safari_original_is_gone(tmp_path: Path) -> None:
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    direct_url = "https://chatgpt.com/backend-api/estuary/content?id=file_safari_fallback"
+    fallback_url = direct_url + "&encoding=thumbnail"
+    candidate = ChatGPTImageCandidate(
+        source_url=direct_url,
+        file_id="file_safari_fallback",
+        conversation_url="https://chatgpt.com/c/safari-fallback",
+        fallback_source_url=fallback_url,
+        request_headers={"authorization": "Bearer test-token"},
+    )
+    context = SafariContext(candidate.conversation_url)
+    page = SafariPage(context, window_id=123)
+    context.pages.append(page)
+    catalog = ChatGPTImageCatalog.build(target_dir)
+    streamed_urls: list[str] = []
+
+    class _NotFoundResponse:
+        ok = False
+        status = 404
+
+    def stream_to_path(url, destination_path, _should_stop, headers=None):
+        streamed_urls.append(url)
+        if url == direct_url:
+            raise RuntimeError("Safari media request returned HTTP 404 with 0 bytes.")
+        assert url == fallback_url
+        assert headers["authorization"] == "Bearer test-token"
+        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        destination_path.write_bytes(PNG_PAYLOAD)
+        return "image/png", False
+
+    with patch.object(page, "download_to_path", side_effect=stream_to_path), patch.object(
+        context.request,
+        "get",
+        return_value=_NotFoundResponse(),
+    ):
+        assert download_chatgpt_image(context, catalog, target_dir, candidate)
+
+    assert streamed_urls == [direct_url, fallback_url]
+    assert catalog.entries_by_file_id[candidate.file_id].source_url == fallback_url
+    assert catalog.summarize() == 1
+
+
 def test_chatgpt_reset_removes_only_the_dedicated_cache(tmp_path: Path) -> None:
     target_dir = tmp_path / "chatgpt" / "Studio208cm"
     candidate = ChatGPTImageCandidate(
@@ -718,11 +1266,6 @@ def test_chatgpt_reset_removes_only_the_dedicated_cache(tmp_path: Path) -> None:
 
 
 def test_chatgpt_browser_probe_requires_a_chatgpt_project_url() -> None:
-    ready = probe_browser_session("chatgpt", "edge", CrawlConfig())
-    assert ready["can_download"] is True
-    assert ready["account_name"] == DEFAULT_CHATGPT_PROJECT_NAME
-    assert "background browser session" in ready["message"]
-
     invalid = probe_browser_session(
         "chatgpt",
         "edge",
@@ -732,11 +1275,109 @@ def test_chatgpt_browser_probe_requires_a_chatgpt_project_url() -> None:
     assert "https://chatgpt.com/" in invalid["message"]
 
 
+def test_chatgpt_browser_probe_verifies_chromium_navigation_and_session() -> None:
+    class _ProbeResponse:
+        ok = True
+
+        @staticmethod
+        def text() -> str:
+            return '{"accessToken":"test-token"}'
+
+    class _ProbePage:
+        def __init__(self) -> None:
+            self.goto_calls: list[tuple[str, str, int]] = []
+
+        def goto(self, url: str, wait_until: str, timeout: int) -> None:
+            self.goto_calls.append((url, wait_until, timeout))
+
+        @staticmethod
+        def evaluate(_expression: str) -> dict[str, object]:
+            return {
+                "ok": True,
+                "status": 200,
+                "bodyText": '{"accessToken":"test-token"}',
+                "error": "",
+            }
+
+    class _ProbeRequest:
+        def get(self, _url: str, **_kwargs) -> _ProbeResponse:
+            return _ProbeResponse()
+
+    page = _ProbePage()
+    context = type("ProbeContext", (), {"pages": [page], "request": _ProbeRequest()})()
+
+    with patch(
+        "app.core.browser_sessions.sync_playwright_or_error",
+        return_value=nullcontext(object()),
+    ), patch(
+        "app.core.browser_sessions.launch_chromium_context",
+        return_value=nullcontext(context),
+    ):
+        ready = probe_browser_session("chatgpt", "edge", CrawlConfig())
+
+    assert ready["can_download"] is True
+    assert ready["account_name"] == DEFAULT_CHATGPT_PROJECT_NAME
+    assert "verified the ChatGPT source" in ready["message"]
+    assert page.goto_calls == [(DEFAULT_CHATGPT_PROJECT_URL, "domcontentloaded", 30_000)]
+
+
+def test_chatgpt_browser_probe_verifies_safari_session_in_a_hidden_context() -> None:
+    class _ProbeResponse:
+        ok = True
+        status = 200
+
+        @staticmethod
+        def text() -> str:
+            return '{"accessToken":"test-token"}'
+
+    class _ProbePage:
+        def __init__(self) -> None:
+            self.goto_calls: list[tuple[str, str, int]] = []
+
+        def goto(self, url: str, wait_until: str, timeout: int) -> None:
+            self.goto_calls.append((url, wait_until, timeout))
+
+        def wait_for_load_state(self, _state: str, _timeout: int) -> None:
+            pass
+
+    class _ProbeRequest:
+        def get(self, _url: str, **_kwargs) -> _ProbeResponse:
+            return _ProbeResponse()
+
+    probe_page = _ProbePage()
+
+    class _ProbeContext:
+        primary_page = probe_page
+        request = _ProbeRequest()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc, _traceback) -> bool:
+            return False
+
+    with patch("app.core.browser_sessions.SafariContext", return_value=_ProbeContext()), patch(
+        "app.core.browser_sessions.time.sleep"
+    ):
+        result = probe_browser_session(
+            "chatgpt",
+            "safari",
+            CrawlConfig(chatgpt_browser="safari"),
+        )
+
+    assert result["logged_in"] is True
+    assert result["can_download"] is True
+    assert "background browser session" in result["message"]
+    assert probe_page.goto_calls == [(DEFAULT_CHATGPT_PROJECT_URL, "domcontentloaded", 60_000)]
+
+
 def test_chatgpt_accepts_a_single_chat_session_url() -> None:
     session_url = "https://chatgpt.com/g/g-p-demo-project/c/conversation-123"
 
     assert is_chatgpt_conversation_url(session_url)
+    assert chatgpt_conversation_id(session_url) == "conversation-123"
     assert is_chatgpt_conversation_url("https://chatgpt.com/c/conversation-123?oai-dm=1")
+    assert chatgpt_conversation_id("https://example.com/c/conversation-123") == ""
     assert not is_chatgpt_conversation_url(DEFAULT_CHATGPT_PROJECT_URL)
     assert not is_chatgpt_conversation_url("https://example.com/c/conversation-123")
 
@@ -755,6 +1396,59 @@ def test_chatgpt_uses_a_single_chat_session_without_scanning_a_project() -> None
 
     assert conversation_urls == [session_url]
     open_page.assert_not_called()
+
+
+def test_chatgpt_project_api_collects_authoritative_session_titles() -> None:
+    conversation_id = "69523533-2780-8321-ac61-b6fd762cb455"
+
+    class _ProjectResponse:
+        ok = True
+        status = 200
+
+        @staticmethod
+        def text() -> str:
+            return json.dumps(
+                {
+                    "items": [
+                        {
+                            "id": conversation_id,
+                            "title": "master 21",
+                        }
+                    ],
+                    "cursor": "",
+                }
+            )
+
+    class _ProjectRequest:
+        @staticmethod
+        def get(_url: str, **_kwargs):
+            return _ProjectResponse()
+
+    class _ProjectContext:
+        request = _ProjectRequest()
+
+    class _ProjectPage:
+        context = _ProjectContext()
+
+    titles_by_id: dict[str, str] = {}
+    state = TaskState("test")
+    with patch("app.core.chatgpt_downloader.open_chatgpt_page"):
+        conversation_urls = collect_project_conversation_urls(
+            _ProjectPage(),
+            DEFAULT_CHATGPT_PROJECT_URL,
+            state,
+            should_stop=lambda: False,
+            request_headers={"authorization": "Bearer test-token"},
+            conversation_titles_by_id=titles_by_id,
+        )
+
+    assert conversation_urls == [
+        "https://chatgpt.com/g/g-p-69522aca2f788191b337866d5c03c59e-studio208cm/"
+        f"c/{conversation_id}"
+    ]
+    assert titles_by_id == {conversation_id: "master 21"}
+    assert state.snapshot()["discovered_tweets"] == 1
+    assert state.snapshot()["queued_tweets"] == 1
 
 
 class _ClosableBrowserContext:
@@ -788,6 +1482,69 @@ def test_chatgpt_sync_launches_edge_offscreen_with_a_rendered_window(tmp_path: P
     assert result.discovered_conversations == 0
     assert launch_context.call_args.kwargs["headless"] is False
     assert launch_context.call_args.kwargs["background_window"] is True
+
+
+def test_chatgpt_sync_accepts_safari_without_playwright(tmp_path: Path) -> None:
+    state = TaskState("test")
+    browser_context = _ClosableBrowserContext()
+
+    with patch("app.core.chatgpt_downloader.sync_playwright", None), patch(
+        "app.core.chatgpt_downloader._launch_chatgpt_browser_context",
+        return_value=nullcontext(browser_context),
+    ) as launch_context, patch(
+        "app.core.chatgpt_downloader.collect_project_conversation_urls",
+        return_value=[],
+    ):
+        result = sync_chatgpt_images(
+            state,
+            config=CrawlConfig(chatgpt_browser="safari"),
+            target_dir=tmp_path / "chatgpt" / DEFAULT_CHATGPT_PROJECT_NAME,
+        )
+
+    assert result.discovered_conversations == 0
+    assert launch_context.call_args.args[0].engine == "safari"
+    assert launch_context.call_args.args[1] == DEFAULT_CHATGPT_PROJECT_URL
+    assert any("offscreen Safari" in event for event in state.snapshot()["recent_events"])
+
+
+def test_chatgpt_direct_session_refresh_skips_the_global_project_image_index(tmp_path: Path) -> None:
+    session_url = "https://chatgpt.com/g/g-p-demo/c/session-123"
+    state = TaskState("test")
+    browser_context = _ClosableBrowserContext()
+
+    with patch("app.core.chatgpt_downloader.sync_playwright", None), patch(
+        "app.core.chatgpt_downloader._launch_chatgpt_browser_context",
+        return_value=nullcontext(browser_context),
+    ), patch(
+        "app.core.chatgpt_downloader.collect_project_conversation_urls",
+        return_value=[session_url],
+    ), patch(
+        "app.core.chatgpt_downloader.collect_chatgpt_project_index_images",
+    ) as project_index, patch(
+        "app.core.chatgpt_downloader._iter_chatgpt_conversation_results",
+        return_value=iter(()),
+    ) as conversation_results:
+        result = sync_chatgpt_images(
+            state,
+            config=CrawlConfig(
+                chatgpt_browser="safari",
+                chatgpt_project_url=session_url,
+            ),
+            target_dir=tmp_path / "chatgpt" / DEFAULT_CHATGPT_PROJECT_NAME,
+        )
+
+    assert result.discovered_conversations == 1
+    project_index.assert_not_called()
+    conversation_results.assert_called_once()
+    assert conversation_results.call_args.args[7] == 1
+    assert any(
+        "skipping the global project image index" in event
+        for event in state.snapshot()["recent_events"]
+    )
+    assert any(
+        "Starting 1 ChatGPT worker" in event
+        for event in state.snapshot()["recent_events"]
+    )
 
 
 def test_chatgpt_sync_uses_the_project_image_index_without_legacy_page_scans(tmp_path: Path) -> None:
@@ -953,6 +1710,163 @@ def test_chatgpt_project_index_iterator_partitions_direct_image_downloads(tmp_pa
     assert {file_id for assignment in assignments_seen for file_id in assignment} == {
         candidate.file_id for candidate in candidates
     }
+
+
+def test_chatgpt_project_index_iterator_does_not_start_workers_after_stop(tmp_path: Path) -> None:
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_stopped",
+        file_id="file_stopped",
+        conversation_url="https://chatgpt.com/c/stopped",
+    )
+
+    with patch("app.core.chatgpt_downloader._chatgpt_index_image_worker") as worker:
+        results = list(
+            _iter_chatgpt_index_image_results(
+                [candidate],
+                object(),
+                ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
+                tmp_path / "Studio208cm",
+                should_stop=lambda: True,
+                worker_count=3,
+            )
+        )
+
+    assert results == []
+    worker.assert_not_called()
+
+
+def test_chatgpt_project_index_iterator_skips_complete_files_before_worker_start(tmp_path: Path) -> None:
+    target_dir = tmp_path / "Studio208cm"
+    target_dir.mkdir()
+    existing_path = target_dir / "img_file_existing.png"
+    existing_path.write_bytes(PNG_PAYLOAD)
+    catalog = ChatGPTImageCatalog(
+        target_dir,
+        {
+            "file_existing": ChatGPTCatalogEntry(
+                file_id="file_existing",
+                relative_path=existing_path.name,
+                content_sha256="",
+                content_bytes=len(PNG_PAYLOAD),
+                source_url="https://example.com/existing.png",
+                conversation_url="https://chatgpt.com/c/project-conversation",
+                alt_text="",
+                width=0,
+                height=0,
+                first_seen_at="",
+                last_seen_at="",
+            )
+        },
+    )
+    candidates = [
+        ChatGPTImageCandidate(
+            source_url="https://example.com/existing.png",
+            file_id="file_existing",
+            conversation_url="https://chatgpt.com/c/project-conversation",
+        ),
+        ChatGPTImageCandidate(
+            source_url="https://example.com/missing.png",
+            file_id="file_missing",
+            conversation_url="https://chatgpt.com/c/project-conversation",
+        ),
+    ]
+    assignments_seen: list[list[str]] = []
+
+    def fake_worker(worker_candidates, _descriptor, _catalog, _target_dir, _should_stop, result_queue) -> None:
+        assignments_seen.append([candidate.file_id for candidate in worker_candidates])
+        for candidate in worker_candidates:
+            result_queue.put(ChatGPTImageDownloadWorkResult(candidate.file_id, downloaded=True))
+
+    with patch("app.core.chatgpt_downloader._chatgpt_index_image_worker", side_effect=fake_worker):
+        results = list(
+            _iter_chatgpt_index_image_results(
+                candidates,
+                object(),
+                catalog,
+                target_dir,
+                lambda: False,
+                worker_count=3,
+            )
+        )
+
+    assert assignments_seen == [["file_missing"]]
+    assert {result.candidate_file_id for result in results} == {"file_existing", "file_missing"}
+    existing_result = next(result for result in results if result.candidate_file_id == "file_existing")
+    assert existing_result.skipped is True
+
+
+def test_chatgpt_project_index_worker_refreshes_authorization_before_download(tmp_path: Path) -> None:
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_index_refresh",
+        file_id="file_index_refresh",
+        conversation_url="https://chatgpt.com/c/project-conversation",
+        request_headers={
+            "authorization": "Bearer stale-token",
+            "oai-device-id": "device-id",
+        },
+    )
+    context = object()
+    result_queue: Queue[ChatGPTImageDownloadWorkResult] = Queue()
+
+    with patch(
+        "app.core.chatgpt_downloader._launch_chatgpt_browser_context",
+        return_value=nullcontext(context),
+    ), patch(
+        "app.core.chatgpt_downloader._load_chatgpt_session_request_headers",
+        return_value={"authorization": "Bearer fresh-token"},
+    ) as load_headers, patch(
+        "app.core.chatgpt_downloader.download_chatgpt_image",
+        return_value=True,
+    ) as download:
+        _chatgpt_index_image_worker(
+            [candidate],
+            object(),
+            ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
+            tmp_path / "Studio208cm",
+            lambda: False,
+            result_queue,
+        )
+
+    effective_candidate = download.call_args.args[3]
+    assert effective_candidate.request_headers == {
+        "authorization": "Bearer fresh-token",
+        "oai-device-id": "device-id",
+    }
+    load_headers.assert_called_once_with(context, candidate.conversation_url)
+    assert result_queue.get_nowait().downloaded is True
+
+
+def test_chatgpt_project_index_worker_retries_transient_startup_failure(tmp_path: Path) -> None:
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_index_retry",
+        file_id="file_index_retry",
+        conversation_url="https://chatgpt.com/c/project-conversation",
+    )
+    context = object()
+    result_queue: Queue[ChatGPTImageDownloadWorkResult] = Queue()
+
+    with patch(
+        "app.core.chatgpt_downloader._launch_chatgpt_browser_context",
+        side_effect=[RuntimeError("Safari request failed: Fetch is aborted"), nullcontext(context)],
+    ) as launch_context, patch(
+        "app.core.chatgpt_downloader._load_chatgpt_session_request_headers",
+        return_value={"authorization": "Bearer fresh-token"},
+    ), patch(
+        "app.core.chatgpt_downloader.download_chatgpt_image",
+        return_value=True,
+    ), patch("app.core.chatgpt_downloader.time.sleep") as sleep:
+        _chatgpt_index_image_worker(
+            [candidate],
+            object(),
+            ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
+            tmp_path / "Studio208cm",
+            lambda: False,
+            result_queue,
+        )
+
+    assert launch_context.call_count == 2
+    sleep.assert_called_once()
+    assert result_queue.get_nowait().downloaded is True
 
 
 def test_chatgpt_project_index_iterator_bounds_worker_cleanup_wait(tmp_path: Path) -> None:

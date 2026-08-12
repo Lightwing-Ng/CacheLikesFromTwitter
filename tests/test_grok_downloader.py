@@ -1,6 +1,6 @@
 """Focused regression tests for Grok media sync dedupe."""
 
-# Code version: v1.4.0-codex.1
+# Code version: v1.5.0-codex.1
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ from app.core.grok_downloader import (
     stream_candidate_download,
 )
 from app.core.config import CrawlConfig
+from app.core.resource_persistence import LEGACY_GROK_CATALOG_FILENAME
 from app.core.state import TaskState
 
 
@@ -325,7 +326,7 @@ class GrokDownloaderTests(unittest.TestCase):
                     },
                 ],
             }
-            (target_dir / GROK_CATALOG_FILENAME).write_text(json.dumps(payload))
+            (target_dir / LEGACY_GROK_CATALOG_FILENAME).write_text(json.dumps(payload))
 
             catalog = GrokMediaCatalog.build(target_dir)
 

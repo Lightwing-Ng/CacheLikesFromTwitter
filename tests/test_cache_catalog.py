@@ -1,6 +1,6 @@
 """Regression tests for the persistent local tweet cache catalog.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -9,12 +9,14 @@ import json
 from pathlib import Path
 
 from app.core.cache_catalog import (
+    CATALOG_FILENAME,
     LocalTweetCacheIndex,
     canonicalize_tweet_url,
     extract_status_id,
     summarize_cached_tweet_dir,
     summarize_local_store_root,
 )
+from app.core.resource_persistence import read_parquet_rows
 
 
 def _write_cached_tweet(directory: Path, url: str, media_name: str) -> None:
@@ -54,6 +56,13 @@ def test_catalog_survives_rebuild_and_prevents_duplicate_claims(tmp_path: Path) 
     assert index.contains_complete_cache("https://x.com/demo/status/123")
     assert index.summarize() == (1, 1, 0)
     assert index.claim("https://x.com/demo/status/123") is False
+    assert not (tweet_dir / "metadata.info.json").exists()
+    rows = read_parquet_rows(account_dir / CATALOG_FILENAME)
+    assert rows is not None
+    assert rows[0]["canonical_urls"] == ["https://x.com/demo/status/123"]
+    assert rows[0]["status_ids"] == ["123"]
+    assert rows[0]["webpage_url"] == url
+    assert index.metadata_for_directory(tweet_dir)["webpage_url"] == url
 
     uncached_url = "https://x.com/demo/status/999"
     assert index.claim(uncached_url) is True

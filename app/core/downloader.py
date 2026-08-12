@@ -1,9 +1,10 @@
 """Download media from tweet URLs with yt-dlp."""
 
-# Code version: v1.6.0-codex.1
+# Code version: v1.7.0-codex.1
 
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import subprocess
@@ -20,6 +21,7 @@ from .state import TaskState
 
 
 MEDIA_MARKER_PREFIX = "__CACHELIKES_MEDIA__:"
+METADATA_MARKER_PREFIX = "__CACHELIKES_X_METADATA__:"
 SUCCESS_SKIP_MARKERS = (
     "has already been recorded in the archive",
     "has already been downloaded",
@@ -102,6 +104,38 @@ def parse_downloaded_paths(command_output: str) -> list[Path]:
         if line.startswith(MEDIA_MARKER_PREFIX):
             downloaded_paths.append(Path(line.removeprefix(MEDIA_MARKER_PREFIX)))
     return downloaded_paths
+
+
+def parse_download_metadata(command_output: str) -> list[dict[str, object]]:
+    """Extract yt-dlp metadata objects emitted after each completed media move."""
+    metadata_rows: list[dict[str, object]] = []
+    for line in command_output.splitlines():
+        if not line.startswith(METADATA_MARKER_PREFIX):
+            continue
+        try:
+            payload = json.loads(line.removeprefix(METADATA_MARKER_PREFIX))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(payload, dict):
+            metadata_rows.append(payload)
+    return metadata_rows
+
+
+def metadata_for_downloaded_path(
+    downloaded_path: Path,
+    metadata_rows: list[dict[str, object]],
+) -> dict[str, object]:
+    """Match one emitted metadata object to a downloaded media directory."""
+    target_directory = downloaded_path.parent.resolve(strict=False)
+    for row in metadata_rows:
+        filepath = str(row.get("filepath") or row.get("_filename") or "").strip()
+        if filepath and Path(filepath).parent.resolve(strict=False) == target_directory:
+            return row
+    directory_id = downloaded_path.parent.name
+    for row in metadata_rows:
+        if str(row.get("display_id") or row.get("id") or "").strip() == directory_id:
+            return row
+    return metadata_rows[0] if len(metadata_rows) == 1 else {}
 
 
 def count_downloaded_media_types(downloaded_paths: list[Path]) -> tuple[int, int]:
@@ -309,9 +343,6 @@ def download_tweet_media(
             build_cookies_from_browser_arg(config),
             "--output",
             str(output_dir / "%(uploader_id|unknown_uploader)s" / "%(id)s" / "%(id)s.%(ext)s"),
-            "--output",
-            "infojson:" + str(output_dir / "%(uploader_id|unknown_uploader)s" / "%(id)s" / "%(id)s"),
-            "--write-info-json",
             "--write-thumbnail",
             "--no-progress",
             "--restrict-filenames",
@@ -320,6 +351,8 @@ def download_tweet_media(
             str(config.max_media_file_size_bytes),
             "--print",
             f"after_move:{MEDIA_MARKER_PREFIX}%(filepath)s",
+            "--print",
+            f"after_move:{METADATA_MARKER_PREFIX}%()j",
         ]
         if remaining_media_items is not None:
             command.extend(["--max-downloads", str(max(1, remaining_media_items))])
@@ -339,6 +372,7 @@ def download_tweet_media(
         stderr = result.stderr or ""
         combined = "\n".join(part for part in (stdout.strip(), stderr.strip()) if part).strip()
         downloaded_paths = parse_downloaded_paths(stdout)
+        metadata_rows = parse_download_metadata(stdout)
         downloaded_paths, oversized_paths = discard_oversized_downloads(
             downloaded_paths,
             config.max_media_file_size_bytes,
@@ -360,7 +394,11 @@ def download_tweet_media(
             if downloaded_paths:
                 image_count, video_count = count_downloaded_media_types(downloaded_paths)
                 for downloaded_path in downloaded_paths:
-                    local_cache.register(tweet_url, downloaded_path.parent)
+                    local_cache.register(
+                        tweet_url,
+                        downloaded_path.parent,
+                        metadata_for_downloaded_path(downloaded_path, metadata_rows),
+                    )
                 state.append_event(f"Downloaded media for {tweet_url}")
                 logger.info(
                     "yt-dlp downloaded media successfully.",

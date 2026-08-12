@@ -1,8 +1,10 @@
-/* Code version: v1.6.0-codex.1 */
+/* Code version: v1.7.0-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v4:";
-    const SESSION_CACHE_TTL_MS = 30_000;
+    const SESSION_CACHE_TTL_MS = 300_000;
+    const SESSION_STALE_MAX_AGE_MS = 1_800_000;
+    const statusRequests = new Map();
 
     function readSessionValue(key) {
         try {
@@ -100,7 +102,8 @@
 
         function setStatus(payload) {
             statusCard.hidden = false;
-            panel.classList.remove("is-browser-status-loading");
+            statusCard.removeAttribute("aria-busy");
+            panel.classList.remove("is-browser-status-loading", "is-browser-status-refreshing");
             panel.classList.toggle("is-browser-ready", Boolean(payload.can_download));
             statusAccount.textContent = payload.account_name || "No signed-in account detected";
             if (statusMessage) {
@@ -114,8 +117,9 @@
 
         function setLoadingState() {
             statusCard.hidden = false;
+            statusCard.setAttribute("aria-busy", "true");
             panel.classList.add("is-browser-status-loading");
-            panel.classList.remove("is-browser-ready");
+            panel.classList.remove("is-browser-ready", "is-browser-status-refreshing");
             statusAccount.textContent = "Checking signed-in account...";
             if (statusMessage) {
                 statusMessage.textContent = "";
@@ -126,10 +130,61 @@
             setStartButtonReady(false);
         }
 
+        function setRefreshingState() {
+            statusCard.setAttribute("aria-busy", "true");
+            panel.classList.remove("is-browser-status-loading");
+            panel.classList.add("is-browser-status-refreshing");
+            if (statusSpinner) statusSpinner.hidden = false;
+            statusCheckmark.hidden = true;
+        }
+
+        function readCachedStatus(cacheKey) {
+            const cachedPayload = readSessionValue(cacheKey);
+            if (!cachedPayload) return null;
+            try {
+                const cachedEntry = JSON.parse(cachedPayload);
+                if (
+                    !cachedEntry
+                    || typeof cachedEntry.cached_at !== "number"
+                    || !cachedEntry.payload
+                ) return null;
+                return {
+                    ageMs: Math.max(Date.now() - cachedEntry.cached_at, 0),
+                    payload: cachedEntry.payload,
+                };
+            } catch (_error) {
+                return null;
+            }
+        }
+
+        function requestBrowserStatus(browserId) {
+            const requestKey = `${platform}:${browserId}`;
+            if (statusRequests.has(requestKey)) return statusRequests.get(requestKey);
+            const request = fetch(
+                `/api/browser-session?platform=${encodeURIComponent(platform)}&browser=${encodeURIComponent(browserId)}`,
+                { cache: "no-store" },
+            )
+                .then(async (response) => {
+                    const payload = await response.json();
+                    if (!response.ok) {
+                        throw new Error(payload.error || "Failed to probe browser session.");
+                    }
+                    return payload;
+                })
+                .finally(() => statusRequests.delete(requestKey));
+            statusRequests.set(requestKey, request);
+            return request;
+        }
+
         async function loadBrowserStatus(browserId) {
             if (!browserId) {
                 statusCard.hidden = true;
-                panel.classList.remove("is-browser-status-loading", "is-browser-ready");
+                statusCard.removeAttribute("aria-busy");
+                panel.classList.remove(
+                    "is-browser-status-loading",
+                    "is-browser-status-refreshing",
+                    "is-browser-ready",
+                );
                 if (statusMessage) {
                     statusMessage.textContent = "";
                     statusMessage.hidden = true;
@@ -140,39 +195,25 @@
             }
 
             const cacheKey = `${SESSION_CACHE_PREFIX}${platform}:${browserId}`;
-            const cachedPayload = readSessionValue(cacheKey);
-            if (cachedPayload) {
-                try {
-                    const cachedEntry = JSON.parse(cachedPayload);
-                    if (
-                        cachedEntry
-                        && typeof cachedEntry.cached_at === "number"
-                        && (Date.now() - cachedEntry.cached_at) < SESSION_CACHE_TTL_MS
-                        && cachedEntry.payload
-                    ) {
-                        setStatus(cachedEntry.payload);
-                        return;
-                    }
-                } catch (_error) {
-                }
+            const cachedStatus = readCachedStatus(cacheKey);
+            if (cachedStatus && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
+                setStatus(cachedStatus.payload);
+                if (cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;
+                setRefreshingState();
+            } else {
+                setLoadingState();
             }
 
-            setLoadingState();
             try {
-                const response = await fetch(
-                    `/api/browser-session?platform=${encodeURIComponent(platform)}&browser=${encodeURIComponent(browserId)}`,
-                    { cache: "no-store" },
-                );
-                const payload = await response.json();
-                if (!response.ok) {
-                    throw new Error(payload.error || "Failed to probe browser session.");
-                }
+                const payload = await requestBrowserStatus(browserId);
                 writeSessionValue(cacheKey, JSON.stringify({
                     cached_at: Date.now(),
                     payload,
                 }));
+                if (activeBrowser !== browserId) return;
                 setStatus(payload);
             } catch (error) {
+                if (activeBrowser !== browserId) return;
                 setStatus({
                     browser_label: selectedLabel.textContent,
                     account_name: "",

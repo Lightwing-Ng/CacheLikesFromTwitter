@@ -1,6 +1,6 @@
 """Tests for Grok naming, validation, and durable work-queue state.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ from app.core.grok_downloader import (
     sanitize_filename_part,
     validate_media_file,
 )
+from app.core.resource_persistence import GROK_WORK_QUEUE_FILENAME, read_parquet_rows
 
 
 class _EmptyCatalog:
@@ -82,3 +83,6 @@ def test_work_queue_persists_resolution_and_download_transitions(tmp_path: Path)
     assert reloaded.total_count() == 1
     assert reloaded.entries_by_asset_id[candidate.asset_id].status == "ready"
     assert reloaded.has_pending_pipeline_work() is True
+    rows = read_parquet_rows(tmp_path / GROK_WORK_QUEUE_FILENAME)
+    assert rows is not None
+    assert rows[0]["asset_id"] == candidate.asset_id

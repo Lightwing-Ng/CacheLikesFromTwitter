@@ -1,26 +1,15 @@
-{# Code version: v1.11.0-codex.1 #}
+{# Code version: v1.12.0-codex.1 #}
 {% extends "_cache_page.html" %}
 {% from "_cache_page_components.html" import render_metric, render_progress_metric %}
+{% from "_number_field.html" import render_number_field %}
 
 {% block source_fields %}
 <div class="field-grid compact-config-grid">
-    <label class="field compact-config-field">
-        <span>Max media files</span>
-        <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="max_media_items" value="{{ saved_config.max_media_items }}">
-    </label>
-    <label class="field compact-config-field">
-        <span>Max scroll rounds</span>
-        <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="max_scroll_rounds" value="{{ saved_config.max_scroll_rounds }}">
-    </label>
-    <label class="field compact-config-field">
-        <span>Scroll pause seconds</span>
-        <input type="text" inputmode="decimal" class="formatted-number-input" data-number-format="decimal" name="scroll_pause_seconds" value="{{ saved_config.scroll_pause_seconds }}">
-    </label>
+    {{ render_number_field("Max media files", "max_media_items", saved_config.max_media_items, minimum="1") }}
+    {{ render_number_field("Max scroll rounds", "max_scroll_rounds", saved_config.max_scroll_rounds, minimum="1") }}
+    {{ render_number_field("Scroll pause seconds", "scroll_pause_seconds", saved_config.scroll_pause_seconds, "decimal", "0.1", "0") }}
 </div>
-<label class="field compact-config-field">
-    <span>Stale round limit</span>
-    <input type="text" inputmode="numeric" class="formatted-number-input" data-number-format="integer" name="stale_round_limit" value="{{ saved_config.stale_round_limit }}">
-</label>
+{{ render_number_field("Stale round limit", "stale_round_limit", saved_config.stale_round_limit, minimum="1") }}
 {% endblock %}
 
 {% block primary_metrics %}

@@ -1,13 +1,14 @@
-<!-- Code version: v1.22.0-codex.1 -->
+<!-- Code version: v1.32.1-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>CacheLikesFromTwitter Browser</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.25.0-codex.1') }}">
+    <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.45.0-codex.1') }}">
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.14.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.20.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-source-filter.js', v='browser-source-filter-v1.2.0-codex.1') }}"></script>
 </head>
 <body>
@@ -26,6 +27,8 @@
             <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
         </button>
 
+        {% include "_theme_toggle.html" %}
+
         <button
             type="button"
             class="sidebar-backdrop"
@@ -37,12 +40,12 @@
         ></button>
 
         <aside class="panel sidebar browser-sidebar" id="browser_sidebar">
+            <section class="hero">
+                <h1>Browser</h1>
+            </section>
             <section class="sidebar-section">
                 <div class="section-heading">
-                    <div>
-                        <p class="section-kicker">Local cache</p>
-                        <h2>Browser</h2>
-                    </div>
+                    <p class="section-kicker">Local cache</p>
                     <span class="status-chip status-collecting">Manageable</span>
                 </div>
                 <form
@@ -52,6 +55,7 @@
                     data-wait-title="Updating media browser"
                     data-wait-copy="Applying the selected filters to the local media catalog."
                 >
+                    <input type="hidden" name="session_view" value="{{ '1' if filters.session_view else '0' }}">
                     <label class="field browser-filter-field">
                         <span>Search</span>
                         <input
@@ -66,7 +70,7 @@
                     </label>
                     <label class="field browser-filter-field">
                         <span>Source</span>
-                        {% set selected_source = namespace(label="All sources", icon="images/square.grid.2x2.fill.svg") %}
+                        {% set selected_source = namespace(label="All sources", icon="images/photo.stack.svg") %}
                         {% for source in cache_sources %}
                             {% if filters.source == source.key %}
                                 {% set selected_source.label = source.label %}
@@ -112,13 +116,13 @@
                                     class="trade-strategy-dropdown-option browser-source-filter-option{% if filters.source == 'all' %} is-selected is-active{% endif %}"
                                     data-browser-source-filter-option="all"
                                     data-browser-source-filter-label="All sources"
-                                    data-browser-source-filter-icon="{{ url_for('static', filename='images/square.grid.2x2.fill.svg') }}"
+                                    data-browser-source-filter-icon="{{ url_for('static', filename='images/photo.stack.svg') }}"
                                     role="option"
                                     aria-selected="{{ 'true' if filters.source == 'all' else 'false' }}"
                                     tabindex="-1"
                                 >
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                                    <span class="cache-source-mark browser-source-filter-mark" style="--cache-source-mark: url('{{ url_for('static', filename='images/square.grid.2x2.fill.svg') }}');" aria-hidden="true"></span>
+                                    <span class="cache-source-mark browser-source-filter-mark" style="--cache-source-mark: url('{{ url_for('static', filename='images/photo.stack.svg') }}');" aria-hidden="true"></span>
                                     <span class="trade-strategy-dropdown-text">All sources</span>
                                 </button>
                                 {% for source in cache_sources %}
@@ -150,8 +154,8 @@
                         </select>
                     </label>
                     <label class="field browser-filter-field">
-                        <span>{{ "Image order in session" if filters.source == "chatgpt" else "Sort order" }}</span>
-                        <select name="sort" class="form-select" aria-label="{{ 'Order images in the current session' if filters.source == 'chatgpt' else 'Sort cached media' }}">
+                        <span>{{ "Image order in session" if filters.source == "chatgpt" and filters.session_view else "Sort order" }}</span>
+                        <select name="sort" class="form-select" aria-label="{{ 'Order images in the current session' if filters.source == 'chatgpt' and filters.session_view else 'Sort cached media' }}">
                             <option value="newest" {% if filters.sort == "newest" %}selected{% endif %}>Newest first</option>
                             <option value="oldest" {% if filters.sort == "oldest" %}selected{% endif %}>Oldest first</option>
                             <option value="name" {% if filters.sort == "name" %}selected{% endif %}>File name</option>
@@ -182,14 +186,27 @@
                 <div class="report-card workspace-summary-card workspace-article-card browser-summary-card">
                     <div class="report-heading-row browser-heading-row">
                         <div>
-                            <p class="workspace-kicker">Local media</p>
                             <h2>Cached media browser</h2>
                         </div>
                     </div>
-                    <p class="status-copy browser-intro">
-                        Browse cached media, remove unwanted resources, or undo a removal while its preview is retained.
-                    </p>
-                    <div class="metric-grid browser-metric-grid" aria-label="Cached media totals">
+                    <div
+                        class="metric-grid browser-metric-grid{% if media_page.pagination_unit == 'session' %} browser-session-metric-grid{% endif %}"
+                        aria-label="{{ 'ChatGPT session metrics' if media_page.pagination_unit == 'session' else 'Cached media totals' }}"
+                    >
+                        {% if media_page.pagination_unit == "session" %}
+                        <div class="metric-card metric-card-accent">
+                            <span class="metric-label">Total resources</span>
+                            <strong>{{ "{:,}".format(media_page.total_count) }}</strong>
+                        </div>
+                        <div class="metric-card metric-card-accent">
+                            <span class="metric-label">Sessions</span>
+                            <strong>{{ "{:,}".format(media_page.current_page if media_page.session_count else 0) }} / {{ "{:,}".format(media_page.session_count) }}</strong>
+                        </div>
+                        <div class="metric-card browser-session-name-metric">
+                            <span class="metric-label">Current session</span>
+                            <strong title="{{ media_page.current_session_label }}">{{ media_page.current_session_label or "No session" }}</strong>
+                        </div>
+                        {% else %}
                         <div class="metric-card metric-card-accent">
                             <span class="metric-label">Total results</span>
                             <strong>{{ "{:,}".format(media_page.total_count) }}</strong>
@@ -202,29 +219,130 @@
                             <span class="metric-label">Videos</span>
                             <strong>{{ "{:,}".format(media_page.video_count) }}</strong>
                         </div>
+                        {% endif %}
                     </div>
 
                     {% if media_page.items %}
-                    <div class="browser-result-summary" aria-live="polite">
+                    <div class="browser-result-summary{% if media_page.pagination_unit == 'session' %} browser-session-controls-row{% endif %}" aria-live="polite">
                         {% if media_page.pagination_unit == "session" %}
-                        <p>
-                            <strong title="{{ media_page.current_session_label }}">{{ media_page.current_session_label }}</strong><br>
-                            Session {{ "{:,}".format(media_page.current_page) }} of {{ "{:,}".format(media_page.session_count) }}
-                            · {{ "{:,}".format(media_page.items|length) }} resources in this session
-                            · Latest image {{ format_captured_at_timestamp_label(media_page.current_session_latest_at) }}
-                        </p>
-                        <span class="status-chip browser-filter-chip">Session view</span>
+                        <div class="browser-result-controls">
+                            <button
+                                type="button"
+                                class="browser-session-control-button browser-session-view-button"
+                                data-chatgpt-session-view
+                                aria-label="Session View"
+                                aria-describedby="browser_session_view_tooltip"
+                                aria-pressed="true"
+                            >
+                                <span class="icon browser-session-view-icon" aria-hidden="true"></span>
+                                <span
+                                    id="browser_session_view_tooltip"
+                                    class="browser-session-control-tooltip"
+                                    role="tooltip"
+                                >
+                                    <span class="browser-session-control-tooltip-title">Session View</span>
+                                    <span class="browser-session-control-tooltip-copy">Browse every cached resource in the current ChatGPT session.</span>
+                                </span>
+                            </button>
+                            {% if media_page.current_session_url %}
+                            <button
+                                type="button"
+                                class="browser-session-control-button browser-session-refresh-button"
+                                data-chatgpt-session-refresh
+                                data-chatgpt-session-url="{{ media_page.current_session_url }}"
+                                data-chatgpt-session-key="{{ media_page.current_session_key }}"
+                                aria-label="Refresh this session"
+                                aria-describedby="browser_session_refresh_tooltip"
+                            >
+                                <span class="icon browser-session-refresh-icon" aria-hidden="true"></span>
+                                <span
+                                    id="browser_session_refresh_tooltip"
+                                    class="browser-session-control-tooltip"
+                                    role="tooltip"
+                                >
+                                    <span class="browser-session-control-tooltip-title" data-session-refresh-tooltip-title>Refresh this session</span>
+                                    <span class="browser-session-control-tooltip-copy" data-session-refresh-tooltip-copy>Check this ChatGPT session for newly generated images.</span>
+                                </span>
+                            </button>
+                            {% endif %}
+                            <div class="browser-view-dock" data-browser-view-dock role="group" aria-label="Media view">
+                                <button
+                                    type="button"
+                                    class="browser-view-dock-item"
+                                    data-browser-view="list"
+                                    data-tooltip="List view"
+                                    aria-label="List view"
+                                    aria-pressed="false"
+                                >
+                                    <span class="icon browser-view-icon browser-view-icon-list" aria-hidden="true"></span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="browser-view-dock-item is-active"
+                                    data-browser-view="grid"
+                                    data-tooltip="Grid view"
+                                    aria-label="Grid view"
+                                    aria-pressed="true"
+                                >
+                                    <span class="icon browser-view-icon browser-view-icon-grid" aria-hidden="true"></span>
+                                </button>
+                            </div>
+                        </div>
                         {% else %}
                         <p>
                             Showing page {{ "{:,}".format(media_page.current_page) }} of {{ "{:,}".format(media_page.total_pages) }}
                             · {{ "{:,}".format(media_page.total_count) }} results
                         </p>
-                        {% if filters.q or filters.source != "all" or filters.kind != "all" %}
-                        <span class="status-chip browser-filter-chip">Filtered view</span>
-                        {% endif %}
+                        <div class="browser-result-controls">
+                            {% if filters.source == "chatgpt" %}
+                            <button
+                                type="button"
+                                class="browser-session-control-button browser-session-view-button"
+                                data-chatgpt-session-view
+                                aria-label="Session View"
+                                aria-describedby="browser_session_view_tooltip"
+                                aria-pressed="false"
+                            >
+                                <span class="icon browser-session-view-icon" aria-hidden="true"></span>
+                                <span
+                                    id="browser_session_view_tooltip"
+                                    class="browser-session-control-tooltip"
+                                    role="tooltip"
+                                >
+                                    <span class="browser-session-control-tooltip-title">Session View</span>
+                                    <span class="browser-session-control-tooltip-copy">Group cached resources into one ChatGPT session per page.</span>
+                                </span>
+                            </button>
+                            {% endif %}
+                            {% if filters.q or filters.source != "all" or filters.kind != "all" %}
+                            <span class="status-chip browser-filter-chip">Filtered view</span>
+                            {% endif %}
+                            <div class="browser-view-dock" data-browser-view-dock role="group" aria-label="Media view">
+                                <button
+                                    type="button"
+                                    class="browser-view-dock-item"
+                                    data-browser-view="list"
+                                    data-tooltip="List view"
+                                    aria-label="List view"
+                                    aria-pressed="false"
+                                >
+                                    <span class="icon browser-view-icon browser-view-icon-list" aria-hidden="true"></span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="browser-view-dock-item is-active"
+                                    data-browser-view="grid"
+                                    data-tooltip="Grid view"
+                                    aria-label="Grid view"
+                                    aria-pressed="true"
+                                >
+                                    <span class="icon browser-view-icon browser-view-icon-grid" aria-hidden="true"></span>
+                                </button>
+                            </div>
+                        </div>
                         {% endif %}
                     </div>
-                    <div class="browser-gallery" aria-label="Cached media gallery">
+                    <div class="browser-gallery" data-view="grid" aria-label="Cached media gallery">
                         {% for item in media_page.items %}
                         <article
                             class="browser-media-card workspace-article-card{% if item.is_deleted %} is-deleted{% endif %}"
@@ -232,7 +350,7 @@
                             data-deleted="{{ 'true' if item.is_deleted else 'false' }}"
                         >
                             {% set original_link_label = {"x": "Open original post", "chatgpt": "Open original conversation", "grok": "Open original source"}.get(item.source, "Open original source") %}
-                            {% set attribution_label = "Session" if item.source == "chatgpt" else "Creator" %}
+                            {% set attribution_label = "Session name" if item.source == "chatgpt" else "Creator" %}
                             <button
                                 type="button"
                                 class="browser-media-open"
@@ -267,10 +385,6 @@
                                 <span class="browser-preview-kind">{{ item.media_kind.title() }}</span>
                             </span>
                             <span class="browser-media-card-body">
-                                <span class="browser-media-card-topline">
-                                    <span class="status-chip browser-source-chip source-{{ item.source }}">{{ {"x": "X", "grok": "Grok", "chatgpt": "ChatGPT"}.get(item.source, item.source.title()) }}</span>
-                                    <span class="browser-media-type">{{ item.media_kind.title() }}</span>
-                                </span>
                                 <span class="browser-media-card-title" title="{{ item.filename }}">{{ item.filename }}</span>
                                 <dl class="browser-media-card-metadata">
                                     <div><dt>{{ attribution_label }}:</dt><dd title="{{ item.creator or item.project_name }}">{{ item.creator or item.project_name }}</dd></div>
@@ -287,12 +401,16 @@
                                     <button
                                         type="button"
                                         class="browser-media-prompt-expand"
-                                        data-media-prompt-open
+                                        data-media-prompt-toggle
                                         data-prompt-source="browser_prompt_{{ item.stable_id }}"
                                         data-prompt-title="{{ item.filename }}"
-                                        aria-controls="browser_prompt_dialog"
+                                        aria-controls="browser_prompt_{{ item.stable_id }}"
+                                        aria-expanded="false"
                                         aria-label="Expand prompt for {{ item.filename }}"
-                                    >Expand</button>
+                                        title="Expand prompt"
+                                    >
+                                        <span class="icon browser-media-prompt-expand-icon" aria-hidden="true"></span>
+                                    </button>
                                     {% else %}
                                     <span class="browser-media-prompt-state">Not indexed</span>
                                     {% endif %}
@@ -306,22 +424,22 @@
                                 </div>
                             </section>
                             {% endif %}
-                            {% if item.source_url %}
                             <div class="browser-media-source-actions">
+                                {% if item.source_url %}
                                 <a
-                                    class="ghost-link browser-media-source-link"
+                                    class="browser-media-round-action browser-media-source-link"
                                     data-media-source-link
                                     href="{{ item.source_url }}"
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     aria-label="{{ original_link_label }} for {{ item.filename }}"
+                                    title="{{ original_link_label }}"
                                 >
-                                    <span class="browser-media-source-link-label">{{ original_link_label }}</span>
-                                    <span class="browser-media-source-link-url" title="{{ item.source_url }}">{{ item.source_url }}</span>
+                                    <span class="icon browser-media-source-link-icon" aria-hidden="true"></span>
                                 </a>
                                 <button
                                     type="button"
-                                    class="browser-media-copy-source-url"
+                                    class="browser-media-round-action browser-media-copy-source-url"
                                     data-media-copy-source-url
                                     aria-label="Copy original URL for {{ item.filename }}"
                                     title="Copy URL"
@@ -329,8 +447,19 @@
                                     <span class="icon browser-media-copy-source-url-icon" aria-hidden="true"></span>
                                     <span class="browser-media-copy-feedback" data-media-copy-feedback aria-live="polite"></span>
                                 </button>
+                                {% endif %}
+                                <button
+                                    type="button"
+                                    class="browser-media-round-action browser-media-reveal"
+                                    data-media-reveal
+                                    data-default-label="Show {{ item.filename }} in {{ file_manager_label }}"
+                                    aria-label="Show {{ item.filename }} in {{ file_manager_label }}"
+                                    title="Show in {{ file_manager_label }}"
+                                >
+                                    <span class="icon browser-media-reveal-icon" aria-hidden="true"></span>
+                                    <span class="browser-media-action-feedback" data-media-reveal-feedback aria-live="polite"></span>
+                                </button>
                             </div>
-                            {% endif %}
                             <button
                                 type="button"
                                 class="browser-media-remove dismiss-button"
@@ -377,7 +506,7 @@
                         {% else %}
                         <a
                             class="local-store-page-button{% if pagination_item.is_active %} is-active{% endif %}{% if pagination_item.kind in ('previous', 'next') %} local-store-page-nav{% endif %}"
-                            href="{{ url_for('browser', source=filters.source, kind=filters.kind, q=filters.q, sort=filters.sort, page=pagination_item.page) }}"
+                            href="{{ url_for('browser', source=filters.source, kind=filters.kind, q=filters.q, sort=filters.sort, session_view=('1' if filters.session_view else '0'), page=pagination_item.page) }}"
                             data-pagination-target="{{ pagination_item.page }}"
                             data-pagination-current="{{ '1' if pagination_item.is_active else '0' }}"
                             data-wait-title="Loading media page"
@@ -406,6 +535,29 @@
     {% include "_sidebar_dock.html" %}
 </main>
 
+<div
+    class="notice-floating notice-floating-banner notice-floating-banner-global browser-session-refresh-banner"
+    data-chatgpt-session-refresh-banner
+    role="status"
+    aria-live="polite"
+    aria-atomic="true"
+    hidden
+>
+    <button
+        type="button"
+        class="workspace-modal-close browser-session-refresh-banner-close"
+        data-session-refresh-dismiss
+        aria-label="Close refresh result"
+    >
+        <span class="cache-wait-modal-close-icon" aria-hidden="true"></span>
+    </button>
+    <span class="icon workspace-modal-icon browser-session-refresh-banner-icon" aria-hidden="true"></span>
+    <div class="browser-session-refresh-banner-content">
+        <p class="browser-session-refresh-banner-heading" data-session-refresh-title></p>
+        <p class="browser-session-refresh-banner-copy" data-session-refresh-copy></p>
+    </div>
+</div>
+
 <dialog class="browser-dialog" id="browser_detail_dialog" aria-labelledby="browser_dialog_title">
     <button type="button" class="browser-dialog-close dismiss-button" data-dialog-close aria-label="Close media details">×</button>
     <div class="browser-dialog-media" data-viewer-media aria-label="Media detail preview"></div>
@@ -427,17 +579,8 @@
     </div>
 </dialog>
 
-<dialog class="browser-prompt-dialog" id="browser_prompt_dialog" aria-labelledby="browser_prompt_dialog_title">
-    <button type="button" class="browser-prompt-dialog-close dismiss-button" data-prompt-dialog-close aria-label="Close expanded prompt">×</button>
-    <div class="browser-prompt-dialog-body">
-        <p class="workspace-kicker">ChatGPT image prompt</p>
-        <h2 id="browser_prompt_dialog_title" data-prompt-dialog-title>Prompt</h2>
-        <div class="browser-prompt-dialog-content browser-media-prompt-markdown" data-prompt-dialog-content></div>
-    </div>
-</dialog>
-
 {% include "_waiting_modal.html" %}
 <script type="application/json" id="browser_media_data">{{ media_payload|tojson }}</script>
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.4.1-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.7.1-codex.1') }}"></script>
 </body>
 </html>

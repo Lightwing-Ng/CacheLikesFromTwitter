@@ -1,4 +1,4 @@
-/* Code version: v1.14.0-codex.1 */
+/* Code version: v1.20.0-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -41,13 +41,177 @@
     const previewElements = Array.from(document.querySelectorAll("[data-preview]"));
     const mediaCards = Array.from(document.querySelectorAll("[data-media-id]"));
     const mediaGallery = document.querySelector(".browser-gallery");
+    const viewButtons = Array.from(document.querySelectorAll("[data-browser-view]"));
+    const sessionRefreshButton = document.querySelector("[data-chatgpt-session-refresh]");
+    const sessionViewButton = document.querySelector("[data-chatgpt-session-view]");
+    const sessionRefreshTooltipTitle = sessionRefreshButton?.querySelector("[data-session-refresh-tooltip-title]");
+    const sessionRefreshTooltipCopy = sessionRefreshButton?.querySelector("[data-session-refresh-tooltip-copy]");
+    const sessionRefreshBanner = document.querySelector("[data-chatgpt-session-refresh-banner]");
+    const sessionRefreshBannerTitle = sessionRefreshBanner?.querySelector("[data-session-refresh-title]");
+    const sessionRefreshBannerCopy = sessionRefreshBanner?.querySelector("[data-session-refresh-copy]");
+    const sessionRefreshBannerDismiss = sessionRefreshBanner?.querySelector("[data-session-refresh-dismiss]");
     const sourceCopyButtons = Array.from(document.querySelectorAll("[data-media-copy-source-url]"));
-    const promptDialog = document.getElementById("browser_prompt_dialog");
-    const promptDialogTitle = promptDialog?.querySelector("[data-prompt-dialog-title]");
-    const promptDialogContent = promptDialog?.querySelector("[data-prompt-dialog-content]");
-    const promptDialogClose = promptDialog?.querySelector("[data-prompt-dialog-close]");
-    const promptOpenButtons = Array.from(document.querySelectorAll("[data-media-prompt-open]"));
-    let activePromptTrigger = null;
+    const revealButtons = Array.from(document.querySelectorAll("[data-media-reveal]"));
+    const promptToggleButtons = Array.from(document.querySelectorAll("[data-media-prompt-toggle]"));
+    const mediaViewStorageKey = "cachelikes.browser.mediaView";
+
+    const wait = (milliseconds) => new Promise((resolve) => {
+        window.setTimeout(resolve, milliseconds);
+    });
+
+    const setSessionRefreshTooltip = (title, copy) => {
+        if (sessionRefreshTooltipTitle) sessionRefreshTooltipTitle.textContent = title;
+        if (sessionRefreshTooltipCopy) sessionRefreshTooltipCopy.textContent = copy;
+    };
+
+    function showSessionRefreshResult() {
+        if (!sessionRefreshBanner) return;
+        const currentUrl = new URL(window.location.href);
+        const rawUpdatedCount = currentUrl.searchParams.get("session_updated");
+        if (rawUpdatedCount === null) return;
+
+        const updatedCount = Math.max(0, Number.parseInt(rawUpdatedCount, 10) || 0);
+        const formattedCount = new Intl.NumberFormat("en-US").format(updatedCount);
+        if (sessionRefreshBannerTitle) {
+            sessionRefreshBannerTitle.textContent = updatedCount
+                ? `${formattedCount} new image${updatedCount === 1 ? "" : "s"} added`
+                : "No new images found";
+        }
+        if (sessionRefreshBannerCopy) {
+            sessionRefreshBannerCopy.textContent = updatedCount
+                ? `The refreshed ChatGPT session now includes ${formattedCount} new image${updatedCount === 1 ? "" : "s"}.`
+                : "This ChatGPT session is already up to date.";
+        }
+        sessionRefreshBanner.hidden = false;
+        currentUrl.searchParams.delete("session_updated");
+        window.history.replaceState({}, "", currentUrl.toString());
+    }
+
+    sessionRefreshBannerDismiss?.addEventListener("click", () => {
+        sessionRefreshBanner.hidden = true;
+    });
+    showSessionRefreshResult();
+
+    async function refreshCurrentChatGPTSession(button) {
+        const conversationUrl = button.dataset.chatgptSessionUrl || "";
+        if (!conversationUrl) return;
+
+        const waitNotice = window.CacheWaitModal?.show({
+            title: "Refreshing ChatGPT session",
+            copy: "Scanning only this session for newly generated images. The browser stays in the background.",
+        });
+        button.disabled = true;
+        setSessionRefreshTooltip(
+            "Refreshing this session",
+            "Checking ChatGPT for newly generated images.",
+        );
+        button.setAttribute("aria-label", "Refreshing session…");
+
+        try {
+            const startResponse = await fetch("/api/browser/chatgpt/session/refresh", {
+                method: "POST",
+                cache: "no-store",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ conversation_url: conversationUrl }),
+            });
+            const startPayload = await startResponse.json();
+            if (!startResponse.ok) {
+                throw new Error(startPayload.error || "Unable to start the ChatGPT session refresh.");
+            }
+
+            const statusUrl = startPayload.status_url || "/api/chatgpt/status";
+            const initialResourceCount = Number(startPayload.resource_count) || 0;
+            let updatedCount = 0;
+            while (true) {
+                await wait(1_000);
+                const statusResponse = await fetch(statusUrl, {
+                    cache: "no-store",
+                    headers: { Accept: "application/json" },
+                });
+                if (!statusResponse.ok) continue;
+                const snapshot = await statusResponse.json();
+                if (snapshot.running) continue;
+                if (snapshot.last_error || snapshot.phase === "failed") {
+                    throw new Error(snapshot.last_error || "The ChatGPT session refresh failed.");
+                }
+                updatedCount = Math.max(
+                    0,
+                    (Number(snapshot.downloaded_images) || 0) - initialResourceCount,
+                );
+                break;
+            }
+
+            const refreshedUrl = new URL(window.location.href);
+            refreshedUrl.searchParams.set("source", "chatgpt");
+            refreshedUrl.searchParams.set(
+                "session",
+                startPayload.session_key || button.dataset.chatgptSessionKey || "",
+            );
+            refreshedUrl.searchParams.set("refresh", "1");
+            refreshedUrl.searchParams.set("session_updated", String(updatedCount));
+            window.location.assign(refreshedUrl.toString());
+        } catch (error) {
+            waitNotice?.finish();
+            button.disabled = false;
+            setSessionRefreshTooltip(
+                "Refresh this session",
+                "Check this ChatGPT session for newly generated images.",
+            );
+            button.setAttribute("aria-label", "Refresh this session");
+            window.alert(error instanceof Error ? error.message : "Unable to refresh this ChatGPT session.");
+        }
+    }
+
+    sessionRefreshButton?.addEventListener("click", () => {
+        refreshCurrentChatGPTSession(sessionRefreshButton);
+    });
+
+    sessionViewButton?.addEventListener("click", () => {
+        const isPressed = sessionViewButton.getAttribute("aria-pressed") === "true";
+        sessionViewButton.setAttribute("aria-pressed", String(!isPressed));
+        const targetUrl = new URL(window.location.href);
+        targetUrl.searchParams.set("source", "chatgpt");
+        targetUrl.searchParams.set("session_view", isPressed ? "0" : "1");
+        targetUrl.searchParams.delete("page");
+        targetUrl.searchParams.delete("session");
+        window.location.assign(targetUrl.toString());
+    });
+
+    function applyMediaView(view, { persist = true } = {}) {
+        if (!mediaGallery || !["grid", "list"].includes(view)) return;
+        mediaGallery.dataset.view = view;
+        mediaGallery.setAttribute(
+            "aria-label",
+            view === "list" ? "Cached media list" : "Cached media gallery",
+        );
+        viewButtons.forEach((button) => {
+            const isActive = button.dataset.browserView === view;
+            button.classList.toggle("is-active", isActive);
+            button.setAttribute("aria-pressed", String(isActive));
+        });
+        window.requestAnimationFrame(updatePromptToggleVisibility);
+        if (!persist) return;
+        try {
+            window.localStorage.setItem(mediaViewStorageKey, view);
+        } catch (_error) {
+        }
+    }
+
+    let initialMediaView = "grid";
+    try {
+        const savedMediaView = window.localStorage.getItem(mediaViewStorageKey);
+        if (["grid", "list"].includes(savedMediaView)) initialMediaView = savedMediaView;
+    } catch (_error) {
+    }
+    applyMediaView(initialMediaView, { persist: false });
+
+    viewButtons.forEach((button) => {
+        button.addEventListener("click", () => applyMediaView(button.dataset.browserView || "grid"));
+    });
+
     const previewObserver = "IntersectionObserver" in window
         ? new IntersectionObserver((entries, observer) => {
             entries.forEach((entry) => {
@@ -170,50 +334,111 @@
         });
     });
 
-    function closePromptDialog() {
-        if (!promptDialog) return;
-        if (promptDialog.open && typeof promptDialog.close === "function") {
-            promptDialog.close();
-        } else {
-            promptDialog.removeAttribute("open");
-        }
+    const revealFeedbackTimers = new WeakMap();
+
+    function setRevealFeedback(button, fileManager) {
+        const activeTimer = revealFeedbackTimers.get(button);
+        if (activeTimer) window.clearTimeout(activeTimer);
+
+        const defaultLabel = button.dataset.defaultLabel || "Show in file manager";
+        const feedback = button.querySelector("[data-media-reveal-feedback]");
+        const successLabel = `Shown in ${fileManager || "file manager"}`;
+        button.classList.remove("is-revealed");
+        void button.offsetWidth;
+        button.classList.add("is-revealed");
+        button.setAttribute("aria-label", successLabel);
+        button.title = successLabel;
+        if (feedback) feedback.textContent = `${successLabel}.`;
+
+        const timer = window.setTimeout(() => {
+            button.classList.remove("is-revealed");
+            button.setAttribute("aria-label", defaultLabel);
+            button.title = defaultLabel;
+            if (feedback) feedback.textContent = "";
+            revealFeedbackTimers.delete(button);
+        }, 1_600);
+        revealFeedbackTimers.set(button, timer);
     }
 
-    function openPromptDialog(button) {
-        if (!promptDialog || !promptDialogContent) return;
+    revealButtons.forEach((button) => {
+        button.addEventListener("click", async () => {
+            const card = button.closest("[data-media-id]");
+            const item = card ? mediaById.get(card.dataset.mediaId || "") : null;
+            if (!item) return;
+
+            button.disabled = true;
+            try {
+                const response = await fetch(`/api/browser/media/${encodeURIComponent(item.id)}/reveal`, {
+                    method: "POST",
+                    headers: { Accept: "application/json" },
+                });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.error || "Unable to show the cached media file.");
+                setRevealFeedback(button, payload.file_manager);
+            } catch (error) {
+                window.alert(error instanceof Error ? error.message : "Unable to show the cached media file.");
+            } finally {
+                button.disabled = false;
+            }
+        });
+    });
+
+    function togglePrompt(button) {
         const sourceId = button.dataset.promptSource || "";
         const source = sourceId ? document.getElementById(sourceId) : null;
         if (!source) return;
 
-        activePromptTrigger = button;
-        if (promptDialogTitle) {
-            const filename = button.dataset.promptTitle || "";
-            promptDialogTitle.textContent = filename ? `Prompt · ${filename}` : "Prompt";
-        }
-        promptDialogContent.replaceChildren(
-            ...Array.from(source.childNodes).map((node) => node.cloneNode(true)),
-        );
-        if (!promptDialog.open && typeof promptDialog.showModal === "function") {
-            promptDialog.showModal();
-        } else {
-            promptDialog.setAttribute("open", "");
-        }
-        promptDialogClose?.focus({ preventScroll: true });
+        const prompt = button.closest(".browser-media-prompt");
+        if (!prompt) return;
+        const isExpanded = button.getAttribute("aria-expanded") === "true";
+        const nextExpanded = !isExpanded;
+        const filename = button.dataset.promptTitle || "this media item";
+        const action = nextExpanded ? "Collapse" : "Expand";
+
+        prompt.classList.toggle("is-expanded", nextExpanded);
+        button.setAttribute("aria-expanded", String(nextExpanded));
+        button.setAttribute("aria-label", `${action} prompt for ${filename}`);
+        button.title = `${action} prompt`;
+        window.requestAnimationFrame(updatePromptToggleVisibility);
     }
 
-    promptOpenButtons.forEach((button) => {
-        button.addEventListener("click", () => openPromptDialog(button));
+    function updatePromptToggleVisibility() {
+        promptToggleButtons.forEach((button) => {
+            const sourceId = button.dataset.promptSource || "";
+            const source = sourceId ? document.getElementById(sourceId) : null;
+            const prompt = button.closest(".browser-media-prompt");
+            if (!source || !prompt) return;
+
+            if (button.getAttribute("aria-expanded") === "true") {
+                button.hidden = false;
+                prompt.classList.remove("is-fully-visible");
+                return;
+            }
+
+            const isFullyVisible = source.scrollHeight <= source.clientHeight + 1;
+            button.hidden = isFullyVisible;
+            prompt.classList.toggle("is-fully-visible", isFullyVisible);
+        });
+    }
+
+    promptToggleButtons.forEach((button) => {
+        button.addEventListener("click", () => togglePrompt(button));
     });
-    promptDialogClose?.addEventListener("click", closePromptDialog);
-    promptDialog?.addEventListener("click", (event) => {
-        if (event.target === promptDialog) closePromptDialog();
-    });
-    promptDialog?.addEventListener("close", () => {
-        if (activePromptTrigger?.isConnected) {
-            activePromptTrigger.focus({ preventScroll: true });
-        }
-        activePromptTrigger = null;
-    });
+
+    window.requestAnimationFrame(updatePromptToggleVisibility);
+    if (document.fonts?.ready) {
+        document.fonts.ready.then(updatePromptToggleVisibility);
+    }
+    if ("ResizeObserver" in window) {
+        const promptResizeObserver = new ResizeObserver(() => {
+            window.requestAnimationFrame(updatePromptToggleVisibility);
+        });
+        promptToggleButtons.forEach((button) => {
+            const sourceId = button.dataset.promptSource || "";
+            const source = sourceId ? document.getElementById(sourceId) : null;
+            if (source) promptResizeObserver.observe(source);
+        });
+    }
 
     const pagination = document.querySelector(".browser-pagination");
 

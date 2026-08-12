@@ -1,6 +1,6 @@
 """Collect liked tweet URLs from the logged-in X account."""
 
-# Code version: v1.2.2-codex.1
+# Code version: v1.3.1-codex.1
 
 from __future__ import annotations
 
@@ -25,6 +25,11 @@ from .browser_sessions import (
     launch_chromium_context,
 )
 from .config import CrawlConfig
+from .safari_automation import (
+    SAFARI_BACKGROUND_WINDOW_APPLESCRIPT,
+    SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT,
+    safari_window_creation_guard,
+)
 from .state import TaskState
 
 try:
@@ -726,9 +731,11 @@ def collect_liked_tweet_urls_via_safari(
     applescript = f"""
 tell application "Safari"
     launch
+    {SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
     make new document
     set targetWindow to front window
     set windowId to id of targetWindow
+    {SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
     set URL of current tab of targetWindow to "{escape_applescript_text(likes_url)}"
     delay 8
     set linksJson to "[]"
@@ -744,14 +751,15 @@ tell application "Safari"
     return finalUrl & linefeed & linksJson
 end tell
 """
-    state.append_event(f"Launching Safari for X likes collection at {likes_url}.")
-    process = subprocess.run(
-        ["osascript"],
-        input=applescript,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    state.append_event(f"Launching an offscreen Safari window for X likes collection at {likes_url}.")
+    with safari_window_creation_guard():
+        process = subprocess.run(
+            ["osascript"],
+            input=applescript,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
     if process.returncode != 0:
         stderr = (process.stderr or process.stdout or "").strip()
         raise RuntimeError(stderr or "Safari likes collection failed.")
@@ -810,7 +818,14 @@ def collect_liked_tweet_urls(config: CrawlConfig, state: TaskState) -> tuple[str
 
     ensure_playwright_available()
     with sync_playwright() as playwright:
-        with launch_chromium_context(playwright, descriptor, headless=config.headless) as context:
+        state.append_event(f"Launching an offscreen {descriptor.label} session for X likes collection.")
+        with launch_chromium_context(
+            playwright,
+            descriptor,
+            headless=config.headless,
+            clone_profile_first=True,
+            background_window=True,
+        ) as context:
             page = context.pages[0] if context.pages else context.new_page()
             state.append_event(f"Opening X home {X_HOME_URL} in {descriptor.label}.")
             page.goto(X_HOME_URL, wait_until="domcontentloaded", timeout=120_000)

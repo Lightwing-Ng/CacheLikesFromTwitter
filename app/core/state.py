@@ -1,6 +1,6 @@
 """Shared task state for the web UI and worker."""
 
-# Code version: v1.2.4-codex.1
+# Code version: v1.3.0-codex.1
 
 from __future__ import annotations
 
@@ -72,6 +72,7 @@ class TaskSnapshot:
     downloaded_videos: int = 0
     skipped_tweets: int = 0
     failed_tweets: int = 0
+    task_failures: int = 0
     output_dir: str = DEFAULT_OUTPUT_DIR_TEMPLATE
     last_error: str = ""
     recent_events: list[str] = field(default_factory=list)
@@ -128,6 +129,7 @@ class TaskState:
             self._snapshot.phase = "failed"
             self._snapshot.message = message
             self._snapshot.last_error = message
+            self._snapshot.task_failures = 1
             self._snapshot.finished_at = utc_now()
 
     def finish_stopped(self, message: str) -> None:

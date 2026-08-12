@@ -1,6 +1,6 @@
 """Browser session probing helpers for X, Grok, and ChatGPT."""
 
-# Code version: v1.7.0-codex.1
+# Code version: v1.10.0-codex.1
 
 from __future__ import annotations
 
@@ -17,6 +17,12 @@ from pathlib import Path
 from typing import Any
 
 from .config import CrawlConfig, DEFAULT_CHATGPT_PROJECT_URL
+from .safari_automation import (
+    SAFARI_BACKGROUND_WINDOW_APPLESCRIPT,
+    SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT,
+    SafariContext,
+    safari_window_creation_guard,
+)
 
 
 LOGGER = logging.getLogger(__name__)
@@ -32,6 +38,7 @@ except ImportError:  # pragma: no cover
 X_HOME_URL = "https://x.com/home"
 GROK_FILES_URL = "https://grok.com/files"
 CHATGPT_PROJECT_URL = DEFAULT_CHATGPT_PROJECT_URL
+CHATGPT_AUTH_SESSION_URL = "https://chatgpt.com/api/auth/session"
 EDGE_USER_DATA_DIR = Path.home() / "Library/Application Support/Microsoft Edge"
 EDGE_PROFILE_DIRECTORY = "Default"
 SAFARI_APPLESCRIPT_SOURCE_LIMIT = 500_000
@@ -54,6 +61,11 @@ BACKGROUND_CHROMIUM_WINDOW_ARGS = (
     "--window-position=-32000,-32000",
     "--window-size=1280,900",
     "--start-minimized",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
 )
 
 
@@ -136,7 +148,7 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
 
     try:
         if platform_key == "chatgpt":
-            result.update(_probe_chromium_chatgpt_session(descriptor, config))
+            result.update(_probe_chatgpt_session(descriptor, config))
         elif descriptor.engine == "safari":
             if platform_key == "x":
                 result.update(_probe_safari_x_session(descriptor))
@@ -163,7 +175,13 @@ def _probe_chromium_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
     from .scraper import detect_account_handle
 
     with sync_playwright_or_error() as playwright:
-        with launch_chromium_context(playwright, descriptor, headless=True) as context:
+        with launch_chromium_context(
+            playwright,
+            descriptor,
+            headless=True,
+            clone_profile_first=True,
+            background_window=True,
+        ) as context:
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, X_HOME_URL)
             wait_for_x_page_ready(page, descriptor.label)
@@ -179,7 +197,13 @@ def _probe_chromium_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
 def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
     """Probe a Grok session from a Chromium-family browser profile."""
     with sync_playwright_or_error() as playwright:
-        with launch_chromium_context(playwright, descriptor, headless=True) as context:
+        with launch_chromium_context(
+            playwright,
+            descriptor,
+            headless=True,
+            clone_profile_first=True,
+            background_window=True,
+        ) as context:
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, GROK_FILES_URL)
             page.wait_for_timeout(8_000)
@@ -214,16 +238,8 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
             raise RuntimeError(f"Could not detect the signed-in Grok account from {descriptor.label}.")
 
 
-def _probe_chromium_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -> dict[str, Any]:
-    """Validate the configured ChatGPT source without opening a second browser window."""
-    if descriptor.engine != "chromium":
-        return {
-            "logged_in": False,
-            "can_download": False,
-            "account_name": "",
-            "message": f"ChatGPT sync requires a Chromium browser; {descriptor.label} is not supported.",
-        }
-
+def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -> dict[str, Any]:
+    """Validate actual project navigation and authorization in the selected browser."""
     project_name = config.chatgpt_project_name or "ChatGPT project"
     project_url = config.chatgpt_project_url or CHATGPT_PROJECT_URL
     if not project_url.startswith("https://chatgpt.com/"):
@@ -234,12 +250,90 @@ def _probe_chromium_chatgpt_session(descriptor: BrowserDescriptor, config: Crawl
             "message": "ChatGPT project or chat URL must use https://chatgpt.com/.",
         }
 
+    if descriptor.engine == "safari":
+        with SafariContext(project_url) as context:
+            page = context.primary_page
+            page.goto(project_url, wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_load_state("domcontentloaded", 60_000)
+            response = context.request.get(
+                CHATGPT_AUTH_SESSION_URL,
+                timeout=60_000,
+                headers={"Accept": "application/json", "Referer": project_url},
+            )
+            try:
+                payload = json.loads(response.text()) if response.ok else {}
+            except (json.JSONDecodeError, TypeError, ValueError):
+                payload = {}
+    elif descriptor.engine == "chromium":
+        with sync_playwright_or_error() as playwright:
+            with launch_chromium_context(
+                playwright,
+                descriptor,
+                headless=False,
+                clone_profile_first=True,
+                background_window=True,
+            ) as context:
+                page = context.pages[0] if context.pages else context.new_page()
+                goto_with_retry(page, project_url, attempts=2, timeout_ms=30_000)
+                auth_result = page.evaluate(
+                    """async () => {
+                        try {
+                            const response = await fetch('/api/auth/session', {
+                                credentials: 'include',
+                                cache: 'no-store',
+                                headers: { Accept: 'application/json' },
+                            });
+                            return {
+                                ok: response.ok,
+                                status: response.status,
+                                bodyText: await response.text(),
+                                error: '',
+                            };
+                        } catch (error) {
+                            return {
+                                ok: false,
+                                status: 0,
+                                bodyText: '',
+                                error: String(error && error.message ? error.message : error),
+                            };
+                        }
+                    }"""
+                )
+                if not isinstance(auth_result, dict) or not auth_result.get("ok"):
+                    error_text = str(auth_result.get("error") or "") if isinstance(auth_result, dict) else ""
+                    status = int(auth_result.get("status") or 0) if isinstance(auth_result, dict) else 0
+                    raise RuntimeError(
+                        f"{descriptor.label} could not verify the ChatGPT session in-page "
+                        f"(HTTP {status or 'unavailable'}{f': {error_text}' if error_text else ''})."
+                    )
+                try:
+                    payload = json.loads(str(auth_result.get("bodyText") or ""))
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    payload = {}
+    else:
+        return {
+            "logged_in": False,
+            "can_download": False,
+            "account_name": project_name,
+            "message": f"ChatGPT sync does not support {descriptor.label}.",
+        }
+
+    if not isinstance(payload, dict) or not str(payload.get("accessToken") or "").strip():
+        return {
+            "logged_in": False,
+            "can_download": False,
+            "account_name": project_name,
+            "message": (
+                f"{descriptor.label} opened the ChatGPT source but did not expose an authorized session."
+            ),
+        }
+
     return {
         "logged_in": True,
         "can_download": True,
         "account_name": project_name,
         "message": (
-            f"{descriptor.label} is configured for {project_name}. "
+            f"{descriptor.label} verified the ChatGPT source for {project_name}. "
             "A background browser session will run when the sync starts."
         ),
     }
@@ -346,12 +440,12 @@ def wait_for_x_page_ready(page, browser_label: str) -> None:
     raise RuntimeError(f"X page did not finish loading in {browser_label}.")
 
 
-def goto_with_retry(page, url: str, attempts: int = 3) -> None:
+def goto_with_retry(page, url: str, attempts: int = 3, timeout_ms: int = 120_000) -> None:
     """Navigate with a small retry budget for transient browser tunnel errors."""
     last_error: Exception | None = None
     for attempt_index in range(1, attempts + 1):
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=120_000)
+            page.goto(url, wait_until="domcontentloaded", timeout=max(1_000, int(timeout_ms)))
             return
         except Exception as exc:  # pragma: no cover - depends on local browser/network state
             last_error = exc
@@ -367,10 +461,10 @@ def launch_chromium_context(
     playwright,
     descriptor: BrowserDescriptor,
     headless: bool,
-    clone_profile_first: bool = False,
-    background_window: bool = False,
+    clone_profile_first: bool = True,
+    background_window: bool = True,
 ):
-    """Launch a Chromium-family browser against the selected profile."""
+    """Launch an isolated Chromium-family browser without surfacing its window."""
     user_data_dir = descriptor.user_data_dir
     if user_data_dir is None:
         raise RuntimeError(f"{descriptor.label} does not expose a Chromium profile directory.")
@@ -438,8 +532,8 @@ def launch_chromium_context(
     return ManagedContext()
 
 
-def build_chromium_launch_args(descriptor: BrowserDescriptor, background_window: bool = False) -> list[str]:
-    """Build Chromium launch arguments for a normal or offscreen window."""
+def build_chromium_launch_args(descriptor: BrowserDescriptor, background_window: bool = True) -> list[str]:
+    """Build Chromium launch arguments for an offscreen window by default."""
     args = [f"--profile-directory={descriptor.profile_directory}"]
     if background_window:
         args.extend(BACKGROUND_CHROMIUM_WINDOW_ARGS)
@@ -600,9 +694,11 @@ def detect_safari_x_account_handle(wait_seconds: int = 10) -> str:
     applescript = f"""
 tell application "Safari"
     launch
+    {SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
     make new document
     set targetWindow to front window
     set windowId to id of targetWindow
+    {SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
     set URL of current tab of targetWindow to "{escape_applescript_text(X_HOME_URL)}"
     delay {wait_seconds}
     set targetWindow to first window whose id is windowId
@@ -611,13 +707,14 @@ tell application "Safari"
     return accountHandle
 end tell
 """
-    process = subprocess.run(
-        ["osascript"],
-        input=applescript,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    with safari_window_creation_guard():
+        process = subprocess.run(
+            ["osascript"],
+            input=applescript,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
     if process.returncode != 0:
         return ""
 
@@ -632,9 +729,11 @@ def fetch_safari_page_snapshot(url: str, wait_seconds: int = 8) -> dict[str, str
     applescript = f"""
 tell application "Safari"
     launch
+    {SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
     make new document
     set targetWindow to front window
     set windowId to id of targetWindow
+    {SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
     set URL of current tab of targetWindow to "{escape_applescript_text(url)}"
     delay {wait_seconds}
     set targetWindow to first window whose id is windowId
@@ -650,13 +749,14 @@ tell application "Safari"
     return currentUrl & linefeed & clippedSource
 end tell
 """
-    process = subprocess.run(
-        ["osascript"],
-        input=applescript,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
+    with safari_window_creation_guard():
+        process = subprocess.run(
+            ["osascript"],
+            input=applescript,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
     if process.returncode != 0:
         stderr = (process.stderr or process.stdout or "").strip()
         raise RuntimeError(stderr or "Safari session probe failed.")

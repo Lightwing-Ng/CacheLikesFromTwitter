@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.13.0-codex.1
+# Code version: v1.15.0-codex.1
 
 from __future__ import annotations
 
@@ -29,6 +29,23 @@ from urllib.parse import urlsplit
 from .browser_sessions import browser_descriptors, launch_chromium_context
 from .config import LOCAL_STORE_ROOT, CrawlConfig
 from .local_media_browser import BrowserDeletionCatalog
+from .resource_persistence import (
+    GROK_CATALOG_FILENAME,
+    GROK_CATALOG_SCHEMA,
+    GROK_CATALOG_SCHEMA_VERSION,
+    GROK_DOWNLOAD_MANIFEST_FILENAME,
+    GROK_DOWNLOAD_MANIFEST_SCHEMA,
+    GROK_DOWNLOAD_MANIFEST_SCHEMA_VERSION,
+    GROK_WORK_QUEUE_FILENAME,
+    GROK_WORK_QUEUE_SCHEMA,
+    GROK_WORK_QUEUE_SCHEMA_VERSION,
+    LEGACY_GROK_CATALOG_FILENAME,
+    LEGACY_GROK_DOWNLOAD_MANIFEST_FILENAME,
+    LEGACY_GROK_WORK_QUEUE_FILENAME,
+    read_parquet_rows,
+    retire_legacy_file,
+    write_parquet_rows_atomic,
+)
 from .safari_automation import SafariContext
 from .state import TaskSnapshot, TaskState, utc_now
 
@@ -45,9 +62,6 @@ logger = logging.getLogger(__name__)
 EDGE_USER_DATA_DIR = Path.home() / "Library/Application Support/Microsoft Edge"
 EDGE_PROFILE_DIR = "Default"
 GROK_TARGET_DIR = LOCAL_STORE_ROOT / "grok"
-GROK_CATALOG_FILENAME = ".grok_catalog.json"
-GROK_DOWNLOAD_MANIFEST_FILENAME = ".grok_download_manifest.json"
-GROK_WORK_QUEUE_FILENAME = ".grok_work_queue.json"
 GROK_FILES_URL = "https://grok.com/files?sort=&fileType=&createdBy="
 GROK_SCROLL_ROUNDS = 480
 GROK_STALE_SCROLL_LIMIT = 12
@@ -271,14 +285,6 @@ def compute_file_sha256(file_path: Path) -> str:
                 break
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def write_json_atomic(path: Path, payload: dict[str, object]) -> None:
-    """Persist JSON atomically so crash recovery sees all-or-nothing state."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = path.with_name(f"{path.name}.tmp")
-    temp_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    os.replace(temp_path, path)
 
 
 def build_download_headers(
@@ -874,6 +880,7 @@ class GrokMediaCatalog:
         catalog = cls(target_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         if catalog._load():
+            catalog.flush()
             return catalog
 
         catalog._rebuild_from_disk()
@@ -1017,18 +1024,28 @@ class GrokMediaCatalog:
             self._flush_unlocked()
 
     def _load(self) -> bool:
-        """Load a previously persisted Grok catalog."""
+        """Load Parquet state, preferring a valid legacy JSON file for one-time migration."""
         with self._lock:
-            if not self.catalog_path.exists():
-                return False
+            rows = read_parquet_rows(self.catalog_path)
+            legacy_path = self.target_dir / LEGACY_GROK_CATALOG_FILENAME
+            migrated_legacy = False
+            if rows is None and legacy_path.exists():
+                try:
+                    payload = json.loads(legacy_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    payload = None
+                raw_entries = payload.get("entries") if isinstance(payload, dict) else None
+                if isinstance(raw_entries, dict):
+                    raw_entries = list(raw_entries.values())
+                if isinstance(raw_entries, list):
+                    rows = [dict(row) for row in raw_entries if isinstance(row, dict)]
+                    migrated_legacy = True
 
-            try:
-                payload = json.loads(self.catalog_path.read_text())
-            except (OSError, json.JSONDecodeError):
+            if rows is None:
                 return False
 
             loaded_any = False
-            for row in payload.get("entries", []):
+            for row in rows:
                 relative_path = str(row.get("relative_path") or "").strip()
                 identity = str(row.get("identity") or "").strip()
                 content_sha256 = str(row.get("content_sha256") or "").strip()
@@ -1086,7 +1103,9 @@ class GrokMediaCatalog:
                 self.media_kind_by_relative_path[canonical_relative_path] = media_kind
                 loaded_any = True
 
-            return loaded_any
+            if migrated_legacy:
+                self.dirty = True
+            return loaded_any or migrated_legacy
 
     def _rebuild_from_disk(self) -> None:
         """Recreate the Grok catalog from existing local files."""
@@ -1231,23 +1250,22 @@ class GrokMediaCatalog:
         if not self.dirty:
             return
 
-        payload = {
-            "schema_version": 1,
-            "entries": [
-                {
-                    "identity": entry.identity,
-                    "relative_path": entry.relative_path,
-                    "media_kind": entry.media_kind,
-                    "content_sha256": entry.content_sha256,
-                    "content_bytes": entry.content_bytes,
-                    "source_url": entry.source_url,
-                    "first_seen_at": entry.first_seen_at,
-                    "last_seen_at": entry.last_seen_at,
-                }
-                for entry in sorted(self.entries_by_identity.values(), key=lambda item: item.identity)
-            ],
-        }
-        write_json_atomic(self.catalog_path, payload)
+        rows = [
+            {
+                "schema_version": GROK_CATALOG_SCHEMA_VERSION,
+                "identity": entry.identity,
+                "relative_path": entry.relative_path,
+                "media_kind": entry.media_kind,
+                "content_sha256": entry.content_sha256,
+                "content_bytes": entry.content_bytes,
+                "source_url": entry.source_url,
+                "first_seen_at": entry.first_seen_at,
+                "last_seen_at": entry.last_seen_at,
+            }
+            for entry in sorted(self.entries_by_identity.values(), key=lambda item: item.identity)
+        ]
+        write_parquet_rows_atomic(self.catalog_path, rows, GROK_CATALOG_SCHEMA)
+        retire_legacy_file(self.target_dir / LEGACY_GROK_CATALOG_FILENAME)
         self.dirty = False
 
     def _prune_unreferenced_relative_path_unlocked(self, relative_path: str) -> None:
@@ -1707,43 +1725,53 @@ class GrokDownloadManifest:
         with self._lock:
             if not self.dirty:
                 return
-            payload = {
-                "schema_version": 1,
-                "entries": [
-                    {
-                        "identity": entry.identity,
-                        "asset_id": entry.asset_id,
-                        "asset_name": entry.asset_name,
-                        "media_kind": entry.media_kind,
-                        "source_url": entry.source_url,
-                        "status": entry.status,
-                        "relative_path": entry.relative_path,
-                        "temp_relative_path": entry.temp_relative_path,
-                        "content_sha256": entry.content_sha256,
-                        "content_bytes": entry.content_bytes,
-                        "expected_bytes": entry.expected_bytes,
-                        "created_at": entry.created_at,
-                        "attempts": entry.attempts,
-                        "last_error": entry.last_error,
-                        "updated_at": entry.updated_at,
-                    }
-                    for entry in sorted(self.entries_by_identity.values(), key=lambda item: item.identity)
-                ],
-            }
-            write_json_atomic(self.manifest_path, payload)
+            rows = [
+                {
+                    "schema_version": GROK_DOWNLOAD_MANIFEST_SCHEMA_VERSION,
+                    "identity": entry.identity,
+                    "asset_id": entry.asset_id,
+                    "asset_name": entry.asset_name,
+                    "media_kind": entry.media_kind,
+                    "source_url": entry.source_url,
+                    "status": entry.status,
+                    "relative_path": entry.relative_path,
+                    "temp_relative_path": entry.temp_relative_path,
+                    "content_sha256": entry.content_sha256,
+                    "content_bytes": entry.content_bytes,
+                    "expected_bytes": entry.expected_bytes,
+                    "created_at": entry.created_at,
+                    "attempts": entry.attempts,
+                    "last_error": entry.last_error,
+                    "updated_at": entry.updated_at,
+                }
+                for entry in sorted(self.entries_by_identity.values(), key=lambda item: item.identity)
+            ]
+            write_parquet_rows_atomic(
+                self.manifest_path,
+                rows,
+                GROK_DOWNLOAD_MANIFEST_SCHEMA,
+            )
+            retire_legacy_file(self.target_dir / LEGACY_GROK_DOWNLOAD_MANIFEST_FILENAME)
             self.dirty = False
 
     def _load(self) -> None:
-        """Load the persisted manifest when it exists."""
-        if not self.manifest_path.exists():
-            return
+        """Load Parquet state and import a valid legacy JSON manifest when present."""
+        rows = read_parquet_rows(self.manifest_path)
+        legacy_path = self.target_dir / LEGACY_GROK_DOWNLOAD_MANIFEST_FILENAME
+        migrated_legacy = False
+        if rows is None and legacy_path.exists():
+            try:
+                payload = json.loads(legacy_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                payload = None
+            raw_entries = payload.get("entries") if isinstance(payload, dict) else None
+            if isinstance(raw_entries, dict):
+                raw_entries = list(raw_entries.values())
+            if isinstance(raw_entries, list):
+                rows = [dict(row) for row in raw_entries if isinstance(row, dict)]
+                migrated_legacy = True
 
-        try:
-            payload = json.loads(self.manifest_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return
-
-        for row in payload.get("entries", []):
+        for row in rows or []:
             identity = str(row.get("identity") or "").strip()
             if not identity:
                 continue
@@ -1764,6 +1792,8 @@ class GrokDownloadManifest:
                 last_error=str(row.get("last_error") or "").strip(),
                 updated_at=normalize_catalog_timestamp(str(row.get("updated_at") or "").strip(), fallback=utc_now()),
             )
+        if migrated_legacy:
+            self.dirty = True
 
 
 class GrokWorkQueue:
@@ -2065,42 +2095,48 @@ class GrokWorkQueue:
             if not self.dirty:
                 return
 
-            payload = {
-                "schema_version": 1,
-                "entries": [
-                    {
-                        "asset_id": entry.asset_id,
-                        "identity": entry.identity,
-                        "asset_name": entry.asset_name,
-                        "media_kind": entry.media_kind,
-                        "source_url": entry.source_url,
-                        "preview_url": entry.preview_url,
-                        "expected_bytes": entry.expected_bytes,
-                        "created_at": entry.created_at,
-                        "discovered_at": entry.discovered_at,
-                        "updated_at": entry.updated_at,
-                        "status": entry.status,
-                        "resolution_attempts": entry.resolution_attempts,
-                        "download_attempts": entry.download_attempts,
-                        "last_error": entry.last_error,
-                    }
-                    for entry in sorted(self.entries_by_asset_id.values(), key=lambda item: item.asset_id)
-                ],
-            }
-            write_json_atomic(self.queue_path, payload)
+            rows = [
+                {
+                    "schema_version": GROK_WORK_QUEUE_SCHEMA_VERSION,
+                    "asset_id": entry.asset_id,
+                    "identity": entry.identity,
+                    "asset_name": entry.asset_name,
+                    "media_kind": entry.media_kind,
+                    "source_url": entry.source_url,
+                    "preview_url": entry.preview_url,
+                    "expected_bytes": entry.expected_bytes,
+                    "created_at": entry.created_at,
+                    "discovered_at": entry.discovered_at,
+                    "updated_at": entry.updated_at,
+                    "status": entry.status,
+                    "resolution_attempts": entry.resolution_attempts,
+                    "download_attempts": entry.download_attempts,
+                    "last_error": entry.last_error,
+                }
+                for entry in sorted(self.entries_by_asset_id.values(), key=lambda item: item.asset_id)
+            ]
+            write_parquet_rows_atomic(self.queue_path, rows, GROK_WORK_QUEUE_SCHEMA)
+            retire_legacy_file(self.target_dir / LEGACY_GROK_WORK_QUEUE_FILENAME)
             self.dirty = False
 
     def _load(self) -> None:
-        """Load the persisted work queue when it exists."""
-        if not self.queue_path.exists():
-            return
+        """Load Parquet state and import a valid legacy JSON work queue when present."""
+        rows = read_parquet_rows(self.queue_path)
+        legacy_path = self.target_dir / LEGACY_GROK_WORK_QUEUE_FILENAME
+        migrated_legacy = False
+        if rows is None and legacy_path.exists():
+            try:
+                payload = json.loads(legacy_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                payload = None
+            raw_entries = payload.get("entries") if isinstance(payload, dict) else None
+            if isinstance(raw_entries, dict):
+                raw_entries = list(raw_entries.values())
+            if isinstance(raw_entries, list):
+                rows = [dict(row) for row in raw_entries if isinstance(row, dict)]
+                migrated_legacy = True
 
-        try:
-            payload = json.loads(self.queue_path.read_text())
-        except (OSError, json.JSONDecodeError):
-            return
-
-        for row in payload.get("entries", []):
+        for row in rows or []:
             asset_id = str(row.get("asset_id") or "").strip().lower()
             if not asset_id:
                 continue
@@ -2120,6 +2156,8 @@ class GrokWorkQueue:
                 download_attempts=int(row.get("download_attempts") or 0),
                 last_error=str(row.get("last_error") or "").strip(),
             )
+        if migrated_legacy:
+            self.dirty = True
 
     def _entry_to_candidate(self, entry: GrokWorkQueueEntry) -> GrokMediaCandidate:
         """Convert one queue entry back into a Grok media candidate."""
@@ -2172,6 +2210,9 @@ def reset_grok_state(target_dir: Path | None = None) -> GrokResetResult:
         resolved_target_dir / GROK_CATALOG_FILENAME,
         resolved_target_dir / GROK_DOWNLOAD_MANIFEST_FILENAME,
         resolved_target_dir / GROK_WORK_QUEUE_FILENAME,
+        resolved_target_dir / LEGACY_GROK_CATALOG_FILENAME,
+        resolved_target_dir / LEGACY_GROK_DOWNLOAD_MANIFEST_FILENAME,
+        resolved_target_dir / LEGACY_GROK_WORK_QUEUE_FILENAME,
     ]
     for state_path in state_paths:
         if not state_path.exists():
@@ -3073,7 +3114,7 @@ def sync_grok_media(
         state.update(phase="collecting")
         with contextlib.ExitStack() as browser_stack:
             if descriptor.engine == "safari":
-                state.append_event("Opening an authenticated Safari window for Grok sync.")
+                state.append_event("Opening an authenticated offscreen Safari window for Grok sync.")
                 context = browser_stack.enter_context(SafariContext(GROK_FILES_URL))
                 max_library_pages = 1
             else:
@@ -3085,6 +3126,7 @@ def sync_grok_media(
                         descriptor,
                         headless=True,
                         clone_profile_first=True,
+                        background_window=True,
                     )
                 )
             page = prepare_grok_library_page(context)

@@ -1,0 +1,38 @@
+{# Code version: v1.0.0-codex.1 #}
+{% macro render_number_field(
+    label_text,
+    name,
+    value,
+    number_format="integer",
+    step="1",
+    minimum=none,
+    maximum=none,
+    field_class="field compact-config-field",
+    input_class="",
+    describedby=none
+) -%}
+<div class="{{ field_class }}">
+    <label class="cache-number-label" for="{{ name }}">{{ label_text }}</label>
+    <span class="cache-number-field" data-cache-number-field>
+        <input
+            id="{{ name }}"
+            type="text"
+            inputmode="{{ 'decimal' if number_format == 'decimal' else 'numeric' }}"
+            role="spinbutton"
+            class="formatted-number-input cache-number-input{% if input_class %} {{ input_class }}{% endif %}"
+            data-number-format="{{ number_format }}"
+            data-number-step="{{ step }}"
+            {% if minimum is not none %}data-number-min="{{ minimum }}" aria-valuemin="{{ minimum }}"{% endif %}
+            {% if maximum is not none %}data-number-max="{{ maximum }}" aria-valuemax="{{ maximum }}"{% endif %}
+            aria-valuenow="{{ value }}"
+            {% if describedby %}aria-describedby="{{ describedby }}"{% endif %}
+            name="{{ name }}"
+            value="{{ value }}"
+        >
+        <span class="cache-number-stepper" role="group" aria-label="{{ label_text }} controls">
+            <button type="button" class="cache-number-stepper-button" data-cache-number-stepper="increment" aria-label="Increase {{ label_text|lower }}">▲</button>
+            <button type="button" class="cache-number-stepper-button" data-cache-number-stepper="decrement" aria-label="Decrease {{ label_text|lower }}">▼</button>
+        </span>
+    </span>
+</div>
+{%- endmacro %}
