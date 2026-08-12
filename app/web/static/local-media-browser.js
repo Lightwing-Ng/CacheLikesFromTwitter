@@ -1,4 +1,4 @@
-/* Code version: v1.20.0-codex.1 */
+/* Code version: v1.21.2-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -461,6 +461,165 @@
     if (pagination) {
         window.requestAnimationFrame(positionPaginationIndicator);
         window.addEventListener("resize", positionPaginationIndicator, { passive: true });
+    }
+
+    const paginationRangePickers = pagination
+        ? Array.from(pagination.querySelectorAll(".browser-pagination-range-picker"))
+        : [];
+    let pinnedPaginationRangePicker = null;
+    let paginationRangeCloseTimer = 0;
+
+    function paginationRangeElements(picker) {
+        return {
+            trigger: picker?.querySelector("[data-pagination-range-trigger]") || null,
+            menu: picker?.querySelector("[data-pagination-range-menu]") || null,
+        };
+    }
+
+    function paginationRangeMenuContentHeight(menu) {
+        const grid = menu?.querySelector(".browser-pagination-range-grid");
+        if (!menu || !grid) return 0;
+        const style = window.getComputedStyle(menu);
+        const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+        const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+        return grid.scrollHeight + paddingTop + paddingBottom;
+    }
+
+    function positionPaginationRangeMenu(picker) {
+        const { menu } = paginationRangeElements(picker);
+        if (!menu || !picker.classList.contains("is-open")) return;
+        menu.classList.remove("is-below");
+        menu.style.removeProperty("--pagination-range-menu-shift-x");
+        menu.style.removeProperty("--pagination-range-menu-max-height");
+        const pickerRect = picker.getBoundingClientRect();
+        const viewportInset = 12;
+        const menuGap = 8;
+        const spaceAbove = Math.max(96, pickerRect.top - viewportInset - menuGap);
+        const spaceBelow = Math.max(96, window.innerHeight - pickerRect.bottom - viewportInset - menuGap);
+        const naturalMenuHeight = paginationRangeMenuContentHeight(menu);
+        if (naturalMenuHeight > spaceAbove && spaceBelow > spaceAbove) {
+            menu.classList.add("is-below");
+        }
+        const availableHeight = menu.classList.contains("is-below") ? spaceBelow : spaceAbove;
+        menu.style.setProperty("--pagination-range-menu-max-height", `${availableHeight}px`);
+        menu.classList.toggle("is-scrollable", naturalMenuHeight > menu.clientHeight + 1);
+        const menuWidth = menu.offsetWidth;
+        const idealMenuLeft = pickerRect.left + (pickerRect.width / 2) - (menuWidth / 2);
+        let horizontalShift = 0;
+        if (idealMenuLeft < viewportInset) {
+            horizontalShift = viewportInset - idealMenuLeft;
+        } else if (idealMenuLeft + menuWidth > window.innerWidth - viewportInset) {
+            horizontalShift = window.innerWidth - viewportInset - idealMenuLeft - menuWidth;
+        }
+        menu.style.setProperty("--pagination-range-menu-shift-x", `${horizontalShift}px`);
+    }
+
+    function setPaginationRangePickerOpen(picker, shouldOpen, { focusFirst = false } = {}) {
+        if (!picker) return;
+        const { trigger, menu } = paginationRangeElements(picker);
+        picker.classList.toggle("is-open", shouldOpen);
+        trigger?.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+        menu?.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
+        if (!shouldOpen) {
+            menu?.classList.remove("is-below");
+            menu?.classList.remove("is-scrollable");
+            menu?.style.removeProperty("--pagination-range-menu-shift-x");
+            menu?.style.removeProperty("--pagination-range-menu-max-height");
+            return;
+        }
+        paginationRangePickers.forEach((otherPicker) => {
+            if (otherPicker !== picker) setPaginationRangePickerOpen(otherPicker, false);
+        });
+        window.requestAnimationFrame(() => {
+            positionPaginationRangeMenu(picker);
+            if (focusFirst) {
+                menu?.querySelector(".browser-pagination-range-option")?.focus();
+            }
+        });
+    }
+
+    function cancelPaginationRangeClose() {
+        if (!paginationRangeCloseTimer) return;
+        window.clearTimeout(paginationRangeCloseTimer);
+        paginationRangeCloseTimer = 0;
+    }
+
+    function schedulePaginationRangeClose(picker) {
+        cancelPaginationRangeClose();
+        if (pinnedPaginationRangePicker === picker) return;
+        paginationRangeCloseTimer = window.setTimeout(() => {
+            paginationRangeCloseTimer = 0;
+            if (!picker.matches(":hover") && !picker.contains(document.activeElement)) {
+                setPaginationRangePickerOpen(picker, false);
+            }
+        }, 140);
+    }
+
+    paginationRangePickers.forEach((picker) => {
+        const { trigger, menu } = paginationRangeElements(picker);
+        picker.addEventListener("pointerenter", () => {
+            cancelPaginationRangeClose();
+            setPaginationRangePickerOpen(picker, true);
+        });
+        picker.addEventListener("pointerleave", () => schedulePaginationRangeClose(picker));
+        picker.addEventListener("focusin", () => {
+            cancelPaginationRangeClose();
+            setPaginationRangePickerOpen(picker, true);
+        });
+        picker.addEventListener("focusout", () => schedulePaginationRangeClose(picker));
+        trigger?.addEventListener("click", () => {
+            cancelPaginationRangeClose();
+            const shouldPin = pinnedPaginationRangePicker !== picker;
+            if (pinnedPaginationRangePicker && pinnedPaginationRangePicker !== picker) {
+                setPaginationRangePickerOpen(pinnedPaginationRangePicker, false);
+            }
+            pinnedPaginationRangePicker = shouldPin ? picker : null;
+            setPaginationRangePickerOpen(picker, shouldPin || picker.matches(":hover"));
+        });
+        trigger?.addEventListener("keydown", (event) => {
+            if (event.key !== "ArrowDown") return;
+            event.preventDefault();
+            pinnedPaginationRangePicker = picker;
+            setPaginationRangePickerOpen(picker, true, { focusFirst: true });
+        });
+        menu?.addEventListener("keydown", (event) => {
+            const options = Array.from(menu.querySelectorAll(".browser-pagination-range-option"));
+            const currentIndex = options.indexOf(document.activeElement);
+            let nextIndex = currentIndex;
+            if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+                nextIndex = Math.min(options.length - 1, currentIndex + 1);
+            } else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+                nextIndex = Math.max(0, currentIndex - 1);
+            } else if (event.key === "Home") {
+                nextIndex = 0;
+            } else if (event.key === "End") {
+                nextIndex = options.length - 1;
+            } else {
+                return;
+            }
+            event.preventDefault();
+            options[nextIndex]?.focus();
+        });
+    });
+
+    if (paginationRangePickers.length) {
+        document.addEventListener("pointerdown", (event) => {
+            if (pagination?.contains(event.target)) return;
+            pinnedPaginationRangePicker = null;
+            paginationRangePickers.forEach((picker) => setPaginationRangePickerOpen(picker, false));
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape") return;
+            const openPicker = paginationRangePickers.find((picker) => picker.classList.contains("is-open"));
+            if (!openPicker) return;
+            event.preventDefault();
+            pinnedPaginationRangePicker = null;
+            setPaginationRangePickerOpen(openPicker, false);
+            paginationRangeElements(openPicker).trigger?.focus();
+        });
+        window.addEventListener("resize", () => {
+            paginationRangePickers.forEach(positionPaginationRangeMenu);
+        }, { passive: true });
     }
 
     const viewerMedia = dialog.querySelector("[data-viewer-media]");

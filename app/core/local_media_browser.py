@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.14.0-codex.1
+# Code version: v1.15.0-codex.1
 
 from __future__ import annotations
 
@@ -102,6 +102,8 @@ class LocalMediaPaginationItem:
     kind: str
     page: int = 0
     is_active: bool = False
+    position: str = ""
+    ranges: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -747,7 +749,13 @@ def build_local_store_pagination(
     if start_page > 1:
         items.append(LocalMediaPaginationItem(kind="previous", page=start_page - 1))
         items.append(LocalMediaPaginationItem(kind="page", page=1))
-        items.append(LocalMediaPaginationItem(kind="ellipsis"))
+        items.append(
+            LocalMediaPaginationItem(
+                kind="ellipsis",
+                position="leading",
+                ranges=_build_pagination_ranges(1, start_page - 1, chunk_size),
+            )
+        )
 
     for page in range(start_page, end_page + 1):
         items.append(
@@ -759,11 +767,35 @@ def build_local_store_pagination(
         )
 
     if end_page < normalized_total_pages:
-        items.append(LocalMediaPaginationItem(kind="ellipsis"))
+        items.append(
+            LocalMediaPaginationItem(
+                kind="ellipsis",
+                position="trailing",
+                ranges=_build_pagination_ranges(end_page + 1, normalized_total_pages, chunk_size),
+            )
+        )
         items.append(LocalMediaPaginationItem(kind="page", page=normalized_total_pages))
         items.append(LocalMediaPaginationItem(kind="next", page=end_page + 1))
 
     return tuple(items)
+
+
+def _build_pagination_ranges(
+    first_page: int,
+    last_page: int,
+    chunk_size: int,
+) -> tuple[tuple[int, int], ...]:
+    """Group hidden pages and merge a short final fragment into its preceding range."""
+    if first_page > last_page:
+        return ()
+    ranges = [
+        (start_page, min(start_page + chunk_size - 1, last_page))
+        for start_page in range(first_page, last_page + 1, chunk_size)
+    ]
+    if len(ranges) > 1 and ranges[-1][1] - ranges[-1][0] + 1 < chunk_size:
+        ranges[-2] = (ranges[-2][0], ranges[-1][1])
+        ranges.pop()
+    return tuple(ranges)
 
 
 class LocalMediaCatalog:

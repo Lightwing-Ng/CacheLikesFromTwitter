@@ -52,8 +52,10 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Assume Chrome on the host machine is already authenticated for that page.
 - Do not rework, replace, or repeatedly troubleshoot login unless the user explicitly asks for login-related changes.
 - Assume future user sessions will also start from that already logged-in page.
-- Default to hot-starting from the host machine's PyCharm when local development launch is needed.
-- Do not kill the existing PyCharm process unless the user explicitly requests it.
+- Use the macOS built-in Terminal as the canonical interface for local development launches,
+  restarts, process control, and log observation.
+- Do not use PyCharm as a runtime entrypoint or process-control interface.
+- Do not close or disrupt the user's existing Terminal windows or sessions unless explicitly requested.
 - Use `/usr/local/bin/python3.13` as the required interpreter for project execution unless the user explicitly overrides it.
 - On this machine, treat `python3` as the valid Python alias and do not assume `python` is available or preferred.
 

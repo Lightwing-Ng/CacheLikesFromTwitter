@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.42.1-codex.1
+# Code version: v1.43.3-codex.1
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from unittest.mock import patch
 
 from app.core.state import TaskSnapshot
 from app.core.config import CrawlConfig
-from app.core.local_media_browser import stable_media_id
+from app.core.local_media_browser import LocalMediaCatalog, LocalMediaPage, stable_media_id
 from app.web.app import create_app, format_media_size, reconcile_cached_snapshot, render_prompt_markdown
 from app.web.cache_sources import CACHE_SOURCE_VIEWS
 
@@ -562,9 +562,9 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.45.0-codex.1", body)
+            self.assertIn("style-v2.46.2-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
-            self.assertIn('local-media-browser.js?v=local-media-browser-v1.20.0-codex.1', body)
+            self.assertIn('local-media-browser.js?v=local-media-browser-v1.21.2-codex.1', body)
             self.assertIn('data-media-source-link', body)
             self.assertIn('data-media-copy-source-url', body)
             self.assertIn('data-media-reveal', body)
@@ -585,6 +585,39 @@ class WebAppTests(unittest.TestCase):
             self.assertEqual(invalid_extension.status_code, 404)
             self.assertEqual(traversal.status_code, 404)
             self.assertEqual(external_link.status_code, 404)
+
+    def test_browser_pagination_ellipses_render_accessible_range_menus(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            root = Path(raw_root) / "local_store"
+            app = create_app(root)
+            media_page = LocalMediaPage(
+                items=(),
+                total_count=24 * 457,
+                image_count=24 * 457,
+                video_count=0,
+                current_page=53,
+                total_pages=457,
+            )
+            with (
+                patch.object(LocalMediaCatalog, "snapshot", return_value=(object(),)),
+                patch.object(LocalMediaCatalog, "query", return_value=media_page),
+                app.test_client() as client,
+            ):
+                response = client.get("/browser?source=x&page=53")
+
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data-pagination-ellipsis="leading"', body)
+        self.assertIn('data-pagination-ellipsis="trailing"', body)
+        self.assertIn('aria-label="Show earlier pages"', body)
+        self.assertIn('aria-label="Show later pages"', body)
+        self.assertIn('role="menuitem"', body)
+        self.assertIn('data-pagination-range-start="1"', body)
+        self.assertIn('>1-5</a>', body)
+        self.assertIn('>46-50</a>', body)
+        self.assertIn('>56-60</a>', body)
+        self.assertIn('>446-450</a>', body)
+        self.assertIn('>451-457</a>', body)
 
     def test_browser_card_uses_filename_metadata_and_binary_size_units(self) -> None:
         with TemporaryDirectory() as raw_root:
@@ -782,6 +815,16 @@ class WebAppTests(unittest.TestCase):
 
         self.assertNotIn("promptDialog.showModal();", script)
         self.assertNotIn("promptDialogContent.replaceChildren(", script)
+
+    def test_browser_pagination_range_menu_scrolls_only_when_content_overflows(self) -> None:
+        script = LOCAL_MEDIA_BROWSER_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        for fragment in (
+            'const naturalMenuHeight = paginationRangeMenuContentHeight(menu);',
+            'menu.classList.toggle("is-scrollable", naturalMenuHeight > menu.clientHeight + 1);',
+            'menu?.classList.remove("is-scrollable");',
+        ):
+            self.assertIn(fragment, script)
 
     def test_browser_prompt_hides_expand_control_when_default_copy_fits(self) -> None:
         script = LOCAL_MEDIA_BROWSER_SCRIPT_PATH.read_text(encoding="utf-8")

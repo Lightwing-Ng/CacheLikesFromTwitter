@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.34.0-codex.1
+# Code version: v1.34.1-codex.1
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
 from typing import Callable, Iterable, Iterator
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
@@ -133,7 +133,6 @@ class ChatGPTImageCandidate:
     message_role: str = ""
     conversation_title: str = ""
     created_at: str = ""
-    fallback_source_url: str = ""
     request_headers: dict[str, str] = field(default_factory=dict, repr=False)
 
 
@@ -314,9 +313,25 @@ def looks_like_image(content: bytes) -> bool:
     return bool(image_signature_extension(content))
 
 
+def _is_chatgpt_thumbnail_source_url(source_url: str) -> bool:
+    """Return whether a ChatGPT URL identifies a derived thumbnail encoding."""
+    normalized_url = unquote(str(source_url or "")).lower()
+    if "#thumbnail" in normalized_url:
+        return True
+    query = parse_qs(urlsplit(source_url).query)
+    return any(
+        str(value).strip().lower() == "thumbnail"
+        for value in query.get("encoding", [])
+    )
+
+
 def should_cache_chatgpt_candidate(candidate: ChatGPTImageCandidate) -> bool:
     """Return whether a ChatGPT original-image candidate can be cached."""
-    return bool(candidate.source_url.strip() and candidate.file_id.strip())
+    return bool(
+        candidate.source_url.strip()
+        and candidate.file_id.strip()
+        and not _is_chatgpt_thumbnail_source_url(candidate.source_url)
+    )
 
 
 def chatgpt_visual_properties(path: Path) -> tuple[str, int, int] | None:
@@ -591,13 +606,16 @@ class ChatGPTImageCatalog:
             return sum(1 for file_id in self.entries_by_file_id if self.complete_entry(file_id) is not None)
 
     def prune_incomplete_entries(self) -> ChatGPTCatalogRepairResult:
-        """Remove stale or invalid entries so the associated assets can be downloaded again."""
+        """Remove invalid entries so only original ChatGPT images remain cached."""
         with self._lock:
             removed_file_ids: list[str] = []
             removed_local_files = 0
             reclaimed_bytes = 0
             for file_id, entry in list(self.entries_by_file_id.items()):
-                if self.complete_entry(file_id) is not None:
+                if (
+                    self.complete_entry(file_id) is not None
+                    and not _is_chatgpt_thumbnail_source_url(entry.source_url)
+                ):
                     continue
                 path = self.target_dir / entry.relative_path
                 if path.exists() and path.is_file():
@@ -1860,12 +1878,7 @@ def _recent_chatgpt_image_candidate(
     except (TypeError, ValueError):
         width = 0
         height = 0
-    encodings = raw_item.get("encodings")
-    thumbnail = encodings.get("thumbnail") if isinstance(encodings, dict) else None
-    fallback_source_url = str(thumbnail.get("path") or "").strip() if isinstance(thumbnail, dict) else ""
-    if urlsplit(fallback_source_url).scheme.lower() != "https":
-        fallback_source_url = ""
-    return ChatGPTImageCandidate(
+    candidate = ChatGPTImageCandidate(
         source_url=source_url,
         file_id=file_id,
         conversation_url=f"{_project_conversation_prefix(project_url)}{conversation_id}",
@@ -1876,8 +1889,8 @@ def _recent_chatgpt_image_candidate(
         message_role="assistant",
         conversation_title=str((conversation_titles_by_id or {}).get(conversation_id) or "").strip(),
         created_at=str(raw_item.get("created_at") or "").strip(),
-        fallback_source_url=fallback_source_url,
     )
+    return candidate if should_cache_chatgpt_candidate(candidate) else None
 
 
 def collect_chatgpt_project_index_images(
@@ -2242,7 +2255,6 @@ def _merge_current_conversation_images(
                 message_role=candidate.message_role or previous.message_role,
                 conversation_title=previous.conversation_title or candidate.conversation_title,
                 created_at=candidate.created_at or previous.created_at,
-                fallback_source_url=candidate.fallback_source_url or previous.fallback_source_url,
                 request_headers=candidate.request_headers or previous.request_headers,
             )
         candidate_has_direct_url = not _is_chatgpt_file_download_url(candidate.source_url)
@@ -2987,23 +2999,7 @@ def _download_chatgpt_image_via_safari(
                 source_url = refreshed_source_url
                 resolved_candidate = replace(candidate, source_url=source_url, request_headers={})
 
-        fallback_source_url = candidate.fallback_source_url
-        can_fallback = (
-            download_error is not None
-            and bool(fallback_source_url)
-            and bool(re.search(r"\bHTTP 404\b", str(download_error)))
-        )
-        if can_fallback:
-            partial_path.unlink(missing_ok=True)
-            content_type, _resumed = context.primary_page.download_to_path(
-                fallback_source_url,
-                partial_path,
-                lambda: False,
-                headers=_safari_chatgpt_image_headers(candidate, fallback_source_url),
-            )
-            source_url = fallback_source_url
-            resolved_candidate = replace(candidate, source_url=source_url, request_headers={})
-        elif download_error is not None:
+        if download_error is not None:
             raise download_error
 
     content = partial_path.read_bytes()
@@ -3060,22 +3056,6 @@ def download_chatgpt_image(
                         max_file_size_bytes,
                     )
                 response, source_url, resolved_candidate = _request_chatgpt_image_with_refresh(context, candidate)
-                if (
-                    not response.ok
-                    and int(response.status) == 404
-                    and candidate.fallback_source_url
-                ):
-                    source_url = candidate.fallback_source_url
-                    response = context.request.get(
-                        source_url,
-                        timeout=CHATGPT_IMAGE_TIMEOUT_MS,
-                        headers=_chatgpt_image_request_headers(candidate),
-                    )
-                    resolved_candidate = replace(
-                        candidate,
-                        source_url=source_url,
-                        request_headers={},
-                    )
                 if not response.ok:
                     raise RuntimeError(f"ChatGPT image request returned HTTP {response.status}.")
 

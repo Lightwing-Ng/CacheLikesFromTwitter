@@ -1,4 +1,4 @@
-/* Code version: v2.45.0-codex.1 */
+/* Code version: v2.46.2-codex.1 */
 :root {
     color-scheme: light;
     --color-scheme: light;
@@ -4657,7 +4657,38 @@ body::before,
     max-width: var(--local-store-pagination-slot-size);
     height: var(--local-store-pagination-slot-size);
     color: var(--theme-text);
-    pointer-events: none;
+    pointer-events: auto;
+}
+
+.browser-pagination-range-trigger {
+    position: relative;
+    display: inline-grid;
+    place-items: center;
+    width: var(--local-store-pagination-slot-size);
+    height: var(--local-store-pagination-slot-size);
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    box-shadow: none;
+    color: inherit;
+    cursor: pointer;
+    transition: background var(--motion-duration-fast) var(--motion-standard), border-color var(--motion-duration-fast) var(--motion-standard), box-shadow var(--motion-duration-fast) var(--motion-standard), transform var(--motion-duration-spatial) var(--motion-bouncy);
+}
+
+.browser-pagination-range-picker:is(:hover, :focus-within, .is-open) .browser-pagination-range-trigger {
+    border-color: var(--theme-glass-border);
+    background: var(--frosted-glass-background-hover);
+    box-shadow: var(--frosted-glass-shadow-active);
+}
+
+.browser-pagination-range-trigger:active {
+    transform: scale(0.94);
+}
+
+.browser-pagination-range-trigger:focus-visible {
+    outline: 2px solid var(--theme-focus-ring);
+    outline-offset: 2px;
 }
 
 .browser-pagination .local-store-page-ellipsis-dots {
@@ -4667,6 +4698,146 @@ body::before,
     border-radius: 50%;
     background: currentColor;
     box-shadow: -5px 0 0 currentColor, 5px 0 0 currentColor;
+}
+
+.browser-pagination-range-menu {
+    --pagination-range-menu-shift-x: 0px;
+    position: absolute;
+    left: 50%;
+    bottom: calc(100% + 8px);
+    z-index: var(--layer-global-popover);
+    display: block;
+    box-sizing: border-box;
+    width: min(420px, calc(100vw - 24px));
+    max-height: min(360px, calc(100vh - 96px), var(--pagination-range-menu-max-height, 360px));
+    padding: 10px;
+    overflow-x: hidden;
+    overflow-y: hidden;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-soft);
+    background: var(--frosted-glass-opaque-background, var(--frosted-glass-background));
+    background-clip: padding-box;
+    box-shadow: var(--frosted-glass-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 8px, 0) scale(0.955);
+    transform-origin: bottom center;
+    transition: opacity var(--motion-duration-fast) var(--motion-standard), visibility var(--motion-duration-fast) var(--motion-standard), transform var(--motion-duration-emphasized) var(--motion-emphasized);
+}
+
+.browser-pagination-range-menu.is-scrollable {
+    overflow-y: auto;
+}
+
+.browser-pagination-range-menu::after {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -9px;
+    height: 9px;
+    content: "";
+}
+
+.browser-pagination-range-menu.is-below {
+    top: calc(100% + 8px);
+    bottom: auto;
+    transform-origin: top center;
+}
+
+.browser-pagination-range-menu.is-below::after {
+    top: -9px;
+    bottom: auto;
+}
+
+.browser-pagination-range-picker.is-open .browser-pagination-range-menu {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    animation: browser-pagination-range-gel-in 300ms var(--motion-bouncy) both;
+}
+
+.browser-pagination-range-picker.is-open .browser-pagination-range-menu.is-below {
+    animation-name: browser-pagination-range-gel-in-below;
+}
+
+.browser-pagination-range-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+    gap: 6px;
+}
+
+.browser-pagination-range-option {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 0;
+    min-height: 32px;
+    padding: 6px 8px;
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--theme-text);
+    font-size: var(--font-table-body);
+    font-variant-numeric: lining-nums tabular-nums;
+    font-feature-settings: "lnum" 1, "tnum" 1;
+    font-weight: var(--font-weight-medium);
+    line-height: 1;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background var(--motion-duration-fast) var(--motion-standard), border-color var(--motion-duration-fast) var(--motion-standard), box-shadow var(--motion-duration-fast) var(--motion-standard), transform var(--motion-duration-standard) var(--motion-bouncy);
+}
+
+.browser-pagination-range-option:is(:hover, :focus-visible) {
+    border-color: var(--theme-glass-border);
+    background: var(--frosted-glass-background-hover);
+    box-shadow: var(--frosted-glass-shadow-active);
+    outline: none;
+    transform: scale(1.035);
+}
+
+.browser-pagination-range-option:active {
+    transform: scale(0.97);
+}
+
+@keyframes browser-pagination-range-gel-in {
+    0% {
+        opacity: 0;
+        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 9px, 0) scale(0.955);
+        filter: saturate(82%);
+    }
+    68% {
+        opacity: 1;
+        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), -1px, 0) scale(1.012);
+        filter: saturate(108%);
+    }
+    100% {
+        opacity: 1;
+        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 0, 0) scale(1);
+        filter: saturate(100%);
+    }
+}
+
+@keyframes browser-pagination-range-gel-in-below {
+    0% {
+        opacity: 0;
+        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), -9px, 0) scale(0.955);
+        filter: saturate(82%);
+    }
+    68% {
+        opacity: 1;
+        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 1px, 0) scale(1.012);
+        filter: saturate(108%);
+    }
+    100% {
+        opacity: 1;
+        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 0, 0) scale(1);
+        filter: saturate(100%);
+    }
 }
 
 .browser-pagination .local-store-page-nav .icon {
@@ -5168,6 +5339,11 @@ body::before,
 
     .browser-dialog {
         transition: none;
+    }
+
+    .browser-pagination-range-picker.is-open .browser-pagination-range-menu {
+        animation-duration: 1ms;
+        animation-timing-function: linear;
     }
 }
 

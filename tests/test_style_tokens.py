@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.23.0-codex.1
+Code version: v1.24.2-codex.1
 """
 
 from pathlib import Path
@@ -560,3 +560,23 @@ def test_browser_pagination_matches_the_sibling_floating_control_states() -> Non
 
     assert "border: var(--frosted-glass-border);" in hover_rule
     assert "transform:" not in hover_rule
+
+
+def test_browser_pagination_range_menu_uses_glass_and_gel_motion_tokens() -> None:
+    """Keep range expansion aligned with the sibling popover motion language."""
+    stylesheet = _stylesheet()
+
+    for token in (
+        ".browser-pagination-range-menu {",
+        "background: var(--frosted-glass-opaque-background, var(--frosted-glass-background));",
+        "background-clip: padding-box;",
+        "backdrop-filter: var(--frosted-glass-blur);",
+        "overflow-y: hidden;",
+        ".browser-pagination-range-menu.is-scrollable {",
+        "overflow-y: auto;",
+        "border-radius: var(--radius-soft);",
+        "animation: browser-pagination-range-gel-in 300ms var(--motion-bouncy) both;",
+        "@keyframes browser-pagination-range-gel-in {",
+        "grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));",
+    ):
+        assert token in stylesheet

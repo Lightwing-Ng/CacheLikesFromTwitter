@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.30.0-codex.1
+# Code version: v1.30.1-codex.1
 
 from __future__ import annotations
 
@@ -134,6 +134,17 @@ def test_chatgpt_keeps_original_images_from_every_message_role() -> None:
     known_upload = dict(base, file_id="file_000000000e6471fd89cf0af9b5bd16e5")
     assert should_cache_chatgpt_candidate(ChatGPTImageCandidate(**known_upload, message_role="user"))
     assert not should_cache_chatgpt_candidate(ChatGPTImageCandidate(**dict(base, source_url="")))
+    assert not should_cache_chatgpt_candidate(
+        ChatGPTImageCandidate(
+            **dict(
+                base,
+                source_url=(
+                    "https://chatgpt.com/backend-api/estuary/content?"
+                    "id=asset%23file_role%23thumbnail"
+                ),
+            )
+        )
+    )
 
 
 def test_chatgpt_extracts_every_image_asset_and_prompt_from_all_conversation_branches() -> None:
@@ -313,11 +324,6 @@ def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
         "file_project_first": "master 21",
         "file_project_second": "master 22",
     }
-    assert next(
-        candidate.fallback_source_url
-        for candidate in candidates
-        if candidate.file_id == "file_project_first"
-    ).endswith("sig=thumb")
     assert any("after=next-page" in url for url in context.request.urls)
 
 
@@ -1017,6 +1023,43 @@ def test_chatgpt_catalog_prunes_missing_entries_during_load(tmp_path: Path) -> N
     assert {str(row["file_id"]) for row in persisted} == {"file_valid"}
 
 
+def test_chatgpt_catalog_prunes_cached_thumbnail_encodings_during_load(tmp_path: Path) -> None:
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    thumbnail_path = target_dir / "img_file_thumbnail.webp"
+    thumbnail_path.parent.mkdir(parents=True)
+    thumbnail_payload = _visual_test_image_payload("WEBP")
+    thumbnail_path.write_bytes(thumbnail_payload)
+    catalog = ChatGPTImageCatalog(
+        target_dir,
+        {
+            "file_thumbnail": ChatGPTCatalogEntry(
+                file_id="file_thumbnail",
+                relative_path=thumbnail_path.name,
+                content_sha256="thumbnail",
+                content_bytes=len(thumbnail_payload),
+                source_url=(
+                    "https://chatgpt.com/backend-api/estuary/content?"
+                    "id=asset%23file_thumbnail%23thumbnail"
+                ),
+                conversation_url="https://chatgpt.com/c/thumbnail",
+                alt_text="",
+                width=512,
+                height=512,
+                first_seen_at="2026-08-11T00:00:00Z",
+                last_seen_at="2026-08-11T00:00:00Z",
+            )
+        },
+    )
+    catalog.save()
+
+    repaired = ChatGPTImageCatalog.build(target_dir)
+
+    assert repaired.repair_result.removed_file_ids == ("file_thumbnail",)
+    assert repaired.repair_result.removed_local_files == 1
+    assert not thumbnail_path.exists()
+    assert repaired.summarize() == 0
+
+
 def test_chatgpt_skips_images_above_the_universal_cache_size_limit(tmp_path: Path) -> None:
     target_dir = tmp_path / "chatgpt" / "Studio208cm"
     candidate = ChatGPTImageCandidate(
@@ -1197,7 +1240,7 @@ def test_chatgpt_streams_first_party_original_through_safari(tmp_path: Path) -> 
     assert catalog.summarize() == 1
 
 
-def test_chatgpt_uses_index_thumbnail_when_safari_original_is_gone(tmp_path: Path) -> None:
+def test_chatgpt_does_not_cache_index_thumbnail_when_safari_original_is_gone(tmp_path: Path) -> None:
     target_dir = tmp_path / "chatgpt" / "Studio208cm"
     direct_url = "https://chatgpt.com/backend-api/estuary/content?id=file_safari_fallback"
     fallback_url = direct_url + "&encoding=thumbnail"
@@ -1205,7 +1248,6 @@ def test_chatgpt_uses_index_thumbnail_when_safari_original_is_gone(tmp_path: Pat
         source_url=direct_url,
         file_id="file_safari_fallback",
         conversation_url="https://chatgpt.com/c/safari-fallback",
-        fallback_source_url=fallback_url,
         request_headers={"authorization": "Bearer test-token"},
     )
     context = SafariContext(candidate.conversation_url)
@@ -1220,24 +1262,19 @@ def test_chatgpt_uses_index_thumbnail_when_safari_original_is_gone(tmp_path: Pat
 
     def stream_to_path(url, destination_path, _should_stop, headers=None):
         streamed_urls.append(url)
-        if url == direct_url:
-            raise RuntimeError("Safari media request returned HTTP 404 with 0 bytes.")
-        assert url == fallback_url
-        assert headers["authorization"] == "Bearer test-token"
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
-        destination_path.write_bytes(PNG_PAYLOAD)
-        return "image/png", False
+        raise RuntimeError("Safari media request returned HTTP 404 with 0 bytes.")
 
     with patch.object(page, "download_to_path", side_effect=stream_to_path), patch.object(
         context.request,
         "get",
         return_value=_NotFoundResponse(),
     ):
-        assert download_chatgpt_image(context, catalog, target_dir, candidate)
+        with pytest.raises(RuntimeError, match="HTTP 404"):
+            download_chatgpt_image(context, catalog, target_dir, candidate)
 
-    assert streamed_urls == [direct_url, fallback_url]
-    assert catalog.entries_by_file_id[candidate.file_id].source_url == fallback_url
-    assert catalog.summarize() == 1
+    assert streamed_urls == [direct_url]
+    assert fallback_url not in streamed_urls
+    assert catalog.summarize() == 0
 
 
 def test_chatgpt_reset_removes_only_the_dedicated_cache(tmp_path: Path) -> None:

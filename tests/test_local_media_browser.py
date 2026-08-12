@@ -1,6 +1,6 @@
 """Read-only local media browser tests.
 
-Code version: v1.9.0-codex.1
+Code version: v1.10.0-codex.1
 """
 
 from __future__ import annotations
@@ -837,6 +837,26 @@ def test_pagination_matches_investment_table_five_page_chunks() -> None:
         ("page", 12, False),
         ("next", 11, False),
     ]
+
+
+def test_pagination_ellipses_expose_five_page_ranges_and_merge_short_tail() -> None:
+    pagination = build_local_store_pagination(total_pages=457, current_page=53)
+    leading, trailing = [item for item in pagination if item.kind == "ellipsis"]
+
+    assert leading.position == "leading"
+    assert leading.ranges == tuple((start, start + 4) for start in range(1, 51, 5))
+    assert trailing.position == "trailing"
+    assert trailing.ranges[0] == (56, 60)
+    assert trailing.ranges[-2:] == ((446, 450), (451, 457))
+    assert len(trailing.ranges) == 80
+
+
+def test_pagination_range_picker_preserves_a_short_only_or_merged_tail() -> None:
+    short_tail = build_local_store_pagination(total_pages=7, current_page=1)
+    merged_tail = build_local_store_pagination(total_pages=12, current_page=1)
+
+    assert next(item for item in short_tail if item.kind == "ellipsis").ranges == ((6, 7),)
+    assert next(item for item in merged_tail if item.kind == "ellipsis").ranges == ((6, 12),)
 
 
 def test_date_format_uses_fixed_english_months() -> None:
