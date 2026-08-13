@@ -1,6 +1,6 @@
 # Engineering and test contract
 
-Documentation version: `v1.0.0-codex.1`
+Documentation version: `v1.1.0-codex.1`
 
 This document supplements the repository-root [AGENTS.md](../AGENTS.md), which remains
 authoritative. It records the project-specific documentation, testing, and handoff practices
@@ -14,6 +14,8 @@ adapted from the sibling project's quality model.
 - Read [TESTING.md](TESTING.md) before changing code that has test or runtime-boundary impact.
 - Read [OPERATIONS.md](OPERATIONS.md) before changing launch behavior, browser profiles,
   cache locations, deletion, reset, or LAN behavior.
+- Read [CACHE_HANDOFF.md](CACHE_HANDOFF.md) before changing Cache routes, source switching,
+  Text/Media behavior, LLM history persistence, or Grok synchronization.
 - Read [STYLE_REFERENCE.md](../STYLE_REFERENCE.md) before any markup, CSS, asset, or UI behavior
   change.
 

@@ -1,0 +1,180 @@
+/* Code version: v1.1.0-codex.1 */
+
+.browser-heading-copy {
+    min-width: 0;
+    flex: 1 1 auto;
+}
+
+.browser-heading-tools {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: flex-start;
+    justify-content: flex-end;
+    gap: 12px;
+    min-width: 0;
+}
+
+.browser-search-field {
+    position: relative;
+    z-index: var(--layer-global-popover);
+    width: min(360px, 34vw);
+    min-width: 220px;
+    margin: 0;
+    gap: 6px;
+    order: 2;
+}
+
+.browser-search-control {
+    position: relative;
+}
+
+.browser-search-input {
+    box-sizing: border-box;
+    min-height: 42px;
+    padding-inline: 12px 14px;
+}
+
+.browser-search-suggestions {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: var(--layer-global-popover);
+    display: grid;
+    width: max(100%, 340px);
+    max-width: min(420px, 72vw);
+    max-height: min(360px, 48vh);
+    overflow-y: auto;
+    border: var(--glass-popover-border);
+    border-radius: var(--radius-soft);
+    background: var(--glass-popover-background);
+    box-shadow: var(--glass-popover-shadow), 0 12px 24px var(--theme-shadow-ambient);
+    backdrop-filter: var(--glass-popover-blur);
+    -webkit-backdrop-filter: var(--glass-popover-blur);
+    isolation: isolate;
+    animation: browserSearchMenuIn 140ms var(--motion-emphasized) both;
+}
+
+.browser-search-suggestions-heading,
+.browser-search-suggestions-empty {
+    padding: 10px 12px 7px;
+    color: var(--muted);
+    font-size: var(--font-ui-xs);
+    line-height: 1.2;
+}
+
+.browser-search-suggestions-heading {
+    border-bottom: 1px solid var(--theme-glass-border);
+    font-weight: var(--font-weight-bold);
+    letter-spacing: 0.04em;
+}
+
+.browser-search-suggestion {
+    display: grid;
+    gap: 3px;
+    width: 100%;
+    min-height: 0;
+    padding: 9px 12px;
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    color: var(--text);
+    text-align: left;
+    transform: none;
+    transition: background 140ms var(--motion-standard), color 140ms var(--motion-standard);
+}
+
+.browser-search-suggestion:hover,
+.browser-search-suggestion:focus-visible,
+.browser-search-suggestion.is-active {
+    outline: none;
+    background: color-mix(in srgb, var(--control-liquid-background-hover) 82%, var(--accent-surface-soft));
+    color: var(--accent-text);
+    transform: none;
+}
+
+.browser-search-suggestion-value {
+    overflow: hidden;
+    font-size: var(--font-form-label);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.browser-search-suggestion-detail {
+    overflow: hidden;
+    color: var(--muted);
+    font-size: var(--font-ui-xs);
+    line-height: 1.2;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.browser-search-match {
+    padding: 0 0.05em;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--accent-surface-soft) 82%, transparent);
+    color: var(--accent-text);
+    font-weight: var(--font-weight-bold);
+}
+
+.browser-heading-tools .browser-session-actions {
+    position: relative;
+    top: auto;
+    right: auto;
+    flex: 0 0 var(--settings-round-icon-button-size);
+    order: 1;
+}
+
+@keyframes browserSearchMenuIn {
+    from {
+        opacity: 0;
+        transform: translateY(-4px) scale(0.985);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+@media (max-width: 900px) {
+    .browser-heading-row {
+        flex-wrap: wrap;
+    }
+
+    .browser-heading-copy,
+    .browser-heading-tools {
+        flex-basis: 100%;
+        width: 100%;
+    }
+
+    .browser-heading-tools {
+        flex-wrap: wrap;
+    }
+
+    .browser-search-field {
+        width: 100%;
+        min-width: 0;
+        order: 1;
+    }
+
+    .browser-heading-tools .browser-session-actions {
+        margin-left: auto;
+        order: 2;
+    }
+
+    .browser-search-suggestions {
+        left: 0;
+        right: 0;
+        width: 100%;
+        max-width: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .browser-search-suggestions {
+        animation: none;
+    }
+}

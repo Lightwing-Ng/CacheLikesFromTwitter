@@ -1,0 +1,311 @@
+# Cache handoff and operating runbook
+
+Documentation version: `v1.1.0-codex.1`
+
+This is the authoritative handoff document for the second Dock item, `Cache`.
+Read it before changing Cache routes, source switching, Text/Media behavior, local
+history persistence, or Grok synchronization. The third Dock item is `Local resources`;
+it is the read-only review surface for cached media and text and must not be confused
+with the Cache execution surface.
+
+## 1. Product boundaries
+
+The Dock order is:
+
+1. Agent
+2. Cache
+3. Local resources
+4. Settings
+
+Cache is the execution surface. Its canonical source pages are:
+
+| Source | Canonical page | Primary payload | Text history |
+| --- | --- | --- | --- |
+| X | `/cache/x` | Liked-post media | None |
+| Grok | `/cache/grok` | Grok media assets | Grok sessions and messages |
+| ChatGPT | `/cache/chatgpt` | ChatGPT images | ChatGPT sessions and messages |
+| Gemini | `/cache/gemini` | Gemini sessions and messages | Gemini sessions and messages |
+
+The historical top-level paths `/grok`, `/chatgpt`, and `/gemini` are compatibility
+redirects. Do not introduce new links to them. The legacy `/chatgpt` plan is not a
+separate Agent route; it resolves into the Cache namespace.
+
+`Local resources` owns `/browser`. It is the review and export surface, not the place
+where a source sync is started. Its text source filter accepts `all`, `chatgpt`,
+`gemini`, and `grok`.
+
+## 2. Shared Text/Media contract
+
+The Cache pages for ChatGPT, Grok, and Gemini render the shared blue sliding control at
+the top of the Cache sidebar:
+
+- Text is the first segment and the default for a new session.
+- Media is the second segment and returns to the current canonical Cache page.
+- The selected segment is remembered in `sessionStorage` under
+  `cachelikes:browser-content-mode:v1`.
+- Current Text destinations are source-aware where the page provides a source-specific
+  history: Grok uses `source=grok`, Gemini uses `source=gemini`, and the ChatGPT Cache
+  Text shortcut intentionally uses `source=all` because ChatGPT history discovery is
+  global rather than limited to the configured media project.
+- The `all` source view is an aggregate view. It must include the ChatGPT, Gemini, and
+  Grok history files.
+
+The control is shared markup in `app/web/templates/_cache_page.html`, behavior in
+`app/web/static/cache-page.js`, and styling in `app/web/static/style.css`. Changes to
+this component also require reading `/Users/lightwing/Desktop/SHARED_UI_SYNC.md` and
+updating its `Cache-page Text/Media control` row. This repository is currently the
+leading implementation and the sibling remains `Pending`.
+
+## 3. Runtime split: media versus text
+
+Grok has two independent runtimes. This split is intentional:
+
+| Operation | UI action | Start route | Status route | Implementation |
+| --- | --- | --- | --- | --- |
+| Grok media | `Start sync` | `POST /cache/grok/start` | `GET /api/cache/grok/status` | `GrokDownloadService` and `grok_downloader.py` |
+| Grok Text | `Cache text history` | `POST /cache/grok/text/start` | `GET /api/cache/grok/text/status` | `GrokHistoryService` and `grok_history.py` |
+
+Text synchronization must not be implemented by scraping the currently visible Grok
+sidebar or by extending the media downloader with unrelated counters. The Text action
+uses the selected Edge profile in an isolated Chromium context, so it can read the
+authenticated session without taking over the foreground Edge window.
+
+The Text worker performs this sequence:
+
+1. Fetch `/rest/app-chat/conversations?pageSize=60&excludeProjects=true`.
+2. Follow `nextPageToken` by sending it back as the `pageToken` query parameter.
+3. For every conversation, fetch
+   `/rest/app-chat/conversations/<conversation-id>/response-node`.
+4. Batch all response IDs into `POST
+   /rest/app-chat/conversations/<conversation-id>/load-responses`.
+5. Keep `human`/`user` and `assistant` responses with non-empty text.
+6. Persist the normalized rows atomically to the Grok Text Parquet file.
+
+The response-node tree is important. A DOM scroll only exposes a partial, selected
+branch and is not evidence that all history was discovered. The API list is paginated,
+and `load-responses` is required to recover the complete text payload.
+
+## 4. Durable local data
+
+The current local store layout is:
+
+| Path | Owner | Meaning |
+| --- | --- | --- |
+| `local_store/grok/` | Grok media runtime | Media files, catalog, manifest, and work queue |
+| `local_store/llm/chatgpt/history.parquet` | ChatGPT Text runtime | Typed ChatGPT messages |
+| `local_store/llm/gemini/history.parquet` | Gemini Text runtime | Typed Gemini messages |
+| `local_store/llm/grok/history.parquet` | Grok Text runtime | Typed Grok messages |
+| `local_store/.cache_task.lock` | All cache runtimes | Cross-process advisory task lock |
+| `logs/cachelikes.log.jsonl` | All runtimes | Structured diagnostics |
+
+The three LLM history files use the same logical fields, but Grok has its own
+`GROK_HISTORY_SCHEMA` and `GROK_HISTORY_SCHEMA_VERSION` in
+`app/core/resource_persistence.py`. Do not silently point Grok at the Gemini or
+ChatGPT file merely because all three filenames are `history.parquet`.
+
+Grok Text rows contain a stable `message_key` formed as
+`<conversation-id>:<response-id>`. The store replaces one conversation at a time,
+preserves `first_seen_at`, updates `last_seen_at`, and writes through an atomic
+temporary Parquet file. Do not edit the Parquet file by hand during a sync.
+
+## 5. Verified Grok baseline
+
+On `13 Aug 2026`, a live Edge-authenticated run completed through the Text pipeline:
+
+- API conversations discovered: `166`
+- Non-empty cached sessions: `165`
+- Cached messages: `1,537`
+- User messages: `808`
+- Assistant messages: `729`
+- Failed sessions: `0`
+- Empty sessions: `1`
+- Output: `local_store/llm/grok/history.parquet`
+
+The Local resources page was then opened with `source=grok` and showed `1,537`
+messages and `165` sessions. This baseline is a diagnostic reference, not a hardcoded
+expectation: Grok history changes whenever new conversations are created or removed.
+
+## 6. Safari cache-window contract
+
+Safari-backed Cache tasks may own exactly one temporary Safari window at a time. The
+window must remain a standard visible window with its native close, minimize, and full
+screen controls. It may stay behind the user's foreground window, but must never be
+hidden, minimized, moved offscreen, or converted into a reusable blank window shell.
+
+The lifecycle is strict:
+
+1. Record the existing Safari window count.
+2. Create one task-owned standard window without reusing the user's current window.
+3. Keep that one window render-active in the background for the task lifetime.
+4. If the user closes it, stop with an explicit error; never spawn a replacement window.
+5. On success, failure, stop, or exception, close the exact owned window through its
+   native close button and verify that its Safari window ID disappeared.
+6. The final Safari window count must equal the starting count.
+
+Do not treat an AppleScript `close` return as proof of cleanup. Safari may retain
+script-visible empty windows after returning success. A verified ID disappearance is
+the cleanup criterion. Never leave `about:blank`, hidden, minimized, offscreen,
+Gemini, Grok, or ChatGPT task windows behind after the task exits.
+
+Gemini Text uses the saved `gemini_scroll_pause_seconds` value. Do not lower the live
+setting merely to accelerate a manual run. Rapid navigation can put Safari into a
+`Failed to open page` state after many sessions; keep the saved 5-second interval on
+this Mac. The Gemini bot-check selector is one JavaScript expression: adjacent string
+literals must be joined explicitly with `+`, because JavaScript does not concatenate
+them like Python.
+
+## 7. Safe operator workflow
+
+Use the local Terminal as the runtime control surface. The required project interpreter
+is `/usr/local/bin/python3.13`.
+
+### Before starting a sync
+
+```bash
+curl -sS 'http://localhost:8666/api/browser-session?platform=grok&browser=edge'
+curl -sS 'http://localhost:8666/api/cache/grok/status'
+curl -sS 'http://localhost:8666/api/cache/grok/text/status'
+```
+
+The Edge session probe must report `logged_in: true`. The media and Text runtimes must
+be idle before starting another task. Only one cache task may hold
+`local_store/.cache_task.lock` across the entire application.
+
+### Start Grok Text
+
+Open `http://localhost:8666/cache/grok`, confirm the selected session is Edge, and
+click `Cache text history`. Monitor `GET /api/cache/grok/text/status` until `running`
+is false. Use the Text stop action for a cooperative stop; do not delete the lock file
+while the worker process is alive.
+
+### Verify the resulting file
+
+```bash
+/usr/local/bin/python3.13 - <<'PY'
+from collections import Counter
+from pathlib import Path
+
+from app.core.resource_persistence import read_parquet_rows
+
+path = Path("local_store/llm/grok/history.parquet")
+rows = read_parquet_rows(path) or []
+print({
+    "path": str(path),
+    "messages": len(rows),
+    "sessions": len({row.get("conversation_id") for row in rows}),
+    "roles": Counter(row.get("role") for row in rows),
+    "empty_messages": sum(not str(row.get("content_text") or "").strip() for row in rows),
+})
+PY
+```
+
+Then open:
+
+```text
+http://localhost:8666/browser?view=text&source=grok&session_view=1&q=&sort=newest
+```
+
+The page should show Grok as the selected source, session rows, message counts, and
+original Grok conversation links.
+
+## 8. Troubleshooting decision tree
+
+### Safari reports an unreadable JavaScript result
+
+Inspect the embedded JavaScript first. A Safari parse error can occur before the
+wrapper's `try/catch`, causing AppleScript to return an empty value. In the Gemini bot
+check, verify that split selector strings use an explicit `+`. Then run a minimal live
+probe against `inspect_gemini_bot_check` before starting a full history sync.
+
+### Safari shows `Failed to open page`
+
+Stop the current Cache task and close its exact owned window. Do not continue counting
+each later session as an independent failure. Confirm the saved Gemini interval is 5
+seconds, open one fresh standard task window, and resume only after the window count
+contract passes. Do not compensate by opening multiple Safari windows.
+
+### The Text action or status route returns `404`
+
+The running Flask process predates the Grok Text integration. Check the listener and
+restart the project from Terminal after confirming the current source tree:
+
+```bash
+lsof -nP -iTCP:8666 -sTCP:LISTEN
+ps -axo pid,ppid,lstart,command | rg '[m]ain.py|[P]ython.*CacheLikes'
+```
+
+Do not kill an unrelated process and do not restart the sibling project. After restart,
+`GET /api/cache/grok/text/status` must return JSON rather than the Flask `404` page.
+
+### The Cache page opens but Text looks empty
+
+Check the URL first. A Grok Text review must contain `source=grok`; `/browser` without
+the source filter is an aggregate view and may be sorted or paginated differently.
+Then check the Parquet file directly. If the file has rows but the page is empty,
+inspect `app/core/chat_history_browser.py` for the Grok path mapping and the
+`source_paths` tuple used by the `all` view.
+
+### Only a few Grok chats are found
+
+This is usually a DOM-scraping regression. The correct implementation follows
+`nextPageToken`, uses `pageToken` on the next request, and loads response IDs through
+the response-node and load-responses endpoints. Do not increase a sidebar scroll limit
+as a substitute.
+
+### Edge is not ready
+
+Keep the existing signed-in Edge session intact and run the session probe again. Do not
+add a login-repair flow, copy cookies, inspect storage, or switch to a foreground DOM
+scrape. The worker clones the selected profile into an isolated temporary context.
+
+### The task cannot start because another task owns the lock
+
+Query all source status endpoints and inspect the lock metadata:
+
+```bash
+cat local_store/.cache_task.lock
+curl -sS 'http://localhost:8666/api/cache/grok/status'
+curl -sS 'http://localhost:8666/api/cache/grok/text/status'
+curl -sS 'http://localhost:8666/api/chatgpt/status'
+curl -sS 'http://localhost:8666/api/gemini/status'
+```
+
+The JSON file is only metadata; the OS advisory lock is authoritative. Wait for the
+active task to finish or stop it through its own UI. Never remove the file as a normal
+fix. If the owning process is genuinely gone and a new process still cannot acquire
+the lock, perform a read-only process check before taking any cleanup action.
+
+### A full test run fails while importing Agent modules
+
+That failure is outside the Grok Text boundary. Parallel Agent changes can remove or
+replace the Agent runtime module set and related Agent files. Preserve those changes and
+report the exact missing import; do not restore or overwrite them as part of a Cache task.
+Run the focused checks first:
+
+```bash
+/usr/local/bin/python3.13 -m pytest -q tests/test_grok_history.py
+/usr/local/bin/python3.13 -m pytest -q tests/test_web_app.py tests/test_style_tokens.py
+```
+
+The second command requires the Agent module set to be internally consistent.
+
+## 9. Change map for future agents
+
+Read these files together before changing Cache behavior:
+
+- `app/web/templates/_cache_page.html`: shared Cache shell and Text/Media control.
+- `app/web/templates/grok.html`: Grok media controls and Grok Text action.
+- `app/web/static/cache-page.js`: mode memory and Cache status polling.
+- `app/web/cache_sources.py`: source registry and canonical page metadata.
+- `app/web/app.py`: runtime registration, routes, status reconciliation, and redirects.
+- `app/core/grok_history.py`: Grok API traversal, normalization, and Parquet persistence.
+- `app/core/grok_history_service.py`: worker lifecycle and shared task lock.
+- `app/core/chat_history_browser.py`: source path mapping and Local resources queries.
+- `app/core/resource_persistence.py`: typed Parquet schemas and atomic writes.
+- `tests/test_grok_history.py`: deterministic Grok Text regression coverage.
+- `/Users/lightwing/Desktop/SHARED_UI_SYNC.md`: shared-component synchronization ledger.
+
+When adding a new LLM source, update the source allowlist, source-specific path map,
+aggregate `all` path tuple, source switcher, Cache Text link, persistence schema, status
+runtime, and focused tests together. A source that appears in a dropdown but is absent
+from one of those contracts is an incomplete integration.

@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.33.0-codex.1
+# Code version: v1.35.0-codex.1
 
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ from app.core.resource_persistence import read_parquet_rows
 from app.core.chatgpt_downloader import (
     ChatGPTConversationWorkResult,
     ChatGPTImageDownloadWorkResult,
+    CHATGPT_HOME_URL,
     PlaywrightError,
     _chatgpt_file_download_url,
     _extract_chatgpt_conversation_messages,
@@ -1469,16 +1470,6 @@ def test_chatgpt_reset_removes_only_the_dedicated_cache(tmp_path: Path) -> None:
     assert unrelated.read_text(encoding="utf-8") == "keep"
 
 
-def test_chatgpt_browser_probe_requires_a_chatgpt_project_url() -> None:
-    invalid = probe_browser_session(
-        "chatgpt",
-        "edge",
-        CrawlConfig(chatgpt_project_url="https://example.com/project"),
-    )
-    assert invalid["can_download"] is False
-    assert "https://chatgpt.com/" in invalid["message"]
-
-
 def test_chatgpt_browser_probe_verifies_chromium_navigation_and_session() -> None:
     class _ProbeResponse:
         ok = True
@@ -1517,12 +1508,16 @@ def test_chatgpt_browser_probe_verifies_chromium_navigation_and_session() -> Non
         "app.core.browser_sessions.launch_chromium_context",
         return_value=nullcontext(context),
     ):
-        ready = probe_browser_session("chatgpt", "edge", CrawlConfig())
+        ready = probe_browser_session(
+            "chatgpt",
+            "edge",
+            CrawlConfig(chatgpt_project_url="https://example.com/project"),
+        )
 
     assert ready["can_download"] is True
-    assert ready["account_name"] == DEFAULT_CHATGPT_PROJECT_NAME
-    assert "verified the ChatGPT source" in ready["message"]
-    assert page.goto_calls == [(DEFAULT_CHATGPT_PROJECT_URL, "domcontentloaded", 30_000)]
+    assert ready["account_name"] == "ChatGPT account"
+    assert "account is ready" in ready["message"]
+    assert page.goto_calls == [("https://chatgpt.com/", "domcontentloaded", 30_000)]
 
 
 def test_chatgpt_browser_probe_verifies_safari_session_in_a_hidden_context() -> None:
@@ -1571,8 +1566,8 @@ def test_chatgpt_browser_probe_verifies_safari_session_in_a_hidden_context() -> 
 
     assert result["logged_in"] is True
     assert result["can_download"] is True
-    assert "background browser session" in result["message"]
-    assert probe_page.goto_calls == [(DEFAULT_CHATGPT_PROJECT_URL, "domcontentloaded", 60_000)]
+    assert "account is ready" in result["message"]
+    assert probe_page.goto_calls == [("https://chatgpt.com/", "domcontentloaded", 60_000)]
 
 
 def test_chatgpt_accepts_a_single_chat_session_url() -> None:
@@ -1767,6 +1762,54 @@ def test_chatgpt_sync_accepts_safari_without_playwright(tmp_path: Path) -> None:
     assert launch_context.call_args.args[0].engine == "safari"
     assert launch_context.call_args.args[1] == DEFAULT_CHATGPT_PROJECT_URL
     assert any("offscreen Safari" in event for event in state.snapshot()["recent_events"])
+
+
+def test_chatgpt_text_sync_uses_safari_home_and_skips_media_pipeline(tmp_path: Path) -> None:
+    state = TaskState("test")
+    browser_context = _ClosableBrowserContext()
+    conversation_urls = [
+        "https://chatgpt.com/c/session-1",
+        "https://chatgpt.com/c/session-2",
+    ]
+
+    with patch("app.core.chatgpt_downloader.sync_playwright", None), patch(
+        "app.core.chatgpt_downloader._launch_chatgpt_browser_context",
+        return_value=nullcontext(browser_context),
+    ) as launch_context, patch(
+        "app.core.chatgpt_downloader.open_chatgpt_page",
+    ) as open_page, patch(
+        "app.core.chatgpt_downloader._load_chatgpt_session_request_headers",
+        return_value={"authorization": "Bearer demo"},
+    ), patch(
+        "app.core.chatgpt_downloader._collect_all_chatgpt_conversation_urls_via_api",
+        return_value=conversation_urls,
+    ) as collect_all, patch(
+        "app.core.chatgpt_downloader.cache_chatgpt_conversation_history",
+        return_value=(2, 4, 0),
+    ) as cache_history, patch(
+        "app.core.chatgpt_downloader.collect_project_conversation_urls",
+    ) as collect_project, patch(
+        "app.core.chatgpt_downloader.collect_chatgpt_project_index_images",
+    ) as collect_media:
+        result = sync_chatgpt_images(
+            state,
+            config=CrawlConfig(chatgpt_browser="safari"),
+            target_dir=tmp_path / "chatgpt" / DEFAULT_CHATGPT_PROJECT_NAME,
+            content_mode="text",
+        )
+
+    assert result.discovered_conversations == 2
+    assert launch_context.call_args.args[0].engine == "safari"
+    assert launch_context.call_args.args[1] == CHATGPT_HOME_URL
+    open_page.assert_called_once()
+    collect_all.assert_called_once()
+    cache_history.assert_called_once()
+    collect_project.assert_not_called()
+    collect_media.assert_not_called()
+    snapshot = state.snapshot()
+    assert snapshot["processed_tweets"] == 2
+    assert snapshot["progress_unit"] == "sessions"
+    assert snapshot["discovery_complete"] is True
 
 
 def test_chatgpt_direct_session_refresh_skips_the_global_project_image_index(tmp_path: Path) -> None:

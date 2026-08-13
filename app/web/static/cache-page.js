@@ -1,4 +1,4 @@
-/* Code version: v1.7.0-codex.1 */
+/* Code version: v1.7.1-codex.1 */
 
 (() => {
     "use strict";
@@ -98,6 +98,16 @@
         if (!element) return;
         const normalizedValue = String(value ?? "");
         if (element.textContent !== normalizedValue) element.textContent = normalizedValue;
+    }
+
+    function setStatusValueIfChanged(element, value) {
+        if (!element) return;
+        const normalizedValue = String(value ?? "");
+        if (element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement) {
+            if (element.value !== normalizedValue) element.value = normalizedValue;
+            return;
+        }
+        setTextIfChanged(element, normalizedValue);
     }
 
     function clampPercent(value) {
@@ -470,11 +480,11 @@
             if (!fieldName) return;
             const rawValue = data[fieldName];
             if (element.dataset.statusFormat === "number") {
-                setTextIfChanged(element, formatMetricNumber(rawValue));
+                setStatusValueIfChanged(element, formatMetricNumber(rawValue));
                 return;
             }
             const fallback = element.dataset.statusFallback || "";
-            setTextIfChanged(element, rawValue === null || rawValue === undefined || rawValue === ""
+            setStatusValueIfChanged(element, rawValue === null || rawValue === undefined || rawValue === ""
                 ? fallback
                 : String(rawValue));
         });

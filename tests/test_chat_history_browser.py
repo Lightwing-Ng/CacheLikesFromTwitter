@@ -1,6 +1,6 @@
 """Focused tests for the local text-history browser."""
 
-# Code version: v1.3.0-codex.1
+# Code version: v1.3.1-codex.1
 
 from pathlib import Path
 
@@ -57,11 +57,13 @@ def test_query_chat_history_reads_and_filters_typed_messages(tmp_path: Path) -> 
     )
 
     page = query_chat_history(tmp_path, query="findable")
+    spaced_page = query_chat_history(tmp_path, query="findable older")
 
     assert page.total_count == 1
     assert page.conversation_count == 1
     assert page.items[0].conversation_id == "old"
     assert page.items[0].content_text == "Findable older message"
+    assert [item.conversation_id for item in spaced_page.items] == ["old"]
 
 
 def test_query_chat_history_can_paginate_one_row_per_session(tmp_path: Path) -> None:

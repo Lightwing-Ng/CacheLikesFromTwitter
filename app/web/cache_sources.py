@@ -1,6 +1,6 @@
 """Presentation registry for cache source pages."""
 
-# Code version: v1.3.2-codex.1
+# Code version: v1.3.4-codex.1
 
 from __future__ import annotations
 
@@ -142,7 +142,7 @@ _CACHE_SOURCE_VIEWS = (
         document_title="CacheLikesFromTwitter ChatGPT",
         overview_title="ChatGPT cache overview",
         browser_panel_label="Authorized browser",
-        browser_empty_message="No authorized project detected",
+        browser_empty_message="The ChatGPT account in the selected browser is ready.",
         browser_config_field="chatgpt_browser",
         require_browser_ready=True,
         start_form_id="start_form_chatgpt",
@@ -179,6 +179,15 @@ def cache_source_views_for_group(group_key: str) -> tuple[CacheSourceView, ...]:
     if normalized_group == "llm":
         return LLM_SWITCHER_SOURCE_VIEWS
     return MEDIA_CACHE_SOURCE_VIEWS
+
+
+def cache_source_views_for_page(source_key: str) -> tuple[CacheSourceView, ...]:
+    """Return the source switcher options for one rendered cache page."""
+    normalized_source = str(source_key or "").strip().lower()
+    if normalized_source == "chatgpt":
+        return CACHE_SOURCE_VIEWS
+    source = get_cache_source_view(normalized_source)
+    return cache_source_views_for_group(source.group_key if source is not None else "media")
 
 
 def get_cache_source_view(source_key: str) -> CacheSourceView | None:

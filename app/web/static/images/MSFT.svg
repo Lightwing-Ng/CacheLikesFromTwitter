@@ -1,0 +1,17 @@
+<!-- Code version: v1.0.0-codex.1 -->
+<svg version="1.2" baseProfile="tiny-ps" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1528 1528" width="1528" height="1528">
+	<title>Microsoft_logo_(2012)-svg</title>
+	<style>
+		tspan { white-space:pre }
+		.shp0 { fill: #f25022 }
+		.shp1 { fill: #7fba00 }
+		.shp2 { fill: #00a4ef }
+		.shp3 { fill: #ffb900 }
+	</style>
+	<g id="Layer">
+		<path id="Layer" class="shp0" d="M0 0L724.96 0L724.96 725.8L0 725.8L0 0Z" />
+		<path id="Layer" class="shp1" d="M801.27 0L1526.24 0L1526.24 725.8L801.27 725.8L801.27 0Z" />
+		<path id="Layer" class="shp2" d="M0 802.2L724.96 802.2L724.96 1528L0 1528L0 802.2Z" />
+		<path id="Layer" class="shp3" d="M801.27 802.2L1526.24 802.2L1526.24 1528L801.27 1528L801.27 802.2Z" />
+	</g>
+</svg>

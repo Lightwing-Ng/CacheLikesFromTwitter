@@ -1,4 +1,4 @@
-/* Code version: v1.26.0-codex.1 */
+/* Code version: v1.27.0-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -8,6 +8,9 @@
     if (!dataNode || !dialog) return;
 
     const filterForm = document.querySelector(".browser-filter-form");
+    const queryInput = document.querySelector("input[name='q'][data-browser-search-input]")
+        || filterForm?.querySelector("input[name='q']");
+    const usesSearchSuggestions = queryInput?.hasAttribute("data-browser-search-input") || false;
     const contentModeStorageKey = "cachelikes:browser-content-mode:v1";
     const contentModeInputs = filterForm
         ? Array.from(filterForm.querySelectorAll("input[name='view'][type='radio']"))
@@ -68,8 +71,11 @@
             if (event.target.matches("select")) submitFilters();
         });
         filterForm.addEventListener("input", (event) => {
-            if (event.target.matches("input[name='q']")) submitFilters();
+            if (event.target.matches("input[name='q']") && !usesSearchSuggestions) submitFilters();
         });
+        if (queryInput && !filterForm.contains(queryInput) && !usesSearchSuggestions) {
+            queryInput.addEventListener("input", submitFilters);
+        }
     }
 
     let mediaItems = [];

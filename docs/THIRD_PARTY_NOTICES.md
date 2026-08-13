@@ -1,26 +1,11 @@
 # Third-Party Notices
 
-Documentation version: `v1.0.0`
+Documentation version: `v1.1.1-codex.1`
 
-## DevSpace
+The Browser search UI vendors Fuse.js v7.3.0 from its official distribution under the
+Apache License 2.0. The minified module is stored at
+`app/web/static/vendor/fuse.min.mjs`, with the corresponding license text at
+`app/web/static/vendor/Fuse.js-LICENSE.txt`.
 
-Source: `@waishnav/devspace` `1.0.7`
-
-MIT License
-
-Copyright (c) 2026 Waishnav
-
-Permission is hereby granted, free of charge, to any person obtaining a copy of this software and
-associated documentation files (the "Software"), to deal in the Software without restriction,
-including without limitation the rights to use, copy, modify, merge, publish, distribute,
-sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all copies or
-substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT
-NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
-DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT
-OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+No other project-specific third-party runtime notice is currently required. Python and
+other JavaScript dependencies retain their own package licenses and notices.

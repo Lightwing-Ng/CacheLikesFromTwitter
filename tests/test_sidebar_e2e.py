@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar.
 
-Code version: v1.3.3-codex.1
+Code version: v1.6.0-codex.2
 """
 
 from __future__ import annotations
@@ -99,7 +99,7 @@ def _open_page(
         reduced_motion="reduce",
     )
     page = context.new_page()
-    page.goto(url, wait_until="networkidle")
+    page.goto(url, wait_until="domcontentloaded")
     return page, context
 
 
@@ -316,7 +316,7 @@ def test_sidebar_state_remains_consistent_across_overlay_transitions(
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_agent_platform_selection_survives_cache_navigation(
+def test_agent_connection_selection_survives_cache_navigation(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
@@ -328,12 +328,13 @@ def test_agent_platform_selection_survives_cache_navigation(
         touch=False,
     )
     try:
-        page.get_by_role("button", name="Platform: ChatGPT", exact=True).click()
-        page.get_by_role("option", name="Gemini", exact=True).click()
-        expect(page.locator('#agent_runtime_form input[name="platform"]')).to_have_value(
-            "gemini"
+        page.get_by_role("button", name="Browser: Safari", exact=True).click()
+        with page.expect_response(re.compile(r"/api/agent/preferences$")):
+            page.get_by_role("option", name="Edge", exact=True).click()
+        expect(page.locator('#agent_runtime_form input[name="browser"]')).to_have_value(
+            "edge"
         )
-        expect(page.get_by_role("heading", name="Gemini Agent", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Browser: Edge", exact=True)).to_be_visible()
 
         page.get_by_role("link", name="Cache", exact=True).click()
         expect(page).to_have_url(re.compile(r"/cache/chatgpt$"))
@@ -341,8 +342,7 @@ def test_agent_platform_selection_survives_cache_navigation(
         expect(page.locator('[data-dock-section="agent"]')).not_to_have_attribute("aria-current", "page")
         page.get_by_role("link", name="Agent", exact=True).click()
 
-        expect(page.get_by_role("button", name="Platform: Gemini", exact=True)).to_be_visible()
-        expect(page.get_by_role("heading", name="Gemini Agent", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Browser: Edge", exact=True)).to_be_visible()
     finally:
         context.close()
 
@@ -388,13 +388,15 @@ def test_browser_text_media_switch_defaults_to_text_and_remembers_selection(
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_chatgpt_cache_sidebar_text_media_switcher_defaults_to_text(
+@pytest.mark.parametrize("source_key", ("chatgpt", "grok", "gemini"))
+def test_cache_sidebar_text_media_switcher_defaults_to_text(
     disposable_browser: Browser,
     sidebar_server_url: str,
+    source_key: str,
 ) -> None:
     page, context = _open_page(
         disposable_browser,
-        f"{sidebar_server_url}/cache/chatgpt",
+        f"{sidebar_server_url}/cache/{source_key}",
         1_280,
         900,
         touch=False,
@@ -407,9 +409,13 @@ def test_chatgpt_cache_sidebar_text_media_switcher_defaults_to_text(
         expect(mode_control).to_have_attribute("data-segmented-active-index", "0")
         expect(text_option).to_have_attribute("aria-checked", "true")
         expect(media_option).to_have_attribute("aria-checked", "false")
+        if source_key == "chatgpt":
+            expect(page.locator("#start_form_chatgpt > label")).to_have_count(0)
+            expect(page.locator("[data-chatgpt-media-config]")).to_be_hidden()
+            expect(page.locator('[name="chatgpt_project_url"]')).to_be_disabled()
 
         media_option.click()
-        expect(page).to_have_url(re.compile(r"/cache/chatgpt$"))
+        expect(page).to_have_url(re.compile(rf"/cache/{source_key}$"))
         expect(page.locator('[data-cache-content-mode-option="media"]')).to_have_attribute(
             "aria-checked",
             "true",
@@ -418,11 +424,42 @@ def test_chatgpt_cache_sidebar_text_media_switcher_defaults_to_text(
             "data-segmented-active-index",
             "1",
         )
+        if source_key == "chatgpt":
+            expect(page.locator("#start_form_chatgpt > label")).to_have_count(0)
+            expect(page.locator("[data-chatgpt-media-config]")).to_be_visible()
+            expect(page.locator('[name="chatgpt_project_url"]')).to_be_enabled()
 
         page.locator('[data-cache-content-mode-option="text"]').click()
-        expect(page).to_have_url(
-            re.compile(r"/browser\?view=text.*session_view=1.*source=chatgpt"),
-        )
+        if source_key == "chatgpt":
+            expect(page).to_have_url(re.compile(r"/cache/chatgpt$"))
+            expect(page.locator("[data-chatgpt-media-config]")).to_be_hidden()
+            expect(page.locator("[data-chatgpt-content-mode-input]")).to_have_value("text")
+            expect(page.locator('[name="chatgpt_project_url"]')).to_be_disabled()
+        else:
+            expect(page).to_have_url(
+                re.compile(rf"/browser\?view=text.*session_view=1.*source={source_key}"),
+            )
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_gemini_cache_source_switcher_opens_chatgpt_cache_page(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/gemini",
+        1_512,
+        982,
+        touch=False,
+    )
+    try:
+        page.locator("[data-cache-source-switcher-trigger]").click()
+        page.locator('[data-cache-source-switcher-option="chatgpt"]').click()
+        expect(page).to_have_url(re.compile(r"/cache/chatgpt$"))
     finally:
         context.close()
 

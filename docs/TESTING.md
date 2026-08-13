@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.1.0-codex.1`
+Documentation version: `v1.2.0-codex.1`
 
 ## Supported commands
 
@@ -75,6 +75,8 @@ or lower the threshold to mask a gap.
   media files, deleted previews, and settings.
 - Flask integration tests use `create_app()` plus `test_client()` and assert route contracts
   without starting a web server.
+- Computer Use Agent tests build context packages in temporary projects, execute the controller
+  through deterministic actions, and replace the signed-in browser runner with a fake.
 - Style-token, template, and responsive-contract tests protect durable UI boundaries directly.
 - Sidebar E2E tests start an isolated local Flask server and a clean headless Chromium context.
   They cover touch input, backdrop dismissal, viewport transitions, and real hit testing through

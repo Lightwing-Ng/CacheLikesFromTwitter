@@ -1,4 +1,4 @@
-{# Code version: v1.10.8-codex.1 #}
+{# Code version: v1.14.0-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -7,13 +7,14 @@
     <title>{{ cache_source.document_title }}</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.62.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.75.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.7.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.8.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.7.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.7.1-codex.1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -61,7 +62,7 @@
             <section class="hero">
                 <h1>{{ cache_source.group_label }}</h1>
             </section>
-            {% if cache_source.key == "chatgpt" %}
+            {% if cache_source.key in ["chatgpt", "grok", "gemini"] %}
             <section class="sidebar-section cache-page-content-mode-section">
                 <div
                     class="browser-content-mode-control cache-page-content-mode-control"
@@ -73,7 +74,7 @@
                 >
                     <a
                         class="browser-content-mode-option is-active"
-                        href="{{ url_for('browser', view='text', session_view='1', q='', source=cache_source.key, sort='newest') }}"
+                        href="{{ url_for('cache_source', source_key='chatgpt') if cache_source.key == 'chatgpt' else url_for('browser', view='text', session_view='1', q='', source=cache_source.key, sort='newest') }}"
                         data-cache-content-mode-option="text"
                         role="radio"
                         aria-checked="true"
@@ -134,7 +135,7 @@
                                 id="cache_source_switcher_option_{{ source.key }}"
                                 class="trade-strategy-dropdown-option browser-source-filter-option{% if source.key == cache_source.key %} is-selected is-active{% endif %}"
                                 data-cache-source-switcher-option="{{ source.key }}"
-                                data-cache-source-switcher-path="{{ url_for('browser', view='text', session_view='1', q='', source=source.key, sort='newest') if cache_source.group_key == 'llm' else url_for('cache_source', source_key=source.key) }}"
+                                data-cache-source-switcher-path="{{ url_for('cache_source', source_key='chatgpt') if source.key == 'chatgpt' else (url_for('browser', view='text', session_view='1', q='', source=source.key, sort='newest') if cache_source.group_key == 'llm' else url_for('cache_source', source_key=source.key)) }}"
                                 role="option"
                                 aria-selected="{{ 'true' if source.key == cache_source.key else 'false' }}"
                                 tabindex="-1"
@@ -201,6 +202,7 @@
                         <button type="submit" form="{{ cache_source.start_form_id }}" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled{% endif %}>{{ cache_source.start_button_label }}</button>
                     </div>
                 </div>
+                {% block secondary_actions %}{% endblock %}
             </section>
         </aside>
 
@@ -261,7 +263,23 @@
                         </div>
                         <div class="summary-row">
                             <dt>Output dir</dt>
-                            <dd id="output_dir" data-status-field="output_dir" data-status-fallback="-">{{ snapshot.output_dir or "-" }}</dd>
+                            <dd>
+                                <span class="shadow-backup-destination-control settings-directory-control settings-directory-control-readonly">
+                                    <input
+                                        class="text-input-control settings-directory-input"
+                                        type="text"
+                                        id="output_dir"
+                                        data-status-field="output_dir"
+                                        data-status-fallback="-"
+                                        value="{{ snapshot.output_dir or '-' }}"
+                                        readonly
+                                        aria-readonly="true"
+                                        aria-label="Output directory"
+                                        spellcheck="false"
+                                        autocomplete="off"
+                                    >
+                                </span>
+                            </dd>
                         </div>
                         <div class="summary-row">
                             <dt>Polling</dt>

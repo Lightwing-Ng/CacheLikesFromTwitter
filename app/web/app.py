@@ -1,15 +1,17 @@
 """Flask application for the local web console."""
 
-# Code version: v1.26.0-codex.1
+# Code version: v1.33.0-codex.4
 
 from __future__ import annotations
 
 import atexit
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
+from html import escape as escape_html
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_file, url_for
 from markdown_it import MarkdownIt
@@ -21,6 +23,10 @@ from app.core.chatgpt_downloader import (
     chatgpt_conversation_id,
     is_chatgpt_conversation_url,
     reset_chatgpt_state,
+)
+from app.core.chatgpt_agent_sources import (
+    list_chatgpt_agent_sources,
+    list_chatgpt_project_sessions,
 )
 from app.core.chatgpt_service import ChatGPTDownloadService
 from app.core.chat_history_browser import (
@@ -43,17 +49,19 @@ from app.core.config import (
     load_saved_config,
     save_config,
 )
-from app.core.devspace_agent import (
-    AGENT_PLATFORM_CONFIG,
-    AGENT_PLATFORM_OPTIONS,
-    AgentService,
-    DevSpaceRuntimeManager,
+from app.core.computer_use_agent import (
+    BROWSER_OPTIONS as AGENT_BROWSER_OPTIONS,
+    OPERATING_SYSTEM_OPTIONS as AGENT_OPERATING_SYSTEM_OPTIONS,
+    ComputerUseAgentService,
+    ComputerUseSettingsStore,
     is_loopback_address,
-    validate_devspace_settings,
+    validate_computer_use_settings,
 )
 from app.core.gemini_downloader import build_gemini_initial_snapshot
 from app.core.gemini_service import GeminiHistoryService
 from app.core.grok_downloader import build_grok_initial_snapshot, reset_grok_state
+from app.core.grok_history import build_grok_history_snapshot
+from app.core.grok_history_service import GrokHistoryService
 from app.core.grok_service import GrokDownloadService
 from app.core.logging_setup import configure_logging, get_log_file_path
 from app.core.local_media_browser import (
@@ -77,7 +85,7 @@ from app.web.cache_sources import (
     LLM_CACHE_SOURCE_VIEWS,
     LLM_SWITCHER_SOURCE_VIEWS,
     MEDIA_CACHE_SOURCE_VIEWS,
-    cache_source_views_for_group,
+    cache_source_views_for_page,
     get_cache_source_label,
     get_cache_source_view,
 )
@@ -85,15 +93,225 @@ from app.web.cache_sources import (
 
 CACHE_RECONCILE_PHASES = {"idle", "finished", "completed", "success", "stopped"}
 PROMPT_MARKDOWN_RENDERER = MarkdownIt(
-    "commonmark",
+    "default",
     {"html": False, "linkify": False, "typographer": False},
 )
+
+_STORED_HTML_ALLOWED_TAGS = frozenset(
+    {
+        "a",
+        "b",
+        "blockquote",
+        "br",
+        "code",
+        "del",
+        "em",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+        "hr",
+        "i",
+        "li",
+        "mark",
+        "ol",
+        "p",
+        "pre",
+        "s",
+        "span",
+        "strong",
+        "sub",
+        "sup",
+        "table",
+        "tbody",
+        "td",
+        "tfoot",
+        "th",
+        "thead",
+        "tr",
+        "u",
+        "ul",
+    }
+)
+_STORED_HTML_VOID_TAGS = frozenset({"br", "hr"})
+_STORED_HTML_SKIPPED_TAGS = frozenset({"iframe", "object", "script", "style", "svg"})
+_STORED_HTML_SKIPPED_CLASSES = frozenset({"screen-reader-user-query-label"})
+
+
+def _safe_stored_html_url(value: str) -> str:
+    """Keep only absolute HTTP(S) URLs from cached rich-text attributes."""
+    candidate = str(value or "").strip()
+    try:
+        parsed = urlsplit(candidate)
+    except ValueError:
+        return ""
+    return candidate if parsed.scheme in {"http", "https"} and parsed.netloc else ""
+
+
+class _StoredHtmlSanitizer(HTMLParser):
+    """Keep harmless rich-text structure while dropping cached page chrome."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+        self.open_tags: list[str] = []
+        self.skipped_tags: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        tag = tag.lower()
+        if self.skipped_tags:
+            if tag not in _STORED_HTML_VOID_TAGS:
+                self.skipped_tags.append(tag)
+            return
+        attrs_map = dict(attrs)
+        class_names = set(str(attrs_map.get("class") or "").split())
+        if tag in _STORED_HTML_SKIPPED_TAGS or class_names & _STORED_HTML_SKIPPED_CLASSES:
+            if tag not in _STORED_HTML_VOID_TAGS:
+                self.skipped_tags.append(tag)
+            return
+        if tag not in _STORED_HTML_ALLOWED_TAGS:
+            return
+
+        safe_attrs: list[tuple[str, str]] = []
+        if tag == "a":
+            href = _safe_stored_html_url(attrs_map.get("href", ""))
+            if href:
+                safe_attrs.append(("href", href))
+            title = str(attrs_map.get("title") or "").strip()
+            if title:
+                safe_attrs.append(("title", title))
+        elif tag == "ol":
+            start = str(attrs_map.get("start") or "").strip()
+            if start.isdigit():
+                safe_attrs.append(("start", start))
+        elif tag in {"td", "th"}:
+            for name in ("colspan", "rowspan"):
+                value = str(attrs_map.get(name) or "").strip()
+                if value.isdigit():
+                    safe_attrs.append((name, value))
+        elif tag == "span":
+            math_value = str(attrs_map.get("data-math") or "").strip()
+            if math_value:
+                safe_attrs.append(("data-math", math_value))
+
+        serialized_attrs = "".join(
+            f' {name}="{escape_html(value, quote=True)}"' for name, value in safe_attrs
+        )
+        self.parts.append(f"<{tag}{serialized_attrs}>")
+        if tag not in _STORED_HTML_VOID_TAGS:
+            self.open_tags.append(tag)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self.handle_starttag(tag, attrs)
+        if tag.lower() not in _STORED_HTML_VOID_TAGS:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        tag = tag.lower()
+        if self.skipped_tags:
+            if tag == self.skipped_tags[-1]:
+                self.skipped_tags.pop()
+            return
+        if tag not in self.open_tags:
+            return
+        while self.open_tags:
+            open_tag = self.open_tags.pop()
+            self.parts.append(f"</{open_tag}>")
+            if open_tag == tag:
+                break
+
+    def handle_data(self, data: str) -> None:
+        if not self.skipped_tags:
+            self.parts.append(escape_html(data))
+
+    def handle_comment(self, _data: str) -> None:
+        return
+
+    def render(self) -> str:
+        while self.open_tags:
+            self.parts.append(f"</{self.open_tags.pop()}>")
+        return "".join(self.parts).strip()
+
+
+def sanitize_stored_html(value: str) -> str:
+    """Sanitize cached rich text before marking it safe for a Jinja template."""
+    source = str(value or "").replace("\x00", "").strip()
+    if not source:
+        return ""
+    parser = _StoredHtmlSanitizer()
+    parser.feed(source)
+    parser.close()
+    return parser.render()
 
 
 def render_prompt_markdown(value: str) -> Markup:
     """Render stored ChatGPT prompt Markdown while escaping embedded HTML."""
     prompt = str(value or "").replace("\x00", "").strip()
     return Markup(PROMPT_MARKDOWN_RENDERER.render(prompt)) if prompt else Markup("")
+
+
+def render_cached_message(content_text: str, content_html: str = "") -> Markup:
+    """Render one cached message from sanitized rich text or Markdown fallback."""
+    rich_text = sanitize_stored_html(content_html)
+    return Markup(rich_text) if rich_text else render_prompt_markdown(content_text)
+
+
+def build_browser_search_suggestions(
+    *,
+    view: str,
+    media_items: Iterable[Any] = (),
+    text_page: Any = None,
+) -> tuple[dict[str, str], ...]:
+    """Build bounded, local-only search recommendations for the browser heading."""
+    normalized_view = str(view or "").strip().lower()
+    is_text_view = normalized_view == "text"
+    source_views = LLM_SWITCHER_SOURCE_VIEWS if is_text_view else MEDIA_CACHE_SOURCE_VIEWS
+    suggestions: list[dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(value: Any, detail: str) -> None:
+        normalized = " ".join(str(value or "").split()).strip()[:120]
+        if not normalized:
+            return
+        key = normalized.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        suggestions.append({"value": normalized, "detail": detail})
+
+    for source in source_views:
+        add(source.label, "Chat source" if is_text_view else "Media source")
+
+    if is_text_view and text_page is not None:
+        sessions = [
+            getattr(text_page, attribute, None)
+            for attribute in ("current_session", "previous_session", "next_session")
+        ]
+        sessions.extend(getattr(text_page, "sessions", ()) or ())
+        for session in sessions:
+            if session is None:
+                continue
+            add(
+                getattr(session, "conversation_title", ""),
+                f"{get_cache_source_label(getattr(session, 'source', ''))} session",
+            )
+        for message in getattr(text_page, "items", ()) or ():
+            add(
+                getattr(message, "conversation_title", ""),
+                f"{get_cache_source_label(getattr(message, 'source', ''))} session",
+            )
+    else:
+        for item in media_items:
+            source_label = get_cache_source_label(getattr(item, "source", ""))
+            media_kind = str(getattr(item, "media_kind", "") or "media").title()
+            detail = f"{source_label} · {media_kind}"
+            add(getattr(item, "title", ""), detail)
+            add(getattr(item, "filename", ""), detail)
+            add(getattr(item, "creator", ""), f"{source_label} creator")
+
+    return tuple(suggestions[:96])
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +361,19 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     service = CacheLikesService(state, shadow_backup_service=shadow_backup_service)
     grok_state = TaskState(version=APP_VERSION, snapshot_factory=build_grok_initial_snapshot)
     grok_service = GrokDownloadService(grok_state, shadow_backup_service=shadow_backup_service)
+    grok_history_state = TaskState(
+        version=APP_VERSION,
+        snapshot_factory=lambda version: build_grok_history_snapshot(
+            version=version,
+            local_store_root=media_catalog.local_store_root,
+        ),
+    )
+    grok_history_service = GrokHistoryService(
+        grok_history_state,
+        media_catalog.local_store_root,
+        shadow_backup_service=shadow_backup_service,
+    )
+    app.extensions["grok_history_service"] = grok_history_service
     chatgpt_state = TaskState(version=APP_VERSION, snapshot_factory=build_chatgpt_initial_snapshot)
     chatgpt_service = ChatGPTDownloadService(chatgpt_state, shadow_backup_service=shadow_backup_service)
     app.extensions["chatgpt_service"] = chatgpt_service
@@ -157,12 +388,11 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     )
     app.extensions["gemini_service"] = gemini_service
     saved_config = load_saved_config()
-    devspace_runtime = DevSpaceRuntimeManager(Path(get_log_file_path()).with_name("devspace-agent.log"))
-    devspace_agent_service = AgentService(devspace_runtime)
-    app.extensions["devspace_runtime"] = devspace_runtime
-    app.extensions["devspace_agent_service"] = devspace_agent_service
-    atexit.register(devspace_runtime.stop_managed_process_at_exit)
-    atexit.register(devspace_agent_service.stop_at_exit)
+    computer_use_settings = ComputerUseSettingsStore()
+    computer_use_agent_service = ComputerUseAgentService(computer_use_settings)
+    app.extensions["computer_use_settings"] = computer_use_settings
+    app.extensions["computer_use_agent_service"] = computer_use_agent_service
+    atexit.register(computer_use_agent_service.stop_at_exit)
     cache_runtimes = {
         "x": CacheRuntimeAdapter(
             state=state,
@@ -248,6 +478,18 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def build_reconciled_grok_snapshot() -> dict[str, Any]:
         """Refresh Grok cache counters from disk without discarding live task status."""
         return build_reconciled_cache_snapshot("grok")
+
+    def build_reconciled_grok_history_snapshot() -> dict[str, Any]:
+        """Refresh Grok text-history counters from disk without discarding live task status."""
+        return reconcile_cached_snapshot(
+            grok_history_state.snapshot(),
+            asdict(
+                build_grok_history_snapshot(
+                    version=APP_VERSION,
+                    local_store_root=media_catalog.local_store_root,
+                )
+            ),
+        )
 
     def build_reconciled_chatgpt_snapshot() -> dict[str, Any]:
         """Refresh ChatGPT image counters from disk without discarding live task status."""
@@ -399,8 +641,11 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         return render_template(
             cache_source.template_name,
             cache_source=cache_source,
-            cache_source_options=cache_source_views_for_group(cache_source.group_key),
+            cache_source_options=cache_source_views_for_page(source_key),
             snapshot=build_reconciled_cache_snapshot(source_key),
+            history_snapshot=(
+                build_reconciled_grok_history_snapshot() if source_key == "grok" else None
+            ),
             saved_config=saved_config,
             browser_options=browser_options,
             selected_browser_label=selected_browser_label,
@@ -425,17 +670,6 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def cache_source(source_key: str):
         if get_cache_source_view(source_key) is None or source_key not in cache_runtimes:
             abort(404)
-        if source_key == "chatgpt":
-            remembered_platform = request.args.get("agent_platform", "").strip().lower()
-            if remembered_platform in AGENT_PLATFORM_CONFIG:
-                response = redirect(cache_source_url("chatgpt"))
-                response.set_cookie(
-                    "cachelikes_agent_platform",
-                    remembered_platform,
-                    path="/",
-                    samesite="Lax",
-                )
-                return response
         return render_cache_source_page(source_key)
 
     @app.get("/")
@@ -471,13 +705,12 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             log_file_path=str(get_log_file_path()),
             local_store_root=str(media_catalog.local_store_root),
             shadow_backup_snapshot=shadow_backup_service.snapshot(),
-            agent_settings=devspace_runtime.settings,
-            agent_runtime_snapshot=devspace_runtime.snapshot(),
-            agent_native_snapshot=devspace_agent_service.native_snapshot(),
+            agent_settings=computer_use_settings.settings,
+            agent_runtime_snapshot=computer_use_settings.snapshot(),
         )
 
     def require_local_agent_request() -> None:
-        """Keep the DevSpace owner control plane on the host loopback interface."""
+        """Keep the local Computer Use control plane on the host loopback interface."""
         host_name = urlsplit(f"//{request.host}").hostname
         if not is_loopback_address(request.remote_addr) or not is_loopback_address(host_name):
             abort(403)
@@ -498,7 +731,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     def build_agent_snapshot() -> dict[str, Any]:
         """Add safe rendered Markdown to the Agent status payload."""
-        snapshot = devspace_agent_service.snapshot()
+        snapshot = computer_use_agent_service.snapshot()
         snapshot["response_html"] = str(
             render_prompt_markdown(str(snapshot.get("response", "")))
         )
@@ -507,15 +740,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     @app.get("/agent")
     def agent():
         require_local_agent_request()
-        agent_settings = devspace_runtime.settings
-        runtime_snapshot = devspace_runtime.snapshot()
-        remembered_platform = request.cookies.get("cachelikes_agent_platform", "").strip().lower()
-        if remembered_platform in AGENT_PLATFORM_CONFIG:
-            agent_settings = replace(
-                agent_settings,
-                platform=remembered_platform,
-                target_url=AGENT_PLATFORM_CONFIG[remembered_platform]["url"],
-            )
+        agent_settings = computer_use_settings.settings
+        runtime_snapshot = computer_use_settings.snapshot()
         return render_template(
             "agent.html",
             version=APP_VERSION,
@@ -525,9 +751,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             agent_project_name=(
                 Path(agent_settings.workspace_path).name or agent_settings.workspace_path
             ),
-            platform_options=AGENT_PLATFORM_OPTIONS,
-            platform_labels={key: value["label"] for key, value in AGENT_PLATFORM_CONFIG.items()},
-            native_snapshot=devspace_agent_service.native_snapshot(),
+            operating_system_options=AGENT_OPERATING_SYSTEM_OPTIONS,
+            browser_options=AGENT_BROWSER_OPTIONS,
             render_prompt_markdown=render_prompt_markdown,
         )
 
@@ -536,8 +761,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         require_local_agent_request()
         return jsonify(
             {
-                "runtime": devspace_runtime.snapshot(),
-                "native": devspace_agent_service.native_snapshot(),
+                "runtime": computer_use_settings.snapshot(),
                 "agent": build_agent_snapshot(),
             }
         )
@@ -547,9 +771,9 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         require_local_agent_request()
         payload = request.get_json(silent=True) or {}
         try:
-            settings = devspace_runtime.update_preferences(
+            settings = computer_use_settings.update_preferences(
                 workspace_path=str(payload.get("workspace_path", "")),
-                platform=str(payload.get("platform", "")),
+                operating_system=str(payload.get("operating_system", "")),
                 browser=str(payload.get("browser", "")),
             )
         except (RuntimeError, ValueError) as exc:
@@ -557,37 +781,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         return jsonify(
             {
                 "settings": asdict(settings),
-                "runtime": devspace_runtime.snapshot(),
-                "native": devspace_agent_service.native_snapshot(),
-                "agent": build_agent_snapshot(),
-            }
-        )
-
-    @app.post("/api/agent/runtime/start")
-    def start_agent_runtime():
-        require_local_agent_request()
-        try:
-            settings = validate_devspace_settings(request.get_json(silent=True) or {})
-            runtime_snapshot = devspace_runtime.start(settings)
-        except (RuntimeError, ValueError) as exc:
-            return jsonify({"error": str(exc)}), 409
-        return jsonify(
-            {
-                "runtime": runtime_snapshot,
-                "native": devspace_agent_service.native_snapshot(),
-                "agent": build_agent_snapshot(),
-            }
-        )
-
-    @app.post("/api/agent/runtime/stop")
-    def stop_agent_runtime():
-        require_local_agent_request()
-        if devspace_agent_service.snapshot()["running"]:
-            return jsonify({"error": "Stop the active Agent request before stopping DevSpace."}), 409
-        return jsonify(
-            {
-                "runtime": devspace_runtime.stop(),
-                "native": devspace_agent_service.native_snapshot(),
+                "runtime": computer_use_settings.snapshot(),
                 "agent": build_agent_snapshot(),
             }
         )
@@ -597,31 +791,55 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         require_local_agent_request()
         payload = request.get_json(silent=True) or {}
         try:
-            devspace_agent_service.start(
+            computer_use_agent_service.start(
                 str(payload.get("prompt", "")),
                 str(payload.get("workspace_path", "")),
                 saved_config,
-                platform=str(payload.get("platform", "")),
+                operating_system=str(payload.get("operating_system", "")),
                 browser=str(payload.get("browser", "")),
+                session_mode=str(payload.get("session_mode", "new")),
+                conversation_url=str(payload.get("conversation_url", "")),
+                project_url=str(payload.get("project_url", "")),
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify(
             {
-                "runtime": devspace_runtime.snapshot(),
-                "native": devspace_agent_service.native_snapshot(),
+                "runtime": computer_use_settings.snapshot(),
                 "agent": build_agent_snapshot(),
             }
         ), 202
+
+    @app.get("/api/agent/chatgpt-sources")
+    def agent_chatgpt_sources():
+        """Load recent ChatGPT sessions and projects for the selected browser."""
+        require_local_agent_request()
+        browser_name = request.args.get("browser", "").strip().lower()
+        try:
+            payload = list_chatgpt_agent_sources(browser_name, saved_config)
+        except (RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(payload)
+
+    @app.get("/api/agent/chatgpt-project-sessions")
+    def agent_chatgpt_project_sessions():
+        """Load recent sessions for one selected ChatGPT project."""
+        require_local_agent_request()
+        browser_name = request.args.get("browser", "").strip().lower()
+        project_url = request.args.get("project_url", "").strip()
+        try:
+            payload = list_chatgpt_project_sessions(browser_name, project_url, saved_config)
+        except (RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(payload)
 
     @app.post("/api/agent/stop")
     def stop_agent():
         require_local_agent_request()
         return jsonify(
             {
-                "stop_requested": devspace_agent_service.request_stop(),
-                "runtime": devspace_runtime.snapshot(),
-                "native": devspace_agent_service.native_snapshot(),
+                "stop_requested": computer_use_agent_service.request_stop(),
+                "runtime": computer_use_settings.snapshot(),
                 "agent": build_agent_snapshot(),
             }
         )
@@ -682,37 +900,48 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             )
             text_page = None
             media_payload = [serialize_media_item(item) for item in media_page.items]
+        browser_search_suggestions = build_browser_search_suggestions(
+            view=filters["view"],
+            media_items=media_page.items if media_page is not None else all_items,
+            text_page=text_page,
+        )
         return render_template(
             "browser.html",
             media_page=media_page,
             text_page=text_page,
             media_payload=media_payload,
             filters=filters,
+            browser_search_suggestions=browser_search_suggestions,
             has_any_media=bool(all_items),
             has_any_text=bool(text_page and text_page.total_count),
             format_captured_at_timestamp_label=format_captured_at_timestamp_label,
             format_chat_message_timestamp_label=format_chat_message_timestamp_label,
             format_media_size=format_media_size,
             render_prompt_markdown=render_prompt_markdown,
+            render_cached_message=render_cached_message,
             file_manager_label=local_file_manager_label(),
             version=APP_VERSION,
         )
 
     @app.get("/browser/session/<session_id>/export")
     def browser_session_export(session_id: str):
-        """Download one complete cached text session in the selected format."""
+        """Download one complete session or the currently displayed session page."""
         source = request.args.get("source", "all")
         sort = request.args.get("sort", "newest")
+        page_only = request.args.get("scope") == "page"
         text_page = query_chat_history(
             media_catalog.local_store_root,
             source=source,
             sort=sort,
-            page=1,
-            page_size=1_000_000,
+            page=request.args.get("page", "1") if page_only else 1,
+            page_size=100 if page_only else 1_000_000,
             session_view=True,
             session=session_id,
         )
-        markdown = build_chat_history_markdown(text_page)
+        markdown = build_chat_history_markdown(
+            text_page,
+            message_count=len(text_page.items) if page_only else None,
+        )
         if not markdown:
             abort(404)
         title = text_page.current_session.conversation_title if text_page.current_session else "session"
@@ -721,10 +950,25 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             for character in str(title)
         ).strip()
         filename = "_".join(filename.split()) or "session"
+        if page_only:
+            filename = f"{filename}_page_{text_page.current_page}"
+        ascii_filename = "".join(
+            character
+            if character.isascii() and (character.isalnum() or character in {"-", "_", " "})
+            else "_"
+            for character in filename
+        ).strip()
+        ascii_filename = "_".join(ascii_filename.split()) or "session"
+        download_filename = f"{filename}.md"
         return Response(
             markdown,
             mimetype="text/markdown",
-            headers={"Content-Disposition": f'attachment; filename="{filename}.md"'},
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{ascii_filename}.md"; '
+                    f"filename*=UTF-8''{quote(download_filename, safe='')}"
+                )
+            },
         )
 
     @app.get("/browser/media/<path:relative_path>")
@@ -818,14 +1062,23 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         config = parse_form_config(saved_config, preserve_missing_booleans=True)
         saved_config = config
         save_config(saved_config)
+        runtime_config = config
         if cache_source.require_browser_ready:
-            browser_name = getattr(config, cache_source.browser_config_field)
-            descriptor = browser_descriptors(config).get(browser_name)
+            browser_name = getattr(runtime_config, cache_source.browser_config_field)
+            descriptor = browser_descriptors(runtime_config).get(browser_name)
             if descriptor is None:
                 runtime.state.finish_error(f"Unsupported {cache_source.label} browser: {browser_name}")
                 return redirect(cache_source_url(source_key))
         try:
-            runtime.service.start(config)
+            if source_key == "chatgpt":
+                content_mode = (
+                    "media"
+                    if request.form.get("chatgpt_content_mode") == "media"
+                    else "text"
+                )
+                runtime.service.start(runtime_config, content_mode=content_mode)
+            else:
+                runtime.service.start(runtime_config)
         except RuntimeError as exc:
             if runtime.service.is_running():
                 runtime.state.append_event(str(exc))
@@ -842,6 +1095,32 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             abort(404)
         runtime.service.request_stop()
         return redirect(cache_source_url(source_key))
+
+    def start_grok_history_runtime():
+        """Persist shared form values and start the Grok text-history runtime."""
+        nonlocal saved_config
+        config = parse_form_config(saved_config, preserve_missing_booleans=True)
+        saved_config = config
+        save_config(saved_config)
+        browser_name = config.grok_browser
+        descriptor = browser_descriptors(config).get(browser_name)
+        if descriptor is None:
+            grok_history_state.finish_error(f"Unsupported Grok browser: {browser_name}")
+            return redirect(cache_source_url("grok"))
+        try:
+            grok_history_service.start(config)
+        except RuntimeError as exc:
+            if grok_history_service.is_running():
+                grok_history_state.append_event(str(exc))
+                grok_history_state.update(last_error=str(exc))
+            else:
+                grok_history_state.finish_error(str(exc))
+        return redirect(cache_source_url("grok"))
+
+    def stop_grok_history_runtime():
+        """Request a safe stop for the Grok text-history runtime."""
+        grok_history_service.request_stop()
+        return redirect(cache_source_url("grok"))
 
     @app.post("/cache/<source_key>/start")
     def start_cache_source(source_key: str):
@@ -866,6 +1145,14 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     @app.post("/grok/stop")
     def stop_grok():
         return stop_cache_source_runtime("grok")
+
+    @app.post("/cache/grok/text/start")
+    def start_grok_text_history():
+        return start_grok_history_runtime()
+
+    @app.post("/cache/grok/text/stop")
+    def stop_grok_text_history():
+        return stop_grok_history_runtime()
 
     @app.post("/chatgpt/start")
     def start_chatgpt():
@@ -929,33 +1216,46 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         nonlocal saved_config
         saved_config = parse_form_config(saved_config)
         save_config(saved_config)
-        if (
-            request.form.get("agent_port") is not None
-            or request.form.get("agent_public_base_url") is not None
-        ):
-            agent_port = parse_int_field(
-                "agent_port",
-                devspace_runtime.settings.port,
-                minimum=1_024,
-                maximum=65_535,
-            )
-            public_base_url = str(
-                request.form.get(
-                    "agent_public_base_url",
-                    devspace_runtime.settings.public_base_url,
-                )
-            ).strip()
-            candidate_payload = asdict(devspace_runtime.settings)
+        agent_field_names = {
+            "agent_operating_system",
+            "agent_context_limit_mib",
+            "agent_max_turns",
+            "agent_command_timeout_seconds",
+            "agent_macos_system_prompt",
+            "agent_windows_system_prompt",
+        }
+        if any(request.form.get(field_name) is not None for field_name in agent_field_names):
+            candidate_payload = asdict(computer_use_settings.settings)
             candidate_payload.update(
                 {
-                    "port": agent_port,
-                    "public_base_url": public_base_url,
+                    "operating_system": request.form.get(
+                        "agent_operating_system",
+                        computer_use_settings.settings.operating_system,
+                    ),
+                    "context_limit_mib": request.form.get(
+                        "agent_context_limit_mib",
+                        computer_use_settings.settings.context_limit_mib,
+                    ),
+                    "max_turns": request.form.get(
+                        "agent_max_turns",
+                        computer_use_settings.settings.max_turns,
+                    ),
+                    "command_timeout_seconds": request.form.get(
+                        "agent_command_timeout_seconds",
+                        computer_use_settings.settings.command_timeout_seconds,
+                    ),
+                    "macos_system_prompt": request.form.get(
+                        "agent_macos_system_prompt",
+                        computer_use_settings.settings.macos_system_prompt,
+                    ),
+                    "windows_system_prompt": request.form.get(
+                        "agent_windows_system_prompt",
+                        computer_use_settings.settings.windows_system_prompt,
+                    ),
                 }
             )
             try:
-                devspace_runtime.update_settings(
-                    validate_devspace_settings(candidate_payload)
-                )
+                computer_use_settings.update(validate_computer_use_settings(candidate_payload))
             except (RuntimeError, ValueError):
                 pass
         return redirect(url_for("settings"))
@@ -969,7 +1269,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             shadow_backup_service.start(saved_config)
         except ShadowBackupError as exc:
             shadow_backup_service.record_start_error(exc)
-        return redirect(url_for("settings"))
+        return redirect(url_for("settings", _anchor="settings-cloud"))
 
     @app.get("/api/settings/shadow-backup/status")
     def api_shadow_backup_status():
@@ -1013,7 +1313,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 "Select shadow cloud backup destination",
             ),
             "agent_allowed_root": (
-                Path(devspace_runtime.settings.workspace_path),
+                Path(computer_use_settings.settings.workspace_path),
                 "Select local Agent project folder",
             ),
         }
@@ -1048,6 +1348,10 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     @app.get("/api/grok/status")
     def api_grok_status():
         return jsonify(build_reconciled_cache_snapshot("grok"))
+
+    @app.get("/api/cache/grok/text/status")
+    def api_grok_text_status():
+        return jsonify(build_reconciled_grok_history_snapshot())
 
     @app.get("/api/chatgpt/status")
     def api_chatgpt_status():

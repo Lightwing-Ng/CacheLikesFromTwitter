@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.12.1-codex.1
+# Code version: v1.13.0-codex.1
 
 from __future__ import annotations
 
@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .config import CrawlConfig, DEFAULT_CHATGPT_PROJECT_URL
+from .config import CrawlConfig
 from .safari_automation import (
     SAFARI_BACKGROUND_WINDOW_APPLESCRIPT,
     SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT,
@@ -37,7 +37,7 @@ except ImportError:  # pragma: no cover
 
 X_HOME_URL = "https://x.com/home"
 GROK_FILES_URL = "https://grok.com/files"
-CHATGPT_PROJECT_URL = DEFAULT_CHATGPT_PROJECT_URL
+CHATGPT_HOME_URL = "https://chatgpt.com/"
 CHATGPT_AUTH_SESSION_URL = "https://chatgpt.com/api/auth/session"
 GEMINI_HOME_URL = "https://gemini.google.com/app"
 EDGE_USER_DATA_DIR = Path.home() / "Library/Application Support/Microsoft Edge"
@@ -289,16 +289,9 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
 
 
 def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -> dict[str, Any]:
-    """Validate actual project navigation and authorization in the selected browser."""
-    project_name = config.chatgpt_project_name or "ChatGPT project"
-    project_url = config.chatgpt_project_url or CHATGPT_PROJECT_URL
-    if not project_url.startswith("https://chatgpt.com/"):
-        return {
-            "logged_in": False,
-            "can_download": False,
-            "account_name": project_name,
-            "message": "ChatGPT project or chat URL must use https://chatgpt.com/.",
-        }
+    """Validate ChatGPT authorization in the selected browser."""
+    del config
+    project_url = CHATGPT_HOME_URL
 
     if descriptor.engine == "safari":
         with SafariContext(project_url) as context:
@@ -364,7 +357,7 @@ def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -
         return {
             "logged_in": False,
             "can_download": False,
-            "account_name": project_name,
+            "account_name": "ChatGPT account",
             "message": f"ChatGPT sync does not support {descriptor.label}.",
         }
 
@@ -372,20 +365,17 @@ def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -
         return {
             "logged_in": False,
             "can_download": False,
-            "account_name": project_name,
+            "account_name": "ChatGPT account",
             "message": (
-                f"{descriptor.label} opened the ChatGPT source but did not expose an authorized session."
+                f"{descriptor.label} opened ChatGPT but did not expose an authorized account."
             ),
         }
 
     return {
         "logged_in": True,
         "can_download": True,
-        "account_name": project_name,
-        "message": (
-            f"{descriptor.label} verified the ChatGPT source for {project_name}. "
-            "A background browser session will run when the sync starts."
-        ),
+        "account_name": "ChatGPT account",
+        "message": f"The ChatGPT account is ready in the selected {descriptor.label} browser.",
     }
 
 

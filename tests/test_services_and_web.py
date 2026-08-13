@@ -1,6 +1,6 @@
 """Service orchestration and Flask contract tests.
 
-Code version: v1.6.2-codex.1
+Code version: v1.8.0-codex.1
 """
 
 from __future__ import annotations
@@ -196,6 +196,58 @@ def test_gemini_start_route_accepts_browser_and_history_limits(client) -> None:
     assert config.gemini_max_conversations == 2_000
     assert config.gemini_scroll_pause_seconds == 0.35
     assert config.gemini_stale_round_limit == 7
+
+
+def test_chatgpt_text_start_preserves_media_settings_and_selects_text_mode(tmp_path: Path) -> None:
+    saved_project_url = "https://chatgpt.com/c/specific-session"
+    initial_config = CrawlConfig(chatgpt_project_url=saved_project_url)
+
+    with patch("app.web.app.load_saved_config", return_value=initial_config), patch(
+        "app.web.app.save_config"
+    ) as save_config, patch("app.core.chatgpt_service.ChatGPTDownloadService.start") as start:
+        application = create_app(tmp_path / "local_store")
+        application.config.update(TESTING=True)
+        with application.test_client() as isolated_client:
+            response = isolated_client.post(
+                "/cache/chatgpt/start",
+                data={
+                    "chatgpt_browser": "safari",
+                    "chatgpt_content_mode": "text",
+                },
+            )
+
+    assert response.status_code == 302
+    runtime_config = start.call_args.args[0]
+    assert runtime_config.chatgpt_browser == "safari"
+    assert runtime_config.chatgpt_project_url == saved_project_url
+    assert start.call_args.kwargs["content_mode"] == "text"
+    assert save_config.call_args.args[0].chatgpt_project_url == saved_project_url
+
+
+def test_chatgpt_media_start_uses_safari_project_settings(tmp_path: Path) -> None:
+    project_url = "https://chatgpt.com/g/g-p-demo/project"
+    initial_config = CrawlConfig(chatgpt_project_url=project_url)
+
+    with patch("app.web.app.load_saved_config", return_value=initial_config), patch(
+        "app.web.app.save_config"
+    ), patch("app.core.chatgpt_service.ChatGPTDownloadService.start") as start:
+        application = create_app(tmp_path / "local_store")
+        application.config.update(TESTING=True)
+        with application.test_client() as isolated_client:
+            response = isolated_client.post(
+                "/cache/chatgpt/start",
+                data={
+                    "chatgpt_browser": "safari",
+                    "chatgpt_content_mode": "media",
+                    "chatgpt_project_url": project_url,
+                },
+            )
+
+    assert response.status_code == 302
+    runtime_config = start.call_args.args[0]
+    assert runtime_config.chatgpt_browser == "safari"
+    assert runtime_config.chatgpt_project_url == project_url
+    assert start.call_args.kwargs["content_mode"] == "media"
 
 
 @pytest.mark.integration

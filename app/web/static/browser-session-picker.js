@@ -1,26 +1,6 @@
-/* Code version: v1.7.0-codex.1 */
+/* Code version: v1.8.0-codex.1 */
 
 (() => {
-    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v4:";
-    const SESSION_CACHE_TTL_MS = 300_000;
-    const SESSION_STALE_MAX_AGE_MS = 1_800_000;
-    const statusRequests = new Map();
-
-    function readSessionValue(key) {
-        try {
-            return window.sessionStorage.getItem(key);
-        } catch (_error) {
-            return null;
-        }
-    }
-
-    function writeSessionValue(key, value) {
-        try {
-            window.sessionStorage.setItem(key, value);
-        } catch (_error) {
-        }
-    }
-
     function closeOtherMenus(activePanel) {
         document.querySelectorAll("[data-browser-session-panel]").forEach((panel) => {
             if (panel !== activePanel) {
@@ -44,16 +24,14 @@
         const selectedIcon = panel.querySelector('[data-role="browser-picker-selected-icon"]');
         const selectedIconShell = panel.querySelector('[data-role="browser-picker-selected-icon-shell"]');
         const hiddenInput = hiddenInputSelector ? document.querySelector(hiddenInputSelector) : null;
-        const statusCard = panel.querySelector('[data-role="browser-session-status"]');
-        const statusAccount = panel.querySelector('[data-role="browser-session-account"]');
-        const statusMessage = panel.querySelector('[data-role="browser-session-message"]');
-        const statusSpinner = panel.querySelector('[data-role="browser-session-spinner"]');
-        const statusCheckmark = panel.querySelector('[data-role="browser-session-checkmark"]');
         const startButton = startButtonSelector ? document.querySelector(startButtonSelector) : null;
         const startButtonInitiallyDisabled = startButton ? startButton.disabled : false;
         const optionButtons = Array.from(panel.querySelectorAll("[data-browser-option]"));
-
         let activeBrowser = "";
+        const statusController = window.CACHELIKES_BROWSER_SESSION_STATUS?.init(panel, {
+            platform,
+            getBrowser: () => activeBrowser,
+        });
 
         function setStartButtonReady(isReady) {
             if (requiresDownloadReady) {
@@ -90,7 +68,10 @@
                 selectedIcon.alt = "";
                 selectedIconShell.hidden = true;
                 setStartButtonReady(false);
-                writeSessionValue(selectionStorageKey, "");
+                try {
+                    window.sessionStorage.setItem(selectionStorageKey, "");
+                } catch (_error) {
+                }
                 return;
             }
 
@@ -98,129 +79,6 @@
             selectedIcon.src = selectedButton.dataset.browserIcon;
             selectedIcon.alt = `${selectedButton.dataset.browserLabel} icon`;
             selectedIconShell.hidden = false;
-        }
-
-        function setStatus(payload) {
-            statusCard.hidden = false;
-            statusCard.removeAttribute("aria-busy");
-            panel.classList.remove("is-browser-status-loading", "is-browser-status-refreshing");
-            panel.classList.toggle("is-browser-ready", Boolean(payload.can_download));
-            statusAccount.textContent = payload.account_name || "No signed-in account detected";
-            if (statusMessage) {
-                statusMessage.textContent = payload.message || "";
-                statusMessage.hidden = !payload.message;
-            }
-            if (statusSpinner) statusSpinner.hidden = true;
-            statusCheckmark.hidden = !Boolean(payload.can_download);
-            setStartButtonReady(Boolean(payload.can_download));
-        }
-
-        function setLoadingState() {
-            statusCard.hidden = false;
-            statusCard.setAttribute("aria-busy", "true");
-            panel.classList.add("is-browser-status-loading");
-            panel.classList.remove("is-browser-ready", "is-browser-status-refreshing");
-            statusAccount.textContent = "Checking signed-in account...";
-            if (statusMessage) {
-                statusMessage.textContent = "";
-                statusMessage.hidden = true;
-            }
-            if (statusSpinner) statusSpinner.hidden = false;
-            statusCheckmark.hidden = true;
-            setStartButtonReady(false);
-        }
-
-        function setRefreshingState() {
-            statusCard.setAttribute("aria-busy", "true");
-            panel.classList.remove("is-browser-status-loading");
-            panel.classList.add("is-browser-status-refreshing");
-            if (statusSpinner) statusSpinner.hidden = false;
-            statusCheckmark.hidden = true;
-        }
-
-        function readCachedStatus(cacheKey) {
-            const cachedPayload = readSessionValue(cacheKey);
-            if (!cachedPayload) return null;
-            try {
-                const cachedEntry = JSON.parse(cachedPayload);
-                if (
-                    !cachedEntry
-                    || typeof cachedEntry.cached_at !== "number"
-                    || !cachedEntry.payload
-                ) return null;
-                return {
-                    ageMs: Math.max(Date.now() - cachedEntry.cached_at, 0),
-                    payload: cachedEntry.payload,
-                };
-            } catch (_error) {
-                return null;
-            }
-        }
-
-        function requestBrowserStatus(browserId) {
-            const requestKey = `${platform}:${browserId}`;
-            if (statusRequests.has(requestKey)) return statusRequests.get(requestKey);
-            const request = fetch(
-                `/api/browser-session?platform=${encodeURIComponent(platform)}&browser=${encodeURIComponent(browserId)}`,
-                { cache: "no-store" },
-            )
-                .then(async (response) => {
-                    const payload = await response.json();
-                    if (!response.ok) {
-                        throw new Error(payload.error || "Failed to probe browser session.");
-                    }
-                    return payload;
-                })
-                .finally(() => statusRequests.delete(requestKey));
-            statusRequests.set(requestKey, request);
-            return request;
-        }
-
-        async function loadBrowserStatus(browserId) {
-            if (!browserId) {
-                statusCard.hidden = true;
-                statusCard.removeAttribute("aria-busy");
-                panel.classList.remove(
-                    "is-browser-status-loading",
-                    "is-browser-status-refreshing",
-                    "is-browser-ready",
-                );
-                if (statusMessage) {
-                    statusMessage.textContent = "";
-                    statusMessage.hidden = true;
-                }
-                if (statusSpinner) statusSpinner.hidden = true;
-                setStartButtonReady(false);
-                return;
-            }
-
-            const cacheKey = `${SESSION_CACHE_PREFIX}${platform}:${browserId}`;
-            const cachedStatus = readCachedStatus(cacheKey);
-            if (cachedStatus && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
-                setStatus(cachedStatus.payload);
-                if (cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;
-                setRefreshingState();
-            } else {
-                setLoadingState();
-            }
-
-            try {
-                const payload = await requestBrowserStatus(browserId);
-                writeSessionValue(cacheKey, JSON.stringify({
-                    cached_at: Date.now(),
-                    payload,
-                }));
-                if (activeBrowser !== browserId) return;
-                setStatus(payload);
-            } catch (error) {
-                if (activeBrowser !== browserId) return;
-                setStatus({
-                    browser_label: selectedLabel.textContent,
-                    account_name: "",
-                    can_download: false,
-                    message: error instanceof Error ? error.message : "Failed to probe browser session.",
-                });
-            }
         }
 
         trigger.addEventListener("click", () => {
@@ -232,8 +90,11 @@
                 const browserId = button.dataset.browserOption || "";
                 setSelectedBrowser(browserId);
                 setMenuOpen(false);
-                writeSessionValue(selectionStorageKey, browserId);
-                void loadBrowserStatus(browserId);
+                try {
+                    window.sessionStorage.setItem(selectionStorageKey, browserId);
+                } catch (_error) {
+                }
+                statusController?.setBrowser(browserId);
             });
         });
 
@@ -249,7 +110,13 @@
             }
         });
 
-        const storedSelection = readSessionValue(selectionStorageKey) || "";
+        const storedSelection = (() => {
+            try {
+                return window.sessionStorage.getItem(selectionStorageKey) || "";
+            } catch (_error) {
+                return "";
+            }
+        })();
         const hiddenInputSelection = hiddenInput ? (hiddenInput.value || "").trim() : "";
         const defaultBrowserId = optionButtons.length === 1 ? (optionButtons[0].dataset.browserOption || "") : "";
         const initialBrowserId = optionButtons.some((button) => button.dataset.browserOption === storedSelection)
@@ -260,13 +127,15 @@
 
         if (initialBrowserId) {
             setSelectedBrowser(initialBrowserId);
-            writeSessionValue(selectionStorageKey, initialBrowserId);
-            void loadBrowserStatus(initialBrowserId);
+            try {
+                window.sessionStorage.setItem(selectionStorageKey, initialBrowserId);
+            } catch (_error) {
+            }
+            statusController?.setBrowser(initialBrowserId);
             return;
         }
 
         setSelectedBrowser("");
-        statusCard.hidden = true;
         setStartButtonReady(false);
     }
 

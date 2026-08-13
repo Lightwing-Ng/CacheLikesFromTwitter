@@ -1,17 +1,24 @@
 """Unit tests for the Safari-backed browser automation surface."""
 
-# Code version: v1.8.5-codex.1
+# Code version: v2.1.1-codex.1
 
 from __future__ import annotations
 
 import base64
+import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from threading import Lock
 from unittest.mock import patch
 
-from app.core.safari_automation import SafariContext, SafariPage, run_applescript
+import pytest
+
+from app.core.safari_automation import (
+    SafariContext,
+    SafariPage,
+    run_applescript,
+)
 
 
 def test_safari_page_downloads_one_authenticated_range(tmp_path: Path) -> None:
@@ -30,7 +37,7 @@ def test_safari_page_downloads_one_authenticated_range(tmp_path: Path) -> None:
         "error": "",
     }
 
-    with patch.object(
+    with patch.object(page, "keep_rendering_in_background"), patch.object(
         page,
         "evaluate",
         side_effect=[
@@ -77,7 +84,7 @@ def test_safari_page_restarts_when_a_stale_partial_gets_http_416(tmp_path: Path)
         "error": "",
     }
 
-    with patch.object(
+    with patch.object(page, "keep_rendering_in_background"), patch.object(
         page,
         "evaluate",
         side_effect=[True, rejected, True, True, accepted, base64.b64encode(content).decode(), True],
@@ -201,7 +208,7 @@ def test_safari_request_client_can_bind_a_request_to_one_owned_page() -> None:
     )
 
 
-def test_safari_request_client_recovers_from_hidden_window_fetch_failure() -> None:
+def test_safari_request_client_recovers_from_suspended_window_fetch_failure() -> None:
     context = SafariContext("https://chatgpt.com/")
     page = SafariPage(context, window_id=123)
     context.pages.append(page)
@@ -213,7 +220,7 @@ def test_safari_request_client_recovers_from_hidden_window_fetch_failure() -> No
             "_get_once",
             side_effect=[RuntimeError("Safari request failed: Load failed"), expected_response],
         ),
-        patch.object(page, "keep_rendering_offscreen") as keep_rendering,
+        patch.object(page, "keep_rendering_in_background") as keep_rendering,
         patch("app.core.safari_automation.time.sleep"),
     ):
         response = context.request.get_from_page(
@@ -241,28 +248,28 @@ def test_safari_page_exposes_shared_readiness_helpers() -> None:
     assert page.context is context
 
 
-def test_safari_page_can_remain_render_active_offscreen_without_stealing_focus() -> None:
+def test_safari_page_can_remain_render_active_in_background_without_stealing_focus() -> None:
     context = SafariContext("https://gemini.google.com/app")
     page = SafariPage(context, window_id=123)
 
     with patch.object(page, "_run_in_window", return_value="") as run:
-        page.keep_rendering_offscreen()
+        page.keep_rendering_in_background()
 
     script = run.call_args.args[0]
     assert "set previousWindowId to id of front window" in script
-    assert "set bounds of targetWindow to {-32000, -32000, -30720, -31100}" in script
     assert "set miniaturized of targetWindow to false" in script
     assert "set visible of targetWindow to true" in script
+    assert "set bounds of targetWindow" not in script
     assert "previousWindowId is not id of targetWindow" in script
     assert "set index of (first window whose id is previousWindowId) to 1" in script
 
 
-def test_safari_page_marks_rendering_active_after_offscreen_restore() -> None:
+def test_safari_page_marks_rendering_active_after_background_restore() -> None:
     context = SafariContext("https://chatgpt.com/")
     page = SafariPage(context, window_id=123)
 
     with patch.object(page, "_run_in_window", return_value=""):
-        page.keep_rendering_offscreen()
+        page.keep_rendering_in_background()
 
     assert page._rendering_active is True
 
@@ -288,7 +295,7 @@ def test_safari_page_restarts_a_resume_when_server_returns_the_wrong_range(tmp_p
         "bytes": len(payload),
     }
 
-    with patch.object(page, "keep_rendering_offscreen"), patch.object(
+    with patch.object(page, "keep_rendering_in_background"), patch.object(
         page,
         "evaluate",
         side_effect=[True, wrong_range, True, correct_range, "ZnJlc2g=", True],
@@ -304,7 +311,7 @@ def test_safari_page_restarts_a_resume_when_server_returns_the_wrong_range(tmp_p
     assert destination.read_bytes() == payload
 
 
-def test_safari_page_can_stay_hidden_without_focus_changes() -> None:
+def test_safari_page_compatibility_background_method_keeps_window_available() -> None:
     context = SafariContext("https://gemini.google.com/app")
     page = SafariPage(context, window_id=123)
 
@@ -312,28 +319,43 @@ def test_safari_page_can_stay_hidden_without_focus_changes() -> None:
         page.keep_background()
 
     script = run.call_args.args[0]
-    assert "set visible of targetWindow to false" in script
-    assert "set miniaturized of targetWindow to true" in script
+    assert "set visible of targetWindow to true" in script
+    assert "set miniaturized of targetWindow to false" in script
+    assert "set bounds of targetWindow" not in script
     assert "set index of targetWindow" not in script
 
 
-def test_safari_page_reopens_a_window_that_was_closed_externally() -> None:
+def test_safari_page_does_not_spawn_a_replacement_when_closed_externally() -> None:
     context = SafariContext("https://grok.com/files")
     page = SafariPage(context, window_id=123)
     context.pages.append(page)
 
     with patch(
         "app.core.safari_automation.run_applescript",
-        side_effect=[
-            RuntimeError("Safari got an error: Can't get window 1 whose id = 123. Invalid index. (-1719)"),
-            "987",
-            "https://grok.com/files",
-        ],
-    ) as run:
-        assert page.url == "https://grok.com/files"
+        side_effect=RuntimeError(
+            "Safari got an error: Can't get window 1 whose id = 123. Invalid index. (-1719)"
+        ),
+    ) as run, pytest.raises(RuntimeError, match="cache window was closed"):
+        _ = page.url
 
-    assert page.window_id == 987
-    assert run.call_count == 3
+    assert page.window_id == 123
+    assert run.call_count == 1
+
+
+def test_safari_page_reports_a_window_that_cannot_be_closed() -> None:
+    context = SafariContext("https://gemini.google.com/app")
+    page = SafariPage(context, window_id=123)
+    context.pages.append(page)
+    close_error = RuntimeError("Safari window 123 remained open.")
+
+    with patch.object(page, "_close_owned_window", return_value=close_error), pytest.raises(
+        RuntimeError,
+        match="remained open",
+    ):
+        page.close()
+
+    assert page not in context.pages
+    assert page._closed is True
 
 
 def test_run_applescript_retries_transient_safari_errors() -> None:
@@ -348,6 +370,17 @@ def test_run_applescript_retries_transient_safari_errors() -> None:
     sleep.assert_called_once()
 
 
+def test_run_applescript_bounds_a_hung_safari_event() -> None:
+    with patch(
+        "app.core.safari_automation.subprocess.run",
+        side_effect=subprocess.TimeoutExpired("osascript", 20),
+    ), patch("app.core.safari_automation.time.sleep"), pytest.raises(
+        RuntimeError,
+        match="timed out",
+    ):
+        run_applescript("return true")
+
+
 def test_safari_context_housekeeping_closes_all_owned_windows() -> None:
     context = SafariContext("https://grok.com/files")
     first_page = SafariPage(context, window_id=123)
@@ -357,11 +390,11 @@ def test_safari_context_housekeeping_closes_all_owned_windows() -> None:
     with patch.object(
         first_page,
         "_run_in_window",
-        return_value="1|about:blank|false|true",
+        return_value="closed",
     ), patch.object(
         second_page,
         "_run_in_window",
-        return_value="1|about:blank|false|true",
+        return_value="closed",
     ):
         assert context.housekeep() == 2
 
@@ -370,7 +403,7 @@ def test_safari_context_housekeeping_closes_all_owned_windows() -> None:
     assert second_page._closed is True
 
 
-def test_safari_context_creates_owned_windows_offscreen_and_minimized() -> None:
+def test_safari_context_creates_a_standard_visible_background_window() -> None:
     context = SafariContext("https://grok.com/files")
 
     with patch("app.core.safari_automation.run_applescript", return_value="123") as run, patch.object(
@@ -392,15 +425,16 @@ def test_safari_context_creates_owned_windows_offscreen_and_minimized() -> None:
     assert "existingWindowIds" in script
     assert "set targetWindow to candidateWindow" in script
     assert "emptyWindowIds" in script
-    assert "set visible of targetWindow to false" in script
-    assert "set bounds of targetWindow to {-32000, -32000, -30720, -31100}" in script
-    assert "set miniaturized of targetWindow to true" in script
+    assert "set visible of targetWindow to true" in script
+    assert "set miniaturized of targetWindow to false" in script
+    assert "set bounds of targetWindow" not in script
+    assert 'Safari did not create an owned window.' in script
     assert (
         "if previousWindowId is not 0 and previousWindowWasVisible and not "
         "previousWindowWasMiniaturized then"
     ) in script
     assert script.index("set URL of current tab of targetWindow") < script.index(
-        "set bounds of targetWindow"
+        "set miniaturized of targetWindow to false"
     )
 
 
@@ -451,7 +485,7 @@ def test_safari_page_reads_navigation_state_without_json_wrapping() -> None:
     assert "document.readyState" in run.call_args.args[0]
 
 
-def test_safari_page_close_releases_only_the_owned_tab_into_a_hidden_shell() -> None:
+def test_safari_page_close_closes_the_owned_window() -> None:
     context = SafariContext("https://chatgpt.com/project")
     page = SafariPage(context, window_id=123)
     context.pages.append(page)
@@ -459,15 +493,15 @@ def test_safari_page_close_releases_only_the_owned_tab_into_a_hidden_shell() -> 
     with patch.object(
         page,
         "_run_in_window",
-        return_value="1|about:blank|false|true",
+        return_value="closed",
     ) as run:
         page.close()
 
     script = run.call_args.args[0]
-    assert 'set URL of current tab of targetWindow to "about:blank"' in script
-    assert 'releasedState is "complete"' in script
-    assert "set visible of targetWindow to false" in script
-    assert '"|" & releasedUrl' in script
+    assert "click button 1 of front window" in script
+    assert "if not (exists (first window whose id is 123))" in script
+    assert 'return "closed"' in script
+    assert "set URL of current tab of targetWindow" not in script
     assert page._closed is True
     assert context.pages == []
 
@@ -508,3 +542,28 @@ def test_safari_context_serializes_concurrent_window_creation() -> None:
 
     assert maximum_active_calls == 1
     assert {page.window_id for page in pages} == {101, 102}
+
+
+def test_safari_context_holds_one_cross_process_lease_for_its_lifetime(tmp_path: Path) -> None:
+    lock_path = tmp_path / "safari-context.lock"
+    first_context = SafariContext("https://gemini.google.com/app")
+    second_context = SafariContext("https://grok.com/files")
+    second_entered = False
+
+    def enter_second_context() -> None:
+        nonlocal second_entered
+        second_context._acquire_context_lock()
+        second_entered = True
+
+    with patch("app.core.safari_automation.SAFARI_CONTEXT_LOCK_PATH", lock_path):
+        first_context._acquire_context_lock()
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            pending = executor.submit(enter_second_context)
+            time.sleep(0.05)
+            assert second_entered is False
+
+            first_context._release_context_lock()
+            pending.result(timeout=1)
+
+        assert second_entered is True
+        second_context._release_context_lock()

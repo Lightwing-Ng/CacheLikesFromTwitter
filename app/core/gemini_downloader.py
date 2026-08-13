@@ -1,6 +1,6 @@
 """Browser-backed Gemini session history caching."""
 
-# Code version: v1.0.4-codex.1
+# Code version: v1.3.2-codex.1
 
 from __future__ import annotations
 
@@ -36,6 +36,7 @@ GEMINI_CONVERSATION_PATH_PATTERN = re.compile(r"^/app/([A-Za-z0-9_-]+)$")
 GEMINI_READY_TIMEOUT_SECONDS = 45.0
 GEMINI_RENDER_SETTLE_MILLISECONDS = 1_000
 GEMINI_BOT_CHECK_POLL_MILLISECONDS = 1_000
+GEMINI_CONVERSATION_RETRY_LIMIT = 3
 GEMINI_BOT_CHECK_MARKERS = (
     "unusual traffic",
     "verify you are human",
@@ -304,8 +305,8 @@ def inspect_gemini_bot_check(page) -> dict[str, Any]:
             const haystack = `${title}\n${bodyText}`.toLowerCase();
             const marker = markers.find((candidate) => haystack.includes(candidate)) || "";
             const challengeElement = document.querySelector(
-                'iframe[src*="captcha"], iframe[src*="recaptcha"], [data-sitekey], '
-                '[id*="captcha"], [class*="captcha"], form[action*="challenge"]'
+                'iframe[src*="captcha"], iframe[src*="recaptcha"], [data-sitekey], [id*="captcha"], '
+                + '[class*="captcha"], form[action*="challenge"]'
             );
             return {
                 detected: Boolean(marker || challengeElement),
@@ -376,8 +377,8 @@ def _wait_for_gemini_ready(page, timeout_seconds: float = GEMINI_READY_TIMEOUT_S
 
 
 def _open_gemini_sidebar(page) -> None:
-    """Open collapsed Gemini navigation without depending on localized visible text."""
-    page.evaluate(
+    """Open the main navigation and its independently collapsible Recents list."""
+    opened_sidebar = page.evaluate(
         r"""() => {
             const hasConversationLinks = [...document.querySelectorAll('a[href]')].some((link) => {
                 try {
@@ -391,18 +392,47 @@ def _open_gemini_sidebar(page) -> None:
                 return /(?:main menu|open sidebar)/i.test(label);
             });
             if (button && !hasConversationLinks) button.click();
-            return Boolean(button);
+            return Boolean(button && !hasConversationLinks);
         }"""
     )
+    if opened_sidebar:
+        page.wait_for_timeout(GEMINI_RENDER_SETTLE_MILLISECONDS)
+    for _attempt_index in range(20):
+        recents_state = page.evaluate(
+            r"""() => {
+            const conversationLinks = [...document.querySelectorAll('a[href]')].filter((link) => {
+                try {
+                    return /^\/app\/[A-Za-z0-9_-]+\/?$/.test(new URL(link.href, location.href).pathname);
+                } catch (_error) {
+                    return false;
+                }
+            });
+            const recentsSection = document.querySelector('[data-test-id="chats-expandable-section"]');
+            const recentsButton = recentsSection?.querySelector(
+                'button[data-test-id="expandable-section-toggle"]'
+            ) || [...document.querySelectorAll('button')].find((candidate) => {
+                const label = `${candidate.getAttribute('aria-label') || ''} ${candidate.textContent || ''}`;
+                return /(?:toggle\s+)?recents/i.test(label);
+            }) || null;
+            const expanded = recentsButton?.getAttribute('aria-expanded') === 'true';
+            if (!conversationLinks.length && recentsButton && !expanded) recentsButton.click();
+            return {
+                buttonFound: Boolean(recentsButton),
+                expanded,
+                links: conversationLinks.length,
+            };
+        }"""
+        )
+        if isinstance(recents_state, dict) and int(recents_state.get("links") or 0) > 0:
+            return
+        page.wait_for_timeout(500)
 
 
 def _prepare_gemini_page_for_rendering(page) -> None:
     """Keep the owned browser page usable without routine Safari focus changes."""
-    keep_background = getattr(page, "keep_background", None)
-    if callable(keep_background):
-        keep_background()
-    elif hasattr(page, "keep_rendering_offscreen"):
-        page.keep_rendering_offscreen()
+    keep_rendering_in_background = getattr(page, "keep_rendering_in_background", None)
+    if callable(keep_rendering_in_background):
+        keep_rendering_in_background()
         page.wait_for_timeout(GEMINI_RENDER_SETTLE_MILLISECONDS)
 
 
@@ -696,29 +726,46 @@ def sync_gemini_history(
         for index, conversation in enumerate(conversation_links, start=1):
             if should_stop():
                 break
-            try:
-                goto_with_retry(page, conversation.url, attempts=2, timeout_ms=60_000)
-                _prepare_gemini_page_for_rendering(page)
-                if not wait_for_gemini_bot_check_clear(page, state, should_stop, "downloading"):
+            last_error: Exception | None = None
+            for attempt_index in range(GEMINI_CONVERSATION_RETRY_LIMIT):
+                try:
+                    goto_with_retry(page, conversation.url, attempts=2, timeout_ms=60_000)
+                    _prepare_gemini_page_for_rendering(page)
+                    if not wait_for_gemini_bot_check_clear(page, state, should_stop, "downloading"):
+                        break
+                    _wait_for_gemini_ready(page)
+                    page.wait_for_timeout(max(250, int(config.gemini_scroll_pause_seconds * 1_000)))
+                    messages = extract_gemini_conversation_messages(page, conversation)
+                    captured_at = utc_now()
+                    added_count, unchanged = store.replace_conversation(
+                        conversation,
+                        messages,
+                        captured_at,
+                    )
+                    store.save()
+                    discovered_messages += len(messages)
+                    new_messages += added_count
+                    unchanged_conversations += int(unchanged)
+                    state.append_event(
+                        f"Cached Gemini session {index:,}/{len(conversation_links):,}: "
+                        f"{conversation.title} ({len(messages):,} messages)."
+                    )
+                    last_error = None
                     break
-                _wait_for_gemini_ready(page)
-                page.wait_for_timeout(max(250, int(config.gemini_scroll_pause_seconds * 1_000)))
-                messages = extract_gemini_conversation_messages(page, conversation)
-                captured_at = utc_now()
-                added_count, unchanged = store.replace_conversation(conversation, messages, captured_at)
-                store.save()
-                discovered_messages += len(messages)
-                new_messages += added_count
-                unchanged_conversations += int(unchanged)
-                state.append_event(
-                    f"Cached Gemini session {index:,}/{len(conversation_links):,}: "
-                    f"{conversation.title} ({len(messages):,} messages)."
-                )
-            except Exception as exc:
+                except Exception as exc:
+                    last_error = exc
+                    if attempt_index + 1 < GEMINI_CONVERSATION_RETRY_LIMIT:
+                        state.append_event(
+                            f"Retrying Gemini session {index:,}/{len(conversation_links):,} "
+                            f"after attempt {attempt_index + 1:,}: "
+                            f"{str(exc).splitlines()[0][:300]}"
+                        )
+                        page.wait_for_timeout(GEMINI_RENDER_SETTLE_MILLISECONDS)
+            if last_error is not None:
                 failed_conversations += 1
                 state.append_event(
                     f"Failed Gemini session {index:,}/{len(conversation_links):,} "
-                    f"{conversation.title}: {str(exc).splitlines()[0][:300]}"
+                    f"{conversation.title}: {str(last_error).splitlines()[0][:300]}"
                 )
             processed_conversations = index
             state.update(

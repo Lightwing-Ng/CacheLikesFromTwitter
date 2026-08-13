@@ -1,6 +1,6 @@
 """Read-only local media browser tests.
 
-Code version: v1.10.1-codex.1
+Code version: v1.10.2-codex.1
 """
 
 from __future__ import annotations
@@ -749,10 +749,12 @@ def test_search_is_case_insensitive_and_source_kind_filters_apply(tmp_path: Path
     catalog = LocalMediaCatalog(root)
 
     search_page = catalog.query(query="SUMMER", force_refresh=True)
+    spaced_search_page = catalog.query(query="summer trip")
     source_page = catalog.query(source="grok")
     kind_page = catalog.query(media_kind="video")
 
     assert [item.filename for item in search_page.items] == ["Summer-Trip.jpg"]
+    assert [item.filename for item in spaced_search_page.items] == ["Summer-Trip.jpg"]
     assert [item.filename for item in source_page.items] == ["winter-video.mp4"]
     assert source_page.image_count == 0
     assert source_page.video_count == 1

@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.18.0-codex.1
+# Code version: v1.18.1-codex.1
 
 from __future__ import annotations
 
@@ -570,7 +570,7 @@ def filter_media_items(
 ) -> tuple[LocalMediaItem, ...]:
     """Filter media items by source, kind, and case-insensitive text search."""
     normalized = normalize_browser_filters(source, media_kind, query, "newest", 1, view="media")
-    search = normalized["q"].casefold()
+    search_terms = tuple(normalized["q"].casefold().split())
     filtered: list[LocalMediaItem] = []
     for item in items:
         if normalized["source"] != "all" and item.source != normalized["source"]:
@@ -579,7 +579,7 @@ def filter_media_items(
             continue
         if media_id and item.stable_id != media_id:
             continue
-        if search:
+        if search_terms:
             searchable = " ".join(
                 (
                     item.filename,
@@ -590,7 +590,7 @@ def filter_media_items(
                     item.project_name,
                 )
             ).casefold()
-            if search not in searchable:
+            if not all(term in searchable for term in search_terms):
                 continue
         filtered.append(item)
     return tuple(filtered)

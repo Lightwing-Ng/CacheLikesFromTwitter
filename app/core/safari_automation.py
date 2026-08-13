@@ -1,6 +1,6 @@
 """Minimal Safari automation primitives backed by Apple Events."""
 
-# Code version: v1.7.5-codex.1
+# Code version: v2.1.1-codex.1
 
 from __future__ import annotations
 
@@ -26,12 +26,14 @@ SAFARI_RESPONSE_TEXT_SLICE_CHARS = 96 * 1024
 SAFARI_POLL_INTERVAL_SECONDS = 0.2
 SAFARI_APPLESCRIPT_RETRY_LIMIT = 2
 SAFARI_APPLESCRIPT_RETRY_DELAY_SECONDS = 0.25
+SAFARI_APPLESCRIPT_TIMEOUT_SECONDS = 20.0
 SAFARI_NAVIGATION_RETRY_LIMIT = 3
 SAFARI_NAVIGATION_RETRY_DELAY_SECONDS = 0.5
 SAFARI_WRONG_PAGE_GRACE_SECONDS = 1.0
 SAFARI_CLOSE_RETRY_LIMIT = 3
 SAFARI_WINDOW_CREATION_LOCK = RLock()
 SAFARI_WINDOW_CREATION_LOCK_PATH = Path(tempfile.gettempdir()) / "cachelikes-safari-window-creation.lock"
+SAFARI_CONTEXT_LOCK_PATH = Path(tempfile.gettempdir()) / "cachelikes-safari-context.lock"
 SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT = """
 set previousWindowId to 0
 set previousWindowWasVisible to false
@@ -46,12 +48,13 @@ if (count of windows) > 0 then
     end try
 end if
 """.strip()
-SAFARI_HIDE_WINDOW_APPLESCRIPT = """
-set bounds of targetWindow to {-32000, -32000, -30720, -31100}
+SAFARI_KEEP_WINDOW_AVAILABLE_APPLESCRIPT = """
 try
-    set visible of targetWindow to false
+    set miniaturized of targetWindow to false
 end try
-set miniaturized of targetWindow to true
+try
+    set visible of targetWindow to true
+end try
 """.strip()
 SAFARI_RESTORE_FRONT_WINDOW_APPLESCRIPT = """
 if previousWindowId is not 0 and previousWindowWasVisible and not previousWindowWasMiniaturized then
@@ -61,7 +64,7 @@ if previousWindowId is not 0 and previousWindowWasVisible and not previousWindow
 end if
 """.strip()
 SAFARI_BACKGROUND_WINDOW_APPLESCRIPT = (
-    f"{SAFARI_HIDE_WINDOW_APPLESCRIPT}\n{SAFARI_RESTORE_FRONT_WINDOW_APPLESCRIPT}"
+    f"{SAFARI_KEEP_WINDOW_AVAILABLE_APPLESCRIPT}\n{SAFARI_RESTORE_FRONT_WINDOW_APPLESCRIPT}"
 )
 
 
@@ -119,13 +122,24 @@ def run_applescript(source: str) -> str:
     """Run one AppleScript program and return its standard output."""
     last_error = ""
     for attempt_index in range(SAFARI_APPLESCRIPT_RETRY_LIMIT + 1):
-        process = subprocess.run(
-            ["osascript"],
-            input=source,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            process = subprocess.run(
+                ["osascript"],
+                input=source,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=SAFARI_APPLESCRIPT_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            last_error = (
+                f"Safari automation timed out after "
+                f"{SAFARI_APPLESCRIPT_TIMEOUT_SECONDS:g} seconds."
+            )
+            if attempt_index >= SAFARI_APPLESCRIPT_RETRY_LIMIT:
+                break
+            time.sleep(SAFARI_APPLESCRIPT_RETRY_DELAY_SECONDS * (attempt_index + 1))
+            continue
         if process.returncode == 0:
             return (process.stdout or "").rstrip("\n")
         last_error = (process.stderr or process.stdout or "").strip()
@@ -239,10 +253,10 @@ class SafariRequestClient:
                     marker in error_text
                     for marker in ("load failed", "failed to fetch", "fetch is aborted")
                 ):
-                    # Safari can reject fetch from a hidden/minimized document. Make the
-                    # owned window render-active offscreen, then retry without stealing focus.
+                    # Safari can reject fetch from a suspended document. Keep the owned
+                    # window render-active in the background, then retry without stealing focus.
                     with contextlib.suppress(RuntimeError):
-                        page.keep_rendering_offscreen()
+                        page.keep_rendering_in_background()
                 time.sleep(SAFARI_APPLESCRIPT_RETRY_DELAY_SECONDS)
         raise last_error or RuntimeError("Safari request failed.")
 
@@ -545,9 +559,8 @@ class SafariPage:
         )
 
     def _keep_in_background(self) -> None:
-        """Reassert the owned window's offscreen state after navigation commits."""
-        self._rendering_active = False
-        self._run_in_window(SAFARI_HIDE_WINDOW_APPLESCRIPT)
+        """Keep the owned window visible and rendered without taking focus."""
+        self.keep_rendering_in_background()
 
     def _read_navigation_state(self) -> dict[str, str] | None:
         """Return Safari's native URL and DOM readiness during navigation."""
@@ -634,22 +647,16 @@ return pageUrlValue & linefeed & pageStateValue
         """Bring the owned Safari window forward."""
         self._run_in_window("set index of targetWindow to 1")
 
-    def keep_rendering_offscreen(self) -> None:
-        """Keep an offscreen window render-active without replacing the user's front window."""
+    def keep_rendering_in_background(self) -> None:
+        """Keep a standard Safari window rendered without replacing the front window."""
         self._run_in_window(
-            """
+            f"""
 set previousWindowId to 0
 try
     set previousWindowId to id of front window
 end try
-set bounds of targetWindow to {-32000, -32000, -30720, -31100}
-try
-    set miniaturized of targetWindow to false
-end try
-try
-    set visible of targetWindow to true
-end try
-        if previousWindowId is not 0 and previousWindowId is not id of targetWindow then
+{SAFARI_KEEP_WINDOW_AVAILABLE_APPLESCRIPT}
+if previousWindowId is not 0 and previousWindowId is not id of targetWindow then
     try
         set index of (first window whose id is previousWindowId) to 1
     end try
@@ -658,78 +665,67 @@ end if
         )
         self._rendering_active = True
 
+    def keep_rendering_offscreen(self) -> None:
+        """Keep the page rendered in a normal background window for compatibility."""
+        self.keep_rendering_in_background()
+
     def keep_background(self) -> None:
-        """Keep the owned window hidden and minimized without changing Safari focus."""
-        self._rendering_active = False
-        self._run_in_window(SAFARI_HIDE_WINDOW_APPLESCRIPT)
+        """Keep the page rendered in a normal background window for compatibility."""
+        self.keep_rendering_in_background()
 
     def close(self) -> None:
-        """Release this page into an invisible reusable Safari window shell."""
+        """Close the Safari window owned by this page."""
         if self._closed:
             return
         with safari_window_creation_guard():
-            last_error = self._release_to_background_shell()
+            last_error = self._close_owned_window()
         if last_error is not None:
             logger.warning(
-                "Safari could not fully release background window %s: %s",
+                "Safari could not fully close owned window %s: %s",
                 self.window_id,
                 last_error,
             )
         self._closed = True
         self._context._forget_page(self)
+        if last_error is not None:
+            raise last_error
 
-    def _release_to_background_shell(self) -> RuntimeError | None:
-        """Navigate to a stable blank document before hiding and minimizing the window."""
+    def _close_owned_window(self) -> RuntimeError | None:
+        """Close the owned window without touching the user's front window."""
         last_error: RuntimeError | None = None
         for attempt_index in range(SAFARI_CLOSE_RETRY_LIMIT):
             try:
-                release_state = self._run_in_window(
-                    """
-if (count of tabs of targetWindow) > 0 then
-    set URL of current tab of targetWindow to "about:blank"
-    repeat with releasePollIndex from 1 to 10
-        delay 0.1
-        set releasedUrl to ""
-        set releasedState to ""
-        try
-            set candidateUrl to URL of current tab of targetWindow
-            if candidateUrl is not missing value then set releasedUrl to candidateUrl as text
-        end try
-        try
-            set candidateState to do JavaScript "document.readyState || ''" in current tab of targetWindow
-            if candidateState is not missing value then set releasedState to candidateState as text
-        end try
-        if releasedUrl is "about:blank" and releasedState is "complete" then exit repeat
-    end repeat
-end if
-set bounds of targetWindow to {-32000, -32000, -30720, -31100}
+                close_state = self._run_in_window(
+                    f"""
+set previousWindowId to 0
 try
-    set visible of targetWindow to false
+    set previousWindowId to id of front window
 end try
-set miniaturized of targetWindow to true
-delay 0.1
-set bounds of targetWindow to {-32000, -32000, -30720, -31100}
-try
-    set visible of targetWindow to false
-end try
-set miniaturized of targetWindow to true
-set releasedUrl to ""
-if (count of tabs of targetWindow) > 0 then
+set index of targetWindow to 1
+tell application "System Events"
+    tell process "Safari"
+        click button 1 of front window
+    end tell
+end tell
+repeat with closePollIndex from 1 to 20
+    if not (exists (first window whose id is {self.window_id})) then exit repeat
+    delay 0.1
+end repeat
+if exists (first window whose id is {self.window_id}) then return "still-open"
+if previousWindowId is not 0 then
     try
-        set candidateUrl to URL of current tab of targetWindow
-        if candidateUrl is not missing value then set releasedUrl to candidateUrl as text
+        set index of (first window whose id is previousWindowId) to 1
     end try
 end if
-return (count of tabs of targetWindow as text) & "|" & releasedUrl & "|" & ¬
-    (visible of targetWindow as text) & "|" & (miniaturized of targetWindow as text)
+return "closed"
 """.strip(),
                     recover_missing=False,
                 ).strip()
-                if release_state == "1|about:blank|false|true":
+                if close_state == "closed":
                     last_error = None
                     break
                 last_error = RuntimeError(
-                    f"Safari window {self.window_id} returned unexpected release state {release_state!r}."
+                    f"Safari window {self.window_id} returned unexpected close state {close_state!r}."
                 )
             except RuntimeError as exc:
                 if is_missing_safari_window_error(exc):
@@ -751,7 +747,7 @@ return (count of tabs of targetWindow as text) & "|" & releasedUrl & "|" & ¬
         with self._context.download_lock:
             if not self._rendering_active:
                 with contextlib.suppress(RuntimeError):
-                    self.keep_rendering_offscreen()
+                    self.keep_rendering_in_background()
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             initial_bytes = destination_path.stat().st_size if destination_path.exists() else 0
             range_start = initial_bytes
@@ -927,8 +923,9 @@ end tell
         except RuntimeError as exc:
             if not recover_missing or not is_missing_safari_window_error(exc):
                 raise
-            self._context._recover_page(self)
-            return run_applescript(source)
+            raise RuntimeError(
+                "The Safari cache window was closed. Restart the cache task when ready."
+            ) from exc
 
 
 class SafariContext:
@@ -940,6 +937,7 @@ class SafariContext:
         self.request = SafariRequestClient(self)
         self.request_lock = RLock()
         self.download_lock = RLock()
+        self._context_lock_handle: Any | None = None
 
     @property
     def primary_page(self) -> SafariPage:
@@ -949,7 +947,12 @@ class SafariContext:
         return self.pages[0]
 
     def __enter__(self) -> SafariContext:
-        self._create_page(self.initial_url)
+        self._acquire_context_lock()
+        try:
+            self._create_page(self.initial_url)
+        except Exception:
+            self._release_context_lock()
+            raise
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> bool:
@@ -967,7 +970,29 @@ class SafariContext:
 
     def close(self) -> None:
         """Close all Safari windows owned by this sync."""
-        self.housekeep()
+        try:
+            self.housekeep()
+        finally:
+            self._release_context_lock()
+
+    def _acquire_context_lock(self) -> None:
+        """Serialize Safari contexts so no task can repurpose another task's window."""
+        if self._context_lock_handle is not None:
+            return
+        handle = SAFARI_CONTEXT_LOCK_PATH.open("a+")
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        self._context_lock_handle = handle
+
+    def _release_context_lock(self) -> None:
+        """Release the cross-process Safari context lease."""
+        handle = self._context_lock_handle
+        if handle is None:
+            return
+        self._context_lock_handle = None
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
     def housekeep(self) -> int:
         """Close every tracked Safari window and return the number released."""
@@ -997,41 +1022,28 @@ class SafariContext:
 tell application "Safari"
     launch
     {SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
+    set existingWindowIds to id of every window
+    set emptyWindowIds to {{}}
+    repeat with candidateWindow in every window
+        if (count of tabs of candidateWindow) is 0 then set end of emptyWindowIds to id of candidateWindow
+    end repeat
+    make new document
     set targetWindow to missing value
     repeat with candidateWindow in every window
-        try
-            if visible of candidateWindow is false and (count of tabs of candidateWindow) is 1 then
-                set candidateBounds to bounds of candidateWindow
-                if candidateBounds is {{-32000, -32000, -30720, -31100}} then
-                    set targetWindow to candidateWindow
-                    exit repeat
-                end if
-            end if
-        end try
+        if existingWindowIds does not contain (id of candidateWindow) then
+            set targetWindow to candidateWindow
+            exit repeat
+        end if
     end repeat
     if targetWindow is missing value then
-        set existingWindowIds to id of every window
-        set emptyWindowIds to {{}}
         repeat with candidateWindow in every window
-            if (count of tabs of candidateWindow) is 0 then set end of emptyWindowIds to id of candidateWindow
-        end repeat
-        make new document
-        repeat with candidateWindow in every window
-            if existingWindowIds does not contain (id of candidateWindow) then
+            if emptyWindowIds contains (id of candidateWindow) and (count of tabs of candidateWindow) > 0 then
                 set targetWindow to candidateWindow
                 exit repeat
             end if
         end repeat
-        if targetWindow is missing value then
-            repeat with candidateWindow in every window
-                if emptyWindowIds contains (id of candidateWindow) and (count of tabs of candidateWindow) > 0 then
-                    set targetWindow to candidateWindow
-                    exit repeat
-                end if
-            end repeat
-        end if
-        if targetWindow is missing value then set targetWindow to front window
     end if
+    if targetWindow is missing value then error "Safari did not create an owned window." number -1719
     set URL of current tab of targetWindow to "{escape_applescript_text(url)}"
     {SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
     return id of targetWindow
@@ -1039,14 +1051,6 @@ end tell
 """
         with safari_window_creation_guard():
             return run_applescript(source).strip()
-
-    def _recover_page(self, page: SafariPage) -> None:
-        """Replace a Safari page whose native window was closed externally."""
-        raw_window_id = self._create_window(page._recovery_url)
-        if not raw_window_id.isdigit():
-            raise RuntimeError("Safari did not return a usable recovery window identifier.")
-        page.window_id = int(raw_window_id)
-        page._closed = False
 
     def _forget_page(self, page: SafariPage) -> None:
         with contextlib.suppress(ValueError):

@@ -1,5 +1,7 @@
 {# Code version: v1.0.0-codex.1 #}
 
+{% from "_browser_session_status.html" import render_browser_session_status %}
+
 {% macro render_browser_session(cache_source, browser_options) -%}
 <div
     class="browser-session-panel"
@@ -51,16 +53,7 @@
             </div>
         </div>
     </div>
-    <div class="browser-session-status-card" data-role="browser-session-status" hidden>
-        <div class="browser-session-status-row">
-            <div class="browser-session-status-copy">
-                <strong class="browser-session-status-account" data-role="browser-session-account">{{ cache_source.browser_empty_message }}</strong>
-                <p class="browser-session-status-message" data-role="browser-session-message" hidden></p>
-            </div>
-            <span class="suggestion-loading-spinner browser-session-status-spinner" data-role="browser-session-spinner" aria-hidden="true" hidden></span>
-            <span class="browser-session-status-checkmark" data-role="browser-session-checkmark" aria-label="Ready to download" hidden></span>
-        </div>
-    </div>
+    {{ render_browser_session_status(cache_source.browser_empty_message, "Ready to download") }}
 </div>
 {%- endmacro %}
 

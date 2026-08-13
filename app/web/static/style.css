@@ -1,4 +1,4 @@
-/* Code version: v2.62.0-codex.1 */
+/* Code version: v2.75.0-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -1007,19 +1007,21 @@ h2 {
 }
 
 .browser-picker-trigger-chevron {
-    width: auto;
-    height: auto;
-    flex: 0 0 auto;
+    width: 12px;
+    height: 8px;
+    flex: 0 0 12px;
     color: var(--muted);
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    font-size: var(--font-ui-md);
-    line-height: 1;
+    font-size: 0;
+    line-height: 0;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.41 1.59 6 6.17l4.59-4.58L12 3l-6 5-6-5z' fill='currentColor'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 12px 8px;
     transition: transform 180ms var(--motion-standard);
 }
 
 .browser-picker-trigger-chevron::before {
-    content: "\25BE";
-    display: block;
+    content: none;
 }
 
 .browser-session-panel.is-browser-menu-open .browser-picker-trigger-chevron {
@@ -1190,12 +1192,14 @@ h2 {
     background-color: var(--accent-fill);
 }
 
-.browser-session-panel.is-browser-ready .browser-session-status-card {
+.browser-session-panel.is-browser-ready .browser-session-status-card,
+.agent-browser-session-field.is-browser-ready .browser-session-status-card {
     border-radius: 10px;
     background: color-mix(in srgb, var(--theme-success) 6%, var(--glass-surface-background-strong));
 }
 
-.browser-session-panel.is-browser-status-loading .browser-session-status-card {
+.browser-session-panel.is-browser-status-loading .browser-session-status-card,
+.agent-browser-session-field.is-browser-status-loading .browser-session-status-card {
     opacity: 0.84;
 }
 
@@ -1621,6 +1625,26 @@ input[type="url"].text-input-control {
 .sidebar-action-row .sidebar-action-button {
     margin-left: 0;
     margin-right: 0;
+}
+
+.cache-secondary-action {
+    margin-top: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--theme-glass-border);
+    border-radius: var(--radius-panel);
+    background: color-mix(in srgb, var(--glass-surface-background) 82%, transparent);
+}
+
+.cache-secondary-action-copy {
+    display: grid;
+    gap: 3px;
+    margin-bottom: 4px;
+}
+
+.cache-secondary-action-status {
+    color: var(--theme-muted);
+    font-size: var(--font-caption);
+    line-height: 1.4;
 }
 
 .stop-button {
@@ -2907,13 +2931,13 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     }
 }
 
-/* Native subscription Agent with an optional DevSpace web bridge. */
+/* Browser-mediated Computer Use Agent. */
+/* Agent session source controls. */
 .agent-sidebar {
     display: flex;
     flex-direction: column;
 }
 
-.agent-web-bridge-copy,
 .agent-empty-response {
     margin: 0;
     color: var(--muted);
@@ -2921,8 +2945,8 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     line-height: 1.45;
 }
 
-.agent-web-bridge-copy a,
-.settings-agent-attribution a {
+.agent-runtime-form a,
+.settings-agent-privacy-note a {
     color: var(--accent);
     text-underline-offset: 2px;
 }
@@ -2944,6 +2968,42 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     gap: 14px;
 }
 
+.agent-session-source {
+    display: grid;
+    gap: 12px;
+    padding-top: 2px;
+    border-top: var(--frosted-glass-border);
+}
+
+.agent-session-source > .field:first-child {
+    padding-top: 12px;
+}
+
+.agent-session-detail-field[hidden] {
+    display: none;
+}
+
+.agent-session-list-combobox .agent-combobox-trigger {
+    min-height: 46px;
+}
+
+.agent-session-list-menu {
+    max-height: min(340px, 42vh);
+    overflow-y: auto;
+    scrollbar-gutter: stable;
+}
+
+.agent-session-list-menu .agent-combobox-option {
+    min-height: 44px;
+    white-space: normal;
+}
+
+.agent-session-list-menu .trade-strategy-dropdown-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
 .agent-connect-fields > .field,
 .agent-combobox {
     min-width: 0;
@@ -2953,9 +3013,40 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     position: relative;
 }
 
+.agent-browser-session-field {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+}
+
+.agent-browser-session-field .browser-session-status-card {
+    margin: 0;
+}
+
 .agent-combobox-trigger {
     width: 100%;
     min-height: 52px;
+}
+
+.agent-os-combobox .browser-picker-selected-icon-shell {
+    width: 32px;
+    height: 32px;
+    border-radius: var(--radius-soft);
+}
+
+.agent-os-combobox .browser-picker-option-icon {
+    display: block;
+    width: 24px;
+    height: 24px;
+    flex: 0 0 24px;
+    object-fit: contain;
+    object-position: center;
+}
+
+.agent-os-combobox .agent-combobox-option {
+    grid-template-columns: 16px 24px minmax(0, 1fr);
+    column-gap: 10px;
+    min-height: 48px;
 }
 
 .agent-combobox.is-agent-combobox-open .agent-combobox-dropdown:not([hidden]) {
@@ -3009,13 +3100,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     flex: 0 0 auto;
 }
 
-.agent-summary-card > p {
-    max-width: 76ch;
-    margin: 8px 0 0;
-    color: var(--muted);
-    line-height: 1.5;
-}
-
 .agent-summary-card > .agent-readiness {
     display: flex;
     align-items: center;
@@ -3043,15 +3127,32 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-workspace-grid {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(260px, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     margin-top: 12px;
 }
 
-.agent-task-card,
-.agent-response-card {
+.agent-task-card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
     min-width: 0;
     min-height: 0;
-    overflow: auto;
+    overflow: hidden;
+}
+
+.agent-task-card > .agent-response-card,
+.agent-task-card > .agent-prompt-form {
+    width: 100%;
+    min-width: 0;
+}
+
+.agent-task-card > .agent-response-card {
+    flex: 1 1 auto;
+    min-height: 0;
+}
+
+.agent-task-card > .agent-prompt-form {
+    flex: 0 0 auto;
 }
 
 .agent-prompt-input {
@@ -3097,10 +3198,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     gap: 8px;
 }
 
-.agent-composer-stop {
-    width: auto;
-}
-
 .agent-composer-submit {
     display: inline-grid;
     place-items: center;
@@ -3130,6 +3227,11 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     transform: none;
 }
 
+.agent-composer-submit.is-stop .agent-composer-submit-icon {
+    mask-image: url("/static/images/stop.fill.svg");
+    -webkit-mask-image: url("/static/images/stop.fill.svg");
+}
+
 .agent-composer-submit-icon {
     width: 14px;
     height: 14px;
@@ -3149,6 +3251,8 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-response-card {
     display: flex;
     flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .agent-conversation-link {
@@ -3161,9 +3265,12 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     min-width: 0;
     min-height: 0;
     margin: 12px 0 0;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     overflow-wrap: anywhere;
+    scrollbar-gutter: stable;
     color: var(--text);
+    font-family: var(--font-family-brand), "Helvetica Neue", Helvetica, Arial, "PingFang SC", "PingFang TC", "PingFang HK", "Microsoft YaHei", "Microsoft JhengHei", sans-serif;
     font-size: var(--font-table-body);
     line-height: 1.55;
 }
@@ -3223,9 +3330,11 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     max-height: 260px;
     margin: 0;
     padding: 0;
-    overflow: auto;
+    overflow-x: hidden;
+    overflow-y: auto;
     list-style: none;
     border-top: var(--frosted-glass-border);
+    scrollbar-gutter: stable;
 }
 
 .agent-activity-item {
@@ -3313,14 +3422,33 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .settings-agent-runtime-status span span,
-.settings-agent-attribution {
+.settings-agent-privacy-note {
     color: var(--muted);
     font-size: var(--font-ui-sm);
     line-height: 1.45;
 }
 
-.settings-agent-attribution {
+.settings-agent-privacy-note {
     margin: 0;
+}
+
+.settings-agent-system-prompt {
+    min-height: 240px;
+    resize: vertical;
+    border-radius: var(--radius-soft);
+    font-family: var(--font-mono);
+    font-size: var(--font-ui-sm);
+    line-height: 1.5;
+    white-space: pre-wrap;
+}
+
+.settings-agent-prompt-field,
+.settings-agent-limit-grid {
+    width: 100%;
+}
+
+.settings-agent-limit-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 @keyframes agentActivitySpin {
@@ -3330,7 +3458,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 @media (max-width: 1100px) {
     .agent-workspace-grid {
         grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: auto minmax(320px, 1fr);
+        grid-template-rows: minmax(320px, 1fr);
         overflow-y: auto;
     }
 }
@@ -3338,6 +3466,10 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 @media (max-width: 560px) {
     .agent-inline-fields,
     .agent-action-row {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .settings-agent-limit-grid {
         grid-template-columns: minmax(0, 1fr);
     }
 }
@@ -4107,93 +4239,139 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 }
 
 .browser-session-actions {
-    position: relative;
-    flex: 0 0 auto;
+    --browser-session-action-gap: 10px;
+    --browser-session-action-step: calc(var(--settings-round-icon-button-size) + var(--browser-session-action-gap));
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: var(--settings-round-icon-button-size);
+    height: var(--settings-round-icon-button-size);
+    isolation: isolate;
+    pointer-events: none;
+    transition: width var(--motion-duration-spatial) var(--motion-emphasized);
     z-index: calc(var(--layer-surface-content) + 2);
 }
 
-.browser-session-actions-trigger {
-    width: var(--settings-round-icon-button-size);
-    height: var(--settings-round-icon-button-size);
-    padding: 0;
-    border: 0;
-    border-radius: var(--settings-round-icon-button-radius);
-    background: var(--settings-round-icon-button-background);
-    box-shadow: var(--settings-round-icon-button-shadow);
-    backdrop-filter: var(--glass-chip-blur);
-    -webkit-backdrop-filter: var(--glass-chip-blur);
+.browser-session-actions:not([hidden]) {
+    pointer-events: auto;
+}
+
+.browser-session-actions:hover,
+.browser-session-actions:focus-within {
+    width: calc((var(--settings-round-icon-button-size) * 4) + (var(--browser-session-action-gap) * 3));
+}
+
+.browser-session-action-button {
+    position: absolute;
+    top: 0;
+    right: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
+    width: var(--settings-round-icon-button-size);
+    min-width: var(--settings-round-icon-button-size);
+    height: var(--settings-round-icon-button-size);
+    min-height: var(--settings-round-icon-button-size);
+    padding: 0;
+    border: var(--settings-round-icon-button-border);
+    border-radius: var(--settings-round-icon-button-radius);
+    background: var(--settings-round-icon-button-background);
+    box-shadow: var(--settings-round-icon-button-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
     color: var(--settings-round-icon-button-color);
     cursor: pointer;
-    transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), transform 460ms var(--motion-press);
+    flex-shrink: 0;
+    transition:
+        opacity 220ms cubic-bezier(0.22, 1, 0.36, 1),
+        transform var(--motion-duration-spatial) var(--motion-emphasized),
+        background 160ms var(--motion-standard),
+        box-shadow 160ms var(--motion-standard),
+        color 160ms var(--motion-standard);
+    will-change: transform, opacity;
 }
 
-.browser-session-actions-trigger:hover,
-.browser-session-actions-trigger:focus-visible,
-.browser-session-actions.is-open .browser-session-actions-trigger {
+.browser-session-action-button:hover,
+.browser-session-action-button:focus-visible {
+    outline: none;
     background: var(--settings-round-icon-button-background-hover);
+    color: var(--settings-round-icon-button-color-hover);
     box-shadow: var(--settings-round-icon-button-shadow-hover);
 }
 
-.browser-session-actions-trigger:active {
+.browser-session-action-button:active {
     box-shadow: var(--settings-round-icon-button-shadow-active);
 }
 
-.browser-session-actions-trigger img {
-    width: 22px;
-    height: 22px;
+.browser-session-actions > .browser-session-action-button:not(.browser-session-page-export-button) {
+    opacity: 0;
+    pointer-events: none;
+    transform: translate3d(var(--browser-session-action-hidden-offset, 0), 0, 0) scale(0.72);
+    transform-origin: center;
+}
+
+.browser-session-actions > .browser-session-open-original-button {
+    right: calc(var(--browser-session-action-step) * 3);
+    --browser-session-action-hidden-offset: calc(var(--browser-session-action-step) * 3);
+    transition-delay: 56ms;
+}
+
+.browser-session-actions > .browser-session-refresh-button {
+    right: calc(var(--browser-session-action-step) * 2);
+    --browser-session-action-hidden-offset: calc(var(--browser-session-action-step) * 2);
+    transition-delay: 28ms;
+}
+
+.browser-session-actions > .browser-session-full-export-button {
+    right: var(--browser-session-action-step);
+    --browser-session-action-hidden-offset: var(--browser-session-action-step);
+    transition-delay: 0ms;
+}
+
+.browser-session-actions:hover > .browser-session-action-button:not(.browser-session-page-export-button),
+.browser-session-actions:focus-within > .browser-session-action-button:not(.browser-session-page-export-button),
+.browser-session-actions > .browser-session-action-button:not(.browser-session-page-export-button):focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translate3d(0, 0, 0) scale(1);
+}
+
+.browser-session-actions:not(:hover):not(:focus-within) > .browser-session-action-button:not(.browser-session-page-export-button) {
+    transition-timing-function: cubic-bezier(0.55, 0.08, 0.68, 0.53), cubic-bezier(0.55, 0.08, 0.68, 0.53), var(--motion-standard), var(--motion-standard), var(--motion-standard);
+}
+
+.browser-session-action-button img,
+.browser-session-action-button .icon {
+    width: var(--settings-round-icon-button-icon-size);
+    height: var(--settings-round-icon-button-icon-size);
+    flex: 0 0 var(--settings-round-icon-button-icon-size);
     object-fit: contain;
 }
 
-.browser-session-actions-drawer {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
-    display: grid;
-    gap: 4px;
-    width: max-content;
-    min-width: 206px;
-    padding: 8px;
-    border: var(--frosted-glass-border);
-    border-radius: var(--radius-panel);
-    background: var(--theme-glass-surface-background);
-    box-shadow: var(--frosted-glass-shadow);
-    backdrop-filter: saturate(180%) blur(20px);
-    -webkit-backdrop-filter: saturate(180%) blur(20px);
-}
-
-.browser-session-action-link {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    min-height: 36px;
-    padding: 6px 10px;
-    border-radius: var(--radius-soft);
-    color: var(--theme-text);
-    text-decoration: none;
-    white-space: nowrap;
-}
-
-.browser-session-action-link:hover,
-.browser-session-action-link:focus-visible {
-    background: var(--theme-glass-chip-background-hover);
-}
-
-.browser-session-action-link img,
-.browser-session-export-icon {
-    width: 20px;
-    height: 20px;
-    flex: 0 0 20px;
-    object-fit: contain;
-}
-
-.browser-session-export-icon {
+.browser-session-action-button .icon {
     display: inline-block;
-    background: currentColor;
-    mask: url("/static/images/square.and.arrow.up.svg") center / contain no-repeat;
-    -webkit-mask: url("/static/images/square.and.arrow.up.svg") center / contain no-repeat;
+    background-color: currentColor;
+    mask-position: center;
+    -webkit-mask-position: center;
+    mask-repeat: no-repeat;
+    -webkit-mask-repeat: no-repeat;
+    mask-size: contain;
+    -webkit-mask-size: contain;
+}
+
+.browser-session-drawer-refresh-icon {
+    mask-image: url("/static/images/arrow.trianglehead.clockwise.svg");
+    -webkit-mask-image: url("/static/images/arrow.trianglehead.clockwise.svg");
+}
+
+.browser-session-export-icon {
+    mask-image: url("/static/images/square.and.arrow.up.svg");
+    -webkit-mask-image: url("/static/images/square.and.arrow.up.svg");
+}
+
+.browser-session-page-export-icon {
+    mask-image: url("/static/images/square.and.arrow.up.svg");
+    -webkit-mask-image: url("/static/images/square.and.arrow.up.svg");
 }
 
 .browser-metric-grid {
@@ -4325,7 +4503,8 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 }
 
 .browser-session-detail-table {
-    min-width: 880px;
+    width: 100%;
+    min-width: 0;
 }
 
 .browser-session-detail-table .browser-session-col-number {
@@ -4379,9 +4558,63 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 }
 
 .browser-session-table-message {
+    box-sizing: border-box;
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
     color: var(--theme-text);
     line-height: 1.55;
+    overflow-x: auto;
     overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.browser-session-table-message > * {
+    min-width: 0;
+    max-width: 100%;
+}
+
+.browser-session-table-message a,
+.browser-session-table-message code,
+.browser-session-table-message span {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.browser-session-table-message img,
+.browser-session-table-message video,
+.browser-session-table-message canvas {
+    display: block;
+    max-width: 100%;
+    height: auto;
+}
+
+.browser-session-table-message pre {
+    box-sizing: border-box;
+    max-width: 100%;
+    overflow-x: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.browser-session-table-message pre code {
+    white-space: inherit;
+    overflow-wrap: inherit;
+    word-break: inherit;
+}
+
+.browser-session-table-message table {
+    width: 100%;
+    max-width: 100%;
+    table-layout: fixed;
+}
+
+.browser-session-table-message th,
+.browser-session-table-message td {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .browser-session-table-message > :first-child {
@@ -4785,13 +5018,13 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 }
 
 .browser-view-icon-list {
-    mask: url("/static/images/list.dash.header.rectangle.svg") center/contain no-repeat;
-    -webkit-mask: url("/static/images/list.dash.header.rectangle.svg") center/contain no-repeat;
+    mask: url("/static/images/rectangle.grid.1x3.fill.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/rectangle.grid.1x3.fill.svg") center/contain no-repeat;
 }
 
 .browser-view-icon-grid {
-    mask: url("/static/images/film.circle.svg") center/contain no-repeat;
-    -webkit-mask: url("/static/images/film.circle.svg") center/contain no-repeat;
+    mask: url("/static/images/rectangle.grid.3x2.fill.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/rectangle.grid.3x2.fill.svg") center/contain no-repeat;
 }
 
 .browser-gallery {

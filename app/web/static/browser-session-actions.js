@@ -1,4 +1,4 @@
-/* Code version: v1.0.0-codex.1 */
+/* Code version: v1.1.0-codex.1 */
 
 (function initializeBrowserSessionActions() {
     "use strict";
@@ -6,32 +6,27 @@
     const root = document.querySelector("[data-browser-session-actions]");
     if (!(root instanceof HTMLElement)) return;
 
-    const trigger = root.querySelector("[data-browser-session-actions-toggle]");
-    const drawer = root.querySelector("[data-browser-session-actions-drawer]");
-    if (!(trigger instanceof HTMLButtonElement) || !(drawer instanceof HTMLElement)) return;
+    const openOriginalButton = root.querySelector("[data-browser-session-open-original]");
+    if (openOriginalButton instanceof HTMLButtonElement) {
+        openOriginalButton.addEventListener("click", () => {
+            const originalUrl = openOriginalButton.dataset.browserSessionOriginalUrl;
+            if (originalUrl) window.open(originalUrl, "_blank", "noopener,noreferrer");
+        });
+    }
 
-    const setOpen = (isOpen) => {
-        drawer.hidden = !isOpen;
-        trigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
-        root.classList.toggle("is-open", isOpen);
-    };
-
-    trigger.addEventListener("click", () => {
-        setOpen(drawer.hidden);
+    root.querySelectorAll("[data-browser-session-refresh-url]").forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        button.addEventListener("click", () => {
+            const refreshUrl = button.dataset.browserSessionRefreshUrl;
+            if (refreshUrl) window.location.assign(refreshUrl);
+        });
     });
 
-    document.addEventListener("click", (event) => {
-        if (drawer.hidden || !(event.target instanceof Node) || root.contains(event.target)) return;
-        setOpen(false);
-    });
-
-    document.addEventListener("keydown", (event) => {
-        if (event.key !== "Escape" || drawer.hidden) return;
-        setOpen(false);
-        trigger.focus();
-    });
-
-    drawer.querySelectorAll("a").forEach((link) => {
-        link.addEventListener("click", () => setOpen(false));
+    root.querySelectorAll("[data-browser-session-download-url]").forEach((button) => {
+        if (!(button instanceof HTMLButtonElement)) return;
+        button.addEventListener("click", () => {
+            const downloadUrl = button.dataset.browserSessionDownloadUrl;
+            if (downloadUrl) window.location.assign(downloadUrl);
+        });
     });
 })();

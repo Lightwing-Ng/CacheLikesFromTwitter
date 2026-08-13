@@ -1,0 +1,14 @@
+{# Code version: v1.0.0-codex.1 #}
+
+{% macro render_browser_session_status(empty_message="No signed-in account detected", ready_label="Ready") -%}
+<div class="browser-session-status-card" data-role="browser-session-status" hidden>
+    <div class="browser-session-status-row">
+        <div class="browser-session-status-copy">
+            <strong class="browser-session-status-account" data-role="browser-session-account">{{ empty_message }}</strong>
+            <p class="browser-session-status-message" data-role="browser-session-message" hidden></p>
+        </div>
+        <span class="suggestion-loading-spinner browser-session-status-spinner" data-role="browser-session-spinner" aria-hidden="true" hidden></span>
+        <span class="browser-session-status-checkmark" data-role="browser-session-checkmark" aria-label="{{ ready_label }}" hidden></span>
+    </div>
+</div>
+{%- endmacro %}

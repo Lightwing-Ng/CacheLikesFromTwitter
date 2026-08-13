@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.39.0-codex.1
+# Code version: v1.40.0-codex.1
 
 from __future__ import annotations
 
@@ -114,6 +114,7 @@ CHATGPT_VISUAL_HASH_DISTANCE_LIMIT = 48
 CHATGPT_VISUAL_ASPECT_RATIO_TOLERANCE = 0.01
 CHATGPT_CONVERSATION_API_PATH = "/backend-api/conversation/"
 CHATGPT_FILE_DOWNLOAD_PATH = "/backend-api/files/download/"
+CHATGPT_HOME_URL = "https://chatgpt.com/"
 CHATGPT_AUTH_SESSION_URL = "https://chatgpt.com/api/auth/session"
 CHATGPT_DOWNLOAD_AUTH_HEADER_NAMES = {
     "authorization",
@@ -3466,9 +3467,11 @@ def sync_chatgpt_images(
     config: CrawlConfig | None = None,
     target_dir: Path | None = None,
     should_stop=lambda: False,
+    content_mode: str = "media",
 ) -> ChatGPTSyncResult:
-    """Cache all original images from the selected ChatGPT source."""
+    """Cache ChatGPT text history or project media through the selected browser."""
     runtime_config = config or CrawlConfig()
+    normalized_content_mode = "media" if content_mode == "media" else "text"
     descriptor = browser_descriptors(runtime_config).get(runtime_config.chatgpt_browser)
     if descriptor is None:
         raise RuntimeError(f"Unsupported ChatGPT browser: {runtime_config.chatgpt_browser}")
@@ -3531,6 +3534,66 @@ def sync_chatgpt_images(
         return ChatGPTSyncResult(cached_count=cached_count, cached_messages=history_store.cached_messages, stopped=True)
 
     try:
+        if normalized_content_mode == "text":
+            state.update(phase="collecting", progress_unit="sessions")
+            state.append_event(
+                f"Starting an offscreen {descriptor.label} session for all ChatGPT text history."
+            )
+            conversation_urls: list[str] = []
+            history_processed = 0
+            history_new_messages = 0
+            history_unchanged_sessions = 0
+            with _launch_chatgpt_browser_context(descriptor, CHATGPT_HOME_URL) as discovery_context:
+                if discovery_context is not None:
+                    page = _chatgpt_context_page(discovery_context)
+                    open_chatgpt_page(
+                        page,
+                        CHATGPT_HOME_URL,
+                        startup_timeout_seconds=startup_timeout_seconds,
+                    )
+                    request_headers = _load_chatgpt_session_request_headers(
+                        discovery_context,
+                        CHATGPT_HOME_URL,
+                    )
+                    conversation_titles_by_id: dict[str, str] = {}
+                    conversation_urls = _collect_all_chatgpt_conversation_urls_via_api(
+                        discovery_context,
+                        CHATGPT_HOME_URL,
+                        request_headers,
+                        state,
+                        should_stop,
+                        conversation_titles_by_id,
+                    )
+                    history_processed, history_new_messages, history_unchanged_sessions = (
+                        cache_chatgpt_conversation_history(
+                            history_store,
+                            conversation_urls,
+                            page,
+                            request_headers,
+                            state,
+                            should_stop,
+                        )
+                    )
+            stopped = should_stop()
+            state.update(
+                discovered_tweets=len(conversation_urls),
+                queued_tweets=len(conversation_urls),
+                processed_tweets=history_processed,
+                progress_unit="sessions",
+                discovery_complete=not stopped,
+            )
+            state.append_event(
+                f"Cached ChatGPT text history for {history_processed:,}/{len(conversation_urls):,} sessions "
+                f"({history_store.cached_messages:,} messages, {history_new_messages:,} new, "
+                f"{history_unchanged_sessions:,} unchanged)."
+            )
+            return ChatGPTSyncResult(
+                discovered_conversations=len(conversation_urls),
+                cached_count=cached_count,
+                cached_messages=history_store.cached_messages,
+                stopped=stopped,
+            )
+
         state.update(phase="collecting")
         project_request_headers: dict[str, str] = {}
         conversation_titles_by_id: dict[str, str] = {}
@@ -3551,28 +3614,6 @@ def sync_chatgpt_images(
                     request_headers=project_request_headers,
                     conversation_titles_by_id=conversation_titles_by_id,
                 )
-                history_conversation_urls = conversation_urls
-                if not direct_session_refresh and project_request_headers:
-                    try:
-                        all_history_urls = _collect_all_chatgpt_conversation_urls_via_api(
-                            discovery_context,
-                            project_url,
-                            project_request_headers,
-                            state,
-                            should_stop,
-                            conversation_titles_by_id,
-                        )
-                    except (ChatGPTRateLimitError, RuntimeError) as exc:
-                        state.append_event(
-                            "ChatGPT all-session text history discovery failed; "
-                            f"retaining the project session list for this run: {str(exc).splitlines()[0][:300]}"
-                        )
-                    else:
-                        if all_history_urls:
-                            history_conversation_urls = all_history_urls
-                        state.append_event(
-                            f"ChatGPT text history scope: {len(history_conversation_urls):,} total sessions."
-                        )
                 if not should_stop() and not direct_session_refresh:
                     project_index_candidates = collect_chatgpt_project_index_images(
                         discovery_context,
@@ -3586,19 +3627,6 @@ def sync_chatgpt_images(
                     project_index_candidates = catalog.merge_known_metadata(
                         project_index_candidates
                     )
-                history_processed, history_new_messages, history_unchanged_sessions = cache_chatgpt_conversation_history(
-                    history_store,
-                    history_conversation_urls,
-                    page,
-                    project_request_headers,
-                    state,
-                    should_stop,
-                )
-                state.append_event(
-                    f"Cached ChatGPT text history for {history_processed:,}/{len(history_conversation_urls):,} sessions "
-                    f"({history_store.cached_messages:,} messages, {history_new_messages:,} new, "
-                    f"{history_unchanged_sessions:,} unchanged)."
-                )
                 if direct_session_refresh:
                     state.append_event(
                         "Refreshing only the supplied ChatGPT session; skipping the global project image index."

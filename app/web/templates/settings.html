@@ -1,4 +1,4 @@
-<!-- Code version: v1.20.1-codex.1 -->
+<!-- Code version: v1.23.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -7,7 +7,7 @@
     <title>CacheLikesFromTwitter Settings</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.62.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.75.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
@@ -245,47 +245,53 @@
                             >
                                 <div class="settings-category-heading">
                                     <p class="workspace-kicker">Agent</p>
-                                    <h3 id="settings_agent_heading">Agent runtimes</h3>
-                                    <p>ChatGPT uses the locally authenticated Codex runtime. DevSpace settings below apply only to the optional Gemini and Grok web bridge.</p>
+                                    <h3 id="settings_agent_heading">Computer Use Agent</h3>
+                                    <p>Use an already signed-in ChatGPT Web account for reasoning while a bounded local controller reads, changes, runs, and verifies the selected project.</p>
                                 </div>
                                 <div class="settings-category-fields">
-                                    <div class="settings-agent-runtime-status" data-ready="{{ 'true' if agent_native_snapshot.ready else 'false' }}">
+                                    <div class="settings-agent-runtime-status" data-ready="{{ 'true' if agent_runtime_snapshot.ready else 'false' }}">
                                         <span class="settings-agent-runtime-dot" aria-hidden="true"></span>
                                         <span>
-                                            <strong>Codex</strong>
-                                            <span>{{ agent_native_snapshot.message }}{% if agent_native_snapshot.version %} {{ agent_native_snapshot.version }}{% endif %}</span>
+                                            <strong>Local controller</strong>
+                                            <span>{{ agent_runtime_snapshot.message }}</span>
                                         </span>
                                     </div>
                                     <label class="field">
-                                        <span>DevSpace port</span>
-                                        <input
-                                            class="text-input-control agent-monospace-input"
-                                            name="agent_port"
-                                            type="number"
-                                            min="1024"
-                                            max="65535"
-                                            value="{{ agent_settings.port }}"
-                                            {% if agent_runtime_snapshot.managed %}disabled{% endif %}
-                                            required
-                                        >
-                                        <span class="field-help">Use a free local port from 1,024 through 65,535. Stop MCP before changing an active port.</span>
+                                        <span>Default operating system</span>
+                                        <select class="form-select" name="agent_operating_system">
+                                            <option value="macos"{% if agent_settings.operating_system == 'macos' %} selected{% endif %}>macOS</option>
+                                            <option value="windows"{% if agent_settings.operating_system == 'windows' %} selected{% endif %}>Windows (planned)</option>
+                                        </select>
+                                        <span class="field-help">macOS executes today. Windows stores its own prompt now but remains unavailable on this host.</span>
                                     </label>
-                                    <label class="field">
-                                        <span>Public HTTPS origin</span>
-                                        <input
-                                            class="text-input-control agent-monospace-input"
-                                            name="agent_public_base_url"
-                                            type="url"
-                                            value="{{ agent_settings.public_base_url }}"
-                                            placeholder="https://devspace.example.com"
-                                            spellcheck="false"
-                                            autocomplete="off"
-                                            {% if agent_runtime_snapshot.managed %}disabled{% endif %}
-                                            required
-                                        >
-                                        <span class="field-help">Use the origin only, without <code>/mcp</code>. ChatGPT native mode does not need this setting.</span>
+                                    <div class="field-grid compact-config-grid settings-agent-limit-grid">
+                                        <label class="field">
+                                            <span>Context Markdown limit (MiB)</span>
+                                            <input class="text-input-control agent-monospace-input" name="agent_context_limit_mib" type="number" min="1" max="512" value="{{ agent_settings.context_limit_mib }}" required>
+                                            <span class="field-help">ChatGPT currently caps each uploaded file at 512 MB and each text or document file at 2 million tokens. The lower limit wins.</span>
+                                        </label>
+                                        <label class="field">
+                                            <span>Maximum controller turns</span>
+                                            <input class="text-input-control agent-monospace-input" name="agent_max_turns" type="number" min="2" max="120" value="{{ agent_settings.max_turns }}" required>
+                                            <span class="field-help">Bounds each fresh browser session and prevents an unproductive loop.</span>
+                                        </label>
+                                        <label class="field">
+                                            <span>Command timeout (s)</span>
+                                            <input class="text-input-control agent-monospace-input" name="agent_command_timeout_seconds" type="number" min="5" max="1800" value="{{ agent_settings.command_timeout_seconds }}" required>
+                                            <span class="field-help">Applies to inspection, build, lint, and test commands only.</span>
+                                        </label>
+                                    </div>
+                                    <label class="field settings-agent-prompt-field">
+                                        <span>macOS system prompt</span>
+                                        <textarea class="text-input-control settings-agent-system-prompt" name="agent_macos_system_prompt" rows="18" spellcheck="false" required>{{ agent_settings.macos_system_prompt }}</textarea>
+                                        <span class="field-help">Defines the JSON action protocol, project boundary, bodycheck, and concise handoff contract.</span>
                                     </label>
-                                    <p class="settings-agent-attribution">The optional web bridge integrates <a href="https://github.com/Waishnav/devspace" target="_blank" rel="noopener">DevSpace</a> under the MIT License.</p>
+                                    <label class="field settings-agent-prompt-field">
+                                        <span>Windows system prompt</span>
+                                        <textarea class="text-input-control settings-agent-system-prompt" name="agent_windows_system_prompt" rows="10" spellcheck="false" required>{{ agent_settings.windows_system_prompt }}</textarea>
+                                        <span class="field-help">Stored separately for the future PowerShell and Windows controller.</span>
+                                    </label>
+                                    <p class="settings-agent-privacy-note">Project context and requested file contents are sent to the selected ChatGPT account. Consumer ChatGPT data controls and file retention apply.</p>
                                 </div>
                             </section>
 
@@ -321,12 +327,23 @@
                                     </p>
                                     <label class="field compact-config-field">
                                         <span>Source folder</span>
-                                        <input type="text" value="{{ local_store_root }}" readonly aria-readonly="true">
+                                        <span class="shadow-backup-destination-control settings-directory-control settings-directory-control-readonly">
+                                            <input
+                                                class="text-input-control settings-directory-input"
+                                                type="text"
+                                                value="{{ local_store_root }}"
+                                                readonly
+                                                aria-readonly="true"
+                                                spellcheck="false"
+                                                autocomplete="off"
+                                            >
+                                        </span>
                                     </label>
                                     <label class="field compact-config-field">
                                         <span>Cloud destination</span>
-                                        <span class="shadow-backup-destination-control">
+                                        <span class="shadow-backup-destination-control settings-directory-control">
                                             <input
+                                                class="text-input-control settings-directory-input"
                                                 type="text"
                                                 id="shadow_backup_destination"
                                                 name="shadow_backup_destination"
@@ -336,7 +353,7 @@
                                             >
                                             <button
                                                 type="button"
-                                                class="secondary-button shadow-backup-choose-button"
+                                                class="secondary-button settings-directory-choose-button shadow-backup-choose-button"
                                                 id="shadow_backup_choose_destination"
                                                 data-settings-directory-picker
                                                 data-directory-field="shadow_backup_destination"

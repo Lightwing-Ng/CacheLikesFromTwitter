@@ -1,6 +1,6 @@
-"""Background service for ChatGPT project image sync."""
+"""Background service for ChatGPT text and media sync."""
 
-# Code version: v1.2.1-codex.1
+# Code version: v1.3.0-codex.1
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def summarize_chatgpt_error_for_status(error: Exception) -> str:
 
 
 class ChatGPTDownloadService:
-    """Manage one ChatGPT project image sync worker."""
+    """Manage one mode-specific ChatGPT cache worker."""
 
     def __init__(
         self,
@@ -47,6 +47,7 @@ class ChatGPTDownloadService:
         self._worker: Thread | None = None
         self._stop_requested = Event()
         self._config = CrawlConfig()
+        self._content_mode = "media"
         self._lifecycle_lock = RLock()
         self._task_lock = task_lock or SHARED_CACHE_TASK_LOCK
         self._owns_task_lock = False
@@ -57,8 +58,8 @@ class ChatGPTDownloadService:
         snapshot = self._state.snapshot()
         return bool(snapshot["running"])
 
-    def start(self, config: CrawlConfig) -> None:
-        """Start a new ChatGPT project image sync worker."""
+    def start(self, config: CrawlConfig, content_mode: str = "media") -> None:
+        """Start a new ChatGPT text or media cache worker."""
         with self._lifecycle_lock:
             if self.is_running():
                 raise RuntimeError("A ChatGPT sync is already running.")
@@ -71,6 +72,7 @@ class ChatGPTDownloadService:
             self._owns_task_lock = True
             self._stop_requested.clear()
             self._config = config
+            self._content_mode = "media" if content_mode == "media" else "text"
             self._state.reset_for_run()
             try:
                 self._worker = Thread(target=self._run, daemon=True)
@@ -93,7 +95,7 @@ class ChatGPTDownloadService:
         return self._stop_requested.is_set()
 
     def _run(self) -> None:
-        """Execute the ChatGPT image sync pipeline."""
+        """Execute the selected ChatGPT cache pipeline."""
         job_id = uuid4().hex[:12]
         token = set_job_id(job_id)
         try:
@@ -103,6 +105,7 @@ class ChatGPTDownloadService:
                     "job_id": job_id,
                     "chatgpt_browser": self._config.chatgpt_browser,
                     "chatgpt_project_name": self._config.chatgpt_project_name,
+                    "chatgpt_content_mode": self._content_mode,
                 },
             )
             if self._is_stop_requested():
@@ -113,12 +116,18 @@ class ChatGPTDownloadService:
                 self._state,
                 config=self._config,
                 should_stop=self._is_stop_requested,
+                content_mode=self._content_mode,
             )
             if result.stopped:
-                self._state.finish_stopped(
-                    f"ChatGPT sync stopped. Cached {result.cached_count:,} original images and "
-                    f"{result.cached_messages:,} text messages."
-                )
+                if self._content_mode == "text":
+                    stopped_message = (
+                        f"ChatGPT text sync stopped. Cached {result.cached_messages:,} text messages."
+                    )
+                else:
+                    stopped_message = (
+                        f"ChatGPT media sync stopped. Cached {result.cached_count:,} original images."
+                    )
+                self._state.finish_stopped(stopped_message)
                 logger.info(
                     "ChatGPT sync stopped by operator.",
                     extra={
@@ -131,13 +140,18 @@ class ChatGPTDownloadService:
                 )
                 return
 
-            completion_message = (
-                f"Finished ChatGPT sync. Inspected {result.discovered_conversations:,} sessions, "
-                f"found {result.discovered_images:,} original images, added {result.downloaded_count:,} new files, "
-                f"cached {result.cached_messages:,} text messages, "
-                f"skipped over size limit {result.skipped_size:,}, "
-                f"failed {result.failed_count:,}; cached total {result.cached_count:,} images."
-            )
+            if self._content_mode == "text":
+                completion_message = (
+                    f"Finished ChatGPT text sync. Inspected {result.discovered_conversations:,} sessions "
+                    f"and cached {result.cached_messages:,} text messages."
+                )
+            else:
+                completion_message = (
+                    f"Finished ChatGPT media sync. Inspected {result.discovered_conversations:,} sessions, "
+                    f"found {result.discovered_images:,} original images, added {result.downloaded_count:,} new files, "
+                    f"skipped over size limit {result.skipped_size:,}, "
+                    f"failed {result.failed_count:,}; cached total {result.cached_count:,} images."
+                )
             if self._shadow_backup_service is not None:
                 shadow_backup_message = self._shadow_backup_service.sync_after_cache_task(self._config)
                 if shadow_backup_message:

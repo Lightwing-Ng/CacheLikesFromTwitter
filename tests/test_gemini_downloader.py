@@ -1,6 +1,6 @@
 """Focused tests for Gemini session history Parquet persistence."""
 
-# Code version: v1.0.4-codex.1
+# Code version: v1.3.2-codex.1
 
 from __future__ import annotations
 
@@ -13,6 +13,8 @@ import pytest
 from app.core.gemini_downloader import (
     GeminiConversationLink,
     GeminiHistoryStore,
+    _open_gemini_sidebar,
+    _prepare_gemini_page_for_rendering,
     _read_gemini_conversation_links,
     _scroll_gemini_conversation_navigation,
     build_gemini_initial_snapshot,
@@ -54,6 +56,35 @@ def _messages(user_text: str = "Hello", assistant_text: str = "Hi there") -> lis
             "model_label": "Gemini Flash",
         },
     ]
+
+
+def test_open_gemini_sidebar_expands_the_independent_recents_list() -> None:
+    class Page:
+        def __init__(self) -> None:
+            self.scripts: list[str] = []
+            self.waits: list[int] = []
+            self.responses = [
+                True,
+                {"buttonFound": True, "expanded": False, "links": 0},
+                {"buttonFound": True, "expanded": True, "links": 30},
+            ]
+
+        def evaluate(self, script):
+            self.scripts.append(script)
+            return self.responses.pop(0)
+
+        def wait_for_timeout(self, milliseconds):
+            self.waits.append(milliseconds)
+
+    page = Page()
+
+    _open_gemini_sidebar(page)
+
+    assert len(page.scripts) == 3
+    assert "open sidebar" in page.scripts[0]
+    assert "chats-expandable-section" in page.scripts[1]
+    assert "recentsButton" in page.scripts[2]
+    assert page.waits == [1_000, 500]
 
 
 def test_gemini_conversation_urls_are_canonical_and_host_scoped() -> None:
@@ -181,6 +212,30 @@ def test_gemini_scroll_dispatches_for_a_virtualized_conversation_list() -> None:
     assert "dispatchEvent(new Event('scroll'" in page.script
 
 
+def test_gemini_keeps_safari_render_active_in_background() -> None:
+    class Page:
+        def __init__(self) -> None:
+            self.background_render_calls = 0
+            self.background_calls = 0
+            self.waits: list[int] = []
+
+        def keep_rendering_in_background(self) -> None:
+            self.background_render_calls += 1
+
+        def keep_background(self) -> None:
+            self.background_calls += 1
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+
+    page = Page()
+    _prepare_gemini_page_for_rendering(page)
+
+    assert page.background_render_calls == 1
+    assert page.background_calls == 0
+    assert page.waits == [1_000]
+
+
 def test_gemini_bot_check_pauses_until_user_clears_google_verification() -> None:
     class Page:
         def __init__(self) -> None:
@@ -219,6 +274,8 @@ def test_gemini_bot_check_inspection_uses_page_markers_and_challenge_selectors()
         def evaluate(self, script, markers):
             assert "challengeElement" in script
             assert "unusual traffic" in markers
+            assert "[data-sitekey], [id*=" in script
+            assert " + '[class*=\"captcha\"]" in script
             return {"detected": True, "reason": "challenge element"}
 
     assert inspect_gemini_bot_check(Page())["detected"]

@@ -1,23 +1,36 @@
-{# Code version: v1.8.1-codex.1 #}
+{# Code version: v1.11.0-codex.1 #}
 {% extends "_cache_page.html" %}
 {% from "_cache_page_components.html" import render_metric, render_progress_metric %}
 {% from "_number_field.html" import render_number_field %}
 
+{% block head %}
+<script defer src="{{ url_for('static', filename='chatgpt-page.js', v='chatgpt-page-v1.2.0-codex.1') }}"></script>
+{% endblock %}
+
 {% block source_fields %}
-<label class="field">
-    <span>Project or chat URL</span>
-    <input
-        type="url"
-        class="text-input-control"
-        name="chatgpt_project_url"
-        value="{{ saved_config.chatgpt_project_url }}"
-        placeholder="https://chatgpt.com/g/.../project or /c/..."
-        autocomplete="url"
-        required
-    >
-</label>
-{{ render_number_field("Startup timeout (s)", "chatgpt_startup_timeout_seconds", saved_config.chatgpt_startup_timeout_seconds, "decimal", "1", "1", "600", "field", "text-input-control") }}
-{{ render_number_field("Scan wait (s)", "chatgpt_scan_wait_seconds", saved_config.chatgpt_scan_wait_seconds, "decimal", "0.1", "0.1", "5", "field", "text-input-control") }}
+<input
+    type="hidden"
+    name="chatgpt_content_mode"
+    id="chatgpt_content_mode"
+    value="text"
+    data-chatgpt-content-mode-input
+>
+<div data-chatgpt-media-config hidden>
+    <label class="field">
+        <span>Project or chat URL</span>
+        <input
+            type="url"
+            class="text-input-control"
+            name="chatgpt_project_url"
+            value="{{ saved_config.chatgpt_project_url }}"
+            placeholder="https://chatgpt.com/g/.../project or /c/..."
+            autocomplete="url"
+            required
+        >
+    </label>
+    {{ render_number_field("Startup timeout (s)", "chatgpt_startup_timeout_seconds", saved_config.chatgpt_startup_timeout_seconds, "decimal", "1", "1", "600", "field", "text-input-control") }}
+    {{ render_number_field("Scan wait (s)", "chatgpt_scan_wait_seconds", saved_config.chatgpt_scan_wait_seconds, "decimal", "0.1", "0.1", "5", "field", "text-input-control") }}
+</div>
 {% endblock %}
 
 {% block primary_metrics %}

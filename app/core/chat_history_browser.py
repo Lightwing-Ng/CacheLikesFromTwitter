@@ -1,6 +1,6 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.3.0-codex.1
+# Code version: v1.6.1-codex.1
 
 from __future__ import annotations
 
@@ -11,7 +11,12 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
 from .local_media_browser import LocalMediaItem, LocalMediaPaginationItem, build_local_store_pagination
-from .resource_persistence import CHATGPT_HISTORY_FILENAME, GEMINI_HISTORY_FILENAME, read_parquet_rows
+from .resource_persistence import (
+    CHATGPT_HISTORY_FILENAME,
+    GEMINI_HISTORY_FILENAME,
+    GROK_HISTORY_FILENAME,
+    read_parquet_rows,
+)
 
 
 CHAT_HISTORY_PAGE_SIZE = 100
@@ -57,6 +62,7 @@ class ChatHistoryMessage:
     role: str
     author_label: str
     content_text: str
+    content_html: str
     source_links: tuple[str, ...]
     model_label: str
     first_seen_at: str
@@ -128,7 +134,11 @@ class ChatHistoryPage:
 def chat_history_path(local_store_root: Path | str, source: str = "gemini") -> Path:
     """Return the typed history file for one supported chat source."""
     normalized_source = normalize_chat_history_source(source)
-    filename = CHATGPT_HISTORY_FILENAME if normalized_source == "chatgpt" else GEMINI_HISTORY_FILENAME
+    filename = {
+        "chatgpt": CHATGPT_HISTORY_FILENAME,
+        "gemini": GEMINI_HISTORY_FILENAME,
+        "grok": GROK_HISTORY_FILENAME,
+    }.get(normalized_source, GEMINI_HISTORY_FILENAME)
     return Path(local_store_root).expanduser() / "llm" / normalized_source / filename
 
 
@@ -185,6 +195,7 @@ def _timestamp_value(value: str) -> float:
 def _message_from_row(row: dict[str, Any], source: str) -> ChatHistoryMessage | None:
     """Convert one persisted history row into a display-safe message."""
     content_text = str(row.get("content_text") or "").replace("\x00", "").strip()
+    content_html = str(row.get("content_html") or "").replace("\x00", "").strip()
     conversation_id = str(row.get("conversation_id") or "").strip()
     message_key = str(row.get("message_key") or "").strip()
     if not content_text or not conversation_id or not message_key:
@@ -209,6 +220,7 @@ def _message_from_row(row: dict[str, Any], source: str) -> ChatHistoryMessage | 
         role=str(row.get("role") or "message").strip().lower(),
         author_label=str(row.get("author_label") or row.get("role") or "Message").strip(),
         content_text=content_text,
+        content_html=content_html,
         source_links=source_links,
         model_label=str(row.get("model_label") or "").strip(),
         first_seen_at=str(row.get("first_seen_at") or "").strip(),
@@ -302,12 +314,14 @@ def query_chat_history(
     """Read cached text sessions or one session's complete message history."""
     normalized_source = normalize_chat_history_source(source)
     normalized_query = str(query or "").strip()[:120].casefold()
+    query_terms = tuple(normalized_query.split())
     source_paths = (
         ((normalized_source, chat_history_path(local_store_root, normalized_source)),)
         if normalized_source != "all"
         else (
             ("chatgpt", chat_history_path(local_store_root, "chatgpt")),
             ("gemini", chat_history_path(local_store_root, "gemini")),
+            ("grok", chat_history_path(local_store_root, "grok")),
         )
     )
     rows_with_sources = [
@@ -376,20 +390,23 @@ def query_chat_history(
         )
 
     messages = all_messages
-    if normalized_query:
+    if query_terms:
         messages = tuple(
             item
             for item in messages
-            if normalized_query
-            in " ".join(
-                (
-                    item.conversation_title,
-                    item.author_label,
-                    item.role,
-                    item.model_label,
-                    item.content_text,
-                )
-            ).casefold()
+            if all(
+                term
+                in " ".join(
+                    (
+                        item.conversation_title,
+                        item.author_label,
+                        item.role,
+                        item.model_label,
+                        item.content_text,
+                    )
+                ).casefold()
+                for term in query_terms
+            )
         )
 
     safe_page_size = max(1, int(page_size))
@@ -441,8 +458,8 @@ def query_chat_history(
     )
 
 
-def build_chat_history_markdown(page: ChatHistoryPage) -> str:
-    """Render one complete cached session as a portable Markdown document."""
+def build_chat_history_markdown(page: ChatHistoryPage, *, message_count: int | None = None) -> str:
+    """Render a cached session page as a portable Markdown document."""
     if not page.session_detail or page.current_session is None:
         return ""
 
@@ -452,7 +469,7 @@ def build_chat_history_markdown(page: ChatHistoryPage) -> str:
         f"# {title}",
         "",
         f"- Source: {session.source.title()}",
-        f"- Messages: {session.message_count:,}",
+        f"- Messages: {(session.message_count if message_count is None else message_count):,}",
     ]
     if session.conversation_url:
         lines.append(f"- Original: {session.conversation_url}")

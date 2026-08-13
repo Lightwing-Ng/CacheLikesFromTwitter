@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.0.2-codex.1`
+Documentation version: `v1.4.0-codex.1`
 
 ## Launch
 
@@ -26,12 +26,32 @@ it through router port forwarding, and do not publish it through a public tunnel
 
 - X caching begins from the currently signed-in Likes page in a supported host browser.
 - Grok and ChatGPT syncing use their existing authenticated browser sessions.
+- A Safari-backed Cache task owns one standard, visible background window with native
+  window controls. It closes and verifies that exact window at task end; it must not
+  hide, minimize, move offscreen, reuse, or accumulate Safari windows.
 - Chrome, Edge, and Safari support differs by source and automation engine; use the session probe
   in the console before a long sync.
 - The first Chromium-backed run works best after normal Chrome windows are closed, because a
   profile lock can prevent Playwright from creating its isolated context.
 - Do not add or repeatedly troubleshoot login flows as part of normal runtime operation. The
   application assumes an existing signed-in session.
+
+## Computer Use Agent
+
+- `/agent` is host-loopback only even though cache pages remain available on the trusted LAN.
+- Each task defaults to a new root-level ChatGPT Web conversation in the selected authenticated
+  Safari, Edge, or Chrome session. The Agent sidebar can also join one of the 20 most recent root
+  sessions, start a session in one of the 20 most recent projects, or join one of a project's
+  20 most recent sessions.
+- Settings → Agent controls the context limit, turn limit, command timeout, and per-operating-system
+  prompts. The Agent page detects the host and selects macOS or Windows automatically. macOS execution
+  is available; Windows is represented for future configuration and is blocked on the current host.
+- Chromium can attach the generated Markdown context directly. Safari falls back to compact
+  on-demand reads because web content cannot programmatically assign a local file to a protected
+  file input.
+- Sending a task transmits the generated context and requested source excerpts to the selected
+  ChatGPT account. Review ChatGPT data controls before using private or regulated source code.
+- Stop requests end current web generation and terminate the active local command process group.
 
 ## Local data
 
@@ -40,6 +60,10 @@ it through router port forwarding, and do not publish it through a public tunnel
 | `local_store/x/` | X media and cache-catalog state |
 | `local_store/grok/` | Grok media, catalog, manifest, and work queue |
 | `local_store/chatgpt/<project-name>/` | ChatGPT images and catalog state |
+| `local_store/llm/chatgpt/history.parquet` | ChatGPT typed text history |
+| `local_store/llm/gemini/history.parquet` | Gemini typed text history |
+| `local_store/llm/grok/history.parquet` | Grok typed text history |
+| `local_store/.cache_task.lock` | Cross-source advisory task lock |
 | `local_store/.browser-trash/` | Recoverable previews moved by the local-media browser |
 | `local_store/.browser_deleted.json` | Browser deletion tombstones and exclusion identities |
 | `logs/cachelikes.log.jsonl` | Structured local application log |
@@ -69,6 +93,13 @@ you intend to discard that cache. Do not use reset operations as a routine troub
   shared Download workers setting only when the machine cannot sustain that browser load.
 - Sync failure: inspect `logs/cachelikes.log.jsonl` for full structured diagnostics. The UI shows a
   bounded status message while retaining the detailed local log.
+- Grok Text cache: use the `Cache text history` action on `/cache/grok`. It follows all Grok
+  conversation pages and response trees; do not replace it with a visible-sidebar scroll. See
+  [CACHE_HANDOFF.md](CACHE_HANDOFF.md) for status routes, verified counts, and recovery commands.
+- Gemini Text cache: preserve the saved Safari navigation interval. If Safari reaches
+  `Failed to open page`, stop that run, close its single task window, and restart after
+  confirming the window count returned to baseline. Never accelerate the run by
+  reducing the saved interval and never open parallel Safari task windows.
 - Cache inconsistency: use the local-media browser to inspect the affected source before choosing a
   source-specific reset. Avoid deleting catalog or manifest files by hand.
 

@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.1.0-codex.1`
+Documentation version: `v1.5.0-codex.1`
 
 ## Runtime flow
 
@@ -25,11 +25,18 @@ registers the local-media browser, and serves the Flask routes.
 - `app/core/service.py`: X Likes collection and yt-dlp orchestration.
 - `app/core/grok_service.py` and `app/core/chatgpt_service.py`: background sync lifecycle,
   stop signaling, and shared cache-task exclusion.
+- `app/core/grok_history.py` and `app/core/grok_history_service.py`: authenticated Grok Text
+  API traversal, normalized message persistence, and the independent Grok Text worker.
 - `app/core/scraper.py` and `app/core/browser_sessions.py`: X timeline discovery and browser
   session probing for Chrome, Edge, and Safari.
 - `app/core/downloader.py`, `app/core/grok_downloader.py`, and
   `app/core/chatgpt_downloader.py`: source-specific cache acquisition, recovery state, and
   content validation.
+- `app/core/chatgpt_agent_sources.py`: authenticated browser-mediated catalogs of the 20 most
+  recent root ChatGPT sessions, projects, and project sessions for the Agent sidebar.
+- `app/core/computer_use_agent.py`: selected ChatGPT Web session targets, bounded context
+  packages, the local JSON action protocol, project path confinement, command policy, and
+  mandatory bodycheck ordering for the optional Agent workspace.
 - `app/core/cache_catalog.py` and `app/core/local_media_browser.py`: durable local indexes,
   media discovery, secure path resolution, deletion tombstones, and restoration.
 - `app/core/logging_setup.py`: process-wide JSON-line logging.
@@ -85,6 +92,23 @@ The Grok downloader persists catalog, resumable download-manifest, and work-queu
 rebuild verifies local media rather than trusting filenames alone. Snapshot and reset helpers
 resolve their default cache directory at call time so tests can safely redirect it.
 
+### Grok Text cache
+
+```text
+authenticated Edge session cloned into an isolated Chromium context
+  -> paginated /rest/app-chat/conversations API
+  -> response-node tree and batched load-responses API
+  -> GrokHistoryStore
+  -> local_store/llm/grok/history.parquet
+```
+
+Grok Text is deliberately separate from the Grok media runtime. Conversation pagination
+uses `nextPageToken` as the next request's `pageToken`; the visible sidebar is not a
+complete history source. Each response ID is stable within its conversation, so the
+store uses `<conversation-id>:<response-id>` as the message key and atomically replaces
+one conversation at a time. See [CACHE_HANDOFF.md](CACHE_HANDOFF.md) for the operator
+workflow and recovery rules.
+
 ### ChatGPT image cache
 
 ```text
@@ -101,12 +125,49 @@ recoverable page failures receive one retry. Catalog claims and atomic writes pr
 workers from corrupting the local index. Only image payloads that pass signature validation are
 retained. The project name is sanitized before it becomes a cache path.
 
+### Gemini Text cache
+
+```text
+authenticated Safari session
+  -> one standard task-owned background window
+  -> Gemini virtualized conversation navigation
+  -> rendered user-query and model-response extraction
+  -> atomic local_store/llm/gemini/history.parquet replacement
+  -> native window close with Safari window-ID verification
+```
+
+Safari contexts are serialized across processes. The worker never reuses the user's
+current window, never creates a replacement after the user closes the owned window,
+and never leaves a hidden or blank reusable shell. JavaScript execution is bounded by
+an AppleScript timeout. Conversation rows are replaced atomically per session, so a
+stopped run preserves every previously verified session without duplicating messages.
+
 ### Local-media browser
 
 `LocalMediaCatalog` reads the X, Grok, and ChatGPT cache trees and returns safe relative paths to
 the Flask application. The browser route allows only readable supported media below the configured
 cache root. Deleting an item moves it to a recoverable hidden browser-trash area and records a
 tombstone; restoring it moves the retained preview back to its original safe path.
+
+### ChatGPT Web Computer Use Agent
+
+```text
+selected local project
+  -> selected browser's recent session/project catalog
+  -> new or selected signed-in ChatGPT Web conversation
+  -> bounded Markdown context package
+  -> one JSON controller action at a time
+  -> confined local read/change/check
+  -> compact observation returned to the same conversation
+  -> current bodycheck
+  -> final Markdown result
+```
+
+The web model never receives direct process or filesystem authority. The local controller resolves
+every path below the selected project, separates explicit file actions from a restricted command
+layer, bounds turns and output, and rejects final completion after an edit until bodycheck passes.
+The browser target is validated as an official ChatGPT root session, project, or project session
+before each task; the selection is run-scoped and the default remains a new root session.
 
 ## Data ownership
 
@@ -131,6 +192,8 @@ user-owned locations above.
   and must never be exercised against production data by the default suite.
 - Browser automation starts from an already authenticated host session. It must not introduce a
   login-repair workflow without explicit product direction.
+- Agent source context is an external data transfer to the selected ChatGPT account. The local UI
+  discloses that boundary; tests never submit real project data or open authenticated profiles.
 - The Flask server binds to the LAN by design, but it has no authentication boundary. Trusted-LAN
   operation is therefore an operating requirement, not an optional convenience.
 

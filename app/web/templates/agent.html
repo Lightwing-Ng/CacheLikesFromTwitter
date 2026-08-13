@@ -1,4 +1,4 @@
-<!-- Code version: v2.1.0-codex.1 -->
+<!-- Code version: v3.1.0-codex.4 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -7,7 +7,7 @@
     <title>CacheLikesFromTwitter Agent</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.62.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.75.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
 </head>
@@ -27,14 +27,10 @@
             </section>
 
             <form class="agent-runtime-form" id="agent_runtime_form">
-                <input name="source_dir" type="hidden" value="{{ settings.source_dir }}">
-                <input name="allowed_root" type="hidden" value="{{ settings.workspace_path }}">
-                <input name="workspace_path" type="hidden" value="{{ settings.workspace_path }}" data-agent-runtime-workspace>
-                <input name="public_base_url" type="hidden" value="{{ settings.public_base_url }}">
                 <input name="target_url" type="hidden" value="{{ settings.target_url }}" data-agent-target-url>
-                <input name="port" type="hidden" value="{{ settings.port }}" data-agent-port>
                 <label class="field">
-                    <span class="field-label">Local project</span>
+                    <span class="field-label">Current project</span>
+                    <span class="field-help" data-agent-project-name>{{ agent_project_name }}</span>
                     <span class="shadow-backup-destination-control settings-directory-control">
                         <input
                             class="text-input-control agent-monospace-input"
@@ -57,65 +53,67 @@
                             data-directory-label="local Agent project"
                             aria-label="Choose local Agent project folder"
                             title="Choose local Agent project folder"
-                            {% if settings.platform != 'chatgpt' and runtime_snapshot.ready %}disabled{% endif %}
+                            {% if agent_snapshot.running %}disabled{% endif %}
                         >
                             <span class="icon settings-directory-choose-icon" aria-hidden="true"></span>
                         </button>
                     </span>
                     <span class="settings-directory-status" data-directory-picker-status aria-live="polite" hidden></span>
-                    <span class="field-help" data-agent-project-name>{{ agent_project_name }}</span>
                 </label>
+
                 <div class="agent-connect-fields">
                     <label class="field">
-                        <span class="field-label">Platform</span>
-                        <div class="trade-strategy-combobox agent-combobox agent-platform-combobox" data-agent-combobox>
-                            <input type="hidden" name="platform" value="{{ settings.platform }}" data-agent-combobox-input>
-                            {% set selected_platform = platform_options | selectattr('key', 'equalto', settings.platform) | list | first %}
+                        <span class="field-label">Operating system</span>
+                        <div
+                            class="trade-strategy-combobox agent-combobox agent-os-combobox"
+                            data-agent-combobox
+                            data-agent-host-operating-system="{{ runtime_snapshot.host_operating_system }}"
+                        >
+                            <input type="hidden" name="operating_system" value="{{ settings.operating_system }}" data-agent-combobox-input>
+                            {% set selected_os = operating_system_options | selectattr('key', 'equalto', settings.operating_system) | list | first %}
                             <button
                                 type="button"
                                 class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger"
                                 data-agent-combobox-trigger
                                 aria-haspopup="listbox"
                                 aria-expanded="false"
-                                aria-label="Platform: {{ selected_platform.label }}"
+                                aria-label="Operating system: {{ selected_os.label }}"
                             >
                                 <span class="browser-session-trigger-leading">
                                     <span class="browser-picker-selected-icon-shell">
-                                        <span class="cache-source-mark is-full-color" style="--cache-source-mark: url('{{ url_for('static', filename=selected_platform.icon_filename) }}');" data-agent-combobox-selected-icon aria-hidden="true"></span>
+                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename=selected_os.icon_filename) }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
                                     </span>
-                                    <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>{{ selected_platform.label }}</span>
+                                    <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>{{ selected_os.label }}</span>
                                 </span>
                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
-                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose Agent platform" hidden>
-                                {% for platform in platform_options %}
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose operating system" hidden>
+                                {% for operating_system in operating_system_options %}
                                 <button
                                     type="button"
-                                    class="trade-strategy-dropdown-option agent-combobox-option{% if settings.platform == platform.key %} is-selected is-active{% endif %}"
-                                    data-agent-combobox-option="{{ platform.key }}"
-                                    data-agent-combobox-label="{{ platform.label }}"
-                                    data-agent-combobox-icon="{{ url_for('static', filename=platform.icon_filename) }}"
+                                    class="trade-strategy-dropdown-option agent-combobox-option{% if settings.operating_system == operating_system.key %} is-selected is-active{% endif %}"
+                                    data-agent-combobox-option="{{ operating_system.key }}"
+                                    data-agent-combobox-label="{{ operating_system.label }}"
+                                    data-agent-combobox-icon="{{ url_for('static', filename=operating_system.icon_filename) }}"
+                                    data-agent-option-available="{{ 'true' if operating_system.available else 'false' }}"
                                     role="option"
-                                    aria-selected="{{ 'true' if settings.platform == platform.key else 'false' }}"
+                                    aria-selected="{{ 'true' if settings.operating_system == operating_system.key else 'false' }}"
                                     tabindex="-1"
                                 >
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                                    <span class="cache-source-mark is-full-color" style="--cache-source-mark: url('{{ url_for('static', filename=platform.icon_filename) }}');" aria-hidden="true"></span>
-                                    <span class="trade-strategy-dropdown-text">{{ platform.label }}</span>
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename=operating_system.icon_filename) }}" alt="" aria-hidden="true">
+                                    <span class="trade-strategy-dropdown-text">{{ operating_system.label }}{% if not operating_system.available %} <small>Planned</small>{% endif %}</span>
                                 </button>
                                 {% endfor %}
                             </div>
                         </div>
                     </label>
-                    <label class="field agent-web-only-control" data-agent-web-only{% if settings.platform == 'chatgpt' %} hidden{% endif %}>
+
+                    <label class="field">
                         <span class="field-label">Browser</span>
+                        <div class="agent-browser-session-field" data-agent-browser-session data-browser-session-platform="chatgpt">
                         <div class="trade-strategy-combobox agent-combobox agent-browser-combobox" data-agent-combobox>
                             <input type="hidden" name="browser" value="{{ settings.browser }}" data-agent-combobox-input>
-                            {% set browser_options = [
-                                {'key': 'safari', 'label': 'Safari', 'icon': 'images/browser.safari.png'},
-                                {'key': 'chrome', 'label': 'Chrome', 'icon': 'images/browser.chrome.png'},
-                                {'key': 'edge', 'label': 'Edge', 'icon': 'images/browser.edge.png'}
-                            ] %}
                             {% set selected_browser = browser_options | selectattr('key', 'equalto', settings.browser) | list | first %}
                             <button
                                 type="button"
@@ -127,7 +125,7 @@
                             >
                                 <span class="browser-session-trigger-leading">
                                     <span class="browser-picker-selected-icon-shell">
-                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename=selected_browser.icon) }}" alt="">
+                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename=selected_browser.icon_filename) }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
                                     </span>
                                     <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>{{ selected_browser.label }}</span>
                                 </span>
@@ -140,33 +138,111 @@
                                     class="trade-strategy-dropdown-option agent-combobox-option{% if settings.browser == browser.key %} is-selected is-active{% endif %}"
                                     data-agent-combobox-option="{{ browser.key }}"
                                     data-agent-combobox-label="{{ browser.label }}"
-                                    data-agent-combobox-icon="{{ url_for('static', filename=browser.icon) }}"
+                                    data-agent-combobox-icon="{{ url_for('static', filename=browser.icon_filename) }}"
                                     role="option"
                                     aria-selected="{{ 'true' if settings.browser == browser.key else 'false' }}"
                                     tabindex="-1"
                                 >
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename=browser.icon) }}" alt="">
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename=browser.icon_filename) }}" alt="" aria-hidden="true">
                                     <span class="trade-strategy-dropdown-text">{{ browser.label }}</span>
                                 </button>
                                 {% endfor %}
                             </div>
                         </div>
+                        {% from "_browser_session_status.html" import render_browser_session_status %}
+                        {{ render_browser_session_status("No signed-in ChatGPT account detected", "Ready to use ChatGPT Web") }}
+                        </div>
                     </label>
                 </div>
-                <p class="agent-web-bridge-copy" data-agent-web-only{% if settings.platform == 'chatgpt' %} hidden{% endif %}>
-                    The web bridge requires a connected DevSpace app. Configure its HTTPS endpoint in <a href="{{ url_for('settings') }}#settings-agent">Settings</a>.
-                </p>
-                <label class="field agent-web-only-control" data-agent-web-only{% if settings.platform == 'chatgpt' %} hidden{% endif %}>
-                    <span class="field-label">Runtime log</span>
+
+                <div class="agent-session-source" data-agent-session-source>
+                    <label class="field">
+                        <span class="field-label">ChatGPT session</span>
+                        <div class="trade-strategy-combobox agent-combobox agent-session-mode-combobox" data-agent-combobox>
+                            <input type="hidden" value="new" data-agent-combobox-input data-agent-session-mode>
+                            <button
+                                type="button"
+                                class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger"
+                                data-agent-combobox-trigger
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                                aria-label="ChatGPT session: New session"
+                            >
+                                <span class="browser-session-trigger-leading">
+                                    <span class="browser-picker-selected-icon-shell">
+                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/arrow.uturn.up.circle.svg') }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
+                                    </span>
+                                    <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>New session</span>
+                                </span>
+                                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                            </button>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose ChatGPT session source" hidden>
+                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active" data-agent-combobox-option="new" data-agent-combobox-label="New session" data-agent-combobox-icon="{{ url_for('static', filename='images/arrow.uturn.up.circle.svg') }}" role="option" aria-selected="true" tabindex="-1">
+                                    <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/arrow.uturn.up.circle.svg') }}" alt="" aria-hidden="true">
+                                    <span class="trade-strategy-dropdown-text">New session</span>
+                                </button>
+                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option" data-agent-combobox-option="recent" data-agent-combobox-label="Recent sessions" data-agent-combobox-icon="{{ url_for('static', filename='images/rectangle.grid.1x3.fill.svg') }}" role="option" aria-selected="false" tabindex="-1">
+                                    <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/rectangle.grid.1x3.fill.svg') }}" alt="" aria-hidden="true">
+                                    <span class="trade-strategy-dropdown-text">Recent sessions</span>
+                                </button>
+                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option" data-agent-combobox-option="project" data-agent-combobox-label="Recent projects" data-agent-combobox-icon="{{ url_for('static', filename='images/rectangle.grid.3x2.fill.svg') }}" role="option" aria-selected="false" tabindex="-1">
+                                    <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/rectangle.grid.3x2.fill.svg') }}" alt="" aria-hidden="true">
+                                    <span class="trade-strategy-dropdown-text">Recent projects</span>
+                                </button>
+                            </div>
+                        </div>
+                        <span class="field-help" data-agent-session-help>Starts a new root-level ChatGPT session for this task.</span>
+                    </label>
+
+                    <div class="field agent-session-detail-field" data-agent-recent-session-field hidden>
+                        <span class="field-label">Recent sessions</span>
+                        <div class="trade-strategy-combobox agent-combobox agent-session-list-combobox" data-agent-combobox data-agent-session-list="recent">
+                            <input type="hidden" value="" data-agent-combobox-input data-agent-recent-session-url>
+                            <button type="button" class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger" data-agent-combobox-trigger aria-haspopup="listbox" aria-expanded="false" aria-label="Recent sessions: Loading recent sessions" disabled>
+                                <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>Loading recent sessions…</span>
+                                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                            </button>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a recent ChatGPT session" hidden></div>
+                        </div>
+                    </div>
+
+                    <div class="field agent-session-detail-field" data-agent-project-field hidden>
+                        <span class="field-label">Recent projects</span>
+                        <div class="trade-strategy-combobox agent-combobox agent-session-list-combobox" data-agent-combobox data-agent-session-list="projects">
+                            <input type="hidden" value="" data-agent-combobox-input data-agent-project-url>
+                            <button type="button" class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger" data-agent-combobox-trigger aria-haspopup="listbox" aria-expanded="false" aria-label="Recent projects: Loading recent projects" disabled>
+                                <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>Loading recent projects…</span>
+                                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                            </button>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a recent ChatGPT project" hidden></div>
+                        </div>
+                    </div>
+
+                    <div class="field agent-session-detail-field" data-agent-project-session-field hidden>
+                        <span class="field-label">Project session</span>
+                        <div class="trade-strategy-combobox agent-combobox agent-session-list-combobox" data-agent-combobox data-agent-session-list="project-sessions">
+                            <input type="hidden" value="new" data-agent-combobox-input data-agent-project-session-url>
+                            <button type="button" class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger" data-agent-combobox-trigger aria-haspopup="listbox" aria-expanded="false" aria-label="Project session: New session in project" disabled>
+                                <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>Choose a project first</span>
+                                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                            </button>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a session in this ChatGPT project" hidden></div>
+                        </div>
+                    </div>
+                </div>
+
+                <label class="field">
+                    <span class="field-label">Context package</span>
                     <span class="shadow-backup-destination-control agent-runtime-log-control">
                         <input
                             class="text-input-control agent-monospace-input"
                             type="text"
-                            id="agent_log_path"
-                            value="{{ runtime_snapshot.log_path }}"
-                            spellcheck="false"
-                            autocomplete="off"
+                            id="agent_context_policy"
+                            value="Markdown · up to {{ settings.context_limit_mib }} MiB"
                             readonly
                             aria-readonly="true"
                         >
@@ -179,11 +255,8 @@
                             <span class="icon agent-runtime-log-open-icon" aria-hidden="true"></span>
                         </a>
                     </span>
+                    <span class="field-help">Choose where this task continues; new session is the default. Configure prompts and limits in <a href="{{ url_for('settings') }}#settings-agent">Settings</a>.</span>
                 </label>
-                <div class="agent-action-row" data-agent-web-only{% if settings.platform == 'chatgpt' %} hidden{% endif %}>
-                    <button type="submit" class="primary-button" id="agent_runtime_start"{% if runtime_snapshot.ready %} disabled{% endif %}>Start MCP</button>
-                    <button type="button" class="secondary-button" id="agent_runtime_stop"{% if not runtime_snapshot.managed or agent_snapshot.running %} disabled{% endif %}>Stop MCP</button>
-                </div>
             </form>
         </aside>
 
@@ -192,32 +265,58 @@
                 <article class="report-card workspace-summary-card workspace-article-card agent-summary-card">
                     <div class="report-heading-row">
                         <div>
-                            <p class="workspace-kicker" data-agent-engine-kicker>{{ 'Local subscription agent' if settings.platform == 'chatgpt' else 'DevSpace web bridge' }}</p>
-                            <h2 data-agent-platform-heading>{{ platform_labels[settings.platform] }} Agent</h2>
+                            <h2 data-agent-heading>ChatGPT Web Agent</h2>
                         </div>
                         <span class="status-chip status-{{ agent_snapshot.phase }}" id="agent_phase_chip">{{ agent_snapshot.phase }}</span>
                     </div>
-                    <p data-agent-engine-copy>{% if settings.platform == 'chatgpt' %}Codex works directly in the selected project through the signed-in ChatGPT subscription. No MCP App, public tunnel, API key, or copied password is required.{% else %}The signed-in web product coordinates the connected DevSpace tools through its subscription session.{% endif %}</p>
-                    <p class="agent-readiness" data-ready="{{ 'true' if (settings.platform == 'chatgpt' and native_snapshot.ready) or (settings.platform != 'chatgpt' and runtime_snapshot.connection.ready) else 'false' }}">
+                    <p class="agent-readiness" data-ready="{{ 'true' if runtime_snapshot.ready else 'false' }}">
                         <span class="agent-readiness-dot" aria-hidden="true"></span>
-                        <span id="agent_readiness_message">{% if settings.platform == 'chatgpt' %}{{ native_snapshot.message }}{% elif not runtime_snapshot.ready %}Start the local MCP runtime.{% elif not runtime_snapshot.connection.public_configured %}Add the public HTTPS origin in Settings.{% elif not runtime_snapshot.connection.connected %}Add or refresh the DevSpace app in {{ platform_labels[settings.platform] }}.{% else %}DevSpace is connected and ready.{% endif %}</span>
+                        <span id="agent_readiness_message">{{ runtime_snapshot.message }}</span>
                     </p>
                 </article>
             </div>
 
             <div class="workspace-grid agent-workspace-grid">
                 <article class="report-card workspace-article-card agent-task-card">
+                    <article class="report-card workspace-article-card agent-response-card" aria-live="polite">
+                        <div class="agent-response-toolbar">
+                            <a class="secondary-button agent-conversation-link" id="agent_conversation_link" href="{{ agent_snapshot.conversation_url }}" target="_blank" rel="noopener"{% if not agent_snapshot.conversation_url %} hidden{% endif %}>Open conversation</a>
+                        </div>
+                        <details class="agent-activity-panel" id="agent_activity_panel"{% if agent_snapshot.running %} open{% endif %}{% if not agent_snapshot.activity %} hidden{% endif %}>
+                            <summary>
+                                <span>Activity</span>
+                                <span class="agent-activity-count" id="agent_activity_count">{{ agent_snapshot.activity | length }}</span>
+                            </summary>
+                            <ol class="agent-activity-list" id="agent_activity_list">
+                                {% for event in agent_snapshot.activity %}
+                                <li class="agent-activity-item" data-status="{{ event.status }}">
+                                    <span class="agent-activity-status" aria-hidden="true"></span>
+                                    <span class="agent-activity-content">
+                                        <span class="agent-activity-label">{{ event.label }}</span>
+                                        <span class="agent-activity-detail">{{ event.detail }}</span>
+                                    </span>
+                                    <span class="agent-activity-meta">{{ event.meta }}</span>
+                                </li>
+                                {% endfor %}
+                            </ol>
+                        </details>
+                        <div class="agent-response-output browser-media-prompt-markdown" id="agent_response_output" lang="zh-CN"{% if not agent_snapshot.response %} hidden{% endif %}>{{ render_prompt_markdown(agent_snapshot.response) }}</div>
+                        <p class="agent-empty-response" id="agent_empty_response"{% if agent_snapshot.response %} hidden{% endif %}>{{ agent_snapshot.message }}</p>
+                    </article>
+
                     <form id="agent_prompt_form" class="agent-prompt-form">
                         <input type="hidden" name="workspace_path" value="{{ settings.workspace_path }}" data-agent-workspace-input>
-                        <input type="hidden" name="platform" value="{{ settings.platform }}" data-agent-prompt-platform>
+                        <input type="hidden" name="operating_system" value="{{ settings.operating_system }}" data-agent-prompt-os>
                         <input type="hidden" name="browser" value="{{ settings.browser }}" data-agent-prompt-browser>
+                        <input type="hidden" name="session_mode" value="new" data-agent-prompt-session-mode>
+                        <input type="hidden" name="conversation_url" value="" data-agent-prompt-conversation-url>
+                        <input type="hidden" name="project_url" value="" data-agent-prompt-project-url>
                         <label class="field agent-composer-field">
                             <span class="agent-composer-shell">
-                                <textarea class="text-input-control agent-prompt-input" name="prompt" rows="4" placeholder="Ask {{ platform_labels[settings.platform] }} to inspect, change, or verify this workspace…" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
+                                <textarea class="text-input-control agent-prompt-input" name="prompt" rows="4" placeholder="Ask ChatGPT Web to inspect, change, and verify this project…" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
                                 <span class="agent-composer-footer">
                                     <span class="agent-composer-actions">
-                                        <button type="button" class="secondary-button agent-composer-stop" id="agent_stop_button"{% if not agent_snapshot.running %} disabled{% endif %}>Stop request</button>
-                                        <button type="submit" class="agent-composer-submit" id="agent_ask_button" aria-label="Ask {{ platform_labels[settings.platform] }}" title="Ask {{ platform_labels[settings.platform] }}"{% if (settings.platform == 'chatgpt' and not native_snapshot.ready) or (settings.platform != 'chatgpt' and not runtime_snapshot.connection.ready) or agent_snapshot.running %} disabled{% endif %}>
+                                        <button type="button" class="agent-composer-submit{% if agent_snapshot.running %} is-stop{% endif %}" id="agent_ask_button" data-agent-action="{{ 'stop' if agent_snapshot.running else 'ask' }}" aria-label="{{ 'Stop Agent task' if agent_snapshot.running else 'Ask ChatGPT Web' }}" title="{{ 'Stop Agent task' if agent_snapshot.running else 'Ask ChatGPT Web' }}"{% if not agent_snapshot.running %} disabled{% endif %}>
                                             <span class="icon agent-composer-submit-icon" aria-hidden="true"></span>
                                         </button>
                                     </span>
@@ -226,42 +325,17 @@
                         </label>
                     </form>
                 </article>
-
-                <article class="report-card workspace-article-card agent-response-card" aria-live="polite">
-                    <div class="agent-response-toolbar">
-                        <a class="secondary-button agent-conversation-link" id="agent_conversation_link" href="{{ agent_snapshot.conversation_url }}" target="_blank" rel="noopener"{% if not agent_snapshot.conversation_url %} hidden{% endif %}>Open conversation</a>
-                    </div>
-                    <details class="agent-activity-panel" id="agent_activity_panel"{% if agent_snapshot.running %} open{% endif %}{% if not agent_snapshot.activity %} hidden{% endif %}>
-                        <summary>
-                            <span>Activity</span>
-                            <span class="agent-activity-count" id="agent_activity_count">{{ agent_snapshot.activity | length }}</span>
-                        </summary>
-                        <ol class="agent-activity-list" id="agent_activity_list">
-                            {% for event in agent_snapshot.activity %}
-                            <li class="agent-activity-item" data-status="{{ event.status }}">
-                                <span class="agent-activity-status" aria-hidden="true"></span>
-                                <span class="agent-activity-content">
-                                    <span class="agent-activity-label">{{ event.label }}</span>
-                                    <span class="agent-activity-detail">{{ event.detail }}</span>
-                                </span>
-                                <span class="agent-activity-meta">{{ event.meta }}</span>
-                            </li>
-                            {% endfor %}
-                        </ol>
-                    </details>
-                    <div class="agent-response-output browser-media-prompt-markdown" id="agent_response_output"{% if not agent_snapshot.response %} hidden{% endif %}>{{ render_prompt_markdown(agent_snapshot.response) }}</div>
-                    <p class="agent-empty-response" id="agent_empty_response"{% if agent_snapshot.response %} hidden{% endif %}>{{ agent_snapshot.message }}</p>
-                </article>
             </div>
         </section>
     </div>
 
-{% set dock_section = "agent" %}
+    {% set dock_section = "agent" %}
     {% include "_sidebar_dock.html" %}
 </main>
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.16.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.0.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='devspace-agent.js', v='devspace-agent-v2.1.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.0.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.1.0-codex.4') }}"></script>
 </body>
 </html>

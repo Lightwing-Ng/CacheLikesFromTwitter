@@ -1,4 +1,4 @@
-<!-- Code version: v1.41.2-codex.1 -->
+<!-- Code version: v1.46.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -7,13 +7,15 @@
     <title>CacheLikesFromTwitter Browser</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.62.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.75.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.1.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.26.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.27.0-codex.1') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='browser-search.js', v='browser-search-v2.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-source-filter.js', v='browser-source-filter-v1.2.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='browser-session-actions.js', v='browser-session-actions-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='browser-session-actions.js', v='browser-session-actions-v1.1.0-codex.1') }}"></script>
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
@@ -54,6 +56,7 @@
                     action="{{ url_for('browser') }}"
                     method="get"
                     class="sidebar-form browser-filter-form"
+                    id="browser_filter_form"
                     data-wait-title="Updating cache browser"
                     data-wait-copy="Applying the selected filters to the local cache."
                 >
@@ -69,18 +72,6 @@
                     </div>
                     <input type="hidden" name="session_view" value="{{ '1' if filters.session_view else '0' }}">
                     {% if filters.session %}<input type="hidden" name="session" value="{{ filters.session }}">{% endif %}
-                    <label class="field browser-filter-field">
-                        <span>Search</span>
-                        <input
-                            type="search"
-                            name="q"
-                            class="browser-search-input"
-                            value="{{ filters.q }}"
-                            maxlength="120"
-                            autocomplete="off"
-                            aria-label="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
-                        >
-                    </label>
                     <label class="field browser-filter-field">
                         <span>{{ "Source" if filters.view == "media" else "Chat source" }}</span>
                         {% set source_options = cache_sources if filters.view == "media" else chat_history_sources %}
@@ -211,7 +202,7 @@
             <div class="workspace-header browser-workspace-header">
                 <div class="report-card workspace-summary-card workspace-article-card browser-summary-card{% if filters.view == 'text' %} browser-text-summary-card{% endif %}">
                     <div class="report-heading-row browser-heading-row">
-                        <div>
+                        <div class="browser-heading-copy">
                             {% if filters.view == "text" and text_page.session_detail %}
                             <p class="workspace-kicker">Session</p>
                             <h2>{{ text_page.current_session.conversation_title }}</h2>
@@ -245,46 +236,88 @@
                             <h2>{{ "Cached media browser" if filters.view == "media" else "Cached text browser" }}</h2>
                             {% endif %}
                         </div>
-                        {% if filters.view == "text" and text_page.session_detail and text_page.current_session.conversation_url %}
-                        <div class="browser-session-actions" data-browser-session-actions>
+                        <div class="browser-heading-tools">
+                            <label class="field browser-filter-field browser-search-field" data-browser-search for="browser_search_input">
+                                <span>Search</span>
+                                <div class="browser-search-control">
+                                    <input
+                                        id="browser_search_input"
+                                        type="search"
+                                        name="q"
+                                        form="browser_filter_form"
+                                        class="browser-search-input"
+                                        value="{{ filters.q }}"
+                                        maxlength="120"
+                                        autocomplete="off"
+                                        autocapitalize="none"
+                                        spellcheck="false"
+                                        role="combobox"
+                                        aria-autocomplete="list"
+                                        aria-controls="browser_search_suggestions"
+                                        aria-expanded="false"
+                                        aria-label="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
+                                        data-browser-search-input
+                                    >
+                                    <div
+                                        class="browser-search-suggestions"
+                                        id="browser_search_suggestions"
+                                        data-browser-search-menu
+                                        role="listbox"
+                                        aria-label="Recommended searches"
+                                        hidden
+                                    ></div>
+                                </div>
+                            </label>
+                            {% if filters.view == "text" and text_page.session_detail and text_page.current_session.conversation_url %}
+                            <div
+                            class="browser-session-actions browser-session-actions-drawer"
+                            data-browser-session-actions
+                            data-browser-session-actions-drawer
+                            role="group"
+                            aria-label="Session actions"
+                        >
                             <button
                                 type="button"
-                                class="browser-session-actions-trigger"
-                                data-browser-session-actions-toggle
-                                aria-expanded="false"
-                                aria-controls="browser_session_actions_drawer"
-                                aria-label="Open session actions"
-                                title="Open session actions"
+                                class="browser-session-action-button browser-session-actions-trigger browser-session-open-original-button"
+                                data-browser-session-open-original
+                                data-browser-session-original-url="{{ text_page.current_session.conversation_url }}"
+                                aria-label="Open original in Safari"
+                                title="Open original in Safari"
                             >
                                 <img src="{{ url_for('static', filename='images/browser.safari.png') }}" alt="" aria-hidden="true">
                             </button>
-                            <div
-                                class="browser-session-actions-drawer"
-                                id="browser_session_actions_drawer"
-                                data-browser-session-actions-drawer
-                                hidden
+                            <button
+                                type="button"
+                                class="browser-session-action-button browser-session-refresh-button"
+                                data-browser-session-refresh-url="{{ url_for('browser', view='text', source=filters.source, q=filters.q, sort=filters.sort, session_view='1', session=text_page.current_session.stable_id, session_page=filters.session_page, page=filters.page, refresh='1') }}"
+                                data-wait-title="Refreshing page"
+                                data-wait-copy="Reloading the current cached session page."
+                                aria-label="Refresh current page"
+                                title="Refresh current page"
                             >
-                                <a
-                                    class="browser-session-action-link"
-                                    href="{{ text_page.current_session.conversation_url }}"
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                >
-                                    <img src="{{ url_for('static', filename='images/browser.safari.png') }}" alt="" aria-hidden="true">
-                                    <span>Open original in Safari</span>
-                                </a>
-                                <a
-                                    class="browser-session-action-link"
-                                    href="{{ url_for('browser_session_export', session_id=text_page.current_session.stable_id, source=filters.source, sort=filters.sort) }}"
-                                    download
-                                    data-browser-session-export
-                                >
-                                    <span class="icon browser-session-export-icon" aria-hidden="true"></span>
-                                    <span>Export Markdown</span>
-                                </a>
+                                <span class="icon browser-session-drawer-refresh-icon" aria-hidden="true"></span>
+                            </button>
+                            <button
+                                type="button"
+                                class="browser-session-action-button browser-session-full-export-button"
+                                data-browser-session-download-url="{{ url_for('browser_session_export', session_id=text_page.current_session.stable_id, source=filters.source, sort=filters.sort) }}"
+                                aria-label="Export Markdown"
+                                title="Export Markdown"
+                            >
+                                <span class="icon browser-session-export-icon" aria-hidden="true"></span>
+                            </button>
+                            <button
+                                type="button"
+                                class="browser-session-action-button browser-session-page-export-button"
+                                data-browser-session-download-url="{{ url_for('browser_session_export', session_id=text_page.current_session.stable_id, source=filters.source, sort=filters.sort, page=filters.page, scope='page') }}"
+                                aria-label="Export current page results"
+                                title="Export current page results"
+                            >
+                                <span class="icon browser-session-page-export-icon" aria-hidden="true"></span>
+                            </button>
                             </div>
+                            {% endif %}
                         </div>
-                        {% endif %}
                     </div>
                     {% if filters.view == "media" %}
                     <div
@@ -622,7 +655,7 @@
                                             {% endif %}
                                         </td>
                                         <td>
-                                            <div class="browser-session-table-message">{{ render_prompt_markdown(message.content_text) }}</div>
+                                            <div class="browser-session-table-message">{{ render_cached_message(message.content_text, message.content_html) }}</div>
                                             {% if message.media_refs or message.source_links %}
                                             <div class="browser-session-table-links">
                                                 {% for media_ref in message.media_refs %}<a href="{{ media_ref.href }}">Related media: {{ media_ref.label }}</a>{% endfor %}
@@ -704,7 +737,7 @@
                                 </div>
                                 <time datetime="{{ message.last_seen_at }}">{{ format_captured_at_timestamp_label(message.last_seen_at) }}</time>
                             </header>
-                            <div class="browser-chat-message-content">{{ render_prompt_markdown(message.content_text) }}</div>
+                            <div class="browser-chat-message-content">{{ render_cached_message(message.content_text, message.content_html) }}</div>
                             {% if message.media_refs or message.source_links or message.conversation_url %}
                             <footer class="browser-chat-message-links">
                                 {% for media_ref in message.media_refs %}
@@ -769,6 +802,7 @@
 
     {% set dock_section = "local-resources" %}
     {% include "_sidebar_dock.html" %}
+    <script id="browser_search_suggestion_data" type="application/json">{{ browser_search_suggestions | tojson }}</script>
 </main>
 
 <div

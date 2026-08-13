@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.36.0-codex.1
+Code version: v1.44.0-codex.1
 """
 
 from pathlib import Path
@@ -574,8 +574,8 @@ def test_browser_view_dock_switches_between_grid_and_list_layouts() -> None:
         ".browser-view-dock::before {",
         ".browser-view-dock-item {",
         ".browser-view-dock-item.is-active {",
-        'mask: url("/static/images/list.dash.header.rectangle.svg") center/contain no-repeat;',
-        'mask: url("/static/images/film.circle.svg") center/contain no-repeat;',
+        'mask: url("/static/images/rectangle.grid.1x3.fill.svg") center/contain no-repeat;',
+        'mask: url("/static/images/rectangle.grid.3x2.fill.svg") center/contain no-repeat;',
         '.browser-gallery[data-view="list"] {',
         '.browser-gallery[data-view="list"] .browser-media-open {',
         "grid-column: 1 / 3;",
@@ -756,9 +756,13 @@ def test_browser_content_mode_control_uses_the_sibling_blue_pill_pattern() -> No
         ".browser-session-neighbor-prev-icon {",
         ".browser-session-neighbor-next-icon {",
         ".browser-session-actions {",
-        ".browser-session-actions-trigger {",
-        ".browser-session-actions-drawer {",
-        ".browser-session-action-link {",
+        ".browser-session-action-button {",
+        ".browser-session-actions > .browser-session-open-original-button {",
+        ".browser-session-actions > .browser-session-refresh-button {",
+        ".browser-session-actions > .browser-session-full-export-button {",
+        ".browser-session-drawer-refresh-icon {",
+        'mask-image: url("/static/images/arrow.trianglehead.clockwise.svg");',
+        ".browser-session-page-export-icon {",
         ".browser-session-export-icon {",
         ".browser-session-index-table .browser-session-col-number {",
         ".browser-session-table-source {",
@@ -769,6 +773,50 @@ def test_browser_content_mode_control_uses_the_sibling_blue_pill_pattern() -> No
         ".browser-session-table-updated-link {",
     ):
         assert token in stylesheet
+
+
+def test_browser_session_messages_wrap_rich_content_inside_fixed_cells() -> None:
+    """Keep code blocks and nested tables inside the session message column."""
+    stylesheet = _stylesheet()
+
+    message_start = stylesheet.index(".browser-session-table-message {")
+    message_rule = stylesheet[message_start:stylesheet.index("\n}", message_start)]
+    pre_start = stylesheet.index(".browser-session-table-message pre {")
+    pre_rule = stylesheet[pre_start:stylesheet.index("\n}", pre_start)]
+    code_start = stylesheet.index(".browser-session-table-message pre code {")
+    code_rule = stylesheet[code_start:stylesheet.index("\n}", code_start)]
+    nested_table_start = stylesheet.index(".browser-session-table-message table {")
+    nested_table_rule = stylesheet[nested_table_start:stylesheet.index("\n}", nested_table_start)]
+
+    for token in (
+        "box-sizing: border-box;",
+        "width: 100%;",
+        "min-width: 0;",
+        "max-width: 100%;",
+        "overflow-x: auto;",
+        "overflow-wrap: anywhere;",
+        "word-break: break-word;",
+    ):
+        assert token in message_rule
+    assert ".browser-session-table-message > * {" in stylesheet
+    assert ".browser-session-table-message img," in stylesheet
+    detail_table_start = stylesheet.index(".browser-session-detail-table {")
+    detail_table_rule = stylesheet[detail_table_start:stylesheet.index("\n}", detail_table_start)]
+    assert "width: 100%;" in detail_table_rule
+    assert "min-width: 0;" in detail_table_rule
+    for token in (
+        "box-sizing: border-box;",
+        "max-width: 100%;",
+        "overflow-x: auto;",
+        "white-space: pre-wrap;",
+        "overflow-wrap: anywhere;",
+        "word-break: break-word;",
+    ):
+        assert token in pre_rule
+    for token in ("white-space: inherit;", "overflow-wrap: inherit;", "word-break: inherit;"):
+        assert token in code_rule
+    for token in ("width: 100%;", "max-width: 100%;", "table-layout: fixed;"):
+        assert token in nested_table_rule
 
 
 def test_browser_workspace_prefers_simplified_chinese_font_fallbacks() -> None:
@@ -794,19 +842,42 @@ def test_browser_summary_card_aligns_pagination_with_the_sidebar_dock() -> None:
     assert ".browser-text-summary-card .browser-session-table-scroll {" in stylesheet
 
 
+def test_browser_picker_arrow_matches_the_shared_select_arrow() -> None:
+    """Keep custom picker arrows visually aligned with native select controls."""
+    stylesheet = _stylesheet()
+    arrow_start = stylesheet.index("\n.browser-picker-trigger-chevron {") + 1
+    arrow_rule = stylesheet[arrow_start:stylesheet.index("\n}", arrow_start)]
+
+    for token in (
+        "width: 12px;",
+        "height: 8px;",
+        "font-size: 0;",
+        "background-repeat: no-repeat;",
+        "background-position: center;",
+        "background-size: 12px 8px;",
+        "fill='currentColor'",
+    ):
+        assert token in arrow_rule
+
+    assert 'content: "\\25BE";' not in stylesheet
+
+
 def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     """Keep the fourth dock item and Agent workspace aligned with the shared shell."""
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.62.0-codex.1 */",
+                "/* Code version: v2.75.0-codex.1 */",
         ".dock-brand-icon {",
         "width: 22px;",
         "height: 22px;",
-        "/* Native subscription Agent with an optional DevSpace web bridge. */",
+        "/* Browser-mediated Computer Use Agent. */",
         ".agent-connect-fields {",
         "grid-template-columns: minmax(0, 1fr);",
         "gap: 14px;",
+        ".agent-os-combobox .browser-picker-selected-icon-shell {",
+        ".agent-os-combobox .browser-picker-option-icon {",
+        ".agent-os-combobox .agent-combobox-option {",
         ".agent-combobox.is-agent-combobox-open .agent-combobox-dropdown:not([hidden]) {",
         ".agent-runtime-log-open-icon {",
         'mask: url("/static/images/finder.svg") center/contain no-repeat;',
@@ -816,17 +887,29 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         "--settings-category-active-index: 5;",
         ".agent-workspace-grid {",
         "grid-template-columns: minmax(0, 1fr);",
-        "grid-template-rows: auto minmax(260px, 1fr);",
+        "grid-template-rows: minmax(0, 1fr);",
+        ".agent-task-card {",
+        "display: flex;",
+        ".agent-task-card > .agent-response-card,",
+        "min-height: 0;",
         ".agent-composer-shell:focus-within {",
         ".agent-composer-submit-icon {",
+        ".agent-composer-submit.is-stop .agent-composer-submit-icon {",
+        'mask-image: url("/static/images/stop.fill.svg");',
         "border-radius: var(--radius-soft);",
         ".agent-readiness[data-ready=\"true\"] .agent-readiness-dot,",
         ".agent-activity-panel {",
+        ".agent-activity-list {",
+        "overflow-y: auto;",
         ".agent-activity-item[data-status=\"completed\"] .agent-activity-status {",
         ".settings-agent-runtime-status {",
         ".agent-response-output {",
+        "overflow-y: auto;",
+        '"PingFang SC", "PingFang TC", "PingFang HK"',
         ".agent-response-output h1,",
         "font-size: var(--font-card-title);",
+        ".settings-agent-system-prompt {",
+        ".settings-agent-limit-grid {",
         "@media (max-width: 1100px) {",
     ):
         assert token in stylesheet
