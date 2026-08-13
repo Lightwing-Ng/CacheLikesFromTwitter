@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.34.1-codex.1
+Code version: v1.36.0-codex.1
 """
 
 from pathlib import Path
@@ -799,11 +799,11 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.60.7-codex.1 */",
+        "/* Code version: v2.62.0-codex.1 */",
         ".dock-brand-icon {",
         "width: 22px;",
         "height: 22px;",
-        "/* DevSpace-backed subscription web Agent. */",
+        "/* Native subscription Agent with an optional DevSpace web bridge. */",
         ".agent-connect-fields {",
         "grid-template-columns: minmax(0, 1fr);",
         "gap: 14px;",
@@ -820,8 +820,13 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-composer-shell:focus-within {",
         ".agent-composer-submit-icon {",
         "border-radius: var(--radius-soft);",
+        ".agent-readiness[data-ready=\"true\"] .agent-readiness-dot,",
+        ".agent-activity-panel {",
+        ".agent-activity-item[data-status=\"completed\"] .agent-activity-status {",
+        ".settings-agent-runtime-status {",
         ".agent-response-output {",
-        "white-space: pre-wrap;",
+        ".agent-response-output h1,",
+        "font-size: var(--font-card-title);",
         "@media (max-width: 1100px) {",
     ):
         assert token in stylesheet

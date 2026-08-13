@@ -1,11 +1,11 @@
-"""Managed DevSpace MCP runtime and subscription web-agent bridge.
+"""Managed DevSpace web bridge and unified local Agent service.
 
-Code version: v1.3.2-codex.1
+Code version: v2.0.1-codex.1
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field, replace
 import ipaddress
 import json
 import logging
@@ -14,7 +14,7 @@ from pathlib import Path
 import secrets
 import signal
 import subprocess
-from threading import Event, RLock, Thread
+from threading import Event, RLock, Thread, current_thread
 import time
 from typing import Any, Callable
 from urllib.error import URLError
@@ -27,6 +27,7 @@ from .browser_sessions import (
     launch_chromium_context,
     sync_playwright_or_error,
 )
+from .codex_agent import CodexRuntimeInspector, resolve_agent_workspace, run_codex_agent
 from .config import CrawlConfig, PROJECT_ROOT
 from .safari_automation import SafariContext
 from .state import utc_now
@@ -60,6 +61,24 @@ AGENT_PLATFORM_OPTIONS = (
     {"key": "gemini", "label": "Gemini", "icon_filename": "images/Google_Gemini_logo_2025_symbol.svg"},
     {"key": "grok", "label": "Grok", "icon_filename": "images/grok.svg"},
 )
+WEB_RESPONSE_MINIMUM_SECONDS = 8.0
+WEB_RESPONSE_STABLE_SECONDS = 3.0
+WEB_PROGRESS_TEXT = {
+    "thinking",
+    "working",
+    "searching",
+    "analyzing",
+    "generating",
+}
+WEB_DEVSPACE_FAILURE_MARKERS = (
+    "devspace plugin is unavailable",
+    "no available devspace",
+    "could not find the devspace",
+    "cannot access devspace",
+    "can't access devspace",
+    "unable to use devspace",
+    "does not have the devspace",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +87,7 @@ class DevSpaceSettings:
 
     source_dir: str = str(DEFAULT_DEVSPACE_SOURCE_DIR)
     allowed_root: str = str(PROJECT_ROOT)
+    workspace_path: str = str(PROJECT_ROOT)
     public_base_url: str = f"http://127.0.0.1:{DEFAULT_DEVSPACE_PORT}"
     platform: str = AGENT_PLATFORM_DEFAULT
     target_url: str = CHATGPT_HOME_URL
@@ -77,15 +97,18 @@ class DevSpaceSettings:
 
 @dataclass(slots=True)
 class AgentRunSnapshot:
-    """Describe one subscription web-agent request without exposing credentials."""
+    """Describe one Agent request without exposing credentials or command output."""
 
     running: bool = False
     phase: str = "idle"
-    message: str = "Ready to ask the selected web agent through DevSpace."
+    message: str = "Ready to run an Agent task in the selected project."
+    engine: str = "codex"
     prompt: str = ""
     workspace_path: str = ""
     response: str = ""
     conversation_url: str = ""
+    thread_id: str = ""
+    activity: list[dict[str, str]] = field(default_factory=list)
     started_at: str = ""
     finished_at: str = ""
     last_error: str = ""
@@ -131,10 +154,15 @@ def validate_devspace_settings(payload: dict[str, Any]) -> DevSpaceSettings:
     """Normalize and validate settings received from the local control page."""
     source_dir = Path(str(payload.get("source_dir", DEFAULT_DEVSPACE_SOURCE_DIR))).expanduser().resolve()
     allowed_root = Path(str(payload.get("allowed_root", PROJECT_ROOT))).expanduser().resolve()
+    workspace_path = Path(
+        str(payload.get("workspace_path", payload.get("allowed_root", PROJECT_ROOT)))
+    ).expanduser().resolve()
     if not source_dir.is_dir() or not (source_dir / "package.json").is_file():
         raise ValueError(f"DevSpace source directory is invalid: {source_dir}")
     if not allowed_root.is_dir():
         raise ValueError(f"Allowed workspace root is invalid: {allowed_root}")
+    if not workspace_path.is_dir():
+        raise ValueError(f"Agent workspace directory is invalid: {workspace_path}")
 
     try:
         port = int(payload.get("port", DEFAULT_DEVSPACE_PORT))
@@ -171,6 +199,7 @@ def validate_devspace_settings(payload: dict[str, Any]) -> DevSpaceSettings:
     return DevSpaceSettings(
         source_dir=str(source_dir),
         allowed_root=str(allowed_root),
+        workspace_path=str(workspace_path),
         public_base_url=public_base_url,
         platform=platform,
         target_url=target_url,
@@ -217,6 +246,7 @@ class DevSpaceRuntimeManager:
         self._log_handle: Any = None
         self._log_path = log_path
         self._settings = load_devspace_settings()
+        self._connection_log_offset = self._log_size()
 
     @property
     def settings(self) -> DevSpaceSettings:
@@ -230,17 +260,46 @@ class DevSpaceRuntimeManager:
             save_devspace_settings(settings)
             self._settings = settings
 
+    def update_preferences(
+        self,
+        *,
+        workspace_path: str,
+        platform: str,
+        browser: str,
+    ) -> DevSpaceSettings:
+        """Persist Agent-only choices without mutating a running MCP process."""
+        workspace = resolve_agent_workspace(workspace_path)
+        platform_key = str(platform or "").strip().lower()
+        browser_key = str(browser or "").strip().lower()
+        if platform_key not in AGENT_PLATFORM_CONFIG:
+            raise ValueError("Agent platform must be ChatGPT, Gemini, or Grok.")
+        if browser_key not in {"chrome", "edge", "safari"}:
+            raise ValueError("The Agent workspace supports Safari, Chrome, or Edge.")
+        with self._lock:
+            settings = replace(
+                self._settings,
+                workspace_path=str(workspace),
+                platform=platform_key,
+                browser=browser_key,
+                target_url=AGENT_PLATFORM_CONFIG[platform_key]["url"],
+            )
+            save_devspace_settings(settings)
+            self._settings = settings
+            return settings
+
     def snapshot(self) -> dict[str, Any]:
         """Return runtime readiness without leaking the OAuth owner token."""
         with self._lock:
             process_running = self._process is not None and self._process.poll() is None
             ready = self._healthcheck(self._settings.port)
             source_ready = (Path(self._settings.source_dir) / "dist/cli.js").is_file()
+            connection = self._connection_snapshot(ready)
             return {
                 "running": process_running or ready,
                 "managed": process_running,
                 "ready": ready,
                 "source_ready": source_ready,
+                "connection": connection,
                 "local_mcp_url": f"http://127.0.0.1:{self._settings.port}/mcp",
                 "log_path": str(self._log_path),
                 "settings": asdict(self._settings),
@@ -264,6 +323,7 @@ class DevSpaceRuntimeManager:
             save_devspace_settings(settings)
             self._settings = settings
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
+            self._connection_log_offset = self._log_size()
             self._log_handle = self._log_path.open("ab", buffering=0)
             environment = os.environ.copy()
             environment.update(
@@ -332,6 +392,74 @@ class DevSpaceRuntimeManager:
             self._log_handle.close()
             self._log_handle = None
 
+    def activity_marker(self) -> int:
+        """Return a byte offset used to verify subsequent MCP traffic."""
+        with self._lock:
+            return self._log_size()
+
+    def successful_mcp_activity_since(self, marker: int) -> bool:
+        """Return whether authenticated MCP traffic reached DevSpace after a marker."""
+        return self._read_mcp_activity(max(0, int(marker)))["connected"]
+
+    def _connection_snapshot(self, local_ready: bool) -> dict[str, Any]:
+        """Describe every web-bridge prerequisite as independently verifiable state."""
+        public_parts = urlsplit(self._settings.public_base_url)
+        public_configured = (
+            public_parts.scheme == "https"
+            and bool(public_parts.hostname)
+            and not is_loopback_address(public_parts.hostname)
+        )
+        activity = self._read_mcp_activity(self._connection_log_offset)
+        return {
+            "ready": bool(local_ready and public_configured and activity["connected"]),
+            "public_configured": public_configured,
+            "connected": activity["connected"],
+            "last_connected_at": activity["last_connected_at"],
+            "public_mcp_url": (
+                f"{self._settings.public_base_url.rstrip('/')}/mcp"
+                if public_configured
+                else ""
+            ),
+        }
+
+    def _read_mcp_activity(self, offset: int) -> dict[str, Any]:
+        """Read bounded structured log data and find successful MCP transport events."""
+        connected = False
+        last_connected_at = ""
+        try:
+            with self._log_path.open("rb") as handle:
+                file_size = handle.seek(0, os.SEEK_END)
+                bounded_offset = max(0, min(offset, file_size))
+                if file_size - bounded_offset > 2 * 1024 * 1024:
+                    bounded_offset = file_size - 2 * 1024 * 1024
+                handle.seek(bounded_offset)
+                for raw_line in handle:
+                    try:
+                        payload = json.loads(raw_line.decode("utf-8", errors="replace"))
+                    except (json.JSONDecodeError, UnicodeDecodeError):
+                        continue
+                    event = str(payload.get("event") or "")
+                    status = payload.get("status")
+                    is_successful_http = (
+                        event == "http_request"
+                        and payload.get("path") == "/mcp"
+                        and isinstance(status, int)
+                        and 200 <= status < 400
+                    )
+                    if is_successful_http or event == "mcp_session_created":
+                        connected = True
+                        last_connected_at = str(payload.get("ts") or last_connected_at)
+        except OSError:
+            pass
+        return {"connected": connected, "last_connected_at": last_connected_at}
+
+    def _log_size(self) -> int:
+        """Return the current structured runtime log size."""
+        try:
+            return self._log_path.stat().st_size
+        except OSError:
+            return 0
+
     @staticmethod
     def _healthcheck(port: int) -> bool:
         try:
@@ -341,16 +469,22 @@ class DevSpaceRuntimeManager:
             return False
 
 
-class ChatGPTWebAgentService:
-    """Submit one DevSpace-directed request through a signed-in web product."""
+class AgentService:
+    """Run native ChatGPT Agent tasks and optional DevSpace web-bridge tasks."""
 
     def __init__(
         self,
         runtime: DevSpaceRuntimeManager,
         runner: Callable[..., tuple[str, str]] | None = None,
+        *,
+        native_runner: Callable[..., tuple[str, str]] | None = None,
+        web_runner: Callable[..., tuple[str, str]] | None = None,
+        native_runtime: CodexRuntimeInspector | None = None,
     ) -> None:
         self._runtime = runtime
-        self._runner = runner or run_chatgpt_web_agent
+        self._native_runtime = native_runtime or CodexRuntimeInspector()
+        self._native_runner = native_runner or runner or run_codex_agent
+        self._web_runner = web_runner or runner or run_chatgpt_web_agent
         self._lock = RLock()
         self._snapshot = AgentRunSnapshot()
         self._stop_requested = Event()
@@ -360,14 +494,66 @@ class ChatGPTWebAgentService:
         with self._lock:
             return asdict(self._snapshot)
 
-    def start(self, prompt: str, workspace_path: str, config: CrawlConfig) -> None:
+    def native_snapshot(self, *, refresh: bool = False) -> dict[str, Any]:
+        """Return the native Codex readiness used by the default ChatGPT mode."""
+        return self._native_runtime.snapshot(refresh=refresh)
+
+    def start(
+        self,
+        prompt: str,
+        workspace_path: str,
+        config: CrawlConfig,
+        *,
+        platform: str | None = None,
+        browser: str | None = None,
+    ) -> None:
         clean_prompt = str(prompt or "").strip()
         if not clean_prompt:
             raise ValueError("Enter a question or task for the agent.")
-        settings = self._runtime.settings
-        workspace = resolve_workspace_path(workspace_path, settings.allowed_root)
-        if not self._runtime.snapshot()["ready"]:
-            raise RuntimeError("Start the DevSpace MCP runtime before asking the agent.")
+        base_settings = self._runtime.settings
+        platform_key = str(platform or base_settings.platform).strip().lower()
+        if platform_key not in AGENT_PLATFORM_CONFIG:
+            raise ValueError("Agent platform must be ChatGPT, Gemini, or Grok.")
+        browser_key = str(browser or base_settings.browser).strip().lower()
+        if browser_key not in {"chrome", "edge", "safari"}:
+            raise ValueError("The Agent workspace supports Safari, Chrome, or Edge.")
+        settings = replace(
+            base_settings,
+            platform=platform_key,
+            browser=browser_key,
+            target_url=AGENT_PLATFORM_CONFIG[platform_key]["url"],
+        )
+
+        if platform_key == "chatgpt":
+            workspace = resolve_agent_workspace(workspace_path)
+            native_status = self.native_snapshot(refresh=True)
+            if not native_status["ready"]:
+                raise RuntimeError(native_status["message"])
+            runner = self._native_runner
+            engine = "codex"
+            activity_marker: int | None = None
+            start_message = "Starting Codex through the signed-in ChatGPT subscription."
+        else:
+            workspace = resolve_workspace_path(workspace_path, settings.allowed_root)
+            runtime_snapshot = self._runtime.snapshot()
+            if not runtime_snapshot["ready"]:
+                raise RuntimeError("Start the DevSpace MCP runtime before asking the web agent.")
+            connection = runtime_snapshot["connection"]
+            if not connection["public_configured"]:
+                raise RuntimeError(
+                    "Configure a public HTTPS DevSpace origin in Settings before using the web bridge."
+                )
+            if not connection["connected"]:
+                raise RuntimeError(
+                    f"Add or refresh the DevSpace app in {AGENT_PLATFORM_CONFIG[platform_key]['label']} "
+                    "before sending a task. No authenticated MCP connection has reached this runtime."
+                )
+            runner = self._web_runner
+            engine = "devspace"
+            activity_marker = self._runtime.activity_marker()
+            start_message = (
+                f"Opening the signed-in {AGENT_PLATFORM_CONFIG[platform_key]['label']} web session."
+            )
 
         with self._lock:
             if self._snapshot.running:
@@ -376,14 +562,23 @@ class ChatGPTWebAgentService:
             self._snapshot = AgentRunSnapshot(
                 running=True,
                 phase="starting",
-                message=f"Opening the signed-in {settings.platform.title()} web session.",
+                message=start_message,
+                engine=engine,
                 prompt=clean_prompt,
                 workspace_path=str(workspace),
                 started_at=utc_now(),
             )
             self._worker = Thread(
                 target=self._run,
-                args=(clean_prompt, str(workspace), config, settings),
+                args=(
+                    runner,
+                    clean_prompt,
+                    str(workspace),
+                    config,
+                    settings,
+                    engine,
+                    activity_marker,
+                ),
                 daemon=True,
             )
             self._worker.start()
@@ -394,18 +589,29 @@ class ChatGPTWebAgentService:
                 return False
             self._stop_requested.set()
             self._snapshot.phase = "stopping"
-            self._snapshot.message = "Stop requested. Waiting for the browser task to end."
+            self._snapshot.message = "Stop requested. Waiting for the Agent task to end."
             return True
+
+    def stop_at_exit(self) -> None:
+        """Signal an active native or browser Agent task during application shutdown."""
+        self.request_stop()
+        with self._lock:
+            worker = self._worker
+        if worker is not None and worker is not current_thread() and worker.is_alive():
+            worker.join(timeout=8)
 
     def _run(
         self,
+        runner: Callable[..., tuple[str, str]],
         prompt: str,
         workspace_path: str,
         config: CrawlConfig,
         settings: DevSpaceSettings,
+        engine: str,
+        activity_marker: int | None,
     ) -> None:
         try:
-            response, conversation_url = self._runner(
+            response, conversation_url = runner(
                 prompt=prompt,
                 workspace_path=workspace_path,
                 config=config,
@@ -413,11 +619,28 @@ class ChatGPTWebAgentService:
                 should_stop=self._stop_requested.is_set,
                 update=self._update,
             )
+            if engine == "devspace":
+                if _response_reports_missing_devspace(response):
+                    raise RuntimeError(
+                        "The selected web product reported that DevSpace is unavailable. "
+                        "Refresh the DevSpace app connection before retrying."
+                    )
+                if activity_marker is None or not self._runtime.successful_mcp_activity_since(
+                    activity_marker
+                ):
+                    raise RuntimeError(
+                        "No DevSpace tool call reached the local runtime during this task. "
+                        "The response was rejected instead of being reported as a completed Agent run."
+                    )
             with self._lock:
                 stopped = self._stop_requested.is_set()
                 self._snapshot.running = False
                 self._snapshot.phase = "stopped" if stopped else "finished"
-                self._snapshot.message = "Agent request stopped." if stopped else "Agent response completed."
+                self._snapshot.message = (
+                    "Agent request stopped."
+                    if stopped
+                    else "Agent task completed and returned a verified result."
+                )
                 self._snapshot.response = response
                 self._snapshot.conversation_url = conversation_url
                 self._snapshot.finished_at = utc_now()
@@ -437,6 +660,32 @@ class ChatGPTWebAgentService:
                     setattr(self._snapshot, key, value)
 
 
+ChatGPTWebAgentService = AgentService
+
+
+def _response_reports_missing_devspace(response: str) -> bool:
+    """Detect explicit web-product failures instead of presenting them as success."""
+    normalized = " ".join(str(response or "").casefold().split())
+    return any(marker in normalized for marker in WEB_DEVSPACE_FAILURE_MARKERS)
+
+
+def _is_web_response_complete(
+    response: str,
+    *,
+    is_generating: bool,
+    submitted_at: float,
+    stable_since: float,
+    now: float,
+) -> bool:
+    """Require a substantive, stable answer after the web generation lifecycle."""
+    normalized = str(response or "").strip()
+    if not normalized or normalized.casefold().rstrip(". …") in WEB_PROGRESS_TEXT:
+        return False
+    if is_generating or now - submitted_at < WEB_RESPONSE_MINIMUM_SECONDS:
+        return False
+    return now - stable_since >= WEB_RESPONSE_STABLE_SECONDS
+
+
 def run_chatgpt_web_agent(
     *,
     prompt: str,
@@ -451,7 +700,7 @@ def run_chatgpt_web_agent(
     platform_config = AGENT_PLATFORM_CONFIG[settings.platform]
 
     agent_prompt = (
-        f"Use the DevSpace plugin for this {platform_config['label']} request. First call open_workspace with "
+        f"Use the connected DevSpace app for this {platform_config['label']} request. First call open_workspace with "
         f"path {workspace_path!r} in checkout mode. Reuse the returned workspaceId for every "
         "later DevSpace tool call. Follow all project instruction files, work autonomously, "
         "verify material changes, and report the outcome.\n\nUser request:\n"
@@ -462,7 +711,7 @@ def run_chatgpt_web_agent(
             return _run_safari_web_agent(
                 context.primary_page,
                 context,
-                settings.port,
+                settings.public_base_url,
                 agent_prompt,
                 platform_config["label"],
                 should_stop,
@@ -481,7 +730,7 @@ def run_chatgpt_web_agent(
             return _run_chromium_web_agent(
                 page,
                 context,
-                settings.port,
+                settings.public_base_url,
                 agent_prompt,
                 platform_config["label"],
                 should_stop,
@@ -494,7 +743,7 @@ def run_chatgpt_web_agent(
 def _run_chromium_web_agent(
     page: Any,
     context: Any,
-    devspace_port: int,
+    devspace_base_url: str,
     agent_prompt: str,
     platform_label: str,
     should_stop: Callable[[], bool],
@@ -526,6 +775,9 @@ def _run_chromium_web_agent(
     update(phase="submitting", message=f"Submitting the request to {platform_label}.")
     composer.fill(agent_prompt)
     composer.press("Enter")
+    submitted_at = time.monotonic()
+    stable_since = submitted_at
+    previous_response = ""
     conversation_url = page.url
     update(
         phase="running",
@@ -545,7 +797,7 @@ def _run_chromium_web_agent(
         _approve_pending_devspace_oauth(
             page,
             context,
-            devspace_port,
+            devspace_base_url,
             approved_pages,
             update,
         )
@@ -553,6 +805,10 @@ def _run_chromium_web_agent(
         assistant_count = assistant_turns.count()
         if assistant_count > baseline_assistant_count:
             response_text = assistant_turns.last.inner_text(timeout=5_000).strip()
+        now = time.monotonic()
+        if response_text != previous_response:
+            previous_response = response_text
+            stable_since = now
         stop_buttons = page.get_by_role("button", name="Stop generating")
         is_generating = bool(stop_buttons.count() and stop_buttons.first.is_visible())
         approval_buttons = page.locator(
@@ -573,7 +829,17 @@ def _run_chromium_web_agent(
                 response=response_text,
                 conversation_url=conversation_url,
             )
-        if response_text and not is_generating:
+        if _is_web_response_complete(
+            response_text,
+            is_generating=is_generating,
+            submitted_at=submitted_at,
+            stable_since=stable_since,
+            now=now,
+        ):
+            if _response_reports_missing_devspace(response_text):
+                raise RuntimeError(
+                    f"{platform_label} reported that the DevSpace app is unavailable."
+                )
             return response_text, conversation_url
         page.wait_for_timeout(1_000)
 
@@ -583,7 +849,7 @@ def _run_chromium_web_agent(
 def _run_safari_web_agent(
     page: Any,
     context: Any,
-    devspace_port: int,
+    devspace_base_url: str,
     agent_prompt: str,
     platform_label: str,
     should_stop: Callable[[], bool],
@@ -629,6 +895,9 @@ def _run_safari_web_agent(
         }""",
         {"selector": selectors["composer"], "value": agent_prompt},
     )
+    submitted_at = time.monotonic()
+    stable_since = submitted_at
+    previous_response = ""
     conversation_url = page.url
     update(phase="running", message=f"{platform_label} is coordinating the DevSpace tools.", conversation_url=conversation_url)
 
@@ -641,13 +910,17 @@ def _run_safari_web_agent(
         _approve_pending_devspace_oauth(
             page,
             context,
-            devspace_port,
+            devspace_base_url,
             approved_pages,
             update,
         )
         count = _safari_count(page, selectors["messages"])
         if count > baseline_count:
             response_text = _safari_last_text(page, selectors["messages"])
+        now = time.monotonic()
+        if response_text != previous_response:
+            previous_response = response_text
+            stable_since = now
         approval_visible = _safari_has_approval(page)
         update(
             phase="awaiting_approval" if approval_visible else "running",
@@ -659,7 +932,18 @@ def _run_safari_web_agent(
             response=response_text,
             conversation_url=page.url,
         )
-        if response_text and not _safari_is_generating(page):
+        is_generating = _safari_is_generating(page)
+        if _is_web_response_complete(
+            response_text,
+            is_generating=is_generating,
+            submitted_at=submitted_at,
+            stable_since=stable_since,
+            now=now,
+        ):
+            if _response_reports_missing_devspace(response_text):
+                raise RuntimeError(
+                    f"{platform_label} reported that the DevSpace app is unavailable."
+                )
             return response_text, page.url
         page.wait_for_timeout(1_000)
     raise RuntimeError(f"{platform_label} did not finish the agent request within 30 minutes.")
@@ -668,7 +952,7 @@ def _run_safari_web_agent(
 def _approve_pending_devspace_oauth(
     primary_page: Any,
     context: Any,
-    devspace_port: int,
+    devspace_base_url: str,
     approved_pages: set[int],
     update: Callable[..., None],
 ) -> bool:
@@ -679,7 +963,10 @@ def _approve_pending_devspace_oauth(
 
     for page in pages:
         page_id = id(page)
-        if page_id in approved_pages or not _is_local_devspace_page(page, devspace_port):
+        if page_id in approved_pages or not _is_configured_devspace_page(
+            page,
+            devspace_base_url,
+        ):
             continue
         try:
             submitted = bool(
@@ -719,18 +1006,25 @@ def _approve_pending_devspace_oauth(
     return False
 
 
-def _is_local_devspace_page(page: Any, devspace_port: int) -> bool:
-    """Return whether a browser page is the configured local DevSpace origin."""
+def _is_configured_devspace_page(page: Any, devspace_base_url: str) -> bool:
+    """Return whether a browser page exactly matches the configured DevSpace origin."""
     try:
         parsed = urlsplit(str(page.url or ""))
-        page_port = parsed.port
-    except Exception:
+        configured = urlsplit(str(devspace_base_url or ""))
+        return (
+            parsed.scheme == configured.scheme
+            and parsed.hostname == configured.hostname
+            and _effective_port(parsed) == _effective_port(configured)
+        )
+    except (AttributeError, TypeError, ValueError):
         return False
-    return (
-        parsed.scheme in {"http", "https"}
-        and parsed.hostname in {"127.0.0.1", "localhost"}
-        and page_port == int(devspace_port)
-    )
+
+
+def _effective_port(parts: Any) -> int | None:
+    """Return an explicit or scheme-default URL port."""
+    if parts.port is not None:
+        return int(parts.port)
+    return 443 if parts.scheme == "https" else 80 if parts.scheme == "http" else None
 
 
 def _safari_count(page: Any, selector: str) -> int:

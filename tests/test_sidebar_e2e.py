@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar.
 
-Code version: v1.3.2-codex.1
+Code version: v1.3.3-codex.1
 """
 
 from __future__ import annotations
@@ -330,8 +330,10 @@ def test_agent_platform_selection_survives_cache_navigation(
     try:
         page.get_by_role("button", name="Platform: ChatGPT", exact=True).click()
         page.get_by_role("option", name="Gemini", exact=True).click()
-        expect(page.locator('input[name="platform"]')).to_have_value("gemini")
-        expect(page.get_by_role("heading", name="Gemini Web Agent", exact=True)).to_be_visible()
+        expect(page.locator('#agent_runtime_form input[name="platform"]')).to_have_value(
+            "gemini"
+        )
+        expect(page.get_by_role("heading", name="Gemini Agent", exact=True)).to_be_visible()
 
         page.get_by_role("link", name="Cache", exact=True).click()
         expect(page).to_have_url(re.compile(r"/cache/chatgpt$"))
@@ -340,7 +342,7 @@ def test_agent_platform_selection_survives_cache_navigation(
         page.get_by_role("link", name="Agent", exact=True).click()
 
         expect(page.get_by_role("button", name="Platform: Gemini", exact=True)).to_be_visible()
-        expect(page.get_by_role("heading", name="Gemini Web Agent", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="Gemini Agent", exact=True)).to_be_visible()
     finally:
         context.close()
 

@@ -1,15 +1,17 @@
 # CacheLikesFromTwitter
 
-Documentation version: `v1.6.0`
+Documentation version: `v1.7.0`
 
 CacheLikesFromTwitter is a local Flask web console that caches media from the
 currently signed-in X account's Likes timeline, Grok's Files library, and a
 configured ChatGPT project or session. It stores media locally and provides
 a browser for reviewing, deleting, and restoring cached files.
 
-Its optional Agent workspace runs the local DevSpace MCP server and submits coding tasks through
-the selected signed-in ChatGPT, Gemini, or Grok web product. The model work therefore uses the
-active web-product subscription rather than a direct inference API.
+Its Agent workspace runs ChatGPT tasks through the Codex CLI bundled with the signed-in ChatGPT
+desktop app. Codex works directly in the selected local project, follows repository instruction
+files, streams activity, and can edit and verify the workspace without a custom ChatGPT App or
+public tunnel. An optional DevSpace bridge remains available for configured Gemini and Grok web
+sessions.
 
 ## Visual Style Reference
 
@@ -29,7 +31,8 @@ endpoint as trusted-only; do not expose it through port forwarding or a public r
 - A signed-in Chrome, Edge, or Safari session for the source you want to cache
 - Playwright Chromium for Chromium-backed X, Grok, and ChatGPT automation
 - `yt-dlp` for X media downloads
-- Node.js `>=22.19 <27`, the selected web product's developer/MCP mode, and a public HTTPS tunnel for the optional Agent
+- The signed-in ChatGPT desktop app for the default native Agent
+- Node.js `>=22.19 <27`, developer/MCP mode, and a public HTTPS endpoint only for the optional Gemini or Grok DevSpace bridge
 
 ChatGPT project caching uses up to three isolated Edge workers in parallel. The worker count is
 bounded deliberately because each worker owns a separate authenticated browser context.
@@ -76,7 +79,7 @@ an authenticated profile, downloads media, or writes to user-owned caches, logs,
 - [Testing guide](docs/TESTING.md)
 - [Operations guide](docs/OPERATIONS.md)
 - [Known operating constraints](docs/KNOWN_ISSUES.md)
-- [DevSpace Subscription Web Agent](docs/DEVSPACE_AGENT.md)
+- [Native Agent and DevSpace Web Bridge](docs/DEVSPACE_AGENT.md)
 - [Third-party notices](docs/THIRD_PARTY_NOTICES.md)
 - [Engineering and test contract](docs/AGENTS.md)
 - [Test coverage map](tests/README.md)

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.56.4-codex.1
+# Code version: v1.58.0-codex.1
 
 from __future__ import annotations
 
@@ -314,11 +314,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.16.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = (
-                    "style-v2.60.7-codex.1"
-                    if body is browser_body
-                    else "style-v2.60.7-codex.1"
-                )
+                expected_style_version = "style-v2.62.0-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -477,9 +473,10 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(remote_status.status_code, 403)
         self.assertEqual(rebound_host_page.status_code, 403)
         local_body = local_page.get_data(as_text=True)
-        self.assertIn("ChatGPT Web Agent", local_body)
-        self.assertIn("https://github.com/Waishnav/devspace", local_body)
-        self.assertIn("MIT License", local_body)
+        self.assertIn("ChatGPT Agent", local_body)
+        self.assertIn("Codex works directly in the selected project", local_body)
+        self.assertIn("No MCP App, public tunnel, API key, or copied password is required.", local_body)
+        self.assertNotIn("https://github.com/Waishnav/devspace", local_body)
         self.assertIn('data-agent-combobox-option="chatgpt"', local_body)
         self.assertIn('data-agent-combobox-option="gemini"', local_body)
         self.assertIn('data-agent-combobox-option="grok"', local_body)
@@ -505,6 +502,13 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('value="safari"', local_body)
         self.assertIn('data-agent-platform-heading', local_body)
         self.assertIn('data-agent-prompt-input', local_body)
+        self.assertIn('data-agent-prompt-platform', local_body)
+        self.assertIn('id="agent_activity_panel"', local_body)
+        self.assertIn(
+            'class="agent-response-output browser-media-prompt-markdown"',
+            local_body,
+        )
+        self.assertIn('data-agent-web-only hidden', local_body)
         self.assertNotIn("Local control plane for a signed-in ChatGPT web session", local_body)
         self.assertNotIn("DevSpace source", local_body)
         self.assertNotIn("Allowed workspace root", local_body)
@@ -512,6 +516,22 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("OAuth owner password", local_body)
         self.assertNotIn("agent_owner_token_reveal", local_body)
         self.assertNotIn("owner_token", json.dumps(local_status.get_json()))
+        self.assertIn("native", local_status.get_json())
+
+    def test_agent_status_renders_safe_markdown_for_live_updates(self) -> None:
+        app = create_app()
+        agent_service = app.extensions["devspace_agent_service"]
+        snapshot = agent_service.snapshot()
+        snapshot["response"] = "**Verified** <script>alert('x')</script>"
+
+        with patch.object(agent_service, "snapshot", return_value=snapshot):
+            with app.test_client() as client:
+                payload = client.get("/api/agent/status").get_json()
+
+        response_html = payload["agent"]["response_html"]
+        self.assertIn("<strong>Verified</strong>", response_html)
+        self.assertNotIn("<script>", response_html)
+        self.assertIn("&lt;script&gt;", response_html)
 
     def test_agent_project_picker_uses_the_shared_directory_route(self) -> None:
         selected_path = Path("/tmp/Selected Agent Project")
@@ -548,6 +568,37 @@ class WebAppTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)
 
+    def test_agent_preferences_persist_the_exact_project_and_execution_choices(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            workspace = Path(raw_root) / "Selected Project"
+            workspace.mkdir()
+            initial_settings = DevSpaceSettings(
+                allowed_root=str(workspace),
+                workspace_path=str(workspace),
+            )
+            with patch(
+                "app.core.devspace_agent.load_devspace_settings",
+                return_value=initial_settings,
+            ):
+                app = create_app()
+                with patch(
+                    "app.core.devspace_agent.save_devspace_settings"
+                ) as save_devspace_settings:
+                    with app.test_client() as client:
+                        response = client.post(
+                            "/api/agent/preferences",
+                            json={
+                                "workspace_path": str(workspace),
+                                "platform": "chatgpt",
+                                "browser": "safari",
+                            },
+                        )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload["settings"]["workspace_path"], str(workspace.resolve()))
+        save_devspace_settings.assert_called_once()
+
     def test_agent_sidebar_log_and_chat_composer_keep_runtime_targets_in_sync(self) -> None:
         script = DEVSPACE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
 
@@ -555,6 +606,23 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('elements.logPath.value = runtime.log_path || ""', script)
         self.assertIn('elements.ask.setAttribute("aria-label", `Ask ${label}`)', script)
         self.assertNotIn("elements.mcpUrl", script)
+
+    def test_agent_client_uses_native_readiness_activity_and_chat_keyboard_contract(self) -> None:
+        script = DEVSPACE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        for fragment in (
+            'platform === "chatgpt"',
+            "Boolean(native.ready)",
+            'requestJson("/api/agent/preferences"',
+            'event.key !== "Enter" || event.shiftKey || event.isComposing',
+            "promptForm.requestSubmit()",
+            "renderActivity(agent.activity, agentRunning)",
+            'elements.responseOutput.innerHTML = agent.response_html || ""',
+            "elements.activityList.scrollTop = elements.activityList.scrollHeight",
+            "elements.responseOutput.hidden = !agent.response",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, script)
 
     def test_agent_platform_cookie_survives_cache_navigation(self) -> None:
         app = create_app()
@@ -567,7 +635,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn('name="platform" value="gemini" data-agent-combobox-input', body)
         self.assertIn('aria-label="Platform: Gemini"', body)
-        self.assertIn("Gemini Web Agent", body)
+        self.assertIn("Gemini Agent", body)
         self.assertIn("gemini.google.com/app", body)
 
     def test_chatgpt_cache_navigation_carries_agent_platform_without_query_in_final_url(self) -> None:
@@ -582,7 +650,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("cachelikes_agent_platform=gemini", response.headers["Set-Cookie"])
         agent_body = agent_response.get_data(as_text=True)
         self.assertIn('name="platform" value="gemini" data-agent-combobox-input', agent_body)
-        self.assertIn("Gemini Web Agent", agent_body)
+        self.assertIn("Gemini Agent", agent_body)
 
     def test_shadow_backup_destination_control_uses_the_macos_folder_picker(self) -> None:
         selected_path = Path("/tmp/OneDrive/AICaches")
@@ -672,7 +740,7 @@ class WebAppTests(unittest.TestCase):
             with self.subTest(directory_picker_fragment=fragment):
                 self.assertIn(fragment, directory_picker_script)
 
-    def test_agent_port_lives_in_the_settings_agent_category_and_persists(self) -> None:
+    def test_agent_web_bridge_settings_live_in_the_agent_category_and_persist(self) -> None:
         with patch("app.core.devspace_agent.load_devspace_settings", return_value=DevSpaceSettings()):
             app = create_app()
             with patch("app.web.app.save_config"), patch(
@@ -680,7 +748,13 @@ class WebAppTests(unittest.TestCase):
             ) as save_devspace_settings:
                 with app.test_client() as client:
                     settings_response = client.get("/settings")
-                    save_response = client.post("/settings", data={"agent_port": "7877"})
+                    save_response = client.post(
+                        "/settings",
+                        data={
+                            "agent_port": "7877",
+                            "agent_public_base_url": "https://devspace.example.test",
+                        },
+                    )
 
         settings_body = settings_response.get_data(as_text=True)
         self.assertEqual(settings_response.status_code, 200)
@@ -688,10 +762,17 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-settings-panel="agent"', settings_body)
         self.assertIn('id="settings-agent"', settings_body)
         self.assertIn('name="agent_port"', settings_body)
+        self.assertIn('name="agent_public_base_url"', settings_body)
+        self.assertIn("Agent runtimes", settings_body)
+        self.assertIn("ChatGPT native mode does not need this setting.", settings_body)
         self.assertNotIn('name="port"', settings_body)
         self.assertEqual(save_response.status_code, 302)
         save_devspace_settings.assert_called_once()
         self.assertEqual(save_devspace_settings.call_args.args[0].port, 7877)
+        self.assertEqual(
+            save_devspace_settings.call_args.args[0].public_base_url,
+            "https://devspace.example.test",
+        )
 
     def test_sidebar_script_has_no_cache_source_menu_controls(self) -> None:
         script = SIDEBAR_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -911,7 +992,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.60.7-codex.1", body)
+            self.assertIn("style-v2.62.0-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.26.0-codex.1', body)

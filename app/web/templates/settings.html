@@ -1,4 +1,4 @@
-<!-- Code version: v1.19.9-codex.1 -->
+<!-- Code version: v1.20.1-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -7,7 +7,7 @@
     <title>CacheLikesFromTwitter Settings</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.60.7-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.62.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
@@ -245,12 +245,19 @@
                             >
                                 <div class="settings-category-heading">
                                     <p class="workspace-kicker">Agent</p>
-                                    <h3 id="settings_agent_heading">DevSpace connection</h3>
-                                    <p>Set the local MCP port used by the subscription web-agent bridge.</p>
+                                    <h3 id="settings_agent_heading">Agent runtimes</h3>
+                                    <p>ChatGPT uses the locally authenticated Codex runtime. DevSpace settings below apply only to the optional Gemini and Grok web bridge.</p>
                                 </div>
                                 <div class="settings-category-fields">
+                                    <div class="settings-agent-runtime-status" data-ready="{{ 'true' if agent_native_snapshot.ready else 'false' }}">
+                                        <span class="settings-agent-runtime-dot" aria-hidden="true"></span>
+                                        <span>
+                                            <strong>Codex</strong>
+                                            <span>{{ agent_native_snapshot.message }}{% if agent_native_snapshot.version %} {{ agent_native_snapshot.version }}{% endif %}</span>
+                                        </span>
+                                    </div>
                                     <label class="field">
-                                        <span>Port</span>
+                                        <span>DevSpace port</span>
                                         <input
                                             class="text-input-control agent-monospace-input"
                                             name="agent_port"
@@ -263,6 +270,22 @@
                                         >
                                         <span class="field-help">Use a free local port from 1,024 through 65,535. Stop MCP before changing an active port.</span>
                                     </label>
+                                    <label class="field">
+                                        <span>Public HTTPS origin</span>
+                                        <input
+                                            class="text-input-control agent-monospace-input"
+                                            name="agent_public_base_url"
+                                            type="url"
+                                            value="{{ agent_settings.public_base_url }}"
+                                            placeholder="https://devspace.example.com"
+                                            spellcheck="false"
+                                            autocomplete="off"
+                                            {% if agent_runtime_snapshot.managed %}disabled{% endif %}
+                                            required
+                                        >
+                                        <span class="field-help">Use the origin only, without <code>/mcp</code>. ChatGPT native mode does not need this setting.</span>
+                                    </label>
+                                    <p class="settings-agent-attribution">The optional web bridge integrates <a href="https://github.com/Waishnav/devspace" target="_blank" rel="noopener">DevSpace</a> under the MIT License.</p>
                                 </div>
                             </section>
 

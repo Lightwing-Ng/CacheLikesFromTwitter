@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.24.4-codex.1
+# Code version: v1.26.0-codex.1
 
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ from app.core.config import (
 from app.core.devspace_agent import (
     AGENT_PLATFORM_CONFIG,
     AGENT_PLATFORM_OPTIONS,
-    ChatGPTWebAgentService,
+    AgentService,
     DevSpaceRuntimeManager,
     is_loopback_address,
     validate_devspace_settings,
@@ -158,10 +158,11 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     app.extensions["gemini_service"] = gemini_service
     saved_config = load_saved_config()
     devspace_runtime = DevSpaceRuntimeManager(Path(get_log_file_path()).with_name("devspace-agent.log"))
-    devspace_agent_service = ChatGPTWebAgentService(devspace_runtime)
+    devspace_agent_service = AgentService(devspace_runtime)
     app.extensions["devspace_runtime"] = devspace_runtime
     app.extensions["devspace_agent_service"] = devspace_agent_service
     atexit.register(devspace_runtime.stop_managed_process_at_exit)
+    atexit.register(devspace_agent_service.stop_at_exit)
     cache_runtimes = {
         "x": CacheRuntimeAdapter(
             state=state,
@@ -472,6 +473,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             shadow_backup_snapshot=shadow_backup_service.snapshot(),
             agent_settings=devspace_runtime.settings,
             agent_runtime_snapshot=devspace_runtime.snapshot(),
+            agent_native_snapshot=devspace_agent_service.native_snapshot(),
         )
 
     def require_local_agent_request() -> None:
@@ -494,6 +496,14 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             ):
                 abort(403)
 
+    def build_agent_snapshot() -> dict[str, Any]:
+        """Add safe rendered Markdown to the Agent status payload."""
+        snapshot = devspace_agent_service.snapshot()
+        snapshot["response_html"] = str(
+            render_prompt_markdown(str(snapshot.get("response", "")))
+        )
+        return snapshot
+
     @app.get("/agent")
     def agent():
         require_local_agent_request()
@@ -510,11 +520,15 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             "agent.html",
             version=APP_VERSION,
             runtime_snapshot=runtime_snapshot,
-            agent_snapshot=devspace_agent_service.snapshot(),
+            agent_snapshot=build_agent_snapshot(),
             settings=agent_settings,
-            agent_project_name=Path(agent_settings.allowed_root).name or agent_settings.allowed_root,
+            agent_project_name=(
+                Path(agent_settings.workspace_path).name or agent_settings.workspace_path
+            ),
             platform_options=AGENT_PLATFORM_OPTIONS,
             platform_labels={key: value["label"] for key, value in AGENT_PLATFORM_CONFIG.items()},
+            native_snapshot=devspace_agent_service.native_snapshot(),
+            render_prompt_markdown=render_prompt_markdown,
         )
 
     @app.get("/api/agent/status")
@@ -523,7 +537,29 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         return jsonify(
             {
                 "runtime": devspace_runtime.snapshot(),
-                "agent": devspace_agent_service.snapshot(),
+                "native": devspace_agent_service.native_snapshot(),
+                "agent": build_agent_snapshot(),
+            }
+        )
+
+    @app.post("/api/agent/preferences")
+    def save_agent_preferences():
+        require_local_agent_request()
+        payload = request.get_json(silent=True) or {}
+        try:
+            settings = devspace_runtime.update_preferences(
+                workspace_path=str(payload.get("workspace_path", "")),
+                platform=str(payload.get("platform", "")),
+                browser=str(payload.get("browser", "")),
+            )
+        except (RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(
+            {
+                "settings": asdict(settings),
+                "runtime": devspace_runtime.snapshot(),
+                "native": devspace_agent_service.native_snapshot(),
+                "agent": build_agent_snapshot(),
             }
         )
 
@@ -535,7 +571,13 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             runtime_snapshot = devspace_runtime.start(settings)
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
-        return jsonify({"runtime": runtime_snapshot, "agent": devspace_agent_service.snapshot()})
+        return jsonify(
+            {
+                "runtime": runtime_snapshot,
+                "native": devspace_agent_service.native_snapshot(),
+                "agent": build_agent_snapshot(),
+            }
+        )
 
     @app.post("/api/agent/runtime/stop")
     def stop_agent_runtime():
@@ -545,7 +587,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         return jsonify(
             {
                 "runtime": devspace_runtime.stop(),
-                "agent": devspace_agent_service.snapshot(),
+                "native": devspace_agent_service.native_snapshot(),
+                "agent": build_agent_snapshot(),
             }
         )
 
@@ -558,13 +601,16 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 str(payload.get("prompt", "")),
                 str(payload.get("workspace_path", "")),
                 saved_config,
+                platform=str(payload.get("platform", "")),
+                browser=str(payload.get("browser", "")),
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify(
             {
                 "runtime": devspace_runtime.snapshot(),
-                "agent": devspace_agent_service.snapshot(),
+                "native": devspace_agent_service.native_snapshot(),
+                "agent": build_agent_snapshot(),
             }
         ), 202
 
@@ -575,7 +621,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             {
                 "stop_requested": devspace_agent_service.request_stop(),
                 "runtime": devspace_runtime.snapshot(),
-                "agent": devspace_agent_service.snapshot(),
+                "native": devspace_agent_service.native_snapshot(),
+                "agent": build_agent_snapshot(),
             }
         )
 
@@ -882,20 +929,35 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         nonlocal saved_config
         saved_config = parse_form_config(saved_config)
         save_config(saved_config)
-        if request.form.get("agent_port") is not None:
+        if (
+            request.form.get("agent_port") is not None
+            or request.form.get("agent_public_base_url") is not None
+        ):
             agent_port = parse_int_field(
                 "agent_port",
                 devspace_runtime.settings.port,
                 minimum=1_024,
                 maximum=65_535,
             )
-            if agent_port != devspace_runtime.settings.port:
-                try:
-                    devspace_runtime.update_settings(
-                        replace(devspace_runtime.settings, port=agent_port)
-                    )
-                except RuntimeError:
-                    pass
+            public_base_url = str(
+                request.form.get(
+                    "agent_public_base_url",
+                    devspace_runtime.settings.public_base_url,
+                )
+            ).strip()
+            candidate_payload = asdict(devspace_runtime.settings)
+            candidate_payload.update(
+                {
+                    "port": agent_port,
+                    "public_base_url": public_base_url,
+                }
+            )
+            try:
+                devspace_runtime.update_settings(
+                    validate_devspace_settings(candidate_payload)
+                )
+            except (RuntimeError, ValueError):
+                pass
         return redirect(url_for("settings"))
 
     @app.post("/settings/shadow-backup/sync")
@@ -951,7 +1013,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 "Select shadow cloud backup destination",
             ),
             "agent_allowed_root": (
-                Path(devspace_runtime.settings.allowed_root),
+                Path(devspace_runtime.settings.workspace_path),
                 "Select local Agent project folder",
             ),
         }

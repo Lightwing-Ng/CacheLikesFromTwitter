@@ -1,4 +1,4 @@
-<!-- Code version: v1.2.5-codex.1 -->
+<!-- Code version: v2.1.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -7,7 +7,7 @@
     <title>CacheLikesFromTwitter Agent</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.60.7-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.62.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
 </head>
@@ -25,15 +25,11 @@
             <section class="hero">
                 <h1>Agent</h1>
             </section>
-            <section class="sidebar-section">
-                <p class="agent-help-copy">
-                    This workspace integrates <a href="https://github.com/Waishnav/devspace" target="_blank" rel="noopener">DevSpace</a>, an open-source self-hosted MCP server by Waishnav, under the MIT License. This project preserves the upstream notice and does not claim ownership of DevSpace.
-                </p>
-            </section>
 
             <form class="agent-runtime-form" id="agent_runtime_form">
                 <input name="source_dir" type="hidden" value="{{ settings.source_dir }}">
-                <input name="allowed_root" type="hidden" value="{{ settings.allowed_root }}">
+                <input name="allowed_root" type="hidden" value="{{ settings.workspace_path }}">
+                <input name="workspace_path" type="hidden" value="{{ settings.workspace_path }}" data-agent-runtime-workspace>
                 <input name="public_base_url" type="hidden" value="{{ settings.public_base_url }}">
                 <input name="target_url" type="hidden" value="{{ settings.target_url }}" data-agent-target-url>
                 <input name="port" type="hidden" value="{{ settings.port }}" data-agent-port>
@@ -44,7 +40,7 @@
                             class="text-input-control agent-monospace-input"
                             type="text"
                             id="agent_project_path"
-                            value="{{ settings.allowed_root }}"
+                            value="{{ settings.workspace_path }}"
                             spellcheck="false"
                             autocomplete="off"
                             readonly
@@ -61,7 +57,7 @@
                             data-directory-label="local Agent project"
                             aria-label="Choose local Agent project folder"
                             title="Choose local Agent project folder"
-                            {% if runtime_snapshot.ready %}disabled{% endif %}
+                            {% if settings.platform != 'chatgpt' and runtime_snapshot.ready %}disabled{% endif %}
                         >
                             <span class="icon settings-directory-choose-icon" aria-hidden="true"></span>
                         </button>
@@ -111,7 +107,7 @@
                             </div>
                         </div>
                     </label>
-                    <label class="field">
+                    <label class="field agent-web-only-control" data-agent-web-only{% if settings.platform == 'chatgpt' %} hidden{% endif %}>
                         <span class="field-label">Browser</span>
                         <div class="trade-strategy-combobox agent-combobox agent-browser-combobox" data-agent-combobox>
                             <input type="hidden" name="browser" value="{{ settings.browser }}" data-agent-combobox-input>
@@ -158,7 +154,10 @@
                         </div>
                     </label>
                 </div>
-                <label class="field">
+                <p class="agent-web-bridge-copy" data-agent-web-only{% if settings.platform == 'chatgpt' %} hidden{% endif %}>
+                    The web bridge requires a connected DevSpace app. Configure its HTTPS endpoint in <a href="{{ url_for('settings') }}#settings-agent">Settings</a>.
+                </p>
+                <label class="field agent-web-only-control" data-agent-web-only{% if settings.platform == 'chatgpt' %} hidden{% endif %}>
                     <span class="field-label">Runtime log</span>
                     <span class="shadow-backup-destination-control agent-runtime-log-control">
                         <input
@@ -181,7 +180,7 @@
                         </a>
                     </span>
                 </label>
-                <div class="agent-action-row">
+                <div class="agent-action-row" data-agent-web-only{% if settings.platform == 'chatgpt' %} hidden{% endif %}>
                     <button type="submit" class="primary-button" id="agent_runtime_start"{% if runtime_snapshot.ready %} disabled{% endif %}>Start MCP</button>
                     <button type="button" class="secondary-button" id="agent_runtime_stop"{% if not runtime_snapshot.managed or agent_snapshot.running %} disabled{% endif %}>Stop MCP</button>
                 </div>
@@ -193,26 +192,32 @@
                 <article class="report-card workspace-summary-card workspace-article-card agent-summary-card">
                     <div class="report-heading-row">
                         <div>
-                            <p class="workspace-kicker">Subscription bridge</p>
-                            <h2 data-agent-platform-heading>{{ platform_labels[settings.platform] }} Web Agent</h2>
+                            <p class="workspace-kicker" data-agent-engine-kicker>{{ 'Local subscription agent' if settings.platform == 'chatgpt' else 'DevSpace web bridge' }}</p>
+                            <h2 data-agent-platform-heading>{{ platform_labels[settings.platform] }} Agent</h2>
                         </div>
                         <span class="status-chip status-{{ agent_snapshot.phase }}" id="agent_phase_chip">{{ agent_snapshot.phase }}</span>
                     </div>
-                    <p>The selected web product coordinates DevSpace tools through its subscription session; this workflow does not call a model inference API.</p>
+                    <p data-agent-engine-copy>{% if settings.platform == 'chatgpt' %}Codex works directly in the selected project through the signed-in ChatGPT subscription. No MCP App, public tunnel, API key, or copied password is required.{% else %}The signed-in web product coordinates the connected DevSpace tools through its subscription session.{% endif %}</p>
+                    <p class="agent-readiness" data-ready="{{ 'true' if (settings.platform == 'chatgpt' and native_snapshot.ready) or (settings.platform != 'chatgpt' and runtime_snapshot.connection.ready) else 'false' }}">
+                        <span class="agent-readiness-dot" aria-hidden="true"></span>
+                        <span id="agent_readiness_message">{% if settings.platform == 'chatgpt' %}{{ native_snapshot.message }}{% elif not runtime_snapshot.ready %}Start the local MCP runtime.{% elif not runtime_snapshot.connection.public_configured %}Add the public HTTPS origin in Settings.{% elif not runtime_snapshot.connection.connected %}Add or refresh the DevSpace app in {{ platform_labels[settings.platform] }}.{% else %}DevSpace is connected and ready.{% endif %}</span>
+                    </p>
                 </article>
             </div>
 
             <div class="workspace-grid agent-workspace-grid">
                 <article class="report-card workspace-article-card agent-task-card">
                     <form id="agent_prompt_form" class="agent-prompt-form">
-                        <input type="hidden" name="workspace_path" value="{{ settings.allowed_root }}" data-agent-workspace-input>
+                        <input type="hidden" name="workspace_path" value="{{ settings.workspace_path }}" data-agent-workspace-input>
+                        <input type="hidden" name="platform" value="{{ settings.platform }}" data-agent-prompt-platform>
+                        <input type="hidden" name="browser" value="{{ settings.browser }}" data-agent-prompt-browser>
                         <label class="field agent-composer-field">
                             <span class="agent-composer-shell">
                                 <textarea class="text-input-control agent-prompt-input" name="prompt" rows="4" placeholder="Ask {{ platform_labels[settings.platform] }} to inspect, change, or verify this workspace…" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
                                 <span class="agent-composer-footer">
                                     <span class="agent-composer-actions">
                                         <button type="button" class="secondary-button agent-composer-stop" id="agent_stop_button"{% if not agent_snapshot.running %} disabled{% endif %}>Stop request</button>
-                                        <button type="submit" class="agent-composer-submit" id="agent_ask_button" aria-label="Ask {{ platform_labels[settings.platform] }}" title="Ask {{ platform_labels[settings.platform] }}"{% if not runtime_snapshot.ready or agent_snapshot.running %} disabled{% endif %}>
+                                        <button type="submit" class="agent-composer-submit" id="agent_ask_button" aria-label="Ask {{ platform_labels[settings.platform] }}" title="Ask {{ platform_labels[settings.platform] }}"{% if (settings.platform == 'chatgpt' and not native_snapshot.ready) or (settings.platform != 'chatgpt' and not runtime_snapshot.connection.ready) or agent_snapshot.running %} disabled{% endif %}>
                                             <span class="icon agent-composer-submit-icon" aria-hidden="true"></span>
                                         </button>
                                     </span>
@@ -226,7 +231,25 @@
                     <div class="agent-response-toolbar">
                         <a class="secondary-button agent-conversation-link" id="agent_conversation_link" href="{{ agent_snapshot.conversation_url }}" target="_blank" rel="noopener"{% if not agent_snapshot.conversation_url %} hidden{% endif %}>Open conversation</a>
                     </div>
-                    <pre class="agent-response-output" id="agent_response_output">{{ agent_snapshot.response }}</pre>
+                    <details class="agent-activity-panel" id="agent_activity_panel"{% if agent_snapshot.running %} open{% endif %}{% if not agent_snapshot.activity %} hidden{% endif %}>
+                        <summary>
+                            <span>Activity</span>
+                            <span class="agent-activity-count" id="agent_activity_count">{{ agent_snapshot.activity | length }}</span>
+                        </summary>
+                        <ol class="agent-activity-list" id="agent_activity_list">
+                            {% for event in agent_snapshot.activity %}
+                            <li class="agent-activity-item" data-status="{{ event.status }}">
+                                <span class="agent-activity-status" aria-hidden="true"></span>
+                                <span class="agent-activity-content">
+                                    <span class="agent-activity-label">{{ event.label }}</span>
+                                    <span class="agent-activity-detail">{{ event.detail }}</span>
+                                </span>
+                                <span class="agent-activity-meta">{{ event.meta }}</span>
+                            </li>
+                            {% endfor %}
+                        </ol>
+                    </details>
+                    <div class="agent-response-output browser-media-prompt-markdown" id="agent_response_output"{% if not agent_snapshot.response %} hidden{% endif %}>{{ render_prompt_markdown(agent_snapshot.response) }}</div>
                     <p class="agent-empty-response" id="agent_empty_response"{% if agent_snapshot.response %} hidden{% endif %}>{{ agent_snapshot.message }}</p>
                 </article>
             </div>
@@ -239,6 +262,6 @@
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.16.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.0.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='devspace-agent.js', v='devspace-agent-v1.5.7-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='devspace-agent.js', v='devspace-agent-v2.1.0-codex.1') }}"></script>
 </body>
 </html>

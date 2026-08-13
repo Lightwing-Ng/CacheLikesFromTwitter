@@ -1,4 +1,4 @@
-/* Code version: v2.60.7-codex.1 */
+/* Code version: v2.62.0-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -2907,18 +2907,24 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     }
 }
 
-/* DevSpace-backed subscription web Agent. */
+/* Native subscription Agent with an optional DevSpace web bridge. */
 .agent-sidebar {
     display: flex;
     flex-direction: column;
 }
 
-.agent-help-copy,
+.agent-web-bridge-copy,
 .agent-empty-response {
     margin: 0;
     color: var(--muted);
     font-size: var(--font-table-body);
     line-height: 1.45;
+}
+
+.agent-web-bridge-copy a,
+.settings-agent-attribution a {
+    color: var(--accent);
+    text-underline-offset: 2px;
 }
 
 .agent-runtime-form,
@@ -2983,7 +2989,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-monospace-input,
-.agent-response-output,
 .agent-page code {
     font-family: var(--font-mono);
 }
@@ -3011,6 +3016,31 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     line-height: 1.5;
 }
 
+.agent-summary-card > .agent-readiness {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: var(--font-table-body);
+}
+
+.agent-readiness-dot,
+.settings-agent-runtime-dot {
+    width: 8px;
+    height: 8px;
+    flex: 0 0 8px;
+    border-radius: 50%;
+    background: var(--theme-error);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-error) 14%, transparent);
+}
+
+.agent-readiness[data-ready="true"] .agent-readiness-dot,
+.settings-agent-runtime-status[data-ready="true"] .settings-agent-runtime-dot {
+    background: var(--theme-success-strong);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-success-strong) 14%, transparent);
+}
+
 .agent-workspace-grid {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(260px, 1fr);
@@ -3026,7 +3056,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-prompt-input {
     min-height: 120px;
-    padding: 4px 4px 0;
+    padding: 12px;
     resize: vertical;
     border: var(--frosted-glass-border);
     border-radius: var(--radius-soft);
@@ -3109,7 +3139,11 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-response-toolbar {
-    min-height: 32px;
+    min-height: 0;
+}
+
+.agent-response-toolbar:not(:has(.agent-conversation-link:not([hidden]))) {
+    display: none;
 }
 
 .agent-response-card {
@@ -3124,14 +3158,173 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-response-output {
     flex: 1 1 auto;
+    min-width: 0;
     min-height: 0;
     margin: 12px 0 0;
     overflow: auto;
-    white-space: pre-wrap;
     overflow-wrap: anywhere;
     color: var(--text);
     font-size: var(--font-table-body);
     line-height: 1.55;
+}
+
+.agent-response-output h1,
+.agent-response-output h2 {
+    font-size: var(--font-card-title);
+}
+
+.agent-response-output h3,
+.agent-response-output h4,
+.agent-response-output h5,
+.agent-response-output h6 {
+    font-size: var(--font-ui-body);
+}
+
+.agent-activity-panel {
+    margin-top: 4px;
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-soft);
+    background: var(--glass-surface-background-soft);
+    overflow: hidden;
+}
+
+.agent-activity-panel > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 40px;
+    padding: 0 12px;
+    color: var(--muted);
+    font-size: var(--font-table-body);
+    cursor: pointer;
+    list-style: none;
+}
+
+.agent-activity-panel > summary::-webkit-details-marker {
+    display: none;
+}
+
+.agent-activity-count {
+    display: inline-grid;
+    place-items: center;
+    min-width: 22px;
+    min-height: 22px;
+    padding: 0 6px;
+    border-radius: var(--radius-pill);
+    background: var(--glass-surface-background);
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.agent-activity-list {
+    display: grid;
+    gap: 0;
+    max-height: 260px;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+    border-top: var(--frosted-glass-border);
+}
+
+.agent-activity-item {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 10px;
+    padding: 10px 12px;
+}
+
+.agent-activity-item + .agent-activity-item {
+    border-top: var(--frosted-glass-border);
+}
+
+.agent-activity-status {
+    width: 8px;
+    height: 8px;
+    margin-top: 5px;
+    border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: agentActivitySpin 720ms linear infinite;
+}
+
+.agent-activity-item[data-status="completed"] .agent-activity-status,
+.agent-activity-item[data-status="failed"] .agent-activity-status {
+    border: 0;
+    animation: none;
+}
+
+.agent-activity-item[data-status="completed"] .agent-activity-status {
+    background: var(--theme-success-strong);
+}
+
+.agent-activity-item[data-status="failed"] .agent-activity-status {
+    background: var(--theme-error);
+}
+
+.agent-activity-content {
+    display: grid;
+    min-width: 0;
+}
+
+.agent-activity-label {
+    color: var(--text);
+    font-size: var(--font-table-body);
+    font-weight: 600;
+}
+
+.agent-activity-detail {
+    overflow: hidden;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-ui-sm);
+    line-height: 1.45;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-activity-meta {
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-ui-sm);
+}
+
+.settings-agent-runtime-status {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px;
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-soft);
+    background: var(--glass-surface-background-soft);
+}
+
+.settings-agent-runtime-status > span:last-child {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+}
+
+.settings-agent-runtime-status strong {
+    color: var(--text);
+    font-size: var(--font-table-body);
+}
+
+.settings-agent-runtime-status span span,
+.settings-agent-attribution {
+    color: var(--muted);
+    font-size: var(--font-ui-sm);
+    line-height: 1.45;
+}
+
+.settings-agent-attribution {
+    margin: 0;
+}
+
+@keyframes agentActivitySpin {
+    to { transform: rotate(360deg); }
 }
 
 @media (max-width: 1100px) {

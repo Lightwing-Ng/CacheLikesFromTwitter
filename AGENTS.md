@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Code policy version: v1.2.0-agent-contract.1
+Code policy version: v1.2.0-agent-contract.2
 
 This file defines mandatory collaboration rules for all coding agents in this repository (Claude, Codex, Antigravity, Trae, and future agents).
 
@@ -48,6 +48,7 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Use local assets first (icons, images, styles) before introducing new resources.
 - Maintain accessibility basics: labels, keyboard reachability, and semantic structure.
 - Keep responsive behavior consistent with existing breakpoints and patterns.
+- Use `Local resources` as the canonical user-facing label for the third Dock item and its related navigation copy. Do not reintroduce `Browser` or `浏览器` for that UI surface. In explanatory sentences, use sentence case; preserve `Local resources` exactly when referring to the product label.
 
 ## 7) Safety and Git Hygiene
 - Never run destructive commands (for example, reset/clean forcefully) without explicit approval.
