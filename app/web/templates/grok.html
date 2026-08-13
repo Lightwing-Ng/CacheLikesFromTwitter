@@ -1,4 +1,4 @@
-{# Code version: v1.10.0-codex.1 #}
+{# Code version: v1.11.0-codex.1 #}
 {% extends "_cache_page.html" %}
 {% from "_cache_page_components.html" import render_metric, render_progress_metric %}
 
@@ -8,18 +8,6 @@
 {{ render_metric("Images", "downloaded_images", snapshot.downloaded_images, true, "downloaded_images") }}
 {{ render_metric("Videos", "downloaded_videos", snapshot.downloaded_videos, false, "downloaded_videos") }}
 {{ render_metric("Skipped", "skipped_tweets", snapshot.skipped_tweets, false, "skipped_tweets") }}
-{% endblock %}
-
-{% block source_notice %}
-<div class="notice-floating notice-floating-banner notice-inline-banner grok-warning-banner" role="note" aria-label="Grok sync notice">
-    <div class="notice-floating-copy">
-        <p class="notice-floating-label">Forced workaround</p>
-        <p class="notice-floating-title">
-            Grok is unusually slow. This sync will keep scrolling and may open extra Grok tabs so discovery can continue while local download workers stay busy.
-        </p>
-    </div>
-    <span class="status-chip status-collecting">Site-limited</span>
-</div>
 {% endblock %}
 
 {% block progress_metrics %}

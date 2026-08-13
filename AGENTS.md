@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Code policy version: v1.1.0-agent-contract.1
+Code policy version: v1.2.0-agent-contract.1
 
 This file defines mandatory collaboration rules for all coding agents in this repository (Claude, Codex, Antigravity, Trae, and future agents).
 
@@ -29,6 +29,14 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - For UI work, treat `/Users/lightwing/Desktop/antigravity/app` as this project's sibling
   and visual source of truth. Read `STYLE_REFERENCE.md` before changing markup, CSS,
   assets, or UI behavior.
+- Before changing a UI pattern shared with the sibling project, read the single local
+  synchronization ledger at `/Users/lightwing/Desktop/SHARED_UI_SYNC.md` and follow its
+  mandatory workflow. The ledger is component-specific: whichever sibling has the newest
+  verified implementation leads that component until the other sibling is synchronized.
+- A task scoped only to this repository does not authorize editing the sibling. When a
+  shared component changes here, update the ledger, mark the sibling `Pending`, and report
+  the required sibling-sync reminder at handoff. When the user authorizes both projects,
+  synchronize and verify both in the same task.
 
 ## 5) Testing and Verification
 - Run focused checks for touched areas.

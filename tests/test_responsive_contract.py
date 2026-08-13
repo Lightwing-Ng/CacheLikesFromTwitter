@@ -1,6 +1,6 @@
 """Responsive sidebar contract tests.
 
-Code version: v1.0.0-codex.1
+Code version: v1.0.1-codex.1
 """
 
 from __future__ import annotations
@@ -75,9 +75,9 @@ def test_sidebar_overlay_and_compact_content_are_independent() -> None:
         "top: var(--sidebar-overlay-inset-top);",
         "bottom: var(--sidebar-overlay-inset-bottom);",
         ".sidebar-backdrop {",
-        ".app-shell.is-sidebar-open .sidebar-backdrop:not([hidden]) {",
+        ".sidebar-backdrop:not([hidden]) {",
         "pointer-events: auto;",
-        ".sidebar-toggle {",
+        ".page > .sidebar-toggle {",
         "width: 44px;",
         "height: 44px;",
         "z-index: var(--layer-sidebar-toggle);",
@@ -102,7 +102,7 @@ def test_hidden_and_pointer_event_contracts_are_authoritative() -> None:
     assert "[hidden] {\n    display: none !important;\n}" in stylesheet
     assert ".sidebar-backdrop {\n    display: none;\n    visibility: hidden;\n    pointer-events: none;\n}" in stylesheet
     assert "html.sidebar-memory-collapsed .app-shell .sidebar {" in stylesheet
-    assert "html.sidebar-memory-collapsed .app-shell .sidebar-backdrop {" in stylesheet
+    assert "html.sidebar-memory-collapsed .sidebar-backdrop {" in stylesheet
 
 
 def test_sidebar_pages_load_the_responsive_contract_before_bootstrap() -> None:
@@ -119,3 +119,14 @@ def test_sidebar_pages_load_the_responsive_contract_before_bootstrap() -> None:
     assert 'window.sessionStorage.getItem("cachelikes:sidebar-open")' in bootstrap_source
     assert 'window.CACHELIKES_RESPONSIVE?.media?.("sidebarOverlayMax")' in bootstrap_source
     assert 'document.documentElement.classList.add("sidebar-memory-collapsed")' in bootstrap_source
+
+
+def test_sidebar_toggle_is_outside_the_shell_stacking_context() -> None:
+    stylesheet = _read(STYLE_PATH)
+    for template_name in ("_cache_page.html", "browser.html", "settings.html"):
+        source = _read(TEMPLATE_ROOT / template_name)
+        toggle_index = source.index('id="sidebar_toggle"')
+        shell_index = source.index('class="app-shell')
+        assert toggle_index < shell_index, template_name
+
+    assert ".page > .sidebar-toggle" in stylesheet

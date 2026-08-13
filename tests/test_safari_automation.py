@@ -1,6 +1,6 @@
 """Unit tests for the Safari-backed browser automation surface."""
 
-# Code version: v1.7.1-codex.1
+# Code version: v1.8.5-codex.1
 
 from __future__ import annotations
 
@@ -201,6 +201,31 @@ def test_safari_request_client_can_bind_a_request_to_one_owned_page() -> None:
     )
 
 
+def test_safari_request_client_recovers_from_hidden_window_fetch_failure() -> None:
+    context = SafariContext("https://chatgpt.com/")
+    page = SafariPage(context, window_id=123)
+    context.pages.append(page)
+    expected_response = object()
+
+    with (
+        patch.object(
+            context.request,
+            "_get_once",
+            side_effect=[RuntimeError("Safari request failed: Load failed"), expected_response],
+        ),
+        patch.object(page, "keep_rendering_offscreen") as keep_rendering,
+        patch("app.core.safari_automation.time.sleep"),
+    ):
+        response = context.request.get_from_page(
+            page,
+            "https://chatgpt.com/api/auth/session",
+            timeout=60_000,
+        )
+
+    assert response is expected_response
+    keep_rendering.assert_called_once_with()
+
+
 def test_safari_page_exposes_shared_readiness_helpers() -> None:
     context = SafariContext("https://chatgpt.com/")
     page = SafariPage(context, window_id=123)
@@ -214,6 +239,82 @@ def test_safari_page_exposes_shared_readiness_helpers() -> None:
         assert page.locator("body").inner_text(timeout=1_000) == "Ready"
 
     assert page.context is context
+
+
+def test_safari_page_can_remain_render_active_offscreen_without_stealing_focus() -> None:
+    context = SafariContext("https://gemini.google.com/app")
+    page = SafariPage(context, window_id=123)
+
+    with patch.object(page, "_run_in_window", return_value="") as run:
+        page.keep_rendering_offscreen()
+
+    script = run.call_args.args[0]
+    assert "set previousWindowId to id of front window" in script
+    assert "set bounds of targetWindow to {-32000, -32000, -30720, -31100}" in script
+    assert "set miniaturized of targetWindow to false" in script
+    assert "set visible of targetWindow to true" in script
+    assert "previousWindowId is not id of targetWindow" in script
+    assert "set index of (first window whose id is previousWindowId) to 1" in script
+
+
+def test_safari_page_marks_rendering_active_after_offscreen_restore() -> None:
+    context = SafariContext("https://chatgpt.com/")
+    page = SafariPage(context, window_id=123)
+
+    with patch.object(page, "_run_in_window", return_value=""):
+        page.keep_rendering_offscreen()
+
+    assert page._rendering_active is True
+
+
+def test_safari_page_restarts_a_resume_when_server_returns_the_wrong_range(tmp_path: Path) -> None:
+    context = SafariContext("https://chatgpt.com/")
+    page = SafariPage(context, window_id=123)
+    destination = tmp_path / "asset.part"
+    destination.write_bytes(b"stale")
+    payload = b"fresh"
+    wrong_range = {
+        "state": "ready",
+        "status": 206,
+        "contentType": "image/png",
+        "contentRange": "bytes 0-4/5",
+        "bytes": len(payload),
+    }
+    correct_range = {
+        "state": "ready",
+        "status": 200,
+        "contentType": "image/png",
+        "contentRange": "",
+        "bytes": len(payload),
+    }
+
+    with patch.object(page, "keep_rendering_offscreen"), patch.object(
+        page,
+        "evaluate",
+        side_effect=[True, wrong_range, True, correct_range, "ZnJlc2g=", True],
+    ):
+        content_type, resumed = page.download_to_path(
+            "https://chatgpt.com/image.png",
+            destination,
+            lambda: False,
+        )
+
+    assert content_type == "image/png"
+    assert resumed is True
+    assert destination.read_bytes() == payload
+
+
+def test_safari_page_can_stay_hidden_without_focus_changes() -> None:
+    context = SafariContext("https://gemini.google.com/app")
+    page = SafariPage(context, window_id=123)
+
+    with patch.object(page, "_run_in_window", return_value="") as run:
+        page.keep_background()
+
+    script = run.call_args.args[0]
+    assert "set visible of targetWindow to false" in script
+    assert "set miniaturized of targetWindow to true" in script
+    assert "set index of targetWindow" not in script
 
 
 def test_safari_page_reopens_a_window_that_was_closed_externally() -> None:
@@ -289,7 +390,7 @@ def test_safari_context_creates_owned_windows_offscreen_and_minimized() -> None:
     assert "set previousWindowWasVisible to visible of front window" in script
     assert "set previousWindowWasMiniaturized to miniaturized of front window" in script
     assert "existingWindowIds" in script
-    assert '(URL of current tab of candidateWindow) is "about:blank"' in script
+    assert "set targetWindow to candidateWindow" in script
     assert "emptyWindowIds" in script
     assert "set visible of targetWindow to false" in script
     assert "set bounds of targetWindow to {-32000, -32000, -30720, -31100}" in script

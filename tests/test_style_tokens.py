@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.25.0-codex.1
+Code version: v1.34.1-codex.1
 """
 
 from pathlib import Path
@@ -13,12 +13,86 @@ def _stylesheet() -> str:
     return STYLE_PATH.read_text(encoding="utf-8")
 
 
+def test_typography_matches_the_sibling_font_contract() -> None:
+    """Keep the local font family, primitives, and semantic aliases in sync."""
+    stylesheet = _stylesheet()
+
+    expected_tokens = (
+        '@font-face {',
+        'font-family: "Univers Next for HSBC";',
+        'src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Regular")',
+        "--font-size-1: 11px;",
+        "--font-size-2: 12px;",
+        "--font-size-3: 13px;",
+        "--font-size-4: 14px;",
+        "--font-size-5: 15px;",
+        "--font-size-6: 24px;",
+        "--font-size-7: 32px;",
+        "--font-size-8: 36px;",
+        '--font-family-brand: "Univers Next for HSBC";',
+        "--font-ui-md: var(--font-size-4);",
+        "--font-ui-lg: var(--font-size-5);",
+        "--font-title-md: var(--font-size-6);",
+        "--font-metric-xl: var(--font-size-8);",
+        "--font-table-head: var(--font-size-3);",
+        "--font-card-subtitle: var(--font-ui-lg);",
+        "--font-metric-value: var(--font-metric-md);",
+        "--font-numeric-fraction-scale: 0.76;",
+    )
+    for token in expected_tokens:
+        assert token in stylesheet
+
+
 def test_settings_fields_use_a_single_column_layout() -> None:
     """Keep every Settings category free of side-by-side field groups."""
     stylesheet = _stylesheet()
 
     assert ".settings-category-panel .field-grid {" in stylesheet
     assert "grid-template-columns: minmax(0, 1fr);" in stylesheet
+
+
+def test_form_inputs_use_regular_weight_monospace_text() -> None:
+    """Keep path and numeric values legible without an inherited bold weight."""
+    stylesheet = _stylesheet()
+    selector_start = stylesheet.index('input[type="text"],\ninput[type="number"] {')
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert 'font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;' in selector_rule
+    assert "font-weight: var(--font-weight-regular);" in selector_rule
+
+
+def test_cache_sidebar_cards_and_url_inputs_use_the_shared_control_treatment() -> None:
+    """Keep shared configuration tactile and URL values legible in monospace."""
+    stylesheet = _stylesheet()
+
+    cache_card_start = stylesheet.index(".cache-common-config--physical {")
+    cache_card_rule = stylesheet[cache_card_start:stylesheet.index("\n}", cache_card_start)]
+    url_input_start = stylesheet.index('input[type="url"].text-input-control {')
+    url_input_rule = stylesheet[url_input_start:stylesheet.index("\n}", url_input_start)]
+    action_row_start = stylesheet.index('.page[data-cache-source="grok"] .sidebar-action-row {')
+    action_row_rule = stylesheet[action_row_start:stylesheet.index("\n}", action_row_start)]
+
+    for token in (
+        "border: var(--frosted-glass-border);",
+        "background: var(--frosted-glass-background);",
+        "box-shadow: var(--frosted-glass-shadow),",
+        "backdrop-filter: var(--frosted-glass-blur);",
+    ):
+        assert token in cache_card_rule
+
+    assert 'font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;' in url_input_rule
+    assert "font-weight: var(--font-weight-regular);" in url_input_rule
+    assert "padding-block: 10px;" in action_row_rule
+
+
+def test_settings_directory_picker_uses_the_folder_icon() -> None:
+    """Keep directory picker buttons compact and backed by the local folder asset."""
+    stylesheet = _stylesheet()
+
+    assert ".settings-directory-choose-icon {" in stylesheet
+    assert "width: var(--settings-round-icon-button-size);" in stylesheet
+    assert "height: var(--settings-round-icon-button-icon-size);" in stylesheet
+    assert 'mask: url("/static/images/folder.fill.svg") center/contain no-repeat;' in stylesheet
 
 
 def test_cache_sidebar_parameter_grids_use_one_field_per_row() -> None:
@@ -28,6 +102,15 @@ def test_cache_sidebar_parameter_grids_use_one_field_per_row() -> None:
     selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
 
     assert "grid-template-columns: minmax(0, 1fr);" in selector_rule
+
+
+def test_browser_grid_cards_stretch_to_the_row_height() -> None:
+    """Keep media cards bottom-aligned when their content heights differ."""
+    stylesheet = _stylesheet()
+    selector_start = stylesheet.index(".browser-gallery {")
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "align-items: stretch;" in selector_rule
 
 
 def test_settings_save_action_reuses_the_sibling_action_package() -> None:
@@ -129,6 +212,27 @@ def test_synchronized_color_aliases_cover_interactive_surfaces() -> None:
 
     for token in expected_tokens:
         assert token in stylesheet
+
+
+def test_non_pill_corner_radii_use_the_shared_ten_pixel_value() -> None:
+    """Keep ordinary rounded surfaces at 10px while preserving pill and circle shapes."""
+    stylesheet = _stylesheet()
+
+    expected_tokens = (
+        "--radius-panel: 10px;",
+        "--radius-soft: 10px;",
+        "--strategy-stepper-radius: 10px;",
+        "--browser-media-frame-radius: var(--radius-panel);",
+        "border-radius: var(--browser-media-frame-radius, var(--radius-panel));",
+        "border-radius: 0 0 var(--radius-panel) var(--radius-panel);",
+        "border-radius: var(--radius-panel) var(--radius-panel) 0 0;",
+        "border-radius: var(--radius-panel) 0 0 var(--radius-panel);",
+    )
+    for token in expected_tokens:
+        assert token in stylesheet
+
+    for non_shared_radius in ("6px", "8px", "9px", "12px", "18px", "20px", "24px", "30px"):
+        assert f"border-radius: {non_shared_radius};" not in stylesheet
 
 
 def test_sidebar_actions_consume_shared_semantic_tokens() -> None:
@@ -260,12 +364,18 @@ def test_cache_dock_direct_link_and_gallery_use_shared_tokens() -> None:
 
     expected_tokens = (
         ".sidebar-dock:has(> .sidebar-dock-item:nth-child(1).is-active)",
+        ".sidebar-dock:has(> .sidebar-dock-item:nth-child(4).is-active)",
         ".cache-source-mark::before",
         "mask-image: var(--cache-source-mark);",
         "background-color: currentColor;",
+        ".cache-source-mark.is-full-color::before",
+        "background: var(--cache-source-mark) center / contain no-repeat;",
+        "mask-image: none;",
+        ".dock-icon-chats",
+        "mask: url(\"/static/images/arrow.down.message.fill.svg\")",
         ".dock-icon-cache",
-        "mask: url(\"/static/images/externaldrive.fill.badge.checkmark.svg\")",
-        ".dock-icon-browser",
+        "mask: url(\"/static/images/photo.badge.arrow.down.fill.svg\")",
+        ".dock-icon-local-resources",
         "mask: url(\"/static/images/photo.stack.svg\")",
         ".browser-empty-icon::before",
         ".browser-gallery",
@@ -401,7 +511,7 @@ def test_chatgpt_prompt_expands_vertically_inside_its_media_card() -> None:
     for token in expected_tokens:
         assert token in stylesheet
 
-    assert "align-items: start;" in gallery_rule
+    assert "align-items: stretch;" in gallery_rule
     assert ".browser-prompt-dialog {" not in stylesheet
 
 
@@ -443,9 +553,9 @@ def test_browser_media_actions_use_standard_round_icon_controls() -> None:
         'mask: url("/static/images/safari.svg") center/contain no-repeat;',
         'mask: url("/static/images/finder.svg") center/contain no-repeat;',
         ".browser-media-reveal.is-revealed {",
-        "border-radius: 0 0 calc(var(--radius-panel) - 1px) calc(var(--radius-panel) - 1px);",
-        "border-radius: calc(var(--radius-panel) - 1px) calc(var(--radius-panel) - 1px) 0 0;",
-        "border-radius: calc(var(--radius-panel) - 1px) 0 0 calc(var(--radius-panel) - 1px);",
+        "border-radius: 0 0 var(--radius-panel) var(--radius-panel);",
+        "border-radius: var(--radius-panel) var(--radius-panel) 0 0;",
+        "border-radius: var(--radius-panel) 0 0 var(--radius-panel);",
     )
 
     for token in expected_tokens:
@@ -562,6 +672,40 @@ def test_browser_pagination_matches_the_sibling_floating_control_states() -> Non
     assert "transform:" not in hover_rule
 
 
+def test_motion_tokens_match_the_sibling_non_linear_motion_contract() -> None:
+    """Keep shared transitions valid and aligned with the sibling motion foundation."""
+    stylesheet = _stylesheet()
+
+    for token in (
+        "--motion-duration-fast: 160ms;",
+        "--motion-duration-standard: 240ms;",
+        "--motion-duration-emphasized: 420ms;",
+        "--motion-duration-spatial: 560ms;",
+        "--motion-standard: cubic-bezier(0.2, 0, 0, 1);",
+        "--motion-emphasized: cubic-bezier(0.16, 1, 0.3, 1);",
+        "--motion-inertial: cubic-bezier(0.16, 1, 0.3, 1);",
+        "--motion-bouncy: cubic-bezier(0.34, 1.56, 0.64, 1);",
+        "--motion-overshoot: cubic-bezier(0.34, 1.32, 0.64, 1);",
+    ):
+        assert token in stylesheet
+
+
+def test_browser_pagination_indicator_uses_composited_spatial_motion() -> None:
+    """Keep pagination indicator movement smooth when page controls are rebuilt."""
+    stylesheet = _stylesheet()
+    indicator_start = stylesheet.index(".browser-pagination .local-store-pagination-indicator {")
+    indicator_rule = stylesheet[indicator_start:stylesheet.index("\n}", indicator_start)]
+
+    for token in (
+        "transform: translate3d(0, 0, 0) scale(1);",
+        "transition:",
+        "transform var(--local-store-pagination-motion-duration) var(--local-store-pagination-motion-easing),",
+        "opacity var(--motion-duration-standard) var(--motion-standard);",
+        "will-change: transform, opacity;",
+    ):
+        assert token in indicator_rule
+
+
 def test_browser_pagination_range_menu_uses_glass_and_gel_motion_tokens() -> None:
     """Keep range expansion aligned with the sibling popover motion language."""
     stylesheet = _stylesheet()
@@ -578,5 +722,106 @@ def test_browser_pagination_range_menu_uses_glass_and_gel_motion_tokens() -> Non
         "animation: browser-pagination-range-gel-in 300ms var(--motion-bouncy) both;",
         "@keyframes browser-pagination-range-gel-in {",
         "grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));",
+    ):
+        assert token in stylesheet
+
+
+def test_browser_content_mode_control_uses_the_sibling_blue_pill_pattern() -> None:
+    """Keep the media/text switcher aligned with the sibling segmented control."""
+    stylesheet = _stylesheet()
+
+    for token in (
+        ".browser-content-mode-control {",
+        "grid-template-columns: repeat(var(--browser-mode-option-count), minmax(0, 1fr));",
+        "border-radius: var(--radius-pill);",
+        "background: var(--accent-fill);",
+        ".browser-content-mode-control:has(> .browser-content-mode-option:last-child input:checked)::before {",
+        "transform: translateX(calc(100% + 4px));",
+        ".browser-content-mode-option input:checked + span {",
+        "color: var(--accent-contrast);",
+        ".browser-chat-list {",
+        ".browser-chat-message {",
+        ".browser-chat-message-link {",
+        ".chart-panel.workspace.browser-workspace {",
+        ".browser-text-summary-card {",
+        "height: auto;",
+        ".browser-session-table-number {",
+        "text-align: center;",
+        ".browser-chat-role-mark {",
+        ".browser-session-table-role {",
+        "display: table-cell;",
+        ".browser-session-detail-actions {",
+        ".browser-session-neighbor-nav {",
+        ".browser-session-neighbor-button:disabled {",
+        ".browser-session-neighbor-prev-icon {",
+        ".browser-session-neighbor-next-icon {",
+        ".browser-session-actions {",
+        ".browser-session-actions-trigger {",
+        ".browser-session-actions-drawer {",
+        ".browser-session-action-link {",
+        ".browser-session-export-icon {",
+        ".browser-session-index-table .browser-session-col-number {",
+        ".browser-session-table-source {",
+        ".browser-session-source-mark,",
+        ".browser-session-table-role > .browser-chat-role-mark,",
+        "display: grid;",
+        "margin-inline: auto;",
+        ".browser-session-table-updated-link {",
+    ):
+        assert token in stylesheet
+
+
+def test_browser_workspace_prefers_simplified_chinese_font_fallbacks() -> None:
+    """Keep Local resources text rendered with Simplified Chinese glyph forms."""
+    stylesheet = _stylesheet()
+    workspace_start = stylesheet.index(".browser-workspace {")
+    workspace_rule = stylesheet[workspace_start:stylesheet.index("\n}", workspace_start)]
+    font_family = 'font-family: var(--font-family-brand), "Helvetica Neue", Helvetica, Arial, "PingFang SC", "PingFang TC", "PingFang HK", "Microsoft YaHei", "Microsoft JhengHei", sans-serif;'
+
+    assert font_family in workspace_rule
+    assert workspace_rule.index('"PingFang SC"') < workspace_rule.index('"PingFang HK"')
+    assert workspace_rule.index('"Microsoft YaHei"') < workspace_rule.index('"Microsoft JhengHei"')
+
+
+def test_browser_summary_card_aligns_pagination_with_the_sidebar_dock() -> None:
+    """Let the session table consume the space above the shared bottom dock."""
+    stylesheet = _stylesheet()
+    summary_start = stylesheet.index(".browser-summary-card {")
+    summary_rule = stylesheet[summary_start:stylesheet.index("\n}", summary_start)]
+
+    assert "padding-bottom: var(--sidebar-dock-bottom-gap);" in summary_rule
+    assert ".browser-text-summary-card .browser-session-table-shell {" in stylesheet
+    assert ".browser-text-summary-card .browser-session-table-scroll {" in stylesheet
+
+
+def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
+    """Keep the fourth dock item and Agent workspace aligned with the shared shell."""
+    stylesheet = _stylesheet()
+
+    for token in (
+        "/* Code version: v2.60.7-codex.1 */",
+        ".dock-brand-icon {",
+        "width: 22px;",
+        "height: 22px;",
+        "/* DevSpace-backed subscription web Agent. */",
+        ".agent-connect-fields {",
+        "grid-template-columns: minmax(0, 1fr);",
+        "gap: 14px;",
+        ".agent-combobox.is-agent-combobox-open .agent-combobox-dropdown:not([hidden]) {",
+        ".agent-runtime-log-open-icon {",
+        'mask: url("/static/images/finder.svg") center/contain no-repeat;',
+        ".agent-port-field {",
+        "grid-column: auto;",
+        ".settings-category-nav-item-agent {",
+        "--settings-category-active-index: 5;",
+        ".agent-workspace-grid {",
+        "grid-template-columns: minmax(0, 1fr);",
+        "grid-template-rows: auto minmax(260px, 1fr);",
+        ".agent-composer-shell:focus-within {",
+        ".agent-composer-submit-icon {",
+        "border-radius: var(--radius-soft);",
+        ".agent-response-output {",
+        "white-space: pre-wrap;",
+        "@media (max-width: 1100px) {",
     ):
         assert token in stylesheet

@@ -1,0 +1,294 @@
+"""Focused tests for the local text-history browser."""
+
+# Code version: v1.3.0-codex.1
+
+from pathlib import Path
+
+from app.core.chat_history_browser import (
+    attach_media_references,
+    build_chat_history_markdown,
+    format_chat_message_timestamp_label,
+    query_chat_history,
+)
+from app.core.local_media_browser import LocalMediaItem
+from app.core.resource_persistence import GEMINI_HISTORY_SCHEMA, write_parquet_rows_atomic
+
+
+def _history_row(
+    conversation_id: str,
+    message_key: str,
+    content_text: str,
+    *,
+    role: str = "user",
+    conversation_title: str = "Demo conversation",
+    last_seen_at: str = "2026-08-12T05:00:00Z",
+    message_index: int = 0,
+) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "platform": "gemini",
+        "conversation_id": conversation_id,
+        "conversation_url": f"https://gemini.google.com/app/{conversation_id}",
+        "conversation_title": conversation_title,
+        "message_key": message_key,
+        "turn_index": 0,
+        "message_index": message_index,
+        "role": role,
+        "author_label": "You" if role == "user" else "Gemini",
+        "content_text": content_text,
+        "content_html": "",
+        "content_sha256": "hash",
+        "source_links": [],
+        "model_label": "",
+        "first_seen_at": last_seen_at,
+        "last_seen_at": last_seen_at,
+    }
+
+
+def test_query_chat_history_reads_and_filters_typed_messages(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "gemini" / "history.parquet"
+    write_parquet_rows_atomic(
+        history_path,
+        [
+            _history_row("new", "new:0:user", "Keep this message", last_seen_at="2026-08-12T06:00:00Z"),
+            _history_row("old", "old:0:user", "Findable older message", last_seen_at="2026-08-11T06:00:00Z"),
+        ],
+        GEMINI_HISTORY_SCHEMA,
+    )
+
+    page = query_chat_history(tmp_path, query="findable")
+
+    assert page.total_count == 1
+    assert page.conversation_count == 1
+    assert page.items[0].conversation_id == "old"
+    assert page.items[0].content_text == "Findable older message"
+
+
+def test_query_chat_history_can_paginate_one_row_per_session(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "gemini" / "history.parquet"
+    write_parquet_rows_atomic(
+        history_path,
+        [
+            _history_row("new", "new:0:user", "First", last_seen_at="2026-08-12T06:00:00Z"),
+            _history_row("new", "new:1:assistant", "Latest", role="assistant", last_seen_at="2026-08-12T07:00:00Z"),
+            _history_row("old", "old:0:user", "Older", last_seen_at="2026-08-11T06:00:00Z"),
+        ],
+        GEMINI_HISTORY_SCHEMA,
+    )
+
+    page = query_chat_history(tmp_path, session_view=True, page_size=1)
+
+    assert page.session_view
+    assert page.total_count == 3
+    assert page.conversation_count == 2
+    assert page.total_pages == 2
+    assert len(page.sessions) == 1
+    assert page.sessions[0].conversation_id == "new"
+    assert page.sessions[0].message_count == 2
+    assert page.sessions[0].latest_message == "Latest"
+    assert {message.message_key for message in page.items} == {"new:0:user", "new:1:assistant"}
+
+
+def test_query_chatgpt_history_lists_sessions_on_the_home_page(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "chatgpt" / "history.parquet"
+    rows = [
+        dict(
+            _history_row(
+                "chat-new",
+                "chat-new:user",
+                "ChatGPT first message",
+                conversation_title="Newest ChatGPT session",
+                last_seen_at="2026-08-12T08:00:00Z",
+            ),
+            platform="chatgpt",
+            conversation_url="https://chatgpt.com/c/chat-new",
+        ),
+        dict(
+            _history_row(
+                "chat-new",
+                "chat-new:assistant",
+                "ChatGPT complete response",
+                role="assistant",
+                conversation_title="Newest ChatGPT session",
+                last_seen_at="2026-08-12T08:01:00Z",
+            ),
+            platform="chatgpt",
+            conversation_url="https://chatgpt.com/c/chat-new",
+        ),
+        dict(
+            _history_row(
+                "chat-old",
+                "chat-old:user",
+                "Older ChatGPT message",
+                conversation_title="Older ChatGPT session",
+                last_seen_at="2026-08-11T08:00:00Z",
+            ),
+            platform="chatgpt",
+            conversation_url="https://chatgpt.com/c/chat-old",
+        ),
+    ]
+    write_parquet_rows_atomic(history_path, rows, GEMINI_HISTORY_SCHEMA)
+
+    page = query_chat_history(tmp_path, source="chatgpt", session_view=True, page=1)
+    second_page = query_chat_history(tmp_path, source="chatgpt", session_view=True, page=2)
+
+    assert page.total_count == 3
+    assert page.conversation_count == 2
+    assert page.total_pages == 1
+    assert len(page.sessions) == 2
+    assert page.sessions[0].source == "chatgpt"
+    assert page.sessions[0].conversation_id == "chat-new"
+    assert page.sessions[0].message_count == 2
+    assert {message.message_key for message in page.items} == {
+        "chat-new:user",
+        "chat-new:assistant",
+        "chat-old:user",
+    }
+    assert second_page.current_page == 1
+
+
+def test_query_chat_history_opens_one_session_and_paginates_messages(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "gemini" / "history.parquet"
+    rows = [
+        _history_row("demo", f"demo:{index}", f"Message {index}", message_index=index)
+        for index in range(3)
+    ]
+    write_parquet_rows_atomic(history_path, rows, GEMINI_HISTORY_SCHEMA)
+
+    index_page = query_chat_history(tmp_path, source="gemini", session_view=True)
+    session_id = index_page.sessions[0].stable_id
+    detail_page = query_chat_history(
+        tmp_path,
+        source="gemini",
+        session_view=True,
+        session=session_id,
+        page_size=2,
+    )
+
+    assert detail_page.session_detail
+    assert detail_page.current_session is not None
+    assert detail_page.current_session.conversation_title == "Demo conversation"
+    assert detail_page.total_count == 3
+    assert detail_page.total_pages == 2
+    assert [message.message_index for message in detail_page.items] == [0, 1]
+    assert detail_page.pagination_unit == "message"
+
+
+def test_build_chat_history_markdown_exports_the_complete_session(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "gemini" / "history.parquet"
+    rows = [
+        _history_row("demo", "demo:0", "A question", message_index=0),
+        _history_row(
+            "demo",
+            "demo:1",
+            "A response",
+            role="assistant",
+            message_index=1,
+            last_seen_at="2026-08-12T05:01:00Z",
+        ),
+    ]
+    rows[0]["source_links"] = ["https://example.com/source"]
+    write_parquet_rows_atomic(history_path, rows, GEMINI_HISTORY_SCHEMA)
+
+    index_page = query_chat_history(tmp_path, source="gemini", session_view=True)
+    detail_page = query_chat_history(
+        tmp_path,
+        source="gemini",
+        session_view=True,
+        session=index_page.sessions[0].stable_id,
+        page_size=100,
+    )
+
+    markdown = build_chat_history_markdown(detail_page)
+    assert markdown.startswith("# Demo conversation\n")
+    assert "- Messages: 2" in markdown
+    assert "### 1. You · 12 Aug 2026 05:00" in markdown
+    assert "### 2. Gemini · 12 Aug 2026 05:01" in markdown
+    assert "Source link 1: https://example.com/source" in markdown
+    assert markdown.endswith("\n")
+
+
+def test_query_chat_history_exposes_adjacent_sessions_in_sorted_order(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "gemini" / "history.parquet"
+    rows = [
+        _history_row("newest", "newest:0", "Newest", last_seen_at="2026-08-12T08:00:00Z"),
+        _history_row("middle", "middle:0", "Middle", last_seen_at="2026-08-12T07:00:00Z"),
+        _history_row("oldest", "oldest:0", "Oldest", last_seen_at="2026-08-12T06:00:00Z"),
+    ]
+    write_parquet_rows_atomic(history_path, rows, GEMINI_HISTORY_SCHEMA)
+
+    index_page = query_chat_history(tmp_path, source="gemini", session_view=True)
+    middle_id = index_page.sessions[1].stable_id
+    detail_page = query_chat_history(
+        tmp_path,
+        source="gemini",
+        session_view=True,
+        session=middle_id,
+    )
+
+    assert detail_page.previous_session is not None
+    assert detail_page.previous_session.conversation_id == "newest"
+    assert detail_page.next_session is not None
+    assert detail_page.next_session.conversation_id == "oldest"
+
+
+def test_query_chat_history_session_home_uses_100_sessions_per_page(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "gemini" / "history.parquet"
+    rows = [
+        _history_row(
+            f"session-{index}",
+            f"session-{index}:0",
+            f"Message {index}",
+            conversation_title=f"Session {index}",
+            last_seen_at=f"2026-08-12T05:{index % 60:02d}:00Z",
+        )
+        for index in range(101)
+    ]
+    write_parquet_rows_atomic(history_path, rows, GEMINI_HISTORY_SCHEMA)
+
+    first_page = query_chat_history(tmp_path, source="gemini", session_view=True)
+    second_page = query_chat_history(tmp_path, source="gemini", session_view=True, page=2)
+
+    assert first_page.page_size == 100
+    assert first_page.total_pages == 2
+    assert len(first_page.sessions) == 100
+    assert len(second_page.sessions) == 1
+
+
+def test_format_chat_message_timestamp_label_uses_zero_padded_day_and_utc() -> None:
+    assert format_chat_message_timestamp_label("2026-08-01T01:02:03Z") == "01 Aug 2026 01:02"
+
+
+def test_chat_history_points_to_existing_media_without_copying_payload(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "gemini" / "history.parquet"
+    conversation_url = "https://gemini.google.com/app/demo"
+    write_parquet_rows_atomic(
+        history_path,
+        [_history_row("demo", "demo:0:user", "A message")],
+        GEMINI_HISTORY_SCHEMA,
+    )
+    media_item = LocalMediaItem(
+        stable_id="media-demo",
+        source="chatgpt",
+        media_kind="image",
+        relative_path="chatgpt/demo/image.png",
+        filename="image.png",
+        title="image.png",
+        description="",
+        creator="Demo",
+        source_url=conversation_url,
+        captured_at="2026-08-12T05:00:00Z",
+        captured_at_label="12 Aug 2026",
+        content_bytes=12,
+        project_name="Demo",
+    )
+
+    page = attach_media_references(
+        query_chat_history(tmp_path),
+        [media_item],
+        lambda stable_id: f"/browser?view=media&media_id={stable_id}",
+    )
+
+    assert page.items[0].media_refs[0].stable_id == "media-demo"
+    assert page.items[0].media_refs[0].href == "/browser?view=media&media_id=media-demo"
+    assert not hasattr(page.items[0], "media_payload")

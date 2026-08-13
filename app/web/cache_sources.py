@@ -1,6 +1,6 @@
 """Presentation registry for cache source pages."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.3.2-codex.1
 
 from __future__ import annotations
 
@@ -32,6 +32,11 @@ class CacheSourceView:
     progress_strategy: str
     progress_aria_label: str
     banner_storage_key: str
+    group_key: str = "media"
+    group_label: str = "Caches"
+    include_in_llm_switcher: bool = False
+    preserve_icon_color: bool = False
+    show_common_config: bool = True
     show_progress_audit: bool = False
     show_progress_value: bool = False
     show_progress_detail: bool = False
@@ -53,6 +58,34 @@ class CacheSourceView:
 
 
 _CACHE_SOURCE_VIEWS = (
+    CacheSourceView(
+        key="gemini",
+        label="Gemini",
+        view_endpoint="gemini",
+        template_name="gemini.html",
+        icon_filename="images/Google_Gemini_logo_2025_symbol.svg",
+        document_title="CacheLikesFromTwitter Gemini",
+        overview_title="Gemini history cache overview",
+        browser_panel_label="Authorized browser",
+        browser_empty_message="No authorized Gemini account detected",
+        browser_config_field="gemini_browser",
+        require_browser_ready=True,
+        start_form_id="start_form_gemini",
+        start_button_label="Start sync",
+        start_wait_title="Starting Gemini history sync",
+        start_wait_copy="Preparing the selected browser session and caching Gemini sessions to Parquet.",
+        stop_wait_title="Stopping Gemini history sync",
+        stop_wait_copy="Requesting a safe stop after the current Gemini session.",
+        progress_strategy="queue",
+        progress_aria_label="Gemini history sync progress",
+        banner_storage_key="cachelikes:gemini-status-banner-dismissed",
+        group_key="llm",
+        group_label="Chats",
+        preserve_icon_color=True,
+        show_common_config=False,
+        show_progress_value=True,
+        show_progress_detail=True,
+    ),
     CacheSourceView(
         key="x",
         label="X",
@@ -96,6 +129,7 @@ _CACHE_SOURCE_VIEWS = (
         progress_strategy="grok-audit",
         progress_aria_label="Grok sync progress",
         banner_storage_key="cachelikes:grok-status-banner-dismissed",
+        include_in_llm_switcher=True,
         show_progress_audit=True,
         show_progress_detail=True,
     ),
@@ -120,6 +154,7 @@ _CACHE_SOURCE_VIEWS = (
         progress_strategy="queue",
         progress_aria_label="ChatGPT sync progress",
         banner_storage_key="cachelikes:chatgpt-status-banner-dismissed",
+        include_in_llm_switcher=True,
         show_progress_audit=True,
         show_progress_value=True,
         show_progress_detail=True,
@@ -128,7 +163,22 @@ _CACHE_SOURCE_VIEWS = (
 
 
 CACHE_SOURCE_VIEWS = tuple(sorted(_CACHE_SOURCE_VIEWS, key=lambda source: source.label.casefold()))
+MEDIA_CACHE_SOURCE_VIEWS = tuple(source for source in CACHE_SOURCE_VIEWS if source.group_key == "media")
+LLM_CACHE_SOURCE_VIEWS = tuple(source for source in CACHE_SOURCE_VIEWS if source.group_key == "llm")
+LLM_SWITCHER_SOURCE_VIEWS = tuple(
+    source
+    for source in CACHE_SOURCE_VIEWS
+    if source.group_key == "llm" or source.include_in_llm_switcher
+)
 CACHE_SOURCE_BY_KEY = MappingProxyType({source.key: source for source in CACHE_SOURCE_VIEWS})
+
+
+def cache_source_views_for_group(group_key: str) -> tuple[CacheSourceView, ...]:
+    """Return the source switcher options for one dock group."""
+    normalized_group = str(group_key or "").strip().lower()
+    if normalized_group == "llm":
+        return LLM_SWITCHER_SOURCE_VIEWS
+    return MEDIA_CACHE_SOURCE_VIEWS
 
 
 def get_cache_source_view(source_key: str) -> CacheSourceView | None:

@@ -1,17 +1,19 @@
-{# Code version: v1.7.0-codex.1 #}
+{# Code version: v1.10.6-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>{{ cache_source.document_title }}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.47.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.60.7-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.7.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.5.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.7.0-codex.1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -40,10 +42,10 @@
         <button type="button" class="notice-floating-dismiss" id="status_banner_dismiss" aria-label="Dismiss status banner">x</button>
     </div>
 
+    <button type="button" class="sidebar-toggle" id="sidebar_toggle" aria-label="Toggle sidebar" aria-expanded="true">
+        <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
+    </button>
     <div class="app-shell is-sidebar-open" id="app_shell">
-        <button type="button" class="sidebar-toggle" id="sidebar_toggle" aria-label="Toggle sidebar" aria-expanded="true">
-            <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
-        </button>
         {% include "_theme_toggle.html" %}
         <button
             type="button"
@@ -57,8 +59,39 @@
 
         <aside class="panel sidebar" id="app_sidebar">
             <section class="hero">
-                <h1>Caches</h1>
+                <h1>{{ cache_source.group_label }}</h1>
             </section>
+            {% if cache_source.key == "chatgpt" %}
+            <section class="sidebar-section cache-page-content-mode-section">
+                <div
+                    class="browser-content-mode-control cache-page-content-mode-control"
+                    role="radiogroup"
+                    aria-label="Cache content type"
+                    data-cache-content-mode
+                    data-option-count="2"
+                    data-segmented-active-index="0"
+                >
+                    <a
+                        class="browser-content-mode-option is-active"
+                        href="{{ url_for('browser', view='text', session_view='1', q='', source=cache_source.key, sort='newest') }}"
+                        data-cache-content-mode-option="text"
+                        role="radio"
+                        aria-checked="true"
+                    >
+                        <span>Text</span>
+                    </a>
+                    <a
+                        class="browser-content-mode-option"
+                        href="{{ url_for('cache_source', source_key=cache_source.key) }}"
+                        data-cache-content-mode-option="media"
+                        role="radio"
+                        aria-checked="false"
+                    >
+                        <span>Media</span>
+                    </a>
+                </div>
+            </section>
+            {% endif %}
             <section class="sidebar-section">
                 <div class="section-heading">
                     <div
@@ -78,7 +111,7 @@
                             <span class="browser-session-trigger-leading">
                                 <span class="browser-picker-selected-icon-shell">
                                     <span
-                                        class="cache-source-mark browser-source-filter-mark"
+                                        class="cache-source-mark browser-source-filter-mark{% if cache_source.preserve_icon_color %} is-full-color{% endif %}"
                                         style="--cache-source-mark: url('{{ url_for('static', filename=cache_source.icon_filename) }}');"
                                         aria-hidden="true"
                                     ></span>
@@ -95,20 +128,20 @@
                             aria-label="Switch cache source"
                             hidden
                         >
-                            {% for source in cache_sources %}
+                            {% for source in cache_source_options %}
                             <button
                                 type="button"
                                 id="cache_source_switcher_option_{{ source.key }}"
                                 class="trade-strategy-dropdown-option browser-source-filter-option{% if source.key == cache_source.key %} is-selected is-active{% endif %}"
                                 data-cache-source-switcher-option="{{ source.key }}"
-                                data-cache-source-switcher-path="{{ url_for(source.view_endpoint) }}"
+                                data-cache-source-switcher-path="{{ url_for('browser', view='text', session_view='1', q='', source=source.key, sort='newest') if cache_source.group_key == 'llm' else url_for('cache_source', source_key=source.key) }}"
                                 role="option"
                                 aria-selected="{{ 'true' if source.key == cache_source.key else 'false' }}"
                                 tabindex="-1"
                             >
                                 <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
                                 <span
-                                    class="cache-source-mark browser-source-filter-mark"
+                                    class="cache-source-mark browser-source-filter-mark{% if source.preserve_icon_color %} is-full-color{% endif %}"
                                     style="--cache-source-mark: url('{{ url_for('static', filename=source.icon_filename) }}');"
                                     aria-hidden="true"
                                 ></span>
@@ -143,7 +176,15 @@
                         id="{{ cache_source.browser_input_id }}"
                         value="{{ saved_config|attr(cache_source.browser_config_field) }}"
                     >
-                    {{ render_cache_common_config(saved_config, cache_source.key) }}
+                    {% if cache_source.show_common_config %}
+                    {{ render_cache_common_config(
+                        saved_config,
+                        cache_source.key,
+                        title="General configuration" if cache_source.key == "grok" else "Shared cache configuration",
+                        show_scope=cache_source.key != "grok",
+                        physical_card=cache_source.key == "grok"
+                    ) }}
+                    {% endif %}
                     {% block source_fields %}{% endblock %}
                 </form>
                 <div class="sidebar-action-row">
@@ -168,7 +209,9 @@
                 <div class="report-card workspace-summary-card workspace-article-card anchor-section" id="overview">
                     <div class="report-heading-row">
                         <div>
+                            {% if cache_source.key != "grok" %}
                             <p class="workspace-kicker">Live snapshot</p>
+                            {% endif %}
                             <h2>{{ cache_source.overview_title }}</h2>
                         </div>
                     </div>
@@ -248,12 +291,11 @@
                                 </table>
                             </div>
                             <nav
-                                class="browser-pagination local-store-pagination local-store-pagination--floating events-pagination is-animated"
+                                class="browser-pagination local-store-pagination local-store-pagination--floating events-pagination"
                                 id="recent_events_pagination"
                                 aria-label="Recent event pages"
-                                style="--local-store-pagination-slots: 1;"
+                                hidden
                             >
-                                <span class="local-store-pagination-indicator" aria-hidden="true"></span>
                             </nav>
                         </div>
                     </div>
@@ -268,7 +310,7 @@
 </main>
 
 {% include "_waiting_modal.html" %}
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.8.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.16.0-codex.1') }}"></script>
 {% block tail %}{% endblock %}
 </body>
 </html>

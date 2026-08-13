@@ -1,4 +1,4 @@
-{# Code version: v1.8.0-codex.1 #}
+{# Code version: v1.8.1-codex.1 #}
 {% extends "_cache_page.html" %}
 {% from "_cache_page_components.html" import render_metric, render_progress_metric %}
 {% from "_number_field.html" import render_number_field %}
@@ -21,7 +21,7 @@
 {% endblock %}
 
 {% block primary_metrics %}
-{{ render_metric("Conversations discovered", "discovered_tweets", snapshot.discovered_tweets, true, "discovered_tweets") }}
+{{ render_metric("Sessions discovered", "discovered_tweets", snapshot.discovered_tweets, true, "discovered_tweets") }}
 {{ render_metric("Images discovered", "discovered_images", snapshot.discovered_images, true, "discovered_images") }}
 {{ render_metric("Images cached", "downloaded_images", snapshot.downloaded_images, true, "downloaded_images") }}
 {{ render_metric("Known images skipped this run", "skipped_tweets", snapshot.skipped_tweets, false, "skipped_tweets") }}

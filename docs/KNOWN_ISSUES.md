@@ -1,6 +1,6 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.1.0-codex.1`
+Documentation version: `v1.1.1-codex.1`
 
 ## Touch-safe iPad sidebar contract established on 12 Aug 2026
 
@@ -16,6 +16,9 @@ Documentation version: `v1.1.0-codex.1`
 - `[hidden] { display: none !important; }` is now a global contract. A hidden backdrop cannot be
   reactivated by a later responsive `display` declaration and therefore leaves layout, paint, and
   hit testing together.
+- The toggle is rendered as a direct child of the page rather than inside the app shell. This
+  keeps its touch layer independent from Safari's fixed-position stacking behavior while the
+  backdrop remains inside the shell beside the sidebar.
 - The quality gate now runs a seeded local Chromium E2E suite in a disposable browser context. It
   validates target phone, iPad, and desktop viewports without reading an authenticated profile.
 

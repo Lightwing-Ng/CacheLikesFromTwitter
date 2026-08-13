@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.15.0-codex.1
+# Code version: v1.15.1-codex.1
 
 from __future__ import annotations
 
@@ -568,9 +568,9 @@ def resolve_candidate_from_versions(context, fallback_candidate: GrokMediaCandid
     """Fetch the versions payload and upgrade a thumbnail candidate to the original asset."""
     try:
         response = context.request.get(build_versions_url(fallback_candidate.asset_id), timeout=DOWNLOAD_TIMEOUT_MS)
-    except PlaywrightError as exc:
+    except (PlaywrightError, RuntimeError) as exc:
         logger.warning(
-            "Falling back to list candidate because the versions endpoint request aborted.",
+            "Falling back to list candidate because the versions endpoint request failed.",
             extra={
                 "asset_id": fallback_candidate.asset_id,
                 "versions_url": build_versions_url(fallback_candidate.asset_id),
@@ -686,7 +686,14 @@ def resolve_candidate_from_file_details_page(
                 return null;
             }"""
         )
-    except PlaywrightError:
+    except (PlaywrightError, RuntimeError) as exc:
+        logger.warning(
+            "Falling back to the discovered candidate because the Grok details page request failed.",
+            extra={
+                "asset_id": fallback_candidate.asset_id,
+                "error": str(exc),
+            },
+        )
         return fallback_candidate
     finally:
         if owns_page:

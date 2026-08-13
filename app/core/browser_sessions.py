@@ -1,6 +1,6 @@
-"""Browser session probing helpers for X, Grok, and ChatGPT."""
+"""Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.10.0-codex.1
+# Code version: v1.12.1-codex.1
 
 from __future__ import annotations
 
@@ -39,6 +39,7 @@ X_HOME_URL = "https://x.com/home"
 GROK_FILES_URL = "https://grok.com/files"
 CHATGPT_PROJECT_URL = DEFAULT_CHATGPT_PROJECT_URL
 CHATGPT_AUTH_SESSION_URL = "https://chatgpt.com/api/auth/session"
+GEMINI_HOME_URL = "https://gemini.google.com/app"
 EDGE_USER_DATA_DIR = Path.home() / "Library/Application Support/Microsoft Edge"
 EDGE_PROFILE_DIRECTORY = "Default"
 SAFARI_APPLESCRIPT_SOURCE_LIMIT = 500_000
@@ -132,7 +133,7 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
         raise ValueError(f"Unsupported browser: {browser_name}")
 
     platform_key = (platform_name or "").strip().lower()
-    if platform_key not in {"x", "grok", "chatgpt"}:
+    if platform_key not in {"x", "grok", "chatgpt", "gemini"}:
         raise ValueError(f"Unsupported platform: {platform_name}")
 
     result = {
@@ -149,6 +150,8 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
     try:
         if platform_key == "chatgpt":
             result.update(_probe_chatgpt_session(descriptor, config))
+        elif platform_key == "gemini":
+            result.update(_probe_gemini_session(descriptor, config))
         elif descriptor.engine == "safari":
             if platform_key == "x":
                 result.update(_probe_safari_x_session(descriptor))
@@ -168,6 +171,53 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
         else:
             result["message"] = f"{descriptor.label} is not ready for {platform_key.upper()} yet."
     return result
+
+
+def _probe_gemini_session(descriptor: BrowserDescriptor, config: CrawlConfig) -> dict[str, Any]:
+    """Verify that the selected browser exposes an authenticated Gemini page."""
+    from .gemini_downloader import _wait_for_gemini_ready
+
+    if descriptor.engine == "safari":
+        with SafariContext(GEMINI_HOME_URL) as context:
+            page = context.primary_page
+            goto_with_retry(page, GEMINI_HOME_URL, attempts=2, timeout_ms=60_000)
+            snapshot = _wait_for_gemini_ready(page)
+    elif descriptor.engine == "chromium":
+        with sync_playwright_or_error() as playwright:
+            with launch_chromium_context(
+                playwright,
+                descriptor,
+                headless=False,
+                clone_profile_first=True,
+                background_window=True,
+            ) as context:
+                page = context.pages[0] if context.pages else context.new_page()
+                goto_with_retry(page, GEMINI_HOME_URL, attempts=2, timeout_ms=60_000)
+                snapshot = _wait_for_gemini_ready(page)
+    else:
+        return {
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "",
+            "message": f"Gemini history sync does not support {descriptor.label}.",
+        }
+
+    if snapshot.get("signedOut"):
+        return {
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "",
+            "message": f"{descriptor.label} is not signed in to Gemini.",
+        }
+    return {
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "Google account",
+        "message": (
+            f"{descriptor.label} verified an authenticated Gemini session. "
+            "A background browser window will cache rendered sessions to Parquet."
+        ),
+    }
 
 
 def _probe_chromium_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
@@ -216,7 +266,7 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
                     "logged_in": True,
                     "can_download": True,
                     "account_name": account_name,
-                    "message": f"{descriptor.label} is signed in to Grok as {account_name}.",
+                    "message": f"{descriptor.label} is ready to sync Grok.",
                 }
             if is_grok_security_verification_page(title, body_text, html):
                 return {
@@ -391,7 +441,7 @@ def _probe_safari_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
                 "logged_in": True,
                 "can_download": True,
                 "account_name": account_name,
-                "message": f"Safari is signed in to Grok as {account_name} and is ready to sync.",
+                "message": "Safari is ready to sync Grok.",
             }
 
     inferred_handle = extract_x_account_from_source(fetch_safari_page_snapshot(X_HOME_URL, wait_seconds=10)["source"])
@@ -400,7 +450,7 @@ def _probe_safari_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
             "logged_in": True,
             "can_download": True,
             "account_name": f"@{inferred_handle}",
-            "message": f"Safari Grok account was inferred from the linked X session as @{inferred_handle}.",
+            "message": "Safari is ready to sync Grok using the linked X session.",
         }
 
     return {

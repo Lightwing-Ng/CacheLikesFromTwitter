@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar.
 
-Code version: v1.0.0-codex.1
+Code version: v1.3.2-codex.1
 """
 
 from __future__ import annotations
@@ -124,6 +124,12 @@ def _assert_toggle_hit_target(page: Page) -> None:
     )
 
 
+def _tap_toggle_center(page: Page, toggle) -> None:
+    box = toggle.bounding_box()
+    assert box is not None
+    page.touchscreen.tap(box["x"] + (box["width"] / 2), box["y"] + (box["height"] / 2))
+
+
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.parametrize(("device_name", "width", "height"), OVERLAY_VIEWPORTS)
@@ -161,8 +167,11 @@ def test_overlay_sidebar_is_touch_safe_across_phone_and_ipad_portraits(
         assert closed_geometry["left"] >= 0, device_name
         assert closed_geometry["top"] >= 0, device_name
         _assert_toggle_hit_target(page)
+        assert toggle.evaluate(
+            "element => element.parentElement?.classList.contains('page')"
+        ), device_name
 
-        toggle.tap()
+        _tap_toggle_center(page, toggle)
         expect(toggle).to_have_attribute("aria-expanded", "true")
         expect(backdrop).to_be_visible()
         expect(backdrop).not_to_have_attribute("hidden", "")
@@ -216,10 +225,10 @@ def test_overlay_sidebar_is_touch_safe_across_phone_and_ipad_portraits(
         expect(toggle).to_have_attribute("aria-expanded", "false")
         _assert_hidden_backdrop(page)
 
-        toggle.tap()
+        _tap_toggle_center(page, toggle)
         expect(toggle).to_have_attribute("aria-expanded", "true")
         _assert_toggle_hit_target(page)
-        toggle.tap()
+        _tap_toggle_center(page, toggle)
         expect(toggle).to_have_attribute("aria-expanded", "false")
         _assert_hidden_backdrop(page)
     finally:
@@ -276,7 +285,7 @@ def test_sidebar_state_remains_consistent_across_overlay_transitions(
         backdrop = page.locator("#sidebar_backdrop")
         expect(toggle).to_have_attribute("aria-expanded", "false")
 
-        toggle.tap()
+        _tap_toggle_center(page, toggle)
         expect(toggle).to_have_attribute("aria-expanded", "true")
         expect(backdrop).to_be_visible()
 
@@ -289,7 +298,7 @@ def test_sidebar_state_remains_consistent_across_overlay_transitions(
         expect(backdrop).to_be_visible()
         _assert_toggle_hit_target(page)
 
-        toggle.tap()
+        _tap_toggle_center(page, toggle)
         expect(toggle).to_have_attribute("aria-expanded", "false")
         _assert_hidden_backdrop(page)
 
@@ -301,5 +310,163 @@ def test_sidebar_state_remains_consistent_across_overlay_transitions(
         expect(toggle).to_have_attribute("aria-expanded", "false")
         _assert_hidden_backdrop(page)
         _assert_toggle_hit_target(page)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_platform_selection_survives_cache_navigation(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/agent",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        page.get_by_role("button", name="Platform: ChatGPT", exact=True).click()
+        page.get_by_role("option", name="Gemini", exact=True).click()
+        expect(page.locator('input[name="platform"]')).to_have_value("gemini")
+        expect(page.get_by_role("heading", name="Gemini Web Agent", exact=True)).to_be_visible()
+
+        page.get_by_role("link", name="Cache", exact=True).click()
+        expect(page).to_have_url(re.compile(r"/cache/chatgpt$"))
+        expect(page.locator('[data-dock-section="cache"]')).to_have_attribute("aria-current", "page")
+        expect(page.locator('[data-dock-section="agent"]')).not_to_have_attribute("aria-current", "page")
+        page.get_by_role("link", name="Agent", exact=True).click()
+
+        expect(page.get_by_role("button", name="Platform: Gemini", exact=True)).to_be_visible()
+        expect(page.get_by_role("heading", name="Gemini Web Agent", exact=True)).to_be_visible()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_browser_text_media_switch_defaults_to_text_and_remembers_selection(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/browser",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        text_input = page.locator("#browser_view_text")
+        media_input = page.locator("#browser_view_media")
+        expect(text_input).to_be_checked()
+        expect(media_input).not_to_be_checked()
+        expect(page.locator(".browser-content-mode-control")).to_have_attribute(
+            "data-segmented-active-index",
+            "0",
+        )
+
+        page.locator('label[for="browser_view_media"]').click()
+        expect(page).to_have_url(re.compile(r"/browser\?view=media"))
+        expect(media_input).to_be_checked()
+        expect(page.locator(".browser-content-mode-control")).to_have_attribute(
+            "data-segmented-active-index",
+            "1",
+        )
+
+        page.goto(f"{sidebar_server_url}/agent")
+        page.goto(f"{sidebar_server_url}/browser")
+        expect(page).to_have_url(re.compile(r"/browser\?view=media"))
+        expect(page.locator("#browser_view_media")).to_be_checked()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_chatgpt_cache_sidebar_text_media_switcher_defaults_to_text(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/chatgpt",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        mode_control = page.locator("[data-cache-content-mode]")
+        text_option = page.locator('[data-cache-content-mode-option="text"]')
+        media_option = page.locator('[data-cache-content-mode-option="media"]')
+        expect(mode_control).to_be_visible()
+        expect(mode_control).to_have_attribute("data-segmented-active-index", "0")
+        expect(text_option).to_have_attribute("aria-checked", "true")
+        expect(media_option).to_have_attribute("aria-checked", "false")
+
+        media_option.click()
+        expect(page).to_have_url(re.compile(r"/cache/chatgpt$"))
+        expect(page.locator('[data-cache-content-mode-option="media"]')).to_have_attribute(
+            "aria-checked",
+            "true",
+        )
+        expect(page.locator("[data-cache-content-mode]")).to_have_attribute(
+            "data-segmented-active-index",
+            "1",
+        )
+
+        page.locator('[data-cache-content-mode-option="text"]').click()
+        expect(page).to_have_url(
+            re.compile(r"/browser\?view=text.*session_view=1.*source=chatgpt"),
+        )
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("device_name", "width", "height", "touch"),
+    (
+        ("iPhone 15 Pro", 393, 852, True),
+        ("wide desktop", 1_512, 982, False),
+    ),
+)
+def test_gemini_source_mark_preserves_full_color_at_target_viewports(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    device_name: str,
+    width: int,
+    height: int,
+    touch: bool,
+) -> None:
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/gemini",
+        width,
+        height,
+        touch=touch,
+    )
+    try:
+        mark = page.locator(
+            ".cache-source-switcher-trigger .cache-source-mark.is-full-color"
+        )
+        expect(mark).to_have_count(1)
+        rendering = mark.evaluate(
+            """element => {
+                const before = getComputedStyle(element, "::before");
+                return {
+                    backgroundImage: before.backgroundImage,
+                    height: before.height,
+                    maskImage: before.maskImage,
+                    width: before.width,
+                };
+            }"""
+        )
+        assert "Google_Gemini_logo_2025_symbol.svg" in rendering["backgroundImage"], device_name
+        assert rendering["maskImage"] == "none", device_name
+        assert rendering["width"] == rendering["height"] == "16px", device_name
     finally:
         context.close()

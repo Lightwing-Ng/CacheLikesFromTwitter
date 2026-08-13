@@ -1,6 +1,6 @@
 """Read-only local media browser tests.
 
-Code version: v1.10.0-codex.1
+Code version: v1.10.1-codex.1
 """
 
 from __future__ import annotations
@@ -849,6 +849,10 @@ def test_pagination_ellipses_expose_five_page_ranges_and_merge_short_tail() -> N
     assert trailing.ranges[0] == (56, 60)
     assert trailing.ranges[-2:] == ((446, 450), (451, 457))
     assert len(trailing.ranges) == 80
+
+
+def test_pagination_omits_controls_for_a_single_page() -> None:
+    assert build_local_store_pagination(total_pages=1, current_page=1) == ()
 
 
 def test_pagination_range_picker_preserves_a_short_only_or_merged_tail() -> None:

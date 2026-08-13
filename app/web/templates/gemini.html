@@ -1,0 +1,37 @@
+{# Code version: v1.0.2-codex.1 #}
+{% extends "_cache_page.html" %}
+{% from "_cache_page_components.html" import render_metric, render_progress_metric %}
+{% from "_number_field.html" import render_number_field %}
+
+{% block source_fields %}
+{{ render_number_field("Max sessions", "gemini_max_conversations", saved_config.gemini_max_conversations, minimum="1") }}
+{{ render_number_field("Sidebar wait (s)", "gemini_scroll_pause_seconds", saved_config.gemini_scroll_pause_seconds, "decimal", "0.05", "0.1") }}
+{{ render_number_field("Stale scroll limit", "gemini_stale_round_limit", saved_config.gemini_stale_round_limit, minimum="1") }}
+{% endblock %}
+
+{% block primary_metrics %}
+{{ render_metric("Sessions discovered", "discovered_tweets", snapshot.discovered_tweets, true, "discovered_tweets") }}
+{{ render_metric("Messages discovered", "discovered_images", snapshot.discovered_images, true, "discovered_images") }}
+{{ render_metric("Sessions cached", "downloaded_posts", snapshot.downloaded_posts, true, "downloaded_posts") }}
+{{ render_metric("Messages cached", "downloaded_tweets", snapshot.downloaded_tweets, true, "downloaded_tweets") }}
+{{ render_metric("Unchanged sessions", "skipped_tweets", snapshot.skipped_tweets, false, "skipped_tweets") }}
+{{ render_metric("Session failures", "failed_tweets", snapshot.failed_tweets, false, "failed_tweets") }}
+{% endblock %}
+
+{% block source_notice %}
+<div class="notice-floating notice-floating-banner notice-inline-banner" role="note" aria-label="Gemini history cache notice">
+    <div class="notice-floating-copy">
+        <p class="notice-floating-label">Browser-rendered history</p>
+        <p class="notice-floating-title">
+            Gemini session links and rendered user/assistant messages are read through a background {{ selected_browser_label }} session. Each message is stored as one typed row in local_store/llm/gemini/history.parquet; no prompt is sent or edited.
+        </p>
+    </div>
+    <span class="status-chip status-collecting">Parquet v1</span>
+</div>
+{% endblock %}
+
+{% block progress_metrics %}
+{{ render_progress_metric("Sessions queued", "queued_tweets", snapshot.queued_tweets, "progress_queued_tweets") }}
+{{ render_progress_metric("Sessions processed", "processed_tweets", snapshot.processed_tweets, "progress_processed_tweets", true) }}
+{{ render_progress_metric("Messages cached", "downloaded_tweets", snapshot.downloaded_tweets, "progress_downloaded_tweets") }}
+{% endblock %}

@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.4.0-codex.1
+Code version: v1.6.0-codex.1
 """
 
 from __future__ import annotations
@@ -154,6 +154,24 @@ def test_background_chromium_launch_args_keep_the_window_offscreen() -> None:
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
     ]
+
+
+def test_gemini_browser_probe_routes_through_the_shared_browser_registry() -> None:
+    with patch(
+        "app.core.browser_sessions._probe_gemini_session",
+        return_value={
+            "logged_in": True,
+            "can_download": True,
+            "account_name": "Google account",
+            "message": "Safari verified Gemini.",
+        },
+    ) as probe:
+        result = probe_browser_session("gemini", "safari", CrawlConfig())
+
+    assert result["logged_in"] is True
+    assert result["can_download"] is True
+    assert result["browser"] == "safari"
+    probe.assert_called_once()
 
 
 def test_chromium_context_defaults_to_an_isolated_background_profile(tmp_path: Path) -> None:
@@ -338,4 +356,5 @@ def test_safari_grok_probe_marks_verified_session_ready_to_download() -> None:
     assert result["logged_in"] is True
     assert result["can_download"] is True
     assert result["account_name"] == "Demo (@demo_x)"
-    assert "ready to sync" in result["message"]
+    assert result["message"] == "Safari is ready to sync Grok."
+    assert result["account_name"] not in result["message"]

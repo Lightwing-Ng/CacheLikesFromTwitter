@@ -1,6 +1,6 @@
 """Minimal Safari automation primitives backed by Apple Events."""
 
-# Code version: v1.6.1-codex.1
+# Code version: v1.7.5-codex.1
 
 from __future__ import annotations
 
@@ -213,17 +213,36 @@ class SafariRequestClient:
         if page.context is not self._context:
             raise RuntimeError("Safari request page belongs to a different browser context.")
         last_error: RuntimeError | None = None
-        for attempt_index in range(2):
+        for attempt_index in range(3):
             try:
                 return self._get_once(page, url, timeout, headers or {}, serialize=serialize)
             except RuntimeError as exc:
                 last_error = exc
-                if "request state disappeared" not in str(exc).lower() or attempt_index:
-                    raise
-                page.wait_for_load_state(
-                    "domcontentloaded",
-                    min(max(1, int(timeout)), 60_000),
+                error_text = str(exc).lower()
+                retryable = any(
+                    marker in error_text
+                    for marker in (
+                        "request state disappeared",
+                        "load failed",
+                        "failed to fetch",
+                        "fetch is aborted",
+                    )
                 )
+                if not retryable or attempt_index >= 2:
+                    raise
+                if "request state disappeared" in error_text:
+                    page.wait_for_load_state(
+                        "domcontentloaded",
+                        min(max(1, int(timeout)), 60_000),
+                    )
+                if any(
+                    marker in error_text
+                    for marker in ("load failed", "failed to fetch", "fetch is aborted")
+                ):
+                    # Safari can reject fetch from a hidden/minimized document. Make the
+                    # owned window render-active offscreen, then retry without stealing focus.
+                    with contextlib.suppress(RuntimeError):
+                        page.keep_rendering_offscreen()
                 time.sleep(SAFARI_APPLESCRIPT_RETRY_DELAY_SECONDS)
         raise last_error or RuntimeError("Safari request failed.")
 
@@ -419,6 +438,7 @@ class SafariPage:
         self._context = context
         self.window_id = int(window_id)
         self._closed = False
+        self._rendering_active = False
         self._recovery_url = context.initial_url if not context.pages else "about:blank"
 
     @property
@@ -526,6 +546,7 @@ class SafariPage:
 
     def _keep_in_background(self) -> None:
         """Reassert the owned window's offscreen state after navigation commits."""
+        self._rendering_active = False
         self._run_in_window(SAFARI_HIDE_WINDOW_APPLESCRIPT)
 
     def _read_navigation_state(self) -> dict[str, str] | None:
@@ -613,6 +634,35 @@ return pageUrlValue & linefeed & pageStateValue
         """Bring the owned Safari window forward."""
         self._run_in_window("set index of targetWindow to 1")
 
+    def keep_rendering_offscreen(self) -> None:
+        """Keep an offscreen window render-active without replacing the user's front window."""
+        self._run_in_window(
+            """
+set previousWindowId to 0
+try
+    set previousWindowId to id of front window
+end try
+set bounds of targetWindow to {-32000, -32000, -30720, -31100}
+try
+    set miniaturized of targetWindow to false
+end try
+try
+    set visible of targetWindow to true
+end try
+        if previousWindowId is not 0 and previousWindowId is not id of targetWindow then
+    try
+        set index of (first window whose id is previousWindowId) to 1
+    end try
+end if
+""".strip()
+        )
+        self._rendering_active = True
+
+    def keep_background(self) -> None:
+        """Keep the owned window hidden and minimized without changing Safari focus."""
+        self._rendering_active = False
+        self._run_in_window(SAFARI_HIDE_WINDOW_APPLESCRIPT)
+
     def close(self) -> None:
         """Release this page into an invisible reusable Safari window shell."""
         if self._closed:
@@ -699,6 +749,9 @@ return (count of tabs of targetWindow as text) & "|" & releasedUrl & "|" & ¬
     ) -> tuple[str, bool]:
         """Stream an authenticated media URL from Safari into a local file."""
         with self._context.download_lock:
+            if not self._rendering_active:
+                with contextlib.suppress(RuntimeError):
+                    self.keep_rendering_offscreen()
             destination_path.parent.mkdir(parents=True, exist_ok=True)
             initial_bytes = destination_path.stat().st_size if destination_path.exists() else 0
             range_start = initial_bytes
@@ -773,6 +826,12 @@ return (count of tabs of targetWindow as text) & "|" & releasedUrl & "|" & ¬
                     )
                 if range_start > 0 and status != 206:
                     destination_path.unlink(missing_ok=True)
+                    if not restarted_after_range_error:
+                        range_start = 0
+                        expected_total = 0
+                        content_type = ""
+                        restarted_after_range_error = True
+                        continue
                     raise RuntimeError("Safari media server did not honor the resume range.")
 
                 content_range = str(metadata.get("contentRange") or "")
@@ -780,6 +839,13 @@ return (count of tabs of targetWindow as text) & "|" & releasedUrl & "|" & ¬
                 if range_match:
                     response_start = int(range_match.group(1))
                     if response_start != range_start:
+                        if not restarted_after_range_error:
+                            destination_path.unlink(missing_ok=True)
+                            range_start = 0
+                            expected_total = 0
+                            content_type = ""
+                            restarted_after_range_error = True
+                            continue
                         raise RuntimeError(
                             f"Safari media server resumed at byte {response_start:,}, expected {range_start:,}."
                         )
@@ -937,10 +1003,8 @@ tell application "Safari"
             if visible of candidateWindow is false and (count of tabs of candidateWindow) is 1 then
                 set candidateBounds to bounds of candidateWindow
                 if candidateBounds is {{-32000, -32000, -30720, -31100}} then
-                    if (URL of current tab of candidateWindow) is "about:blank" then
-                        set targetWindow to candidateWindow
-                        exit repeat
-                    end if
+                    set targetWindow to candidateWindow
+                    exit repeat
                 end if
             end if
         end try

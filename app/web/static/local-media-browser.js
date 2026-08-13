@@ -1,4 +1,4 @@
-/* Code version: v1.21.2-codex.1 */
+/* Code version: v1.26.0-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -8,6 +8,48 @@
     if (!dataNode || !dialog) return;
 
     const filterForm = document.querySelector(".browser-filter-form");
+    const contentModeStorageKey = "cachelikes:browser-content-mode:v1";
+    const contentModeInputs = filterForm
+        ? Array.from(filterForm.querySelectorAll("input[name='view'][type='radio']"))
+        : [];
+
+    function readRememberedContentMode() {
+        try {
+            const stored = window.sessionStorage.getItem(contentModeStorageKey);
+            return ["media", "text"].includes(stored) ? stored : "";
+        } catch (_error) {
+            return "";
+        }
+    }
+
+    function rememberContentMode(mode) {
+        if (!["media", "text"].includes(mode)) return;
+        try {
+            window.sessionStorage.setItem(contentModeStorageKey, mode);
+        } catch (_error) {
+        }
+    }
+
+    function navigateToContentMode(mode) {
+        if (!filterForm || !["media", "text"].includes(mode)) return;
+        const targetUrl = new URL(filterForm.action || window.location.href, window.location.origin);
+        const formData = new FormData(filterForm);
+        formData.set("view", mode);
+        targetUrl.search = new URLSearchParams(formData).toString();
+        ["page", "media_id", "session"].forEach((name) => targetUrl.searchParams.delete(name));
+        if (mode === "text") targetUrl.searchParams.delete("kind");
+        window.location.assign(targetUrl.toString());
+    }
+
+    const currentUrl = new URL(window.location.href);
+    const rememberedContentMode = readRememberedContentMode();
+    if (!currentUrl.searchParams.has("view") && rememberedContentMode) {
+        currentUrl.searchParams.set("view", rememberedContentMode);
+        window.location.replace(currentUrl.href);
+        return;
+    }
+    const checkedContentMode = contentModeInputs.find((input) => input.checked)?.value || "text";
+    rememberContentMode(checkedContentMode);
     if (filterForm) {
         let filterSubmitTimer = 0;
         const submitFilters = () => {
@@ -18,6 +60,11 @@
             }, 180);
         };
         filterForm.addEventListener("change", (event) => {
+            if (event.target.matches("input[name='view'][type='radio']")) {
+                rememberContentMode(event.target.value);
+                navigateToContentMode(event.target.value);
+                return;
+            }
             if (event.target.matches("select")) submitFilters();
         });
         filterForm.addEventListener("input", (event) => {
@@ -54,6 +101,7 @@
     const revealButtons = Array.from(document.querySelectorAll("[data-media-reveal]"));
     const promptToggleButtons = Array.from(document.querySelectorAll("[data-media-prompt-toggle]"));
     const mediaViewStorageKey = "cachelikes.browser.mediaView";
+    const paginationMotion = window.CACHELIKES_PAGINATION_MOTION;
 
     const wait = (milliseconds) => new Promise((resolve) => {
         window.setTimeout(resolve, milliseconds);
@@ -442,25 +490,22 @@
 
     const pagination = document.querySelector(".browser-pagination");
 
-    function positionPaginationIndicator() {
-        if (!pagination) return;
-        const indicator = pagination.querySelector(".local-store-pagination-indicator");
-        const target = pagination.querySelector(".local-store-page-button.is-active");
-        if (!indicator || !target) return;
-
-        const paginationRect = pagination.getBoundingClientRect();
-        const targetRect = target.getBoundingClientRect();
-        const x = targetRect.left - paginationRect.left - pagination.clientLeft;
-        const y = targetRect.top - paginationRect.top - pagination.clientTop;
-        indicator.style.width = `${targetRect.width}px`;
-        indicator.style.height = `${targetRect.height}px`;
-        indicator.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-        pagination.classList.add("is-animated");
+    function positionPaginationIndicator({ immediate = false } = {}) {
+        if (!pagination || !paginationMotion) return;
+        paginationMotion.positionPaginationIndicator(
+            pagination,
+            pagination.querySelector(".local-store-page-button.is-active"),
+            { immediate },
+        );
     }
 
     if (pagination) {
-        window.requestAnimationFrame(positionPaginationIndicator);
-        window.addEventListener("resize", positionPaginationIndicator, { passive: true });
+        window.requestAnimationFrame(() => positionPaginationIndicator());
+        window.addEventListener(
+            "resize",
+            () => positionPaginationIndicator({ immediate: true }),
+            { passive: true },
+        );
     }
 
     const paginationRangePickers = pagination
@@ -851,7 +896,7 @@
         const externalUrl = validExternalUrl(item.source_url);
         const sourceLinkLabels = {
             x: "Open original post",
-            chatgpt: "Open original conversation",
+            chatgpt: "Open original session",
             grok: "Open original source",
         };
         if (viewerSourceLink) {

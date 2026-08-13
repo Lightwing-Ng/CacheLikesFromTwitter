@@ -1,15 +1,23 @@
-{# Code version: v1.2.0-codex.1 #}
+{# Code version: v1.4.0-codex.1 #}
 {% from "_number_field.html" import render_number_field %}
-{% macro render_cache_common_config(saved_config, id_prefix) -%}
+{% macro render_cache_common_config(
+    saved_config,
+    id_prefix,
+    title="Shared cache configuration",
+    show_scope=true,
+    physical_card=false
+) -%}
 <section
-    class="cache-common-config"
+    class="cache-common-config{% if physical_card %} cache-common-config--physical{% endif %}"
     aria-labelledby="{{ id_prefix }}_cache_common_config_heading"
 >
     <div class="cache-common-config-heading">
         <p class="cache-common-config-title" id="{{ id_prefix }}_cache_common_config_heading">
-            Shared cache configuration
+            {{ title }}
         </p>
+        {% if show_scope %}
         <span class="cache-common-config-scope">All cache sources</span>
+        {% endif %}
     </div>
     <div class="field-grid compact-config-grid">
         {{ render_number_field("Download workers", "download_workers", saved_config.download_workers, minimum="1") }}

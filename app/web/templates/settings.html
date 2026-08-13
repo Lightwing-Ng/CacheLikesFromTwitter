@@ -1,17 +1,19 @@
-<!-- Code version: v1.18.0-codex.1 -->
+<!-- Code version: v1.19.9-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>CacheLikesFromTwitter Settings</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.47.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.60.7-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='settings-navigation.js', v='settings-navigation-v1.1.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-navigation.js', v='settings-navigation-v1.1.1-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-auto-save.js', v='settings-auto-save-v1.0.0-codex.1') }}"></script>
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
@@ -19,16 +21,16 @@
 {% from "_number_field.html" import render_number_field %}
 {% set current_phase = snapshot.phase or "idle" %}
 <main class="page">
+    <button
+        type="button"
+        class="sidebar-toggle"
+        id="sidebar_toggle"
+        aria-label="Toggle sidebar"
+        aria-expanded="true"
+    >
+        <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
+    </button>
     <div class="app-shell is-sidebar-open" id="app_shell">
-        <button
-            type="button"
-            class="sidebar-toggle"
-            id="sidebar_toggle"
-            aria-label="Toggle sidebar"
-            aria-expanded="true"
-        >
-            <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
-        </button>
 
         {% include "_theme_toggle.html" %}
 
@@ -85,6 +87,16 @@
                     <span class="settings-category-nav-label">ChatGPT</span>
                 </a>
                 <a
+                    href="#settings-agent"
+                    class="settings-category-nav-item settings-category-nav-item-agent"
+                    data-settings-category="agent"
+                >
+                    <span class="settings-category-nav-icon-shell" aria-hidden="true">
+                        <span class="icon settings-category-nav-icon"></span>
+                    </span>
+                    <span class="settings-category-nav-label">Agent</span>
+                </a>
+                <a
                     href="#settings-cloud"
                     class="settings-category-nav-item settings-category-nav-item-cloud"
                     data-settings-category="cloud"
@@ -105,7 +117,6 @@
                     <span class="settings-category-nav-label">Maintenance</span>
                 </a>
             </nav>
-            <p class="settings-category-sidebar-help">Choose a category to focus the configuration workspace.</p>
         </aside>
 
         <section class="panel chart-panel workspace" id="settings_workspace">
@@ -118,7 +129,7 @@
                         </div>
                     </div>
                     <p class="status-copy settings-intro-copy">
-                        Configure one category at a time. Saved changes apply to future cache tasks on this Mac.
+                        Configure one category at a time. Changes apply immediately to future cache tasks on this Mac.
                     </p>
                     <div class="settings-category-shell" data-settings-category-shell data-active-category="browser">
                         <form
@@ -160,8 +171,10 @@
                                                 data-directory-field="chrome_user_data_dir"
                                                 data-directory-input="chrome_user_data_dir"
                                                 data-directory-label="Chrome user data directory"
+                                                aria-label="Choose Chrome user data folder"
+                                                title="Choose Chrome user data folder"
                                             >
-                                                Choose folder…
+                                                <span class="icon settings-directory-choose-icon" aria-hidden="true"></span>
                                             </button>
                                         </span>
                                         <span class="settings-directory-status" data-directory-picker-status aria-live="polite" hidden></span>
@@ -226,6 +239,35 @@
 
                             <section
                                 class="settings-category-panel"
+                                id="settings-agent"
+                                data-settings-panel="agent"
+                                aria-labelledby="settings_agent_heading"
+                            >
+                                <div class="settings-category-heading">
+                                    <p class="workspace-kicker">Agent</p>
+                                    <h3 id="settings_agent_heading">DevSpace connection</h3>
+                                    <p>Set the local MCP port used by the subscription web-agent bridge.</p>
+                                </div>
+                                <div class="settings-category-fields">
+                                    <label class="field">
+                                        <span>Port</span>
+                                        <input
+                                            class="text-input-control agent-monospace-input"
+                                            name="agent_port"
+                                            type="number"
+                                            min="1024"
+                                            max="65535"
+                                            value="{{ agent_settings.port }}"
+                                            {% if agent_runtime_snapshot.managed %}disabled{% endif %}
+                                            required
+                                        >
+                                        <span class="field-help">Use a free local port from 1,024 through 65,535. Stop MCP before changing an active port.</span>
+                                    </label>
+                                </div>
+                            </section>
+
+                            <section
+                                class="settings-category-panel"
                                 id="settings-cloud"
                                 data-settings-panel="cloud"
                                 aria-labelledby="settings_cloud_heading"
@@ -277,8 +319,10 @@
                                                 data-directory-field="shadow_backup_destination"
                                                 data-directory-input="shadow_backup_destination"
                                                 data-directory-label="shadow cloud backup destination"
+                                                aria-label="Choose cloud destination folder"
+                                                title="Choose cloud destination folder"
                                             >
-                                                Choose folder…
+                                                <span class="icon settings-directory-choose-icon" aria-hidden="true"></span>
                                             </button>
                                         </span>
                                         <span class="settings-directory-status" data-directory-picker-status aria-live="polite" hidden></span>
@@ -369,29 +413,6 @@
                         </form>
 
                         <section
-                            class="settings-action-package settings-callout-card-primary settings-save-package"
-                            data-settings-save-bar
-                            aria-labelledby="settings_save_package_heading"
-                        >
-                            <span class="settings-action-package-icon-shell settings-callout-icon-shell" aria-hidden="true">
-                                <span class="icon icon-settings-save"></span>
-                            </span>
-                            <div class="settings-action-package-copy settings-callout-text">
-                                <p class="settings-service-name" id="settings_save_package_heading">Save settings</p>
-                                <p class="settings-service-note">Apply changes from every category to future cache tasks on this Mac.</p>
-                            </div>
-                            <div class="settings-callout-form settings-action-package-form">
-                                <button
-                                    type="submit"
-                                    form="settings_form"
-                                    class="primary-button settings-inline-button settings-inline-button-primary"
-                                >
-                                    Save settings
-                                </button>
-                            </div>
-                        </section>
-
-                        <section
                             class="settings-category-panel settings-maintenance-panel"
                             id="settings-maintenance"
                             data-settings-panel="maintenance"
@@ -472,7 +493,7 @@
 </main>
 
 {% include "_waiting_modal.html" %}
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.8.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.16.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='shadow-backup-settings.js', v='shadow-backup-settings-v1.3.0-codex.1') }}"></script>
 </body>
 </html>

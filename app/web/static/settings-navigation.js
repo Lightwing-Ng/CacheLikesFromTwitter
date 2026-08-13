@@ -1,4 +1,4 @@
-/* Code version: v1.1.0-codex.1 */
+/* Code version: v1.1.1-codex.1 */
 
 (function initializeSettingsNavigation() {
     "use strict";
@@ -6,7 +6,6 @@
     const shell = document.querySelector("[data-settings-category-shell]");
     const categoryLinks = Array.from(document.querySelectorAll("[data-settings-category]"));
     const categoryPanels = Array.from(document.querySelectorAll("[data-settings-panel]"));
-    const saveBar = document.querySelector("[data-settings-save-bar]");
     if (!shell || !categoryLinks.length || !categoryPanels.length) return;
 
     const categories = new Set(categoryPanels.map((panel) => panel.dataset.settingsPanel));
@@ -36,8 +35,6 @@
             panel.classList.toggle("is-active", isActive);
             panel.hidden = !isActive;
         });
-        if (saveBar) saveBar.hidden = nextCategory === "maintenance";
-
         if (updateHistory) {
             const nextHash = `#settings-${nextCategory}`;
             window.history.pushState(null, "", nextHash);

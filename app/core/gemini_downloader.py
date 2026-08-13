@@ -1,0 +1,744 @@
+"""Browser-backed Gemini session history caching."""
+
+# Code version: v1.0.4-codex.1
+
+from __future__ import annotations
+
+import contextlib
+import hashlib
+import re
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+from urllib.parse import urlsplit, urlunsplit
+
+from .browser_sessions import (
+    browser_descriptors,
+    goto_with_retry,
+    launch_chromium_context,
+    sync_playwright_or_error,
+)
+from .config import LOCAL_STORE_ROOT, CrawlConfig
+from .resource_persistence import (
+    GEMINI_HISTORY_FILENAME,
+    GEMINI_HISTORY_SCHEMA,
+    GEMINI_HISTORY_SCHEMA_VERSION,
+    read_parquet_rows,
+    write_parquet_rows_atomic,
+)
+from .safari_automation import SafariContext
+from .state import TaskSnapshot, TaskState, utc_now
+
+
+GEMINI_HOME_URL = "https://gemini.google.com/app"
+GEMINI_HISTORY_RELATIVE_DIR = Path("llm") / "gemini"
+GEMINI_CONVERSATION_PATH_PATTERN = re.compile(r"^/app/([A-Za-z0-9_-]+)$")
+GEMINI_READY_TIMEOUT_SECONDS = 45.0
+GEMINI_RENDER_SETTLE_MILLISECONDS = 1_000
+GEMINI_BOT_CHECK_POLL_MILLISECONDS = 1_000
+GEMINI_BOT_CHECK_MARKERS = (
+    "unusual traffic",
+    "verify you are human",
+    "verify you're human",
+    "verify that you're human",
+    "are you a robot",
+    "suspicious activity",
+    "security check",
+    "verify it's you",
+    "verify it’s you",
+    "captcha",
+    "recaptcha",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class GeminiConversationLink:
+    """Identify one session discovered from the Gemini navigation."""
+
+    conversation_id: str
+    url: str
+    title: str
+
+
+@dataclass(frozen=True, slots=True)
+class GeminiSyncResult:
+    """Summarize one browser-backed Gemini history sync."""
+
+    discovered_conversations: int
+    processed_conversations: int
+    discovered_messages: int
+    new_messages: int
+    unchanged_conversations: int
+    failed_conversations: int
+    cached_conversations: int
+    cached_messages: int
+    stopped: bool = False
+
+
+def gemini_history_dir(local_store_root: Path | str = LOCAL_STORE_ROOT) -> Path:
+    """Return the local directory dedicated to Gemini chat history."""
+    return Path(local_store_root) / GEMINI_HISTORY_RELATIVE_DIR
+
+
+def gemini_history_path(local_store_root: Path | str = LOCAL_STORE_ROOT) -> Path:
+    """Return the typed Parquet file used for Gemini chat history."""
+    return gemini_history_dir(local_store_root) / GEMINI_HISTORY_FILENAME
+
+
+def normalize_gemini_conversation_url(value: str) -> str:
+    """Return one canonical Gemini session URL or an empty string."""
+    try:
+        parsed = urlsplit(str(value or "").strip())
+    except ValueError:
+        return ""
+    if parsed.scheme != "https" or parsed.netloc.lower() != "gemini.google.com":
+        return ""
+    match = GEMINI_CONVERSATION_PATH_PATTERN.fullmatch(parsed.path.rstrip("/"))
+    if match is None:
+        return ""
+    return urlunsplit(("https", "gemini.google.com", f"/app/{match.group(1)}", "", ""))
+
+
+def is_gemini_conversation_url(value: str) -> bool:
+    """Return whether a URL points to one Gemini session."""
+    return bool(normalize_gemini_conversation_url(value))
+
+
+def gemini_conversation_id(value: str) -> str:
+    """Extract a stable Gemini session identifier."""
+    normalized = normalize_gemini_conversation_url(value)
+    if not normalized:
+        return ""
+    return urlsplit(normalized).path.rsplit("/", maxsplit=1)[-1]
+
+
+def build_gemini_initial_snapshot(
+    version: str,
+    local_store_root: Path | str = LOCAL_STORE_ROOT,
+) -> TaskSnapshot:
+    """Hydrate an idle Gemini snapshot from the local Parquet cache."""
+    history_path = gemini_history_path(local_store_root)
+    rows = read_parquet_rows(history_path)
+    snapshot = TaskSnapshot(
+        version=version,
+        account_name="Gemini",
+        output_dir=str(history_path.parent),
+        progress_unit="sessions",
+    )
+    if not rows:
+        return snapshot
+
+    conversation_count = len(
+        {
+            str(row.get("conversation_id") or "").strip()
+            for row in rows
+            if str(row.get("conversation_id") or "").strip()
+        }
+    )
+    message_count = len(rows)
+    snapshot.downloaded_posts = conversation_count
+    snapshot.downloaded_tweets = message_count
+    snapshot.discovered_images = message_count
+    conversation_label = "session" if conversation_count == 1 else "sessions"
+    message_label = "message" if message_count == 1 else "messages"
+    snapshot.message = (
+        f"Ready. Found existing Gemini history: {conversation_count:,} {conversation_label}, "
+        f"{message_count:,} {message_label}."
+    )
+    return snapshot
+
+
+class GeminiHistoryStore:
+    """Merge complete Gemini sessions into one atomic Parquet file."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        rows = read_parquet_rows(path)
+        if path.exists() and rows is None:
+            raise RuntimeError(f"Gemini history Parquet is unreadable: {path}")
+        self._rows_by_key: dict[str, dict[str, Any]] = {}
+        for row in rows or []:
+            message_key = str(row.get("message_key") or "").strip()
+            if message_key:
+                self._rows_by_key[message_key] = dict(row)
+
+    @property
+    def rows(self) -> list[dict[str, Any]]:
+        """Return deterministic rows ordered by session and message position."""
+        return sorted(
+            self._rows_by_key.values(),
+            key=lambda row: (
+                str(row.get("conversation_id") or ""),
+                int(row.get("message_index") or 0),
+            ),
+        )
+
+    @property
+    def cached_conversations(self) -> int:
+        """Return the number of unique cached sessions."""
+        return len(
+            {
+                str(row.get("conversation_id") or "").strip()
+                for row in self._rows_by_key.values()
+                if str(row.get("conversation_id") or "").strip()
+            }
+        )
+
+    @property
+    def cached_messages(self) -> int:
+        """Return the number of cached message rows."""
+        return len(self._rows_by_key)
+
+    def replace_conversation(
+        self,
+        conversation: GeminiConversationLink,
+        messages: list[dict[str, Any]],
+        captured_at: str,
+    ) -> tuple[int, bool]:
+        """Replace one session atomically in memory and report new content."""
+        previous_rows = {
+            key: row
+            for key, row in self._rows_by_key.items()
+            if str(row.get("conversation_id") or "") == conversation.conversation_id
+        }
+        next_rows: dict[str, dict[str, Any]] = {}
+        new_message_count = 0
+        for message in messages:
+            message_index = int(message.get("message_index") or 0)
+            role = str(message.get("role") or "").strip().lower()
+            content_text = str(message.get("content_text") or "").replace("\x00", "").strip()
+            content_html = str(message.get("content_html") or "").replace("\x00", "").strip()
+            if role not in {"user", "assistant"} or not content_text:
+                continue
+            message_key = f"{conversation.conversation_id}:{message_index}:{role}"
+            content_sha256 = hashlib.sha256(content_text.encode("utf-8")).hexdigest()
+            previous = previous_rows.get(message_key)
+            first_seen_at = captured_at
+            if previous and str(previous.get("content_sha256") or "") == content_sha256:
+                first_seen_at = str(previous.get("first_seen_at") or captured_at)
+            else:
+                new_message_count += 1
+            source_links = [
+                str(link).strip()
+                for link in message.get("source_links") or []
+                if str(link).strip()
+            ]
+            next_rows[message_key] = {
+                "schema_version": GEMINI_HISTORY_SCHEMA_VERSION,
+                "platform": "gemini",
+                "conversation_id": conversation.conversation_id,
+                "conversation_url": conversation.url,
+                "conversation_title": str(message.get("conversation_title") or conversation.title).strip(),
+                "message_key": message_key,
+                "turn_index": int(message.get("turn_index") or 0),
+                "message_index": message_index,
+                "role": role,
+                "author_label": str(message.get("author_label") or role.title()).strip(),
+                "content_text": content_text,
+                "content_html": content_html,
+                "content_sha256": content_sha256,
+                "source_links": list(dict.fromkeys(source_links)),
+                "model_label": str(message.get("model_label") or "").strip(),
+                "first_seen_at": first_seen_at,
+                "last_seen_at": captured_at,
+            }
+
+        if not next_rows:
+            raise RuntimeError(f"Gemini session {conversation.conversation_id} exposed no cacheable messages.")
+
+        unchanged = (
+            set(previous_rows) == set(next_rows)
+            and all(
+                str(previous_rows[key].get("content_sha256") or "")
+                == str(next_rows[key].get("content_sha256") or "")
+                for key in next_rows
+            )
+        )
+        for key in previous_rows:
+            self._rows_by_key.pop(key, None)
+        self._rows_by_key.update(next_rows)
+        return new_message_count, unchanged
+
+    def save(self) -> None:
+        """Persist all cached messages with schema verification and atomic replacement."""
+        write_parquet_rows_atomic(self.path, self.rows, GEMINI_HISTORY_SCHEMA)
+
+
+def inspect_gemini_session(page) -> dict[str, Any]:
+    """Return a browser-independent snapshot of Gemini account readiness."""
+    payload = page.evaluate(
+        r"""() => {
+            const bodyText = document.body ? (document.body.innerText || "") : "";
+            const account = document.querySelector(
+                '[aria-label^="Google Account"], [aria-label*="Google Account:"]'
+            );
+            const conversationLinks = [...document.querySelectorAll('a[href]')].filter((link) => {
+                try {
+                    return /^\/app\/[A-Za-z0-9_-]+\/?$/.test(new URL(link.href, location.href).pathname);
+                } catch (_error) {
+                    return false;
+                }
+            }).length;
+            const hasComposer = Boolean(document.querySelector('textarea, [contenteditable="true"]'));
+            const signedOut = /(?:^|\n)\s*(?:Sign in|Log in)\s*(?:\n|$)/i.test(bodyText)
+                && !account && !conversationLinks && !hasComposer;
+            return {
+                href: location.href,
+                title: document.title || "",
+                accountLabel: account ? (account.getAttribute("aria-label") || account.textContent || "") : "",
+                conversationLinks,
+                hasComposer,
+                signedOut,
+            };
+        }"""
+    )
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def inspect_gemini_bot_check(page) -> dict[str, Any]:
+    """Return visible signals that Google requires a human verification step."""
+    payload = page.evaluate(
+        r"""(markers) => {
+            const title = document.title || "";
+            const bodyText = document.body ? (document.body.innerText || "") : "";
+            const haystack = `${title}\n${bodyText}`.toLowerCase();
+            const marker = markers.find((candidate) => haystack.includes(candidate)) || "";
+            const challengeElement = document.querySelector(
+                'iframe[src*="captcha"], iframe[src*="recaptcha"], [data-sitekey], '
+                '[id*="captcha"], [class*="captcha"], form[action*="challenge"]'
+            );
+            return {
+                detected: Boolean(marker || challengeElement),
+                reason: marker || (challengeElement ? "challenge element" : ""),
+                href: location.href,
+                title,
+            };
+        }""",
+        list(GEMINI_BOT_CHECK_MARKERS),
+    )
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def wait_for_gemini_bot_check_clear(
+    page,
+    state: TaskState | None,
+    should_stop,
+    resume_phase: str,
+) -> bool:
+    """Pause in place for a user to complete Google's verification challenge."""
+    notified = False
+    while True:
+        check = inspect_gemini_bot_check(page)
+        if not check.get("detected"):
+            if notified and state is not None:
+                state.update(phase=resume_phase)
+                state.append_event("Google verification cleared. Resuming Gemini history sync.")
+            return True
+        if should_stop():
+            return False
+        if not notified:
+            reason = str(check.get("reason") or "Google verification").strip()
+            message = (
+                f"Google requested a human verification ({reason}). "
+                "Gemini sync is paused; complete it in Safari, then leave the page open."
+            )
+            if state is not None:
+                state.update(phase="paused")
+                state.append_event(message)
+            bring_to_front = getattr(page, "bring_to_front", None)
+            if callable(bring_to_front):
+                with contextlib.suppress(Exception):
+                    bring_to_front()
+            notified = True
+        page.wait_for_timeout(GEMINI_BOT_CHECK_POLL_MILLISECONDS)
+
+
+def _wait_for_gemini_ready(page, timeout_seconds: float = GEMINI_READY_TIMEOUT_SECONDS) -> dict[str, Any]:
+    """Wait until Gemini exposes authenticated navigation or a chat composer."""
+    remaining_checks = max(1, int(max(1.0, timeout_seconds) / 0.5))
+    last_snapshot: dict[str, Any] = {}
+    for _attempt in range(remaining_checks):
+        last_snapshot = inspect_gemini_session(page)
+        if last_snapshot.get("signedOut"):
+            raise RuntimeError("The selected browser is not signed in to Gemini.")
+        if (
+            last_snapshot.get("accountLabel")
+            or int(last_snapshot.get("conversationLinks") or 0) > 0
+            or last_snapshot.get("hasComposer")
+            or is_gemini_conversation_url(str(last_snapshot.get("href") or ""))
+        ):
+            return last_snapshot
+        page.wait_for_timeout(500)
+    raise RuntimeError(
+        "Gemini did not expose an authenticated chat page before the startup timeout. "
+        f"Last page: {last_snapshot.get('title') or last_snapshot.get('href') or 'unknown'}."
+    )
+
+
+def _open_gemini_sidebar(page) -> None:
+    """Open collapsed Gemini navigation without depending on localized visible text."""
+    page.evaluate(
+        r"""() => {
+            const hasConversationLinks = [...document.querySelectorAll('a[href]')].some((link) => {
+                try {
+                    return /^\/app\/[A-Za-z0-9_-]+\/?$/.test(new URL(link.href, location.href).pathname);
+                } catch (_error) {
+                    return false;
+                }
+            });
+            const button = [...document.querySelectorAll('button')].find((candidate) => {
+                const label = `${candidate.getAttribute('aria-label') || ''} ${candidate.textContent || ''}`;
+                return /(?:main menu|open sidebar)/i.test(label);
+            });
+            if (button && !hasConversationLinks) button.click();
+            return Boolean(button);
+        }"""
+    )
+
+
+def _prepare_gemini_page_for_rendering(page) -> None:
+    """Keep the owned browser page usable without routine Safari focus changes."""
+    keep_background = getattr(page, "keep_background", None)
+    if callable(keep_background):
+        keep_background()
+    elif hasattr(page, "keep_rendering_offscreen"):
+        page.keep_rendering_offscreen()
+        page.wait_for_timeout(GEMINI_RENDER_SETTLE_MILLISECONDS)
+
+
+def _read_gemini_conversation_links(page) -> list[GeminiConversationLink]:
+    """Read the currently rendered session links in DOM order."""
+    payload = page.evaluate(
+        r"""() => [...document.querySelectorAll('a[href]')].map((link) => {
+            let url;
+            try {
+                url = new URL(link.href, location.href);
+            } catch (_error) {
+                return null;
+            }
+            const match = url.pathname.replace(/\/$/, '').match(/^\/app\/([A-Za-z0-9_-]+)$/);
+            if (!match) return null;
+            return {
+                conversationId: match[1],
+                url: `${url.origin}/app/${match[1]}`,
+                title: (link.innerText || link.getAttribute('aria-label') || '').trim(),
+            };
+        }).filter(Boolean)"""
+    )
+    links: list[GeminiConversationLink] = []
+    seen: set[str] = set()
+    for item in payload if isinstance(payload, list) else []:
+        if not isinstance(item, dict):
+            continue
+        url = normalize_gemini_conversation_url(str(item.get("url") or ""))
+        conversation_id = gemini_conversation_id(url)
+        if not conversation_id or conversation_id in seen:
+            continue
+        seen.add(conversation_id)
+        links.append(
+            GeminiConversationLink(
+                conversation_id=conversation_id,
+                url=url,
+                title=str(item.get("title") or "").strip() or f"Gemini session {conversation_id}",
+            )
+        )
+    return links
+
+
+def _scroll_gemini_conversation_navigation(page) -> dict[str, Any]:
+    """Advance the scrollable sidebar region that owns session links."""
+    payload = page.evaluate(
+        r"""() => {
+            const links = [...document.querySelectorAll('a[href]')].filter((link) => {
+                try {
+                    return /^\/app\/[A-Za-z0-9_-]+\/?$/.test(new URL(link.href, location.href).pathname);
+                } catch (_error) {
+                    return false;
+                }
+            });
+            const conversationList = document.querySelector('conversations-list');
+            let target = conversationList
+                ? conversationList.closest('infinite-scroller')
+                : (links.length ? links[links.length - 1].closest('infinite-scroller') : null);
+            if (!target && links.length) target = links[links.length - 1].parentElement;
+            while (target && target !== document.body) {
+                const style = getComputedStyle(target);
+                if (target.scrollHeight > target.clientHeight + 4 && /(auto|scroll)/.test(style.overflowY)) break;
+                target = target.parentElement;
+            }
+            if (!target || target === document.body) {
+                const candidates = [...document.querySelectorAll('*')].filter((element) => {
+                    if (element.scrollHeight <= element.clientHeight + 4) return false;
+                    const style = getComputedStyle(element);
+                    return /(auto|scroll)/.test(style.overflowY)
+                        && Boolean(element.querySelector('a[href*="/app/"]'));
+                });
+                target = candidates.sort((left, right) => left.clientHeight - right.clientHeight)[0] || null;
+            }
+            if (!target) {
+                target = document.querySelector('conversations-list')?.closest('infinite-scroller') || null;
+            }
+            if (!target) return { moved: false, eventDispatched: false, top: 0, height: 0, viewport: 0 };
+            const before = target.scrollTop;
+            target.scrollTop = target.scrollHeight;
+            target.dispatchEvent(new Event('scroll', { bubbles: true }));
+            return {
+                moved: target.scrollTop > before,
+                eventDispatched: true,
+                top: target.scrollTop,
+                height: target.scrollHeight,
+                viewport: target.clientHeight,
+            };
+        }"""
+    )
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
+def collect_gemini_conversation_links(
+    page,
+    config: CrawlConfig,
+    should_stop,
+    state: TaskState | None = None,
+) -> list[GeminiConversationLink]:
+    """Collect recent and lazy-loaded Gemini history links from the sidebar."""
+    goto_with_retry(page, GEMINI_HOME_URL, attempts=2, timeout_ms=60_000)
+    _prepare_gemini_page_for_rendering(page)
+    if not wait_for_gemini_bot_check_clear(page, state, should_stop, "collecting"):
+        return []
+    _wait_for_gemini_ready(page)
+    _open_gemini_sidebar(page)
+    page.wait_for_timeout(GEMINI_RENDER_SETTLE_MILLISECONDS)
+
+    max_conversations = max(1, int(config.gemini_max_conversations))
+    max_rounds = max(1, int(config.max_scroll_rounds))
+    # A virtualized list can dispatch its scroll handler before the next batch
+    # is painted. Keep a small asynchronous grace window even when the setting
+    # is configured aggressively low.
+    stale_limit = max(3, int(config.gemini_stale_round_limit))
+    pause_ms = max(100, int(float(config.gemini_scroll_pause_seconds) * 1_000))
+    collected: dict[str, GeminiConversationLink] = {}
+    stale_rounds = 0
+    for _round_index in range(max_rounds):
+        if should_stop():
+            break
+        if not wait_for_gemini_bot_check_clear(page, state, should_stop, "collecting"):
+            break
+        visible_links = _read_gemini_conversation_links(page)
+        previous_count = len(collected)
+        for link in visible_links:
+            collected.setdefault(link.conversation_id, link)
+            if len(collected) >= max_conversations:
+                break
+        if len(collected) >= max_conversations:
+            break
+        stale_rounds = stale_rounds + 1 if len(collected) == previous_count else 0
+        scroll_state = _scroll_gemini_conversation_navigation(page)
+        if (
+            stale_rounds >= stale_limit
+            or (
+                not scroll_state.get("moved")
+                and not scroll_state.get("eventDispatched")
+            )
+        ):
+            break
+        page.wait_for_timeout(pause_ms)
+        if not wait_for_gemini_bot_check_clear(page, state, should_stop, "collecting"):
+            break
+    return list(collected.values())[:max_conversations]
+
+
+def extract_gemini_conversation_messages(
+    page,
+    conversation: GeminiConversationLink,
+) -> list[dict[str, Any]]:
+    """Extract ordered user and assistant messages from one rendered session."""
+    payload = page.evaluate(
+        r"""({ fallbackTitle }) => {
+            const normalizeText = (value) => String(value || '')
+                .replace(/\u200b/g, '')
+                .replace(/\r\n?/g, '\n')
+                .replace(/[ \t]+\n/g, '\n')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+            let containers = [...document.querySelectorAll('user-query, model-response')];
+            if (!containers.length) {
+                containers = [...document.querySelectorAll('h1, h2, h3')]
+                    .filter((heading) => /^(You said|Gemini said)$/i.test(normalizeText(heading.textContent)))
+                    .map((heading) => heading.closest('article, section, [role="article"]') || heading.parentElement)
+                    .filter(Boolean);
+            }
+            containers = containers.filter((container, index) => containers.indexOf(container) === index);
+            const documentTitle = normalizeText(document.title).replace(/\s*-\s*Google Gemini\s*$/i, '');
+            const conversationTitle = documentTitle && !/^Google Gemini$/i.test(documentTitle)
+                ? documentTitle
+                : fallbackTitle;
+            const modeButton = [...document.querySelectorAll('button')].find((button) => {
+                const label = button.getAttribute('aria-label') || '';
+                return /mode picker/i.test(label);
+            });
+            const modelLabel = normalizeText(
+                modeButton ? (modeButton.getAttribute('aria-label') || modeButton.textContent) : ''
+            ).replace(/^Open mode picker,?\s*(?:currently\s*)?/i, '');
+            let turnIndex = -1;
+            const messages = [];
+            containers.forEach((container) => {
+                const tagName = container.tagName.toLowerCase();
+                const fullText = normalizeText(container.innerText || container.textContent);
+                const role = tagName === 'user-query' || /^You said\b/i.test(fullText) ? 'user' : 'assistant';
+                if (role === 'user') turnIndex += 1;
+                if (turnIndex < 0) turnIndex = 0;
+                const selectors = role === 'user'
+                    ? ['.query-text', '[data-test-id="user-query-content"]', '.user-query-bubble-with-background']
+                    : ['message-content', '.model-response-text', '[data-test-id="model-response"]', '.response-content'];
+                const contentRoot = selectors.map((selector) => container.querySelector(selector)).find(Boolean)
+                    || container;
+                let contentText = normalizeText(contentRoot.innerText || contentRoot.textContent);
+                contentText = contentText.replace(role === 'user' ? /^You said\s*/i : /^Gemini said\s*/i, '');
+                if (role === 'user') {
+                    contentText = contentText.replace(/\n(?:Expand\n)?Copy prompt\s*$/i, '').trim();
+                } else {
+                    contentText = contentText.split(/\n(?:Good response|Bad response)(?:\n|$)/i, 1)[0].trim();
+                    contentText = contentText.replace(/\nGemini is AI and can make mistakes\.?\s*$/i, '').trim();
+                }
+                if (!contentText) return;
+                const sourceLinks = [...contentRoot.querySelectorAll('a[href], img[src]')].map((element) => {
+                    const rawValue = element.href || element.currentSrc || element.src || '';
+                    try {
+                        return new URL(rawValue, location.href).href;
+                    } catch (_error) {
+                        return '';
+                    }
+                }).filter(Boolean);
+                messages.push({
+                    conversation_title: conversationTitle,
+                    turn_index: turnIndex,
+                    message_index: messages.length,
+                    role,
+                    author_label: role === 'user' ? 'You' : 'Gemini',
+                    content_text: contentText,
+                    content_html: String(contentRoot.innerHTML || '').trim(),
+                    source_links: [...new Set(sourceLinks)],
+                    model_label: role === 'assistant' ? modelLabel : '',
+                });
+            });
+            return messages;
+        }""",
+        {"fallbackTitle": conversation.title},
+    )
+    return [dict(item) for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
+
+
+@contextlib.contextmanager
+def launch_gemini_browser_context(config: CrawlConfig):
+    """Open an isolated authenticated Gemini context for Safari, Edge, or Chrome."""
+    descriptor = browser_descriptors(config).get(config.gemini_browser)
+    if descriptor is None:
+        raise RuntimeError(f"Unsupported Gemini browser: {config.gemini_browser}")
+    if descriptor.engine == "safari":
+        with SafariContext(GEMINI_HOME_URL) as context:
+            yield context, descriptor
+        return
+    with sync_playwright_or_error() as playwright:
+        with launch_chromium_context(
+            playwright,
+            descriptor,
+            headless=False,
+            clone_profile_first=True,
+            background_window=True,
+        ) as context:
+            yield context, descriptor
+
+
+def _gemini_context_page(context):
+    """Return the primary browser page for either context implementation."""
+    if isinstance(context, SafariContext):
+        return context.primary_page
+    return context.pages[0] if context.pages else context.new_page()
+
+
+def sync_gemini_history(
+    state: TaskState,
+    config: CrawlConfig,
+    should_stop,
+    local_store_root: Path | str = LOCAL_STORE_ROOT,
+) -> GeminiSyncResult:
+    """Cache rendered Gemini sessions into a local Parquet file."""
+    history_path = gemini_history_path(local_store_root)
+    store = GeminiHistoryStore(history_path)
+    state.update(
+        phase="collecting",
+        progress_unit="sessions",
+        output_dir=str(history_path.parent),
+        account_name="Gemini",
+        downloaded_posts=store.cached_conversations,
+        downloaded_tweets=store.cached_messages,
+    )
+    state.append_event("Opening the authenticated Gemini history in the selected browser.")
+
+    discovered_messages = 0
+    new_messages = 0
+    unchanged_conversations = 0
+    failed_conversations = 0
+    processed_conversations = 0
+    conversation_links: list[GeminiConversationLink] = []
+    with launch_gemini_browser_context(config) as (context, descriptor):
+        page = _gemini_context_page(context)
+        conversation_links = collect_gemini_conversation_links(page, config, should_stop, state)
+        state.update(
+            phase="downloading",
+            discovered_tweets=len(conversation_links),
+            queued_tweets=len(conversation_links),
+            discovery_complete=True,
+        )
+        state.append_event(
+            f"Discovered {len(conversation_links):,} Gemini sessions in {descriptor.label}."
+        )
+        for index, conversation in enumerate(conversation_links, start=1):
+            if should_stop():
+                break
+            try:
+                goto_with_retry(page, conversation.url, attempts=2, timeout_ms=60_000)
+                _prepare_gemini_page_for_rendering(page)
+                if not wait_for_gemini_bot_check_clear(page, state, should_stop, "downloading"):
+                    break
+                _wait_for_gemini_ready(page)
+                page.wait_for_timeout(max(250, int(config.gemini_scroll_pause_seconds * 1_000)))
+                messages = extract_gemini_conversation_messages(page, conversation)
+                captured_at = utc_now()
+                added_count, unchanged = store.replace_conversation(conversation, messages, captured_at)
+                store.save()
+                discovered_messages += len(messages)
+                new_messages += added_count
+                unchanged_conversations += int(unchanged)
+                state.append_event(
+                    f"Cached Gemini session {index:,}/{len(conversation_links):,}: "
+                    f"{conversation.title} ({len(messages):,} messages)."
+                )
+            except Exception as exc:
+                failed_conversations += 1
+                state.append_event(
+                    f"Failed Gemini session {index:,}/{len(conversation_links):,} "
+                    f"{conversation.title}: {str(exc).splitlines()[0][:300]}"
+                )
+            processed_conversations = index
+            state.update(
+                processed_tweets=processed_conversations,
+                discovered_images=discovered_messages,
+                downloaded_posts=store.cached_conversations,
+                downloaded_tweets=store.cached_messages,
+                skipped_tweets=unchanged_conversations,
+                failed_tweets=failed_conversations,
+            )
+
+    stopped = should_stop()
+    return GeminiSyncResult(
+        discovered_conversations=len(conversation_links),
+        processed_conversations=processed_conversations,
+        discovered_messages=discovered_messages,
+        new_messages=new_messages,
+        unchanged_conversations=unchanged_conversations,
+        failed_conversations=failed_conversations,
+        cached_conversations=store.cached_conversations,
+        cached_messages=store.cached_messages,
+        stopped=stopped,
+    )

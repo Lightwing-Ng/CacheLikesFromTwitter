@@ -1,11 +1,12 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.34.1-codex.1
+# Code version: v1.39.0-codex.1
 
 from __future__ import annotations
 
 import contextlib
 import hashlib
+import io
 import json
 import logging
 import mimetypes
@@ -39,6 +40,9 @@ from .resource_persistence import (
     CHATGPT_CATALOG_FILENAME,
     CHATGPT_CATALOG_SCHEMA,
     CHATGPT_CATALOG_SCHEMA_VERSION,
+    CHATGPT_HISTORY_FILENAME,
+    CHATGPT_HISTORY_SCHEMA,
+    CHATGPT_HISTORY_SCHEMA_VERSION,
     LEGACY_CHATGPT_CATALOG_FILENAME,
     read_parquet_rows,
     retire_legacy_file,
@@ -59,8 +63,9 @@ CHATGPT_TARGET_DIR = LOCAL_STORE_ROOT / "chatgpt" / DEFAULT_CHATGPT_PROJECT_NAME
 CHATGPT_PARTIAL_DIRNAME = ".chatgpt-partial"
 CHATGPT_PAGE_GOTO_TIMEOUT_MS = 120_000
 CHATGPT_IMAGE_TIMEOUT_MS = 60_000
-CHATGPT_IMAGE_DOWNLOAD_RETRY_LIMIT = 3
+CHATGPT_IMAGE_DOWNLOAD_RETRY_LIMIT = 5
 CHATGPT_IMAGE_DOWNLOAD_RETRY_DELAY_SECONDS = 0.5
+CHATGPT_SAFARI_WORKER_COUNT = 1
 CHATGPT_WORKER_JOIN_TIMEOUT_SECONDS = 5.0
 CHATGPT_WORKER_START_RETRY_LIMIT = 3
 CHATGPT_WORKER_START_RETRY_DELAY_SECONDS = 0.5
@@ -77,12 +82,16 @@ CHATGPT_RENDERED_IMAGE_WAIT_MS = 5_500
 CHATGPT_RENDERED_IMAGE_POLL_MS = 250
 CHATGPT_RENDERED_IMAGE_STABLE_ROUNDS = 3
 CHATGPT_PROJECT_API_PAGE_SIZE = 10
+CHATGPT_HISTORY_API_PAGE_SIZE = 100
 CHATGPT_RECENT_IMAGE_PAGE_SIZE = 25
 CHATGPT_API_PAGE_LIMIT = 1_000
 CHATGPT_API_RETRY_LIMIT = 3
 CHATGPT_API_RETRY_DELAY_SECONDS = 1.0
+CHATGPT_API_RATE_LIMIT_RETRY_LIMIT = 6
+CHATGPT_API_RATE_LIMIT_MAX_DELAY_SECONDS = 30.0
 CHATGPT_PROMPT_METADATA_PERSIST_BATCH_SIZE = 25
 CHATGPT_PROMPT_METADATA_WORKER_JOIN_TIMEOUT_SECONDS = 5.0
+CHATGPT_HISTORY_RELATIVE_DIR = Path("llm") / "chatgpt"
 CHATGPT_RECOVERABLE_PAGE_ERROR_MARKERS = (
     "Page crashed",
     "frame was detached",
@@ -117,6 +126,10 @@ CHATGPT_GIZMO_PROJECT_ID_PATTERN = re.compile(r"^(g-p-[0-9a-f]{32})(?:-|$)", re.
 
 
 logger = logging.getLogger(__name__)
+
+
+class ChatGPTRateLimitError(RuntimeError):
+    """Signal that one ChatGPT API route should be deferred without aborting the sync."""
 
 
 @dataclass(slots=True)
@@ -196,6 +209,200 @@ class ChatGPTSyncResult:
     cached_count: int = 0
     stopped: bool = False
     skipped_size: int = 0
+    cached_messages: int = 0
+
+
+def chatgpt_history_path(local_store_root: Path | str = LOCAL_STORE_ROOT) -> Path:
+    """Return the typed Parquet file used for ChatGPT text history."""
+    return Path(local_store_root) / CHATGPT_HISTORY_RELATIVE_DIR / CHATGPT_HISTORY_FILENAME
+
+
+def _chatgpt_message_text(message: object) -> str:
+    """Extract readable text from one ChatGPT mapping message."""
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content")
+    if not isinstance(content, dict):
+        return ""
+    parts = content.get("parts")
+    if not isinstance(parts, list):
+        parts = [parts] if parts is not None else []
+    values: list[str] = []
+    direct_text = content.get("text")
+    if isinstance(direct_text, str) and direct_text.strip():
+        values.append(direct_text.strip())
+    for part in parts:
+        if isinstance(part, str) and part.strip():
+            values.append(part.strip())
+        elif isinstance(part, dict):
+            text = part.get("text") or part.get("content")
+            if isinstance(text, str) and text.strip():
+                values.append(text.strip())
+    return "\n\n".join(dict.fromkeys(values))
+
+
+def _extract_chatgpt_conversation_messages(
+    payload: dict[str, object],
+    conversation_url: str,
+    captured_at: str,
+) -> list[dict[str, object]]:
+    """Extract all user and assistant text messages from one conversation mapping."""
+    mapping = payload.get("mapping")
+    if not isinstance(mapping, dict):
+        return []
+    conversation_id = chatgpt_conversation_id(conversation_url)
+    title = str(payload.get("title") or "Untitled session").strip()
+    messages: list[dict[str, object]] = []
+    turn_index = -1
+    for node_id, node in mapping.items():
+        if not isinstance(node, dict) or not isinstance(node.get("message"), dict):
+            continue
+        message = node["message"]
+        author = message.get("author")
+        role = str(author.get("role") or "").strip().lower() if isinstance(author, dict) else ""
+        if role not in {"user", "assistant"}:
+            continue
+        content_text = _chatgpt_message_text(message)
+        if not content_text:
+            continue
+        if role == "user":
+            turn_index += 1
+        if turn_index < 0:
+            turn_index = 0
+        message_index = len(messages)
+        message_key = f"{conversation_id}:{node_id}"
+        messages.append(
+            {
+                "schema_version": CHATGPT_HISTORY_SCHEMA_VERSION,
+                "platform": "chatgpt",
+                "conversation_id": conversation_id,
+                "conversation_url": conversation_url,
+                "conversation_title": title,
+                "message_key": message_key,
+                "turn_index": turn_index,
+                "message_index": message_index,
+                "role": role,
+                "author_label": "You" if role == "user" else "ChatGPT",
+                "content_text": content_text,
+                "content_html": "",
+                "content_sha256": hashlib.sha256(content_text.encode("utf-8")).hexdigest(),
+                "source_links": [],
+                "model_label": "",
+                "first_seen_at": captured_at,
+                "last_seen_at": captured_at,
+            }
+        )
+    return messages
+
+
+class ChatGPTHistoryStore:
+    """Merge complete ChatGPT sessions into one atomic Parquet file."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        rows = read_parquet_rows(path)
+        if path.exists() and rows is None:
+            raise RuntimeError(f"ChatGPT history Parquet is unreadable: {path}")
+        self._rows_by_key = {
+            str(row.get("message_key")): dict(row)
+            for row in rows or []
+            if str(row.get("message_key") or "").strip()
+        }
+
+    @property
+    def cached_messages(self) -> int:
+        return len(self._rows_by_key)
+
+    def has_conversation(self, conversation_url: str) -> bool:
+        """Return whether this store already contains text for one ChatGPT session."""
+        conversation_id = chatgpt_conversation_id(conversation_url)
+        return bool(conversation_id) and any(
+            str(row.get("conversation_id") or "") == conversation_id
+            for row in self._rows_by_key.values()
+        )
+
+    def replace_conversation(self, conversation_url: str, payload: dict[str, object], captured_at: str) -> tuple[int, bool]:
+        """Replace one cached conversation and report new-message and unchanged counts."""
+        conversation_id = chatgpt_conversation_id(conversation_url)
+        previous = {
+            key: row for key, row in self._rows_by_key.items()
+            if str(row.get("conversation_id") or "") == conversation_id
+        }
+        next_rows = {
+            str(row["message_key"]): row
+            for row in _extract_chatgpt_conversation_messages(payload, conversation_url, captured_at)
+        }
+        if not next_rows:
+            raise RuntimeError(f"ChatGPT session {conversation_id} exposed no cacheable text messages.")
+        new_count = sum(
+            1 for key, row in next_rows.items()
+            if str(previous.get(key, {}).get("content_sha256") or "") != str(row["content_sha256"])
+        )
+        for key in previous:
+            self._rows_by_key.pop(key, None)
+        for key, row in next_rows.items():
+            if key in previous and previous[key].get("content_sha256") == row["content_sha256"]:
+                row["first_seen_at"] = previous[key].get("first_seen_at") or captured_at
+            self._rows_by_key[key] = row
+        unchanged = set(previous) == set(next_rows) and new_count == 0
+        return new_count, unchanged
+
+    def save(self) -> None:
+        """Persist all cached ChatGPT messages with schema verification."""
+        write_parquet_rows_atomic(
+            self.path,
+            sorted(self._rows_by_key.values(), key=lambda row: (str(row.get("conversation_id")), int(row.get("message_index") or 0))),
+            CHATGPT_HISTORY_SCHEMA,
+        )
+
+
+def cache_chatgpt_conversation_history(
+    history_store: ChatGPTHistoryStore,
+    conversation_urls: Iterable[str],
+    page,
+    request_headers: dict[str, str],
+    state: TaskState,
+    should_stop,
+) -> tuple[int, int, int]:
+    """Fetch and persist complete text mappings for every discovered session."""
+    processed = 0
+    new_messages = 0
+    unchanged_sessions = 0
+    urls = tuple(conversation_urls)
+    for index, conversation_url in enumerate(urls, start=1):
+        if should_stop():
+            break
+        api_url = _chatgpt_conversation_api_url(conversation_url)
+        if not api_url:
+            continue
+        if history_store.has_conversation(conversation_url):
+            processed += 1
+            unchanged_sessions += 1
+            continue
+        try:
+            payload = _get_chatgpt_api_json_via_page(page, api_url, request_headers)
+            added_count, unchanged = history_store.replace_conversation(
+                conversation_url,
+                payload,
+                utc_now(),
+            )
+            history_store.save()
+        except ChatGPTRateLimitError:
+            state.append_event(
+                f"ChatGPT text history reached the API rate limit at session {index:,}/{len(urls):,}; "
+                "deferring the remaining sessions until the next cache run."
+            )
+            break
+        except (AttributeError, RuntimeError) as exc:
+            state.append_event(
+                f"Failed to cache ChatGPT text session {index:,}/{len(urls):,}: "
+                f"{str(exc).splitlines()[0][:300]}"
+            )
+            continue
+        processed += 1
+        new_messages += added_count
+        unchanged_sessions += int(unchanged)
+    return processed, new_messages, unchanged_sessions
 
 
 @dataclass(slots=True)
@@ -313,6 +520,18 @@ def looks_like_image(content: bytes) -> bool:
     return bool(image_signature_extension(content))
 
 
+def image_payload_is_decodable(content: bytes) -> bool:
+    """Return whether an image payload can be fully decoded by Pillow."""
+    try:
+        with Image.open(io.BytesIO(content)) as image:
+            image.verify()
+        with Image.open(io.BytesIO(content)) as image:
+            image.load()
+    except (OSError, SyntaxError, UnidentifiedImageError, ValueError):
+        return False
+    return True
+
+
 def _is_chatgpt_thumbnail_source_url(source_url: str) -> bool:
     """Return whether a ChatGPT URL identifies a derived thumbnail encoding."""
     normalized_url = unquote(str(source_url or "")).lower()
@@ -345,7 +564,7 @@ def chatgpt_visual_properties(path: Path) -> tuple[str, int, int] | None:
                 Image.Resampling.LANCZOS,
             )
             pixels = grayscale.tobytes()
-    except (OSError, UnidentifiedImageError, ValueError):
+    except (OSError, SyntaxError, UnidentifiedImageError, ValueError):
         return None
 
     signature = 0
@@ -518,6 +737,12 @@ class ChatGPTImageCatalog:
                 if not looks_like_image(signature):
                     return None
             except OSError:
+                return None
+            # Older Safari runs only checked the file signature and could leave
+            # a PNG with a damaged interior chunk in the catalog. Re-decode
+            # entries without a persisted visual signature so the next sync
+            # prunes and downloads those files again.
+            if not entry.visual_signature and chatgpt_visual_properties(path) is None:
                 return None
             return entry
 
@@ -860,6 +1085,7 @@ def reset_chatgpt_state(
     for state_path in (
         catalog_path,
         resolved_target_dir / LEGACY_CHATGPT_CATALOG_FILENAME,
+        chatgpt_history_path(resolved_target_dir.parent.parent),
     ):
         if state_path.exists() and state_path.is_file():
             state_path.unlink()
@@ -1007,7 +1233,10 @@ def _get_chatgpt_api_json(
     """Fetch authenticated ChatGPT JSON with bounded transient-error retries."""
     last_status = 0
     fetch = request_get or context.request.get
-    for attempt_index in range(CHATGPT_API_RETRY_LIMIT):
+    rate_limit_attempts = 0
+    attempt_index = 0
+    attempt_limit = CHATGPT_API_RETRY_LIMIT
+    while attempt_index < attempt_limit:
         try:
             response = fetch(
                 url,
@@ -1020,6 +1249,7 @@ def _get_chatgpt_api_json(
                     "ChatGPT API request failed after transient browser connection retries."
                 ) from exc
             time.sleep(CHATGPT_API_RETRY_DELAY_SECONDS * (attempt_index + 1))
+            attempt_index += 1
             continue
         last_status = int(response.status)
         if response.ok:
@@ -1029,15 +1259,53 @@ def _get_chatgpt_api_json(
                 if attempt_index + 1 >= CHATGPT_API_RETRY_LIMIT:
                     raise RuntimeError("ChatGPT API returned invalid JSON after retries.") from exc
                 time.sleep(CHATGPT_API_RETRY_DELAY_SECONDS * (attempt_index + 1))
+                attempt_index += 1
                 continue
             if isinstance(payload, dict):
                 return payload
             raise RuntimeError("ChatGPT API returned an unexpected JSON payload.")
+        if last_status == 429:
+            rate_limit_attempts += 1
+            if rate_limit_attempts >= CHATGPT_API_RATE_LIMIT_RETRY_LIMIT:
+                raise ChatGPTRateLimitError(
+                    f"ChatGPT API request returned HTTP {last_status}."
+                )
+            attempt_limit = max(attempt_limit, CHATGPT_API_RATE_LIMIT_RETRY_LIMIT)
+            retry_after = _chatgpt_retry_after_seconds(response)
+            delay_seconds = retry_after or min(
+                CHATGPT_API_RATE_LIMIT_MAX_DELAY_SECONDS,
+                CHATGPT_API_RETRY_DELAY_SECONDS * (2 ** (rate_limit_attempts - 1)),
+            )
+            time.sleep(delay_seconds)
+            attempt_index += 1
+            continue
         retryable_status = last_status in {408, 429} or 500 <= last_status < 600
         if not retryable_status or attempt_index + 1 >= CHATGPT_API_RETRY_LIMIT:
             break
         time.sleep(CHATGPT_API_RETRY_DELAY_SECONDS * (attempt_index + 1))
+        attempt_index += 1
     raise RuntimeError(f"ChatGPT API request returned HTTP {last_status}.")
+
+
+def _chatgpt_retry_after_seconds(response: object) -> float | None:
+    """Parse a bounded Retry-After response header when ChatGPT sends one."""
+    try:
+        headers = response.headers
+    except AttributeError:
+        return None
+    if not isinstance(headers, dict):
+        return None
+    raw_value = next(
+        (value for key, value in headers.items() if str(key).lower() == "retry-after"),
+        None,
+    )
+    try:
+        delay_seconds = float(str(raw_value).strip())
+    except (TypeError, ValueError):
+        return None
+    if delay_seconds < 0:
+        return None
+    return min(delay_seconds, CHATGPT_API_RATE_LIMIT_MAX_DELAY_SECONDS)
 
 
 def _get_chatgpt_api_json_via_page(page, url: str, headers: dict[str, str]) -> dict[str, object]:
@@ -1387,7 +1655,7 @@ def enrich_chatgpt_project_index_prompts(
         if skipped_conversation_count:
             state.append_event(
                 f"Reused complete cached prompt metadata for {skipped_conversation_count:,} "
-                "ChatGPT conversations."
+                "ChatGPT sessions."
             )
     if not conversation_urls:
         return candidates
@@ -1449,7 +1717,7 @@ def enrich_chatgpt_project_index_prompts(
             if "HTTP 429" in result.error:
                 persist_pending_updates()
                 state.append_event(
-                    f"ChatGPT prompt metadata reached the API rate limit at conversation "
+                    f"ChatGPT prompt metadata reached the API rate limit at session "
                     f"{result.conversation_index:,}/{len(conversation_urls):,}; deferring the remaining "
                     "prompt metadata and continuing the image sync."
                 )
@@ -1457,7 +1725,7 @@ def enrich_chatgpt_project_index_prompts(
                 return False
             failed_conversations += 1
             state.append_event(
-                f"ChatGPT prompt metadata skipped conversation {result.conversation_index:,}/"
+                f"ChatGPT prompt metadata skipped session {result.conversation_index:,}/"
                 f"{len(conversation_urls):,}: "
                 f"{_summarize_chatgpt_image_error(RuntimeError(result.error))}"
             )
@@ -1472,7 +1740,7 @@ def enrich_chatgpt_project_index_prompts(
             persist_pending_updates()
             state.append_event(
                 f"ChatGPT prompt metadata inspected {completed_count:,}/{len(conversation_urls):,} "
-                f"relevant conversations and matched {prompt_count:,}/{len(candidates):,} images."
+                f"relevant sessions and matched {prompt_count:,}/{len(candidates):,} images."
             )
         return True
 
@@ -1536,7 +1804,7 @@ def enrich_chatgpt_project_index_prompts(
         )
     if failed_conversations:
         state.append_event(
-            f"ChatGPT prompt metadata could not inspect {failed_conversations:,} relevant conversations."
+            f"ChatGPT prompt metadata could not inspect {failed_conversations:,} relevant sessions."
         )
     return [candidates_by_file_id[candidate.file_id] for candidate in candidates]
 
@@ -1757,14 +2025,74 @@ def _collect_project_conversation_urls_via_api(
         state.update(
             discovered_tweets=len(conversation_urls),
             queued_tweets=len(conversation_urls),
-            progress_unit="conversations",
+            progress_unit="sessions",
         )
         state.append_event(
-            f"ChatGPT project API loaded {len(conversation_urls):,} conversations after page {page_index + 1}."
+            f"ChatGPT project API loaded {len(conversation_urls):,} sessions after page {page_index + 1}."
         )
         cursor = str(payload.get("cursor") or "").strip()
         if not raw_items:
             break
+    return conversation_urls
+
+
+def _collect_all_chatgpt_conversation_urls_via_api(
+    context,
+    referer: str,
+    request_headers: dict[str, str],
+    state: TaskState,
+    should_stop,
+    conversation_titles_by_id: dict[str, str] | None = None,
+) -> list[str]:
+    """Load every ChatGPT session for text history, independent of the media project."""
+    if not request_headers:
+        return []
+
+    api_headers = _chatgpt_api_request_headers(request_headers, referer)
+    conversation_urls: list[str] = []
+    seen_ids: set[str] = set()
+    offset = 0
+    for page_index in range(CHATGPT_API_PAGE_LIMIT):
+        if should_stop():
+            break
+        query = urlencode(
+            {
+                "offset": offset,
+                "limit": CHATGPT_HISTORY_API_PAGE_SIZE,
+                "order": "updated",
+            }
+        )
+        payload = _get_chatgpt_api_json(
+            context,
+            f"https://chatgpt.com/backend-api/conversations?{query}",
+            api_headers,
+        )
+        raw_items = payload.get("items")
+        if not isinstance(raw_items, list):
+            break
+        new_session_count = 0
+        for raw_item in raw_items:
+            if not isinstance(raw_item, dict):
+                continue
+            conversation_id = str(
+                raw_item.get("id") or raw_item.get("conversation_id") or ""
+            ).strip()
+            if not conversation_id or conversation_id in seen_ids:
+                continue
+            seen_ids.add(conversation_id)
+            new_session_count += 1
+            conversation_urls.append(f"https://chatgpt.com/c/{conversation_id}")
+            conversation_title = str(raw_item.get("title") or "").strip()
+            if conversation_title and conversation_titles_by_id is not None:
+                conversation_titles_by_id[conversation_id] = conversation_title
+        state.update(progress_unit="sessions")
+        state.append_event(
+            f"ChatGPT history API loaded {len(conversation_urls):,} total sessions "
+            f"after page {page_index + 1}."
+        )
+        if not raw_items or not new_session_count:
+            break
+        offset += len(raw_items)
     return conversation_urls
 
 
@@ -1833,7 +2161,7 @@ def collect_project_conversation_urls(
                 seen_urls.add(url)
                 conversation_urls.append(url)
         state.append_event(
-            f"ChatGPT project scan loaded {len(conversation_urls):,} conversations after page {round_index + 1}."
+            f"ChatGPT project scan loaded {len(conversation_urls):,} sessions after page {round_index + 1}."
         )
         if not _has_load_more_conversations(page):
             break
@@ -2910,8 +3238,19 @@ def _is_retryable_chatgpt_image_error(error: Exception) -> bool:
         marker in error_text
         for marker in (
             "non-image or incomplete image payload",
+            "corrupt or incomplete image payload",
+            "broken png",
+            "cannot identify image file",
             "timeout",
             "timed out",
+            "request state disappeared",
+            "fetch is aborted",
+            "load failed",
+            "failed to fetch",
+            "undefined is not an object",
+            "resumed at byte",
+            "did not honor the resume range",
+            "bytes[index]",
             "connection reset",
             "connection closed",
             "socket disconnected",
@@ -3015,6 +3354,9 @@ def _download_chatgpt_image_via_safari(
     ):
         partial_path.unlink(missing_ok=True)
         raise RuntimeError("ChatGPT returned a non-image or incomplete image payload.")
+    if not image_payload_is_decodable(content):
+        partial_path.unlink(missing_ok=True)
+        raise RuntimeError("ChatGPT returned a corrupt or incomplete image payload.")
 
     extension = infer_image_extension(source_url, content_type, content)
     target_path = target_dir / f"img_{sanitize_filename_part(candidate.file_id)}{extension}"
@@ -3153,6 +3495,7 @@ def sync_chatgpt_images(
         MAX_CHATGPT_SCAN_WAIT_SECONDS,
     )
     resolved_target_dir = target_dir or chatgpt_target_dir(project_name)
+    history_store = ChatGPTHistoryStore(chatgpt_history_path(resolved_target_dir.parent.parent))
     catalog = ChatGPTImageCatalog.build(resolved_target_dir)
     repair_result = catalog.repair_result
     cleanup_result = catalog.deduplicate_visual_duplicates()
@@ -3185,7 +3528,7 @@ def sync_chatgpt_images(
         f"scan wait: {scan_wait_seconds:g} s."
     )
     if should_stop():
-        return ChatGPTSyncResult(cached_count=cached_count, stopped=True)
+        return ChatGPTSyncResult(cached_count=cached_count, cached_messages=history_store.cached_messages, stopped=True)
 
     try:
         state.update(phase="collecting")
@@ -3208,6 +3551,28 @@ def sync_chatgpt_images(
                     request_headers=project_request_headers,
                     conversation_titles_by_id=conversation_titles_by_id,
                 )
+                history_conversation_urls = conversation_urls
+                if not direct_session_refresh and project_request_headers:
+                    try:
+                        all_history_urls = _collect_all_chatgpt_conversation_urls_via_api(
+                            discovery_context,
+                            project_url,
+                            project_request_headers,
+                            state,
+                            should_stop,
+                            conversation_titles_by_id,
+                        )
+                    except (ChatGPTRateLimitError, RuntimeError) as exc:
+                        state.append_event(
+                            "ChatGPT all-session text history discovery failed; "
+                            f"retaining the project session list for this run: {str(exc).splitlines()[0][:300]}"
+                        )
+                    else:
+                        if all_history_urls:
+                            history_conversation_urls = all_history_urls
+                        state.append_event(
+                            f"ChatGPT text history scope: {len(history_conversation_urls):,} total sessions."
+                        )
                 if not should_stop() and not direct_session_refresh:
                     project_index_candidates = collect_chatgpt_project_index_images(
                         discovery_context,
@@ -3221,7 +3586,20 @@ def sync_chatgpt_images(
                     project_index_candidates = catalog.merge_known_metadata(
                         project_index_candidates
                     )
-                elif direct_session_refresh:
+                history_processed, history_new_messages, history_unchanged_sessions = cache_chatgpt_conversation_history(
+                    history_store,
+                    history_conversation_urls,
+                    page,
+                    project_request_headers,
+                    state,
+                    should_stop,
+                )
+                state.append_event(
+                    f"Cached ChatGPT text history for {history_processed:,}/{len(history_conversation_urls):,} sessions "
+                    f"({history_store.cached_messages:,} messages, {history_new_messages:,} new, "
+                    f"{history_unchanged_sessions:,} unchanged)."
+                )
+                if direct_session_refresh:
                     state.append_event(
                         "Refreshing only the supplied ChatGPT session; skipping the global project image index."
                     )
@@ -3238,12 +3616,16 @@ def sync_chatgpt_images(
                         should_stop,
                         persist_batch=catalog.update_metadata_batch,
                         browser_page=page,
-                        worker_count=max(
-                            1,
-                            min(
-                                int(runtime_config.download_workers),
-                                CHATGPT_MAX_CONVERSATION_WORKERS,
-                            ),
+                        worker_count=(
+                            1
+                            if descriptor.engine == "safari"
+                            else max(
+                                1,
+                                min(
+                                    int(runtime_config.download_workers),
+                                    CHATGPT_MAX_CONVERSATION_WORKERS,
+                                ),
+                            )
                         ),
                         skip_complete_conversations=True,
                     )
@@ -3252,9 +3634,9 @@ def sync_chatgpt_images(
                     discovered_images=len(project_index_candidates),
                     queued_tweets=len(project_index_candidates) or len(conversation_urls),
                     processed_tweets=0,
-                    progress_unit="images" if project_index_candidates else "conversations",
+                    progress_unit="images" if project_index_candidates else "sessions",
                 )
-                state.append_event(f"Found {len(conversation_urls):,} ChatGPT conversations in the project.")
+                state.append_event(f"Found {len(conversation_urls):,} ChatGPT sessions in the project.")
                 if project_index_candidates:
                     state.append_event(
                         f"Found {len(project_index_candidates):,} current original images in "
@@ -3274,6 +3656,11 @@ def sync_chatgpt_images(
         failed_count = 0
         processed_conversations = 0
         worker_count = max(1, min(int(runtime_config.download_workers), CHATGPT_MAX_CONVERSATION_WORKERS))
+        if descriptor.engine == "safari":
+            worker_count = CHATGPT_SAFARI_WORKER_COUNT
+            state.append_event(
+                "Using one serialized Safari media worker to preserve the offscreen page byte stream."
+            )
         if direct_session_refresh:
             worker_count = 1
             state.append_event(
@@ -3343,14 +3730,14 @@ def sync_chatgpt_images(
 
         if project_index_candidates:
             state.append_event(
-                "ChatGPT's project image index is available; skipping legacy conversation scans "
+                "ChatGPT's project image index is available; skipping legacy session scans "
                 "that only surface unavailable historical assets."
             )
             conversation_results = ()
         elif should_stop():
             conversation_results = ()
         else:
-            state.append_event("Starting ChatGPT conversation scans because no project image index was available.")
+            state.append_event("Starting ChatGPT session scans because no project image index was available.")
             conversation_results = _iter_chatgpt_conversation_results(
                 conversation_urls,
                 descriptor,
@@ -3376,7 +3763,7 @@ def sync_chatgpt_images(
                 )
             if result.error:
                 state.append_event(
-                    f"Failed to inspect ChatGPT conversation {result.conversation_index:,}/{len(conversation_urls):,}: "
+                    f"Failed to inspect ChatGPT session {result.conversation_index:,}/{len(conversation_urls):,}: "
                     f"{result.error}"
                 )
             for image_error in result.image_errors:
@@ -3397,7 +3784,7 @@ def sync_chatgpt_images(
                 failed_tweets=failed_count,
             )
             state.append_event(
-                f"Scanned ChatGPT conversation {result.conversation_index:,}/{len(conversation_urls):,}; "
+                f"Scanned ChatGPT session {result.conversation_index:,}/{len(conversation_urls):,}; "
                 f"found {len(result.candidate_file_ids):,} original images."
             )
 
@@ -3424,6 +3811,7 @@ def sync_chatgpt_images(
             skipped_size=size_skipped_count,
             failed_count=failed_count,
             cached_count=cached_count,
+            cached_messages=history_store.cached_messages,
             stopped=stopped,
         )
     except PlaywrightError as exc:

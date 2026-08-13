@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.15.0-codex.1
+# Code version: v1.18.0-codex.1
 
 from __future__ import annotations
 
@@ -40,8 +40,13 @@ IMAGE_SUFFIXES = frozenset({".avif", ".gif", ".heic", ".jpeg", ".jpg", ".png", "
 VIDEO_SUFFIXES = frozenset({".m4v", ".mkv", ".mov", ".mp4", ".webm"})
 MEDIA_SUFFIXES = IMAGE_SUFFIXES | VIDEO_SUFFIXES
 SOURCE_VALUES = frozenset({"all", "x", "grok", "chatgpt"})
+TEXT_SOURCE_VALUES = frozenset({"all", "chatgpt", "gemini", "grok"})
+# Gemini has no media cache source. Treat a legacy URL that names Gemini in
+# Media mode as the ChatGPT media view instead of silently showing all media.
+TEXT_ONLY_SOURCE_VALUES = frozenset({"gemini"})
 MEDIA_KIND_VALUES = frozenset({"all", "image", "video"})
 SORT_VALUES = frozenset({"newest", "oldest", "name"})
+VIEW_VALUES = frozenset({"media", "text"})
 PAGE_SIZE = 24
 DEFAULT_TTL_SECONDS = 5.0
 CHATGPT_TEMPORARY_PROJECT_NAMES = frozenset({"forprompts"})
@@ -523,6 +528,9 @@ def normalize_browser_filters(
     page: object = 1,
     session: str | None = None,
     session_view: object = None,
+    view: str | None = None,
+    media_id: str | None = None,
+    session_page: object = 1,
 ) -> dict[str, Any]:
     """Normalize user-controlled browser filters to safe allowlisted values."""
     normalized_source = str(source or "").strip().lower()
@@ -530,14 +538,25 @@ def normalize_browser_filters(
     normalized_sort = str(sort or "").strip().lower()
     normalized_query = str(query or "").strip()[:120]
     normalized_session_view = str(session_view or "").strip().lower()
+    normalized_view = str(view or "").strip().lower()
+    if not normalized_view:
+        normalized_view = "text"
+    elif normalized_view not in VIEW_VALUES:
+        normalized_view = "media"
+    source_values = SOURCE_VALUES if normalized_view == "media" else TEXT_SOURCE_VALUES
+    if normalized_view == "media" and normalized_source in TEXT_ONLY_SOURCE_VALUES:
+        normalized_source = "chatgpt"
     return {
-        "source": normalized_source if normalized_source in SOURCE_VALUES else "all",
+        "source": normalized_source if normalized_source in source_values else "all",
         "kind": normalized_kind if normalized_kind in MEDIA_KIND_VALUES else "all",
         "q": normalized_query,
         "sort": normalized_sort if normalized_sort in SORT_VALUES else "newest",
         "page": _coerce_positive_page(page),
         "session": str(session or "").strip()[:160],
         "session_view": normalized_session_view not in {"0", "false", "off"},
+        "session_page": _coerce_positive_page(session_page),
+        "view": normalized_view,
+        "media_id": str(media_id or "").strip()[:96],
     }
 
 
@@ -547,15 +566,18 @@ def filter_media_items(
     source: str = "all",
     media_kind: str = "all",
     query: str = "",
+    media_id: str = "",
 ) -> tuple[LocalMediaItem, ...]:
     """Filter media items by source, kind, and case-insensitive text search."""
-    normalized = normalize_browser_filters(source, media_kind, query, "newest", 1)
+    normalized = normalize_browser_filters(source, media_kind, query, "newest", 1, view="media")
     search = normalized["q"].casefold()
     filtered: list[LocalMediaItem] = []
     for item in items:
         if normalized["source"] != "all" and item.source != normalized["source"]:
             continue
         if normalized["kind"] != "all" and item.media_kind != normalized["kind"]:
+            continue
+        if media_id and item.stable_id != media_id:
             continue
         if search:
             searchable = " ".join(
@@ -735,7 +757,7 @@ def build_local_store_pagination(
     total_pages: int,
     current_page: int,
 ) -> tuple[LocalMediaPaginationItem, ...]:
-    """Build the investment table's five-page chunk and boundary controls."""
+    """Build shared five-page controls, returning no controls for a single page."""
     normalized_total_pages = max(1, int(total_pages))
     normalized_current_page = min(normalized_total_pages, max(1, int(current_page)))
     if normalized_total_pages <= 1:
@@ -1001,14 +1023,16 @@ class LocalMediaCatalog:
         force_refresh: bool = False,
         chatgpt_session_key: str = "",
         chatgpt_session_view: bool = True,
+        media_id: str = "",
     ) -> LocalMediaPage:
         """Return a safe filtered, sorted, and paginated view of the snapshot."""
-        filters = normalize_browser_filters(source, media_kind, query, sort, page)
+        filters = normalize_browser_filters(source, media_kind, query, sort, page, view="media")
         filtered = filter_media_items(
             self.snapshot(force_refresh=force_refresh),
             source=filters["source"],
             media_kind=filters["kind"],
             query=filters["q"],
+            media_id=filters["media_id"] or media_id,
         )
         if filters["source"] == "chatgpt" and chatgpt_session_view:
             return paginate_chatgpt_sessions(

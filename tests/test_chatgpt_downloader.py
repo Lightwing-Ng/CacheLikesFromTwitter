@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.30.1-codex.1
+# Code version: v1.33.0-codex.1
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from PIL import Image
 
 from app.core.browser_sessions import probe_browser_session
 from app.core.chatgpt_downloader import (
+    ChatGPTHistoryStore,
     ChatGPTImageSizeLimitError,
     ChatGPTImageCandidate,
     ChatGPTImageCatalog,
@@ -43,7 +44,9 @@ from app.core.chatgpt_downloader import (
     ChatGPTImageDownloadWorkResult,
     PlaywrightError,
     _chatgpt_file_download_url,
+    _extract_chatgpt_conversation_messages,
     _chatgpt_index_image_worker,
+    _collect_all_chatgpt_conversation_urls_via_api,
     _chatgpt_project_id,
     _extract_chatgpt_conversation_image_payloads,
     _get_chatgpt_api_json,
@@ -57,13 +60,17 @@ from app.core.chatgpt_downloader import (
     _load_chatgpt_session_request_headers,
     _merge_current_conversation_images,
     _wait_for_project_conversation_links,
+    cache_chatgpt_conversation_history,
 )
 from app.core.config import CrawlConfig, DEFAULT_CHATGPT_PROJECT_NAME, DEFAULT_CHATGPT_PROJECT_URL
 from app.core.safari_automation import SafariContext, SafariPage
 from app.core.state import TaskState
 
 
-PNG_PAYLOAD = b"\x89PNG\r\n\x1a\n" + (b"cachelikes" * 8)
+PNG_PAYLOAD = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c489"
+    "0000000d49444154789c6360606060000000050001a5f645400000000049454e44ae426082"
+)
 
 
 def _visual_test_image_payload(image_format: str, *, quality: int | None = None) -> bytes:
@@ -80,6 +87,98 @@ def _visual_test_image_payload(image_format: str, *, quality: int | None = None)
     save_options = {"quality": quality} if quality is not None else {}
     image.save(output, format=image_format, **save_options)
     return output.getvalue()
+
+
+def test_chatgpt_history_cache_persists_every_user_and_assistant_message(tmp_path: Path) -> None:
+    conversation_url = "https://chatgpt.com/c/session-complete"
+    payload = {
+        "title": "Complete session",
+        "mapping": {
+            "system-node": {
+                "message": {"author": {"role": "system"}, "content": {"parts": ["ignored"]}}
+            },
+            "user-node": {
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"parts": ["Please summarize this"]},
+                }
+            },
+            "assistant-node": {
+                "message": {
+                    "author": {"role": "assistant"},
+                    "content": {"parts": [{"text": "Here is the summary."}]},
+                }
+            },
+        },
+    }
+
+    extracted = _extract_chatgpt_conversation_messages(
+        payload,
+        conversation_url,
+        "2026-08-12T08:00:00Z",
+    )
+    assert [row["role"] for row in extracted] == ["user", "assistant"]
+    assert [row["content_text"] for row in extracted] == [
+        "Please summarize this",
+        "Here is the summary.",
+    ]
+
+    history_store = ChatGPTHistoryStore(tmp_path / "llm" / "chatgpt" / "history.parquet")
+    with patch(
+        "app.core.chatgpt_downloader._get_chatgpt_api_json_via_page",
+        return_value=payload,
+    ):
+        processed, new_messages, unchanged_sessions = cache_chatgpt_conversation_history(
+            history_store,
+            [conversation_url],
+            object(),
+            {},
+            TaskState("test"),
+            lambda: False,
+        )
+
+    rows = read_parquet_rows(history_store.path)
+    assert processed == 1
+    assert new_messages == 2
+    assert unchanged_sessions == 0
+    assert rows is not None
+    assert [row["content_text"] for row in rows] == [
+        "Please summarize this",
+        "Here is the summary.",
+    ]
+
+
+def test_chatgpt_history_cache_skips_sessions_already_in_the_store(tmp_path: Path) -> None:
+    conversation_url = "https://chatgpt.com/c/session-already-cached"
+    history_store = ChatGPTHistoryStore(tmp_path / "llm" / "chatgpt" / "history.parquet")
+    history_store.replace_conversation(
+        conversation_url,
+        {
+            "mapping": {
+                "user": {
+                    "message": {
+                        "author": {"role": "user"},
+                        "content": {"parts": ["Already cached"]},
+                    }
+                }
+            }
+        },
+        "2026-08-12T08:00:00Z",
+    )
+    history_store.save()
+
+    with patch("app.core.chatgpt_downloader._get_chatgpt_api_json_via_page") as api_get:
+        processed, new_messages, unchanged_sessions = cache_chatgpt_conversation_history(
+            history_store,
+            [conversation_url],
+            object(),
+            {},
+            TaskState("test"),
+            lambda: False,
+        )
+
+    assert (processed, new_messages, unchanged_sessions) == (1, 0, 1)
+    api_get.assert_not_called()
 
 
 class _FakeResponse:
@@ -554,7 +653,7 @@ def test_chatgpt_prompt_backfill_skips_conversations_with_complete_catalog_metad
     assert enriched == [candidate]
     api_get.assert_not_called()
     assert any(
-        "Reused complete cached prompt metadata for 1 ChatGPT conversations" in event
+        "Reused complete cached prompt metadata for 1 ChatGPT sessions" in event
         for event in state.snapshot()["recent_events"]
     )
 
@@ -675,6 +774,42 @@ def test_chatgpt_api_retries_transient_browser_connection_errors(error_type) -> 
     assert payload == {"items": []}
     assert context.request.attempts == 3
     assert [call.args[0] for call in sleep.call_args_list] == [1.0, 2.0]
+
+
+def test_chatgpt_api_retries_rate_limits_with_retry_after() -> None:
+    class _RateLimitedResponse:
+        ok = False
+        status = 429
+        headers = {"Retry-After": "4"}
+
+    class _ReadyResponse:
+        ok = True
+        status = 200
+        headers = {}
+
+        @staticmethod
+        def text() -> str:
+            return '{"items": []}'
+
+    class _RateLimitedRequest:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        def get(self, _url: str, **_kwargs):
+            self.attempts += 1
+            return _RateLimitedResponse() if self.attempts == 1 else _ReadyResponse()
+
+    class _RateLimitedContext:
+        def __init__(self) -> None:
+            self.request = _RateLimitedRequest()
+
+    context = _RateLimitedContext()
+    with patch("app.core.chatgpt_downloader.time.sleep") as sleep:
+        payload = _get_chatgpt_api_json(context, "https://chatgpt.com/backend-api/test", {})
+
+    assert payload == {"items": []}
+    assert context.request.attempts == 2
+    sleep.assert_called_once_with(4.0)
 
 
 def test_chatgpt_browser_page_api_uses_authorized_fetch_headers() -> None:
@@ -1021,6 +1156,38 @@ def test_chatgpt_catalog_prunes_missing_entries_during_load(tmp_path: Path) -> N
     persisted = read_parquet_rows(repaired.catalog_path)
     assert persisted is not None
     assert {str(row["file_id"]) for row in persisted} == {"file_valid"}
+
+
+def test_chatgpt_catalog_prunes_signature_only_corrupt_images_during_load(tmp_path: Path) -> None:
+    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_corrupt",
+        file_id="file_corrupt",
+        conversation_url="https://chatgpt.com/c/corrupt",
+    )
+    catalog = ChatGPTImageCatalog.build(target_dir)
+    corrupt_path = target_dir / "img_file_corrupt.png"
+    corrupt_path.parent.mkdir(parents=True, exist_ok=True)
+    corrupt_path.write_bytes(b"\x89PNG\r\n\x1a\n" + (b"damaged" * 32))
+    catalog.entries_by_file_id[candidate.file_id] = ChatGPTCatalogEntry(
+        file_id=candidate.file_id,
+        relative_path=corrupt_path.name,
+        content_sha256="corrupt",
+        content_bytes=corrupt_path.stat().st_size,
+        source_url=candidate.source_url,
+        conversation_url=candidate.conversation_url,
+        alt_text="",
+        width=0,
+        height=0,
+        first_seen_at="",
+        last_seen_at="",
+    )
+    catalog.save()
+
+    reloaded = ChatGPTImageCatalog.build(target_dir)
+
+    assert candidate.file_id not in reloaded.entries_by_file_id
+    assert not corrupt_path.exists()
 
 
 def test_chatgpt_catalog_prunes_cached_thumbnail_encodings_during_load(tmp_path: Path) -> None:
@@ -1486,6 +1653,64 @@ def test_chatgpt_project_api_collects_authoritative_session_titles() -> None:
     assert titles_by_id == {conversation_id: "master 21"}
     assert state.snapshot()["discovered_tweets"] == 1
     assert state.snapshot()["queued_tweets"] == 1
+
+
+def test_chatgpt_history_api_collects_all_sessions_outside_the_media_project() -> None:
+    class _HistoryResponse:
+        ok = True
+        status = 200
+
+        def __init__(self, payload: dict[str, object]) -> None:
+            self._payload = payload
+
+        def text(self) -> str:
+            return json.dumps(self._payload)
+
+    class _HistoryRequest:
+        calls: list[str] = []
+
+        @classmethod
+        def get(cls, url: str, **_kwargs):
+            cls.calls.append(url)
+            if "offset=0" in url:
+                return _HistoryResponse(
+                    {
+                        "items": [
+                            {"id": "studio-session", "title": "Studio image session"},
+                            *[
+                                {"id": f"filler-{index}", "title": f"Filler {index}"}
+                                for index in range(99)
+                            ],
+                        ]
+                    }
+                )
+            return _HistoryResponse(
+                {
+                    "items": [
+                        {"id": "personal-session", "title": "Personal text session"},
+                    ]
+                }
+            )
+
+    class _HistoryContext:
+        request = _HistoryRequest()
+
+    titles: dict[str, str] = {}
+    urls = _collect_all_chatgpt_conversation_urls_via_api(
+        _HistoryContext(),
+        DEFAULT_CHATGPT_PROJECT_URL,
+        {"authorization": "Bearer test-token"},
+        TaskState("test"),
+        should_stop=lambda: False,
+        conversation_titles_by_id=titles,
+    )
+
+    assert urls[0] == "https://chatgpt.com/c/studio-session"
+    assert urls[-1] == "https://chatgpt.com/c/personal-session"
+    assert len(urls) == 101
+    assert titles["studio-session"] == "Studio image session"
+    assert titles["personal-session"] == "Personal text session"
+    assert any("/backend-api/conversations?" in url for url in _HistoryRequest.calls)
 
 
 class _ClosableBrowserContext:

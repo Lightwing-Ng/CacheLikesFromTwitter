@@ -1,6 +1,6 @@
 """Service orchestration and Flask contract tests.
 
-Code version: v1.4.0-codex.1
+Code version: v1.6.2-codex.1
 """
 
 from __future__ import annotations
@@ -58,9 +58,10 @@ def test_grok_status_error_summary_is_actionable_and_bounded() -> None:
 @pytest.mark.integration
 def test_web_pages_and_status_apis_are_available(client) -> None:
     for path, expected_text in (
-        ("/", b"Execution overview"),
-        ("/grok", b"Grok library overview"),
-        ("/chatgpt", b"ChatGPT cache overview"),
+            ("/cache/x", b"Execution overview"),
+            ("/cache/grok", b"Grok library overview"),
+            ("/cache/chatgpt", b"ChatGPT cache overview"),
+            ("/cache/gemini", b"Gemini history cache overview"),
         ("/settings", b"Configuration center"),
     ):
         response = client.get(path)
@@ -70,12 +71,41 @@ def test_web_pages_and_status_apis_are_available(client) -> None:
     status = client.get("/api/status")
     grok_status = client.get("/api/grok/status")
     chatgpt_status = client.get("/api/chatgpt/status")
+    gemini_status = client.get("/api/gemini/status")
     generic_statuses = [client.get(f"/api/cache/{source.key}/status") for source in CACHE_SOURCE_VIEWS]
     assert status.status_code == 200
     assert grok_status.status_code == 200
     assert chatgpt_status.status_code == 200
+    assert gemini_status.status_code == 200
     assert all(response.status_code == 200 for response in generic_statuses)
-    assert status.get_json()["phase"] in {"idle", "starting", "downloading", "finished", "failed", "stopped", "stopping"}
+    assert status.get_json()["phase"] in {
+        "idle",
+        "starting",
+        "collecting",
+        "downloading",
+        "paused",
+        "finished",
+        "failed",
+        "stopped",
+        "stopping",
+    }
+
+
+@pytest.mark.integration
+def test_legacy_cache_page_paths_redirect_to_canonical_namespace(client) -> None:
+    for legacy_path, canonical_path in (
+        ("/", "/cache/x"),
+        ("/grok", "/cache/grok"),
+        ("/chatgpt", "/cache/chatgpt"),
+        ("/gemini", "/cache/gemini"),
+    ):
+        response = client.get(legacy_path)
+        assert response.status_code == 302
+        assert response.headers["Location"] == canonical_path
+
+    query_response = client.get("/chatgpt?agent_platform=gemini")
+    assert query_response.status_code == 302
+    assert query_response.headers["Location"] == "/cache/chatgpt?agent_platform=gemini"
 
 
 def test_browser_empty_cache_isolated_from_repository_cache(tmp_path: Path) -> None:
@@ -83,7 +113,7 @@ def test_browser_empty_cache_isolated_from_repository_cache(tmp_path: Path) -> N
     application.config.update(TESTING=True)
 
     with application.test_client() as isolated_client:
-        response = isolated_client.get("/browser")
+        response = isolated_client.get("/browser?view=media")
 
     assert response.status_code == 200
     assert b"Cached media browser" in response.data
@@ -145,6 +175,27 @@ def test_grok_start_route_accepts_safari(client) -> None:
     assert config.grok_browser == "safari"
     assert config.download_workers == 2
     assert config.max_media_file_size_mib == 75
+
+
+@pytest.mark.integration
+def test_gemini_start_route_accepts_browser_and_history_limits(client) -> None:
+    with patch("app.core.gemini_service.GeminiHistoryService.start") as start:
+        response = client.post(
+            "/cache/gemini/start",
+            data={
+                "gemini_browser": "edge",
+                "gemini_max_conversations": "2,000",
+                "gemini_scroll_pause_seconds": "0.35",
+                "gemini_stale_round_limit": "7",
+            },
+        )
+
+    assert response.status_code == 302
+    config = start.call_args.args[0]
+    assert config.gemini_browser == "edge"
+    assert config.gemini_max_conversations == 2_000
+    assert config.gemini_scroll_pause_seconds == 0.35
+    assert config.gemini_stale_round_limit == 7
 
 
 @pytest.mark.integration

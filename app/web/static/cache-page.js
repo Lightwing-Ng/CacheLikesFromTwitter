@@ -1,4 +1,4 @@
-/* Code version: v1.5.0-codex.1 */
+/* Code version: v1.7.0-codex.1 */
 
 (() => {
     "use strict";
@@ -33,10 +33,13 @@
     const progressProcessedLabel = document.querySelector("[data-progress-unit-label]");
     const recentEventsBody = document.getElementById("recent_events_body");
     const recentEventsPagination = document.getElementById("recent_events_pagination");
+    const paginationMotion = window.CACHELIKES_PAGINATION_MOTION;
     const cacheSourceSwitcher = document.querySelector("[data-cache-source-switcher]");
     const sectionLinks = Array.from(document.querySelectorAll("[data-section-link]"));
     const statusFields = Array.from(document.querySelectorAll("[data-status-field]"));
     const initialStateNode = document.getElementById("cache_page_initial_state");
+    const cacheContentModeControl = document.querySelector("[data-cache-content-mode]");
+    const cacheContentModeStorageKey = "cachelikes:browser-content-mode:v1";
 
     let recentEvents = [];
     let recentEventsCurrentPage = 1;
@@ -45,6 +48,51 @@
     let statusPollTimer = 0;
     let statusRefreshInFlight = false;
     let statusRefreshFailed = false;
+
+    function readRememberedContentMode() {
+        try {
+            const rememberedMode = window.sessionStorage.getItem(cacheContentModeStorageKey);
+            return rememberedMode === "media" || rememberedMode === "text" ? rememberedMode : "text";
+        } catch (_error) {
+            return "text";
+        }
+    }
+
+    function syncCacheContentMode(mode) {
+        if (!cacheContentModeControl) return;
+        const normalizedMode = mode === "media" ? "media" : "text";
+        const options = Array.from(
+            cacheContentModeControl.querySelectorAll("[data-cache-content-mode-option]"),
+        );
+        const activeIndex = options.findIndex(
+            (option) => option.dataset.cacheContentModeOption === normalizedMode,
+        );
+        cacheContentModeControl.dataset.segmentedActiveIndex = String(Math.max(activeIndex, 0));
+        options.forEach((option) => {
+            const isActive = option.dataset.cacheContentModeOption === normalizedMode;
+            option.classList.toggle("is-active", isActive);
+            option.setAttribute("aria-checked", String(isActive));
+        });
+    }
+
+    function rememberCacheContentMode(mode) {
+        try {
+            window.sessionStorage.setItem(cacheContentModeStorageKey, mode);
+        } catch (_error) {
+        }
+    }
+
+    function initializeCacheContentMode() {
+        if (!cacheContentModeControl) return;
+        syncCacheContentMode(readRememberedContentMode());
+        cacheContentModeControl.addEventListener("click", (event) => {
+            const option = event.target.closest("[data-cache-content-mode-option]");
+            if (!option || !cacheContentModeControl.contains(option)) return;
+            rememberCacheContentMode(option.dataset.cacheContentModeOption);
+        });
+    }
+
+    initializeCacheContentMode();
 
     function setTextIfChanged(element, value) {
         if (!element) return;
@@ -104,7 +152,32 @@
         return Math.max(1, Math.ceil(recentEvents.length / recentEventsPageSize));
     }
 
+    function normalizePaginationPage(value, fallback = 1) {
+        const numericValue = Number(value);
+        if (!Number.isFinite(numericValue)) return fallback;
+        return Math.max(1, Math.trunc(numericValue));
+    }
+
+    function buildRecentEventsPaginationState(totalPages, currentPage) {
+        const normalizedTotalPages = normalizePaginationPage(totalPages);
+        const normalizedCurrentPage = Math.min(
+            normalizedTotalPages,
+            normalizePaginationPage(currentPage),
+        );
+        const shouldRender = normalizedTotalPages > 1;
+        return {
+            totalPages: normalizedTotalPages,
+            currentPage: normalizedCurrentPage,
+            shouldRender,
+            items: shouldRender
+                ? buildRecentEventsPaginationItems(normalizedTotalPages, normalizedCurrentPage)
+                : [],
+        };
+    }
+
     function buildRecentEventsPaginationItems(totalPages, currentPage) {
+        if (totalPages <= 1) return [];
+
         const chunkSize = 5;
         const startPage = Math.floor((currentPage - 1) / chunkSize) * chunkSize + 1;
         const endPage = Math.min(startPage + chunkSize - 1, totalPages);
@@ -126,29 +199,34 @@
         return items;
     }
 
-    function positionRecentEventsPaginationIndicator() {
-        if (!recentEventsPagination) return;
-        const indicator = recentEventsPagination.querySelector(".local-store-pagination-indicator");
-        const target = recentEventsPagination.querySelector(".local-store-page-button.is-active");
-        if (!indicator || !target) return;
-
-        const paginationRect = recentEventsPagination.getBoundingClientRect();
-        const targetRect = target.getBoundingClientRect();
-        const x = targetRect.left - paginationRect.left - recentEventsPagination.clientLeft;
-        const y = targetRect.top - paginationRect.top - recentEventsPagination.clientTop;
-        indicator.style.width = `${targetRect.width}px`;
-        indicator.style.height = `${targetRect.height}px`;
-        indicator.style.transform = `translate3d(${x}px, ${y}px, 0)`;
-        recentEventsPagination.classList.add("is-animated");
+    function positionRecentEventsPaginationIndicator({ immediate = false } = {}) {
+        if (!recentEventsPagination || !paginationMotion) return;
+        paginationMotion.positionPaginationIndicator(
+            recentEventsPagination,
+            recentEventsPagination.querySelector(".local-store-page-button.is-active"),
+            { immediate },
+        );
     }
 
-    function renderRecentEventsPagination(totalPages) {
+    function renderRecentEventsPagination(totalPages, { animationState = null } = {}) {
         if (!recentEventsPagination) return;
+        const paginationState = buildRecentEventsPaginationState(totalPages, recentEventsCurrentPage);
+        recentEventsCurrentPage = paginationState.currentPage;
+        recentEventsPagination.hidden = !paginationState.shouldRender;
+
+        if (!paginationState.shouldRender) {
+            paginationMotion?.clearPaginationAnimation(recentEventsPagination);
+            recentEventsPagination.replaceChildren();
+            recentEventsPagination.style.removeProperty("--local-store-pagination-slots");
+            recentEventsPagination.classList.remove("is-animated");
+            return;
+        }
+
         const indicator = recentEventsPagination.querySelector(".local-store-pagination-indicator")
             || document.createElement("span");
         indicator.className = "local-store-pagination-indicator";
         indicator.setAttribute("aria-hidden", "true");
-        const items = buildRecentEventsPaginationItems(totalPages, recentEventsCurrentPage);
+        const items = paginationState.items;
         const controls = items.map((item) => {
             if (item.kind === "ellipsis") {
                 const ellipsis = document.createElement("span");
@@ -182,18 +260,29 @@
             }
 
             button.addEventListener("click", () => {
+                if (item.isActive) return;
+                const nextAnimationState = paginationMotion?.capturePaginationAnimation(
+                    recentEventsPagination,
+                    item.page,
+                );
                 recentEventsCurrentPage = item.page;
-                renderRecentEventsPage();
+                renderRecentEventsPage({ animationState: nextAnimationState });
             });
             return button;
         });
 
         recentEventsPagination.style.setProperty("--local-store-pagination-slots", String(items.length));
         recentEventsPagination.replaceChildren(indicator, ...controls);
-        window.requestAnimationFrame(positionRecentEventsPaginationIndicator);
+        window.requestAnimationFrame(() => {
+            if (animationState && paginationMotion) {
+                paginationMotion.animatePaginationIndicator(recentEventsPagination, animationState);
+                return;
+            }
+            positionRecentEventsPaginationIndicator({ immediate: true });
+        });
     }
 
-    function renderRecentEventsPage() {
+    function renderRecentEventsPage({ animationState = null } = {}) {
         if (!recentEventsBody || !recentEventsPagination) return;
         const totalPages = recentEventsTotalPages();
         recentEventsCurrentPage = Math.min(Math.max(recentEventsCurrentPage, 1), totalPages);
@@ -223,7 +312,7 @@
             });
         }
 
-        renderRecentEventsPagination(totalPages);
+        renderRecentEventsPagination(totalPages, { animationState });
     }
 
     function setRecentEvents(events) {
@@ -486,7 +575,8 @@
         const processed = Math.min(Math.max(Number(data.processed_tweets) || 0, 0), queued);
         const progressUnits = {
             images: "image assets",
-            conversations: "conversations",
+            conversations: "sessions",
+            sessions: "sessions",
             resources: "resources",
         };
         const progressUnit = progressUnits[data.progress_unit] || "items";
@@ -540,7 +630,8 @@
         if (!progressProcessedLabel) return;
         const labels = {
             images: "Image assets processed",
-            conversations: "Conversations processed",
+            conversations: "Sessions processed",
+            sessions: "Sessions processed",
             resources: "Resources processed",
         };
         setTextIfChanged(progressProcessedLabel, labels[data.progress_unit] || "Work items processed");
@@ -609,7 +700,11 @@
     }
 
     statusBannerDismiss?.addEventListener("click", () => setStatusBannerVisible(false));
-    window.addEventListener("resize", positionRecentEventsPaginationIndicator, { passive: true });
+    window.addEventListener(
+        "resize",
+        () => positionRecentEventsPaginationIndicator({ immediate: true }),
+        { passive: true },
+    );
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("pagehide", () => window.clearTimeout(statusPollTimer), { once: true });
 

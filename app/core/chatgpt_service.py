@@ -1,6 +1,6 @@
 """Background service for ChatGPT project image sync."""
 
-# Code version: v1.2.0-codex.1
+# Code version: v1.2.1-codex.1
 
 from __future__ import annotations
 
@@ -116,7 +116,8 @@ class ChatGPTDownloadService:
             )
             if result.stopped:
                 self._state.finish_stopped(
-                    f"ChatGPT sync stopped. Cached {result.cached_count:,} original images."
+                    f"ChatGPT sync stopped. Cached {result.cached_count:,} original images and "
+                    f"{result.cached_messages:,} text messages."
                 )
                 logger.info(
                     "ChatGPT sync stopped by operator.",
@@ -131,8 +132,9 @@ class ChatGPTDownloadService:
                 return
 
             completion_message = (
-                f"Finished ChatGPT sync. Inspected {result.discovered_conversations:,} conversations, "
+                f"Finished ChatGPT sync. Inspected {result.discovered_conversations:,} sessions, "
                 f"found {result.discovered_images:,} original images, added {result.downloaded_count:,} new files, "
+                f"cached {result.cached_messages:,} text messages, "
                 f"skipped over size limit {result.skipped_size:,}, "
                 f"failed {result.failed_count:,}; cached total {result.cached_count:,} images."
             )

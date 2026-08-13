@@ -1,12 +1,13 @@
 """Unit tests for Grok downloader canonical asset handling."""
 
-# Code version: v1.3.2-codex.2
+# Code version: v1.3.3-codex.1
 
 from __future__ import annotations
 
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.core.grok_downloader import (
     GrokCatalogEntry,
@@ -22,10 +23,54 @@ from app.core.grok_downloader import (
     entry_needs_remote_image_upgrade,
     open_grok_page,
     prepare_grok_library_page,
+    resolve_candidate_from_versions,
+    resolve_candidate_from_file_details_page,
 )
 
 
 class BuildCandidateFromVersionsPayloadTests(unittest.TestCase):
+    def test_versions_request_failure_keeps_the_discovered_candidate(self) -> None:
+        fallback_candidate = GrokMediaCandidate(
+            source_url="https://assets.grok.com/users/test/generated/asset-id/preview_image.jpg",
+            asset_id="asset-id",
+            asset_name="preview-image",
+            media_kind="image",
+            identity="asset-id/preview-image",
+            preview_url="https://assets.grok.com/users/test/generated/asset-id/preview_image.jpg",
+        )
+
+        class Request:
+            def get(self, _url: str, **_kwargs):
+                raise RuntimeError("Safari request failed: Load failed")
+
+        context = type("Context", (), {"request": Request()})()
+
+        resolved = resolve_candidate_from_versions(context, fallback_candidate)
+
+        self.assertEqual(resolved, fallback_candidate)
+
+    def test_details_page_request_failure_keeps_the_discovered_candidate(self) -> None:
+        fallback_candidate = GrokMediaCandidate(
+            source_url="https://assets.grok.com/users/test/generated/asset-id/preview_image.jpg",
+            asset_id="asset-id",
+            asset_name="preview-image",
+            media_kind="image",
+            identity="asset-id/preview-image",
+            preview_url="https://assets.grok.com/users/test/generated/asset-id/preview_image.jpg",
+        )
+
+        with patch(
+            "app.core.grok_downloader.open_grok_page",
+            side_effect=RuntimeError("Safari request failed: Load failed"),
+        ):
+            resolved = resolve_candidate_from_file_details_page(
+                object(),
+                fallback_candidate,
+                details_page=object(),
+            )
+
+        self.assertEqual(resolved, fallback_candidate)
+
     def test_prefers_canonical_asset_key_over_preview_identity(self) -> None:
         fallback_candidate = GrokMediaCandidate(
             source_url="https://assets.grok.com/users/test/generated/asset-id/preview_image.jpg",

@@ -1,4 +1,4 @@
-/* Code version: v1.8.0-codex.1 */
+/* Code version: v1.16.0-codex.1 */
 
 (function initializeSidebar() {
     "use strict";
@@ -13,9 +13,15 @@
     const sidebarOverlayMedia = window.CACHELIKES_RESPONSIVE.media("sidebarOverlayMax");
     const sidebarMemoryKey = "cachelikes:sidebar-open";
     const dockLocationMemoryPrefix = "cachelikes:dock-location:v1:";
-    const dockSections = new Set(["cache", "browser", "settings"]);
-    const cacheSectionPaths = new Set(["/", "/grok", "/chatgpt"]);
-    const browserFilterNames = ["source", "kind", "q", "sort", "session_view"];
+    const dockSections = new Set(["agent", "cache", "local-resources", "settings"]);
+    const cacheSectionPaths = new Set(["/cache/x", "/cache/grok", "/cache/chatgpt", "/cache/gemini"]);
+    const legacyCachePathMap = new Map([
+        ["/", "/cache/x"],
+        ["/grok", "/cache/grok"],
+        ["/chatgpt", "/cache/chatgpt"],
+        ["/gemini", "/cache/gemini"],
+    ]);
+    const localResourceFilterNames = ["view", "source", "kind", "q", "sort", "session_view"];
     const settingsCategoryPattern = /^#settings-(browser|downloads|chatgpt|cloud|maintenance)$/;
     const dockLinks = sidebarDock
         ? Array.from(sidebarDock.querySelectorAll("[data-dock-section], [data-section-link]"))
@@ -57,9 +63,15 @@
         }
         if (targetUrl.origin !== window.location.origin) return "";
 
+        if (section === "agent") {
+            return targetUrl.pathname === "/agent" ? "/agent" : "";
+        }
         if (section === "cache") {
-            if (!cacheSectionPaths.has(targetUrl.pathname)) return "";
-            return targetUrl.pathname;
+            // Migrate the previous Cache destination, which incorrectly pointed
+            // at the local browser, to the first cache source page.
+            if (targetUrl.pathname === "/browser") return "/cache/chatgpt";
+            const normalizedPath = legacyCachePathMap.get(targetUrl.pathname) || targetUrl.pathname;
+            return cacheSectionPaths.has(normalizedPath) ? normalizedPath : "";
         }
         if (section === "settings") {
             if (targetUrl.pathname !== "/settings") return "";
@@ -69,7 +81,7 @@
         if (targetUrl.pathname !== "/browser") return "";
 
         const normalizedUrl = new URL(targetUrl.pathname, window.location.origin);
-        browserFilterNames.forEach((name) => {
+        localResourceFilterNames.forEach((name) => {
             if (targetUrl.searchParams.has(name)) {
                 normalizedUrl.searchParams.set(name, targetUrl.searchParams.get(name) || "");
             }
@@ -101,7 +113,7 @@
         const explicitSection = link?.dataset.dockSection || "";
         if (dockSections.has(explicitSection)) return explicitSection;
         const legacySection = link?.dataset.sectionLink || "";
-        if (legacySection === "browser" || legacySection === "settings") return legacySection;
+        if (["llm", "local-resources", "settings"].includes(legacySection)) return legacySection;
         return legacySection ? "cache" : "";
     }
 
@@ -111,19 +123,12 @@
         return dockSections.has(section) ? section : "";
     }
 
-    function currentCacheLocation() {
-        const selectedSource = document.querySelector(
-            '[data-cache-source-switcher-option][aria-selected="true"]',
-        );
-        return selectedSource?.dataset.cacheSourceSwitcherPath || window.location.pathname;
-    }
-
-    function currentBrowserLocation() {
+    function currentLocalResourcesLocation() {
         const filterForm = document.querySelector(".browser-filter-form");
         const browserUrl = new URL("/browser", window.location.origin);
         if (!(filterForm instanceof HTMLFormElement)) return browserUrl.pathname;
 
-        browserFilterNames.forEach((name) => {
+        localResourceFilterNames.forEach((name) => {
             const field = filterForm.elements.namedItem(name);
             if (field instanceof RadioNodeList) {
                 browserUrl.searchParams.set(name, field.value);
@@ -144,10 +149,37 @@
     }
 
     function currentDockLocation(section) {
-        if (section === "cache") return currentCacheLocation();
-        if (section === "browser") return currentBrowserLocation();
+        if (section === "agent") return "/agent";
+        if (section === "cache") {
+            const normalizedPath = legacyCachePathMap.get(window.location.pathname) || window.location.pathname;
+            return cacheSectionPaths.has(normalizedPath) ? normalizedPath : "/cache/chatgpt";
+        }
+        if (section === "local-resources") return currentLocalResourcesLocation();
         if (section === "settings") return currentSettingsLocation();
         return "";
+    }
+
+    function dockSectionForCurrentPath() {
+        const normalizedPath = legacyCachePathMap.get(window.location.pathname) || window.location.pathname;
+        if (normalizedPath === "/agent") return "agent";
+        if (cacheSectionPaths.has(normalizedPath)) return "cache";
+        if (window.location.pathname === "/browser") return "local-resources";
+        if (window.location.pathname === "/settings") return "settings";
+        return "";
+    }
+
+    function syncDockActiveState() {
+        const activeSection = dockSectionForCurrentPath();
+        if (!activeSection) return;
+        dockLinks.forEach((link) => {
+            const isActive = dockSectionForLink(link) === activeSection;
+            link.classList.toggle("is-active", isActive);
+            if (isActive) {
+                link.setAttribute("aria-current", "page");
+            } else {
+                link.removeAttribute("aria-current");
+            }
+        });
     }
 
     function syncDockDestinations() {
@@ -236,6 +268,7 @@
     };
 
     applySidebarState(readSidebarMemory(), { persist: false });
+    syncDockActiveState();
     rememberCurrentDockLocation();
     syncDockDestinations();
 
@@ -249,9 +282,9 @@
         if (rememberedLocation) dockLink.href = rememberedLocation;
     });
 
-    const browserFilterForm = document.querySelector(".browser-filter-form");
-    browserFilterForm?.addEventListener("input", rememberCurrentDockLocation);
-    browserFilterForm?.addEventListener("change", rememberCurrentDockLocation);
+    const localResourceFilterForm = document.querySelector(".browser-filter-form");
+    localResourceFilterForm?.addEventListener("input", rememberCurrentDockLocation);
+    localResourceFilterForm?.addEventListener("change", rememberCurrentDockLocation);
 
     document.addEventListener("click", (event) => {
         const categoryLink = event.target instanceof Element
@@ -288,6 +321,7 @@
     });
     window.addEventListener("pageshow", () => {
         scheduleDockPosition();
+        syncDockActiveState();
         rememberCurrentDockLocation();
     });
 })();
