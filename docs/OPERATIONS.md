@@ -64,6 +64,13 @@ to override it. A successful unlock is stored in the signed Flask session for th
 - Sending a task transmits the generated context and requested source excerpts to the selected
   ChatGPT account. Review ChatGPT data controls before using private or regulated source code.
 - Stop requests end current web generation and terminate the active local command process group.
+- Agent source discovery is cached in `local_store/agent/agent_source_catalog.parquet` for 15
+  minutes per provider/browser/Project key. Fresh reads use process memory; the first read after a
+  restart hydrates memory from Parquet. Expired passive reads return the previous catalog while a
+  single background refresh runs for that key. Use `refresh=1` on `/api/agent/sources` or
+  `/api/agent/project-sessions` for an intentional synchronous Edge/Chrome/Safari re-check. The
+  response's `cache.status` is `hit`, `miss`, `refreshed`, or `stale`; a stale response means the
+  browser check failed or is still refreshing while the previous catalog was retained.
 
 ## Local data
 
@@ -75,6 +82,7 @@ to override it. A successful unlock is stored in the signed Flask session for th
 | `local_store/llm/chatgpt/history.parquet` | ChatGPT typed text history |
 | `local_store/llm/gemini/history.parquet` | Gemini typed text history |
 | `local_store/llm/grok/history.parquet` | Grok typed text history |
+| `local_store/agent/agent_source_catalog.parquet` | Provider-neutral Agent session and Project discovery cache |
 | `local_store/.cache_task.lock` | Cross-source advisory task lock |
 | `local_store/.browser-trash/` | Recoverable previews moved by the local-media browser |
 | `local_store/.browser_deleted.json` | Browser deletion tombstones and exclusion identities |

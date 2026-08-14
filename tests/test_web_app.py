@@ -1090,37 +1090,38 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(grok_response.get_json()["settings"]["model"], "grok-auto")
 
     def test_agent_source_routes_are_loopback_only_and_delegate_selected_browser(self) -> None:
-        app = create_app()
-        with patch("app.web.app.list_chatgpt_agent_sources", return_value={"recent_sessions": [], "projects": []}) as sources:
-            with patch("app.web.app.list_chatgpt_project_sessions", return_value={"sessions": []}) as sessions:
-                with patch(
-                    "app.web.app.fetch_chatgpt_conversation_history",
-                    return_value={
-                        "conversation_url": "https://chatgpt.com/c/demo-session",
-                        "title": "Demo session",
-                        "history": [
-                            {
-                                "prompt": "Inspect the fonts.",
-                                "response": "The project uses Inter.",
-                                "started_at": "2026-08-14T01:01:00Z",
-                                "finished_at": "2026-08-14T01:02:00Z",
-                            }
-                        ],
-                        "limit": 100,
-                    },
-                ) as history:
-                    with app.test_client() as client:
-                        source_response = client.get("/api/agent/chatgpt-sources?browser=edge")
-                        project_response = client.get(
-                            "/api/agent/chatgpt-project-sessions?browser=edge&project_url=https://chatgpt.com/g/g-p-demo/project"
-                        )
-                        history_response = client.get(
-                            "/api/agent/chatgpt-session-history?browser=edge&conversation_url=https://chatgpt.com/c/demo-session"
-                        )
-                        remote_response = client.get(
-                            "/api/agent/chatgpt-sources?browser=edge",
-                            environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
-                        )
+        with TemporaryDirectory() as raw_root:
+            app = create_app(Path(raw_root) / "local_store")
+            with patch("app.web.app.list_chatgpt_agent_sources", return_value={"recent_sessions": [], "projects": []}) as sources:
+                with patch("app.web.app.list_chatgpt_project_sessions", return_value={"sessions": []}) as sessions:
+                    with patch(
+                        "app.web.app.fetch_chatgpt_conversation_history",
+                        return_value={
+                            "conversation_url": "https://chatgpt.com/c/demo-session",
+                            "title": "Demo session",
+                            "history": [
+                                {
+                                    "prompt": "Inspect the fonts.",
+                                    "response": "The project uses Inter.",
+                                    "started_at": "2026-08-14T01:01:00Z",
+                                    "finished_at": "2026-08-14T01:02:00Z",
+                                }
+                            ],
+                            "limit": 100,
+                        },
+                    ) as history:
+                        with app.test_client() as client:
+                            source_response = client.get("/api/agent/chatgpt-sources?browser=edge")
+                            project_response = client.get(
+                                "/api/agent/chatgpt-project-sessions?browser=edge&project_url=https://chatgpt.com/g/g-p-demo/project"
+                            )
+                            history_response = client.get(
+                                "/api/agent/chatgpt-session-history?browser=edge&conversation_url=https://chatgpt.com/c/demo-session"
+                            )
+                            remote_response = client.get(
+                                "/api/agent/chatgpt-sources?browser=edge",
+                                environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
+                            )
 
         self.assertEqual(source_response.status_code, 200)
         self.assertEqual(project_response.status_code, 200)
@@ -1132,7 +1133,6 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("<p>The project uses Inter.</p>", history_response.get_json()["history"][0]["response_html"])
 
     def test_agent_provider_source_route_reuses_one_recent_session_contract(self) -> None:
-        app = create_app()
         payload = {
             "platform": "gemini",
             "browser_label": "Edge",
@@ -1147,17 +1147,53 @@ class WebAppTests(unittest.TestCase):
             "projects": [],
             "limit": 20,
         }
-        with patch("app.web.app.list_agent_sources", return_value=payload) as sources:
-            with app.test_client() as client:
-                response = client.get("/api/agent/sources?platform=gemini&browser=edge")
+        with TemporaryDirectory() as raw_root:
+            app = create_app(Path(raw_root) / "local_store")
+            with patch("app.web.app.list_agent_sources", return_value=payload) as sources:
+                with app.test_client() as client:
+                    response = client.get("/api/agent/sources?platform=gemini&browser=edge")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), payload)
+        self.assertEqual(response.get_json()["recent_sessions"], payload["recent_sessions"])
+        self.assertEqual(response.get_json()["projects"], payload["projects"])
+        self.assertEqual(response.get_json()["cache"]["status"], "miss")
         sources.assert_called_once()
         self.assertEqual(sources.call_args.args[:2], ("gemini", "edge"))
 
+    def test_agent_provider_source_route_reuses_parquet_until_explicit_refresh(self) -> None:
+        first_payload = {
+            "platform": "gemini",
+            "browser_label": "Edge",
+            "recent_sessions": [{"id": "first-session"}],
+            "projects": [],
+            "limit": 20,
+        }
+        second_payload = {
+            "platform": "gemini",
+            "browser_label": "Edge",
+            "recent_sessions": [{"id": "second-session"}],
+            "projects": [],
+            "limit": 20,
+        }
+        with TemporaryDirectory() as raw_root:
+            app = create_app(Path(raw_root) / "local_store")
+            with patch("app.web.app.list_agent_sources", side_effect=[first_payload, second_payload]) as sources:
+                with app.test_client() as client:
+                    first_response = client.get("/api/agent/sources?platform=gemini&browser=edge")
+                    cached_response = client.get("/api/agent/sources?platform=gemini&browser=edge")
+                    refreshed_response = client.get(
+                        "/api/agent/sources?platform=gemini&browser=edge&refresh=1"
+                    )
+
+        self.assertEqual(first_response.get_json()["recent_sessions"], [{"id": "first-session"}])
+        self.assertEqual(first_response.get_json()["cache"]["status"], "miss")
+        self.assertEqual(cached_response.get_json()["recent_sessions"], [{"id": "first-session"}])
+        self.assertEqual(cached_response.get_json()["cache"]["status"], "hit")
+        self.assertEqual(refreshed_response.get_json()["recent_sessions"], [{"id": "second-session"}])
+        self.assertEqual(refreshed_response.get_json()["cache"]["status"], "refreshed")
+        self.assertEqual(sources.call_count, 2)
+
     def test_agent_project_route_reuses_one_project_session_contract(self) -> None:
-        app = create_app()
         project_url = "https://grok.com/project/project-1?tab=conversations"
         payload = {
             "platform": "grok",
@@ -1172,15 +1208,18 @@ class WebAppTests(unittest.TestCase):
             ],
             "limit": 20,
         }
-        with patch("app.web.app.list_agent_project_sessions", return_value=payload) as sessions:
-            with app.test_client() as client:
-                response = client.get(
-                    "/api/agent/project-sessions?platform=grok&browser=edge&project_url="
-                    "https://grok.com/project/project-1?tab=conversations"
-                )
+        with TemporaryDirectory() as raw_root:
+            app = create_app(Path(raw_root) / "local_store")
+            with patch("app.web.app.list_agent_project_sessions", return_value=payload) as sessions:
+                with app.test_client() as client:
+                    response = client.get(
+                        "/api/agent/project-sessions?platform=grok&browser=edge&project_url="
+                        "https://grok.com/project/project-1?tab=conversations"
+                    )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), payload)
+        self.assertEqual(response.get_json()["sessions"], payload["sessions"])
+        self.assertEqual(response.get_json()["cache"]["status"], "miss")
         sessions.assert_called_once()
         self.assertEqual(sessions.call_args.args[:3], ("grok", "edge", project_url))
 

@@ -36,6 +36,9 @@ registers the local-media browser, and serves the Flask routes.
   recent root ChatGPT sessions, projects, and project sessions for the Agent sidebar.
 - `app/core/agent_session_sources.py`: the provider-neutral Agent session and Project adapter;
   it maps ChatGPT Projects, Gemini Notebooks, and Grok Projects into one URL and source contract.
+- `app/core/agent_source_cache.py`: the shared typed Parquet catalog for Agent recent sessions,
+  Projects, and Project sessions. Its cache key isolates provider, browser, source kind, and
+  Project URL, while atomic replacement preserves the other providers' entries.
 - `app/core/agent_access_security.py`: the Agent password resolver, constant-time password
   comparison, and loopback/private-network request boundary.
 - `app/core/computer_use_agent.py`: selected ChatGPT, Gemini, or Grok Web session targets, bounded context
@@ -182,6 +185,12 @@ every path below the selected project, separates explicit file actions from a re
 layer, bounds turns and output, and rejects final completion after an edit until bodycheck passes.
 The provider adapter validates each official root session, Project, or Project session before the
 task; the selection is run-scoped and the default remains a new root session.
+Source discovery is persisted separately from message history through a three-level read-through
+path: process memory, the shared Parquet catalog, and the authenticated browser collector. The
+`/agent` source routes reuse a 15-minute entry by default, coalesce concurrent refreshes by cache
+key, and use stale-while-revalidate after expiry. They accept `refresh=1` for an explicit synchronous
+browser re-check. A failed refresh falls back to the last known entry and marks the response as
+stale; no remote conversation messages are written by this catalog.
 Chromium tasks clone the selected Edge or Chrome profile into an offscreen, minimized temporary
 context, suppress browser prompts, and clean the task-owned profile on exit. Stale cleanup is
 restricted to abandoned application-prefixed temporary directories older than 24 hours; the

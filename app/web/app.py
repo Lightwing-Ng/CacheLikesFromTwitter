@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.37.0-codex.2
+# Code version: v1.38.0-codex.1
 
 from __future__ import annotations
 
@@ -25,7 +25,12 @@ from app.core.agent_access_security import (
     is_allowed_agent_network_request,
     validate_agent_access_password,
 )
-from app.core.agent_session_sources import list_agent_project_sessions, list_agent_sources
+from app.core.agent_session_sources import (
+    list_agent_project_sessions,
+    list_agent_sources,
+    normalize_agent_project_url,
+)
+from app.core.agent_source_cache import AgentSourceCache
 from app.core.chatgpt_downloader import (
     build_chatgpt_initial_snapshot,
     chatgpt_conversation_id,
@@ -376,6 +381,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     media_catalog = LocalMediaCatalog(local_store_root or LOCAL_STORE_ROOT)
     app.extensions["local_media_catalog"] = media_catalog
+    agent_source_cache = AgentSourceCache(media_catalog.local_store_root)
+    app.extensions["agent_source_cache"] = agent_source_cache
     shadow_backup_service = ShadowBackupService(media_catalog.local_store_root)
     app.extensions["shadow_backup_service"] = shadow_backup_service
     state = TaskState(version=APP_VERSION)
@@ -773,6 +780,25 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         if not allow_locked and not is_agent_access_unlocked():
             abort(401)
 
+    def load_agent_source_catalog(
+        *,
+        platform: str,
+        browser: str,
+        source_kind: str,
+        project_url: str = "",
+        collector: Callable[[], dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Route every Agent catalog request through the shared cache policy."""
+        force_refresh = request.args.get("refresh", "").strip().lower() in {"1", "true", "yes"}
+        return agent_source_cache.get_or_collect(
+            platform=platform,
+            browser=browser,
+            source_kind=source_kind,
+            project_url=project_url,
+            collector=collector,
+            force_refresh=force_refresh,
+        )
+
     def build_agent_snapshot() -> dict[str, Any]:
         """Add safe rendered Markdown to the Agent status payload."""
         snapshot = computer_use_agent_service.snapshot()
@@ -921,7 +947,15 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         require_local_agent_request()
         browser_name = request.args.get("browser", "").strip().lower()
         try:
-            payload = list_chatgpt_agent_sources(browser_name, saved_config)
+            payload = load_agent_source_catalog(
+                platform="chatgpt",
+                browser=browser_name,
+                source_kind="sources",
+                collector=lambda: {
+                    **list_chatgpt_agent_sources(browser_name, saved_config),
+                    "platform": "chatgpt",
+                },
+            )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify(payload)
@@ -933,7 +967,12 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         platform = request.args.get("platform", computer_use_settings.settings.platform).strip().lower()
         browser_name = request.args.get("browser", "").strip().lower()
         try:
-            payload = list_agent_sources(platform, browser_name, saved_config)
+            payload = load_agent_source_catalog(
+                platform=platform,
+                browser=browser_name,
+                source_kind="sources",
+                collector=lambda: list_agent_sources(platform, browser_name, saved_config),
+            )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify(payload)
@@ -945,7 +984,17 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         browser_name = request.args.get("browser", "").strip().lower()
         project_url = request.args.get("project_url", "").strip()
         try:
-            payload = list_chatgpt_project_sessions(browser_name, project_url, saved_config)
+            normalized_project_url = normalize_agent_project_url("chatgpt", project_url)
+            payload = load_agent_source_catalog(
+                platform="chatgpt",
+                browser=browser_name,
+                source_kind="project-sessions",
+                project_url=normalized_project_url or project_url,
+                collector=lambda: {
+                    **list_chatgpt_project_sessions(browser_name, project_url, saved_config),
+                    "platform": "chatgpt",
+                },
+            )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify(payload)
@@ -958,7 +1007,14 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         browser_name = request.args.get("browser", "").strip().lower()
         project_url = request.args.get("project_url", "").strip()
         try:
-            payload = list_agent_project_sessions(platform, browser_name, project_url, saved_config)
+            normalized_project_url = normalize_agent_project_url(platform, project_url)
+            payload = load_agent_source_catalog(
+                platform=platform,
+                browser=browser_name,
+                source_kind="project-sessions",
+                project_url=normalized_project_url or project_url,
+                collector=lambda: list_agent_project_sessions(platform, browser_name, project_url, saved_config),
+            )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify(payload)

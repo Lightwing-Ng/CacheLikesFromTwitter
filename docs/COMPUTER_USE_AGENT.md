@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.10.0-codex.2`
+Documentation version: `v3.10.0-codex.4`
 
 ## Purpose
 
@@ -16,6 +16,15 @@ most recent sessions. The adapter maps ChatGPT Projects, Gemini Notebooks, and G
 the same Project contract, so the Agent UI and execution loop do not expose provider-specific
 container names. The selected Web provider supplies reasoning; a bounded local macOS controller
 performs project actions and returns compact observations to the same conversation.
+
+The recent-session, Project, and Project-session catalogs use one shared read-through Parquet cache
+under `local_store/agent/agent_source_catalog.parquet`. The cache key isolates provider, browser,
+catalog kind, and Project URL. Fresh entries are reused from process memory for 15 minutes; the
+first process read hydrates that memory from Parquet. After expiry, passive requests immediately
+serve the last catalog while one background refresh runs per key. Add `refresh=1` to the relevant
+`/api/agent/sources` or `/api/agent/project-sessions` request when a synchronous browser re-check
+is required. If that refresh fails and an older entry exists, the API returns the older catalog
+with `cache.status: "stale"` so the selector remains usable and the condition stays observable.
 
 This route uses no API, command-line coding-agent runtime, MCP connection, or third-party agent bridge.
 ChatGPT plan limits, file-upload limits, data controls, storage, and retention still apply.
