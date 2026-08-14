@@ -274,14 +274,16 @@
     function syncConversationLink(agent) {
         if (!elements.conversationLink) return;
         const recordedUrl = String(agent?.conversation_url || "").trim();
-        const platform = String(agent?.platform || selectedPlatform()).trim().toLowerCase();
-        const targetUrl = recordedUrl.startsWith("https://chatgpt.com/")
+        const agentPlatform = String(agent?.platform || selectedPlatform()).trim().toLowerCase();
+        const currentPlatform = selectedPlatform();
+        const samePlatform = agentPlatform === currentPlatform;
+        const targetUrl = samePlatform && (recordedUrl.startsWith("https://chatgpt.com/")
             || recordedUrl.startsWith("https://gemini.google.com/")
             || recordedUrl.startsWith("https://grok.com/")
-            ? recordedUrl
+            ) ? recordedUrl
             : selectedPlatformHomeUrl();
-        const hasRecordedTarget = Boolean(recordedUrl);
-        const platformLabel = platform === selectedPlatform() ? selectedPlatformLabel() : platform;
+        const hasRecordedTarget = samePlatform && Boolean(recordedUrl);
+        const platformLabel = selectedPlatformLabel();
         elements.conversationLink.href = targetUrl;
         elements.conversationLink.setAttribute(
             "aria-label",

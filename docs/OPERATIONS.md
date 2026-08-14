@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.5.0-codex.1`
+Documentation version: `v1.5.0-codex.2`
 
 ## Launch
 
@@ -19,8 +19,12 @@ Start the Flask console:
 The normal server address is `http://127.0.0.1:8666`. The application also binds to `0.0.0.0`,
 which permits access from trusted devices on the same LAN at `http://<host-lan-ip>:8666`.
 
-The console has no login or authorization layer. Keep it on a trusted local network, do not expose
-it through router port forwarding, and do not publish it through a public tunnel or reverse proxy.
+Cache and Local resources routes have no login layer, so keep the console on a trusted local
+network, do not expose it through router port forwarding, and do not publish it through a public
+tunnel or reverse proxy. The Agent control plane is the exception: loopback requests continue
+directly, while private-network requests to `/agent` and `/api/agent/*` require the six-digit
+password gate. The default password is `195135`; set `CACHELIKES_AGENT_PASSWORD` before launch
+to override it. A successful unlock is stored in the signed Flask session for that browser.
 
 ## Browser-session preconditions
 
@@ -43,7 +47,9 @@ it through router port forwarding, and do not publish it through a public tunnel
 
 ## Computer Use Agent
 
-- `/agent` is host-loopback only even though cache pages remain available on the trusted LAN.
+- `/agent` and its `/api/agent/*` control routes accept host-loopback requests directly. Requests
+  from RFC1918 private IPv4 or IPv6 ULA addresses show the password gate before the Agent page or
+  API is served; public and host-rebinding addresses remain rejected.
 - Each task defaults to a new root-level ChatGPT Web conversation in the selected authenticated
   Safari, Edge, or Chrome session. The Agent sidebar can also join one of the 20 most recent root
   sessions, start a session in one of the 20 most recent projects, or join one of a project's

@@ -1,6 +1,6 @@
 """Provider-neutral Web Agent Project and session discovery.
 
-Code version: v1.1.0-codex.1
+Code version: v1.1.0-codex.4
 """
 
 from __future__ import annotations
@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import replace
 import re
 from typing import Any, Callable
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, quote, urlencode, urlsplit
 
 from .browser_sessions import (
     browser_descriptors,
@@ -28,7 +28,7 @@ from .gemini_downloader import (
     collect_gemini_conversation_links,
     normalize_gemini_conversation_url,
 )
-from .grok_history import GROK_HOME_URL, list_grok_conversations
+from .grok_history import GROK_HOME_URL, _grok_api_json, list_grok_conversations
 
 
 AGENT_SOURCE_LIMIT = 20
@@ -88,7 +88,7 @@ def normalize_gemini_project_url(value: str) -> str:
 
 
 def normalize_grok_conversation_url(value: str) -> str:
-    """Return one canonical Grok conversation URL, or an empty string."""
+    """Return one canonical Grok conversation URL, including Project sessions."""
     try:
         parsed = urlsplit(str(value or "").strip())
     except ValueError:
@@ -98,10 +98,15 @@ def normalize_grok_conversation_url(value: str) -> str:
         or (parsed.hostname or "").lower() not in GROK_HOSTS
         or parsed.username
         or parsed.password
-        or not GROK_CONVERSATION_PATH_PATTERN.fullmatch(parsed.path)
     ):
         return ""
-    return f"https://grok.com{parsed.path.rstrip('/')}"
+    if GROK_CONVERSATION_PATH_PATTERN.fullmatch(parsed.path):
+        return f"https://grok.com{parsed.path.rstrip('/')}"
+    if GROK_PROJECT_PATH_PATTERN.fullmatch(parsed.path):
+        chat_id = str(parse_qs(parsed.query).get("chat", [""])[0] or "").strip()
+        if re.fullmatch(r"[A-Za-z0-9_-]+", chat_id):
+            return f"https://grok.com{parsed.path.rstrip('/')}?chat={chat_id}"
+    return ""
 
 
 def normalize_grok_project_url(value: str) -> str:
@@ -301,17 +306,96 @@ def _read_gemini_project_links(page: Any) -> list[dict[str, str]]:
 
 
 def _read_grok_project_links(page: Any) -> list[dict[str, str]]:
-    """Read the Projects sidebar links from the authenticated Grok page."""
+    """Read Grok Project rows, including button-only sidebar implementations."""
     try:
-        rows = page.evaluate(
-            r"""() => [...document.querySelectorAll('a[href], [role="link"]')].map((element) => ({
-                href: element.href || element.getAttribute('href') || '',
-                title: (element.innerText || element.textContent || element.getAttribute('aria-label') || '').trim(),
-            }))"""
+        projects = _read_grok_project_api_rows(page)
+    except Exception:
+        projects = []
+    if projects:
+        return _normalize_project_rows("grok", projects)
+
+    try:
+        projects_toggle = page.get_by_role("button", name="Projects", exact=True)
+        if projects_toggle.count() and projects_toggle.is_visible():
+            if projects_toggle.get_attribute("aria-expanded") != "true":
+                projects_toggle.click(timeout=10_000)
+                page.wait_for_timeout(250)
+
+        project_buttons = page.locator('button, [role="button"]').evaluate_all(
+            r"""(buttons) => buttons.map((button, index) => ({
+                index,
+                label: (button.innerText || button.textContent || button.getAttribute('aria-label') || '')
+                    .replace(/\s+/g, ' ').trim(),
+                hasNestedButton: Boolean(button.querySelector('button')),
+                visible: button.getClientRects().length > 0,
+            })).filter((item) => item.visible && item.hasNestedButton && item.label)"""
+        )
+        for item in project_buttons if isinstance(project_buttons, list) else []:
+            label = str(item.get("label") or "") if isinstance(item, dict) else ""
+            if not label or re.search(
+                r"^(?:add project|history|search|see all|new chat|options|pfp|toggle sidebar)",
+                label,
+                flags=re.IGNORECASE,
+            ):
+                continue
+            try:
+                page.locator('button, [role="button"]').nth(int(item["index"])).click(timeout=5_000)
+                page.wait_for_timeout(150)
+            except Exception:
+                continue
+
+        rows = page.locator('a[href*="/project/"]').evaluate_all(
+            r"""(links) => links.map((link) => {
+                const text = (element) => (element?.innerText || element?.textContent || '')
+                    .replace(/\s+/g, ' ').trim();
+                const row = link.closest('li') || link.parentElement;
+                return {
+                    href: link.href || link.getAttribute('href') || '',
+                    title: text(row) || text(link),
+                };
+            })"""
         )
     except Exception:
         return []
     return _normalize_project_rows("grok", rows)
+
+
+def _read_grok_project_api_rows(page: Any) -> list[dict[str, str]]:
+    """Read Grok Projects from the authenticated workspace repository API."""
+    rows: list[dict[str, str]] = []
+    page_token = ""
+    seen_tokens: set[str] = set()
+    for _ in range(20):
+        query = {
+            "pageSize": "50",
+            "orderBy": "ORDER_BY_LAST_USE_TIME",
+            "kind": "WORKSPACE_KIND_ALL",
+        }
+        if page_token:
+            query["pageToken"] = page_token
+        payload = _grok_api_json(page, "/rest/workspaces?" + urlencode(query))
+        workspaces = payload.get("workspaces")
+        if not isinstance(workspaces, list):
+            break
+        for item in workspaces:
+            if not isinstance(item, dict):
+                continue
+            workspace_id = str(item.get("workspaceId") or "").strip()
+            if not workspace_id or str(item.get("kind") or "").strip() == "WORKSPACE_KIND_IMAGINE":
+                continue
+            rows.append(
+                {
+                    "href": f"https://grok.com/project/{workspace_id}",
+                    "title": str(item.get("name") or "").strip() or "Untitled project",
+                    "updated_at": str(item.get("lastUseTime") or "").strip(),
+                }
+            )
+        next_token = str(payload.get("nextPageToken") or "").strip()
+        if not next_token or next_token in seen_tokens or not workspaces:
+            break
+        seen_tokens.add(next_token)
+        page_token = next_token
+    return rows
 
 
 def _read_gemini_project_session_links(page: Any, project_url: str) -> list[dict[str, str]]:
@@ -319,7 +403,34 @@ def _read_gemini_project_session_links(page: Any, project_url: str) -> list[dict
 
 
 def _read_grok_project_session_links(page: Any, project_url: str) -> list[dict[str, str]]:
-    return _read_project_session_links(page, "grok", project_url)
+    try:
+        project_id = urlsplit(project_url).path.rstrip("/").rsplit("/", 1)[-1]
+        payload = _grok_api_json(
+            page,
+            "/rest/app-chat/conversations?"
+            + urlencode({"workspaceId": project_id, "pageSize": "100"}),
+        )
+        rows = []
+        for item in payload.get("conversations", []) if isinstance(payload, dict) else []:
+            if not isinstance(item, dict):
+                continue
+            conversation_id = str(item.get("conversationId") or "").strip()
+            if not conversation_id:
+                continue
+            rows.append(
+                {
+                    "id": conversation_id,
+                    "url": (
+                        f"https://grok.com/project/{quote(project_id, safe='')}"
+                        f"?chat={quote(conversation_id, safe='')}"
+                    ),
+                    "title": str(item.get("title") or "").strip(),
+                    "updated_at": str(item.get("modifyTime") or "").strip(),
+                }
+            )
+        return _normalize_session_rows("grok", rows)
+    except Exception:
+        return _read_project_session_links(page, "grok", project_url)
 
 
 def _read_project_session_links(page: Any, platform: str, project_url: str) -> list[dict[str, str]]:

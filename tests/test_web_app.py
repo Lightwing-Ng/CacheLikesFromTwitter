@@ -609,32 +609,83 @@ class WebAppTests(unittest.TestCase):
                         aside,
                     )
 
-    def test_agent_control_plane_is_loopback_only(self) -> None:
+    def test_agent_control_plane_allows_private_lan_with_password(self) -> None:
         app = create_app()
 
-        with app.test_client() as client:
-            local_page = client.get("/agent")
-            local_status = client.get("/api/agent/status")
-            removed_reveal = client.post("/api/agent/owner-token/reveal")
-            remote_page = client.get(
-                "/agent",
-                environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
-            )
-            remote_status = client.get(
-                "/api/agent/status",
-                environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
-            )
-            rebound_host_page = client.get(
-                "/agent",
-                headers={"Host": "malicious.example"},
-            )
+        lan_environ = {"REMOTE_ADDR": "192.168.124.20"}
+        lan_headers = {"Host": "192.168.124.10:8666"}
+        with patch.dict("os.environ", {"CACHELIKES_AGENT_PASSWORD": "195135"}):
+            with app.test_client() as client:
+                local_page = client.get("/agent")
+                local_status = client.get("/api/agent/status")
+                removed_reveal = client.post("/api/agent/owner-token/reveal")
+                lan_page = client.get(
+                    "/agent",
+                    headers=lan_headers,
+                    environ_overrides=lan_environ,
+                )
+                lan_status = client.get(
+                    "/api/agent/status",
+                    headers=lan_headers,
+                    environ_overrides=lan_environ,
+                )
+                wrong_unlock = client.post(
+                    "/agent/unlock",
+                    data={"password": "000000"},
+                    headers=lan_headers,
+                    environ_overrides=lan_environ,
+                )
+                correct_unlock = client.post(
+                    "/agent/unlock",
+                    data={"password": "195135"},
+                    headers=lan_headers,
+                    environ_overrides=lan_environ,
+                )
+                unlocked_lan_page = client.get(
+                    "/agent",
+                    headers=lan_headers,
+                    environ_overrides=lan_environ,
+                )
+                unlocked_lan_status = client.get(
+                    "/api/agent/status",
+                    headers=lan_headers,
+                    environ_overrides=lan_environ,
+                )
+                remote_page = client.get(
+                    "/agent",
+                    environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
+                )
+                remote_status = client.get(
+                    "/api/agent/status",
+                    environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
+                )
+                rebound_host_page = client.get(
+                    "/agent",
+                    headers={"Host": "malicious.example"},
+                )
 
         self.assertEqual(local_page.status_code, 200)
         self.assertEqual(local_status.status_code, 200)
         self.assertEqual(removed_reveal.status_code, 404)
+        self.assertEqual(lan_page.status_code, 200)
+        self.assertEqual(lan_status.status_code, 401)
+        self.assertEqual(wrong_unlock.status_code, 401)
+        self.assertEqual(correct_unlock.status_code, 303)
+        self.assertEqual(correct_unlock.headers["Location"], "/agent")
+        self.assertIn("HttpOnly", correct_unlock.headers["Set-Cookie"])
+        self.assertIn("SameSite=Lax", correct_unlock.headers["Set-Cookie"])
+        self.assertEqual(unlocked_lan_page.status_code, 200)
+        self.assertEqual(unlocked_lan_status.status_code, 200)
         self.assertEqual(remote_page.status_code, 403)
         self.assertEqual(remote_status.status_code, 403)
         self.assertEqual(rebound_host_page.status_code, 403)
+        locked_body = lan_page.get_data(as_text=True)
+        self.assertIn('class="workspace-modal-dialog agent-access-dialog"', locked_body)
+        self.assertIn('id="agent_access_password"', locked_body)
+        self.assertEqual(locked_body.count('class="agent-access-slot"'), 6)
+        self.assertNotIn("195135", locked_body)
+        self.assertIn("no-store", lan_page.headers["Cache-Control"])
+        self.assertIn("The password is incorrect.", wrong_unlock.get_data(as_text=True))
         local_body = local_page.get_data(as_text=True)
         self.assertIn("ChatGPT Web Agent", local_body)
         self.assertNotIn("public tunnel, API key, or copied password", local_body)
@@ -680,7 +731,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.2.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.11.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.11.0-codex.2', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-role="browser-session-account"', local_body)
@@ -966,7 +1017,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.11.0-codex.1',
+            'computer-use-agent-v3.11.0-codex.2',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'suggestion-loading-spinner agent-empty-response-spinner',

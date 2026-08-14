@@ -1,6 +1,6 @@
 """Focused tests for the provider-neutral Agent session source adapter.
 
-Code version: v1.1.0-codex.1
+Code version: v1.1.0-codex.2
 """
 
 from __future__ import annotations
@@ -8,6 +8,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from app.core.agent_session_sources import (
+    _read_grok_project_links,
+    _read_grok_project_session_links,
     list_agent_project_sessions,
     list_agent_sources,
     normalize_agent_conversation_url,
@@ -32,6 +34,10 @@ def test_agent_conversation_url_normalization_is_provider_specific() -> None:
         "https://www.chatgpt.com/c/session-3?messageId=ignored",
     ) == "https://chatgpt.com/c/session-3"
     assert normalize_agent_conversation_url("grok", "https://example.com/c/session") == ""
+    assert normalize_agent_conversation_url(
+        "grok",
+        "https://grok.com/project/project-1?chat=session-1",
+    ) == "https://grok.com/project/project-1?chat=session-1"
 
 
 def test_agent_project_url_normalization_hides_provider_specific_routes() -> None:
@@ -168,6 +174,116 @@ def test_grok_sources_expose_projects_as_shared_projects() -> None:
         payload = list_agent_sources("grok", "edge", CrawlConfig())
 
     assert payload["projects"][0]["url"] == "https://grok.com/project/project-1?tab=conversations"
+
+
+def test_grok_project_reader_uses_playwright_controls_for_button_rows() -> None:
+    class _Toggle:
+        def count(self) -> int:
+            return 1
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, _name: str) -> str:
+            return "false"
+
+        def click(self, **_kwargs: object) -> None:
+            return None
+
+    class _Locator:
+        def evaluate_all(self, _script: str) -> list[dict[str, object]]:
+            return [{"index": 3, "label": "Research project New chat Options"}]
+
+        def nth(self, _index: int) -> "_Locator":
+            return self
+
+        def click(self, **_kwargs: object) -> None:
+            return None
+
+    class _Page:
+        def get_by_role(self, _role: str, *, name: str, exact: bool) -> _Toggle:
+            assert name == "Projects"
+            assert exact is True
+            return _Toggle()
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def locator(self, selector: str) -> _Locator:
+            if selector == 'a[href*="/project/"]':
+                return _LocatorWithRows()
+            return _Locator()
+
+    class _LocatorWithRows(_Locator):
+        def evaluate_all(self, _script: str) -> list[dict[str, str]]:
+            return [{
+                "href": "https://grok.com/project/project-1?chat=session-1",
+                "title": "Research project",
+            }]
+
+    assert _read_grok_project_links(_Page()) == [{
+        "id": "project-1",
+        "title": "Research project",
+        "url": "https://grok.com/project/project-1?tab=conversations",
+        "updated_at": "",
+    }]
+
+
+def test_grok_project_reader_prefers_workspace_repository_api() -> None:
+    class _Page:
+        def evaluate(self, _script: str, request: dict[str, object]) -> dict[str, object]:
+            assert "/rest/workspaces?" in str(request["url"])
+            return {
+                "status": 200,
+                "body": {
+                    "workspaces": [
+                        {
+                            "workspaceId": "project-1",
+                            "name": "Research project",
+                            "lastUseTime": "2026-08-14T12:00:00Z",
+                            "kind": "WORKSPACE_KIND_ALL",
+                        },
+                        {
+                            "workspaceId": "imagine-1",
+                            "name": "Generated images",
+                            "kind": "WORKSPACE_KIND_IMAGINE",
+                        },
+                    ]
+                },
+            }
+
+    assert _read_grok_project_links(_Page()) == [{
+        "id": "project-1",
+        "title": "Research project",
+        "url": "https://grok.com/project/project-1?tab=conversations",
+        "updated_at": "2026-08-14T12:00:00Z",
+    }]
+
+
+def test_grok_project_session_reader_uses_workspace_conversations_api() -> None:
+    class _Page:
+        def evaluate(self, _script: str, request: dict[str, object]) -> dict[str, object]:
+            assert "workspaceId=project-1" in str(request["url"])
+            return {
+                "status": 200,
+                "body": {
+                    "conversations": [{
+                        "conversationId": "session-1",
+                        "title": "Research session",
+                        "modifyTime": "2026-08-14T12:30:00Z",
+                    }]
+                },
+            }
+
+    assert _read_grok_project_session_links(
+        _Page(),
+        "https://grok.com/project/project-1?tab=conversations",
+    ) == [{
+        "id": "session-1",
+        "title": "Research session",
+        "url": "https://grok.com/project/project-1?chat=session-1",
+        "updated_at": "2026-08-14T12:30:00Z",
+    }]
 
 
 def test_project_session_listing_uses_one_contract_for_gemini_and_grok() -> None:

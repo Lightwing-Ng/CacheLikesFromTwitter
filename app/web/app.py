@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.37.0-codex.1
+# Code version: v1.37.0-codex.2
 
 from __future__ import annotations
 

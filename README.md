@@ -1,6 +1,6 @@
 # CacheLikesFromTwitter
 
-Documentation version: `v1.11.0-codex.1`
+Documentation version: `v1.11.0-codex.2`
 
 CacheLikesFromTwitter is a local Flask web console that caches media from the
 currently signed-in X account's Likes timeline, Grok's Files library, and a
@@ -24,8 +24,10 @@ control, and motion decisions. Read [STYLE_REFERENCE.md](STYLE_REFERENCE.md) bef
 making any UI change.
 
 This project starts a web console on `http://localhost:8666` and listens on all network
-interfaces so devices on the same LAN can use `http://<computer-ip>:8666`. Treat that LAN
-endpoint as trusted-only; do not expose it through port forwarding or a public reverse proxy.
+interfaces so devices on the same LAN can use `http://<computer-ip>:8666`. Cache and Local
+resources pages remain trusted-LAN surfaces; the Agent control plane adds a six-digit password
+gate for private-network requests. Do not expose the LAN endpoint through port forwarding or a
+public reverse proxy.
 
 ## Requirements
 

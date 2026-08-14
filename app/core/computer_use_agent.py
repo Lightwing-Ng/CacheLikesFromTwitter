@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.9.0-codex.1
+Code version: v3.9.0-codex.4
 """
 
 from __future__ import annotations
@@ -908,20 +908,48 @@ def _path_has_ignored_part(relative: Path) -> bool:
 
 
 def parse_agent_action(response: str) -> dict[str, Any]:
-    """Parse one strict JSON controller action from a Web provider response."""
+    """Parse one JSON controller action across provider formatting variants."""
     text = str(response or "").strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
-    if fenced:
-        text = fenced.group(1).strip()
     if len(text) > MAX_ACTION_JSON_CHARS:
         raise ValueError("The Web provider returned an action that exceeds the controller limit.")
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise ValueError("The Web provider must return exactly one JSON controller action.") from exc
-    if not isinstance(payload, dict) or not isinstance(payload.get("action"), str):
-        raise ValueError("The Web provider returned an invalid controller action.")
-    return payload
+
+    candidates: list[dict[str, Any]] = []
+    candidate_signatures: set[str] = set()
+    fenced_matches = re.findall(
+        r"```(?:json)?\s*(\{.*?\})\s*```",
+        text,
+        flags=re.DOTALL | re.IGNORECASE,
+    )
+    parse_targets = [*fenced_matches, text]
+    decoder = json.JSONDecoder()
+
+    def register(payload: Any) -> None:
+        if not isinstance(payload, dict) or not isinstance(payload.get("action"), str):
+            return
+        signature = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if signature not in candidate_signatures:
+            candidate_signatures.add(signature)
+            candidates.append(payload)
+
+    for target in parse_targets:
+        candidate_text = str(target or "").strip()
+        try:
+            register(json.loads(candidate_text))
+        except json.JSONDecodeError:
+            for start, character in enumerate(candidate_text):
+                if character != "{":
+                    continue
+                try:
+                    payload, _end = decoder.raw_decode(candidate_text, start)
+                except json.JSONDecodeError:
+                    continue
+                register(payload)
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        raise ValueError("The Web provider returned more than one JSON controller action.")
+    raise ValueError("The Web provider must return exactly one JSON controller action.")
 
 
 class WorkspaceController:
@@ -1744,6 +1772,12 @@ def _run_web_action_loop(
             action = parse_agent_action(response)
         except ValueError as exc:
             invalid_action_retries += 1
+            LOGGER.warning(
+                "%s returned an invalid controller response on retry %s: %s",
+                AGENT_PLATFORM_BY_KEY[platform]["label"],
+                invalid_action_retries,
+                _truncate_text(str(response or ""), 600),
+            )
             if invalid_action_retries > MAX_INVALID_ACTION_RETRIES:
                 raise RuntimeError(
                     f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned too many invalid controller actions in a row."
@@ -1988,8 +2022,7 @@ def _verify_agent_page(
                     && getComputedStyle(element).display !== 'none';
                 const bodyText = (document.body?.innerText || '').trim();
                 const account = document.querySelector(
-                    '[aria-label^="Google Account"], [aria-label*="Google Account:"], '
-                    '[data-testid*="account" i], [data-testid*="profile" i]'
+                    '[aria-label^="Google Account"], [aria-label*="Google Account:"], [data-testid*="account" i], [data-testid*="profile" i]'
                 );
                 const composer = document.querySelector('textarea, [contenteditable="true"]');
                 const authAction = [...document.querySelectorAll('a,button')].some((element) =>
@@ -2587,7 +2620,12 @@ def _is_web_response_complete(
     now: float,
 ) -> bool:
     normalized = str(response or "").strip()
-    if not normalized or normalized.casefold().rstrip(". …") in WEB_PROGRESS_TEXT:
+    progress_text = normalized.casefold().rstrip(". …")
+    provider_progress = re.fullmatch(
+        r"(?:thinking|working|searching|analyzing|generating)(?:\s+for\s+\d+(?:\.\d+)?s)?",
+        progress_text,
+    )
+    if not normalized or progress_text in WEB_PROGRESS_TEXT or provider_progress:
         return False
     if is_generating or now - submitted_at < WEB_RESPONSE_MINIMUM_SECONDS:
         return False

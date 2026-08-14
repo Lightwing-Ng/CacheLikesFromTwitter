@@ -29,6 +29,7 @@ from app.core.computer_use_agent import (
     _wait_for_chromium_composer,
     _web_last_text,
     _web_is_generating,
+    _is_web_response_complete,
     build_context_markdown,
     detect_host_operating_system,
     is_loopback_address,
@@ -386,6 +387,20 @@ def test_agent_session_target_resolves_root_and_project_choices() -> None:
         project_url=project_url,
     ) == project_session_url
 
+    grok_project_url = "https://grok.com/project/project-1?tab=conversations"
+    grok_session_url = "https://grok.com/project/project-1?chat=session-1"
+    assert resolve_agent_session_target(
+        "project_new",
+        project_url=grok_project_url,
+        platform="grok",
+    ) == grok_project_url
+    assert resolve_agent_session_target(
+        "project_session",
+        conversation_url=grok_session_url,
+        project_url=grok_project_url,
+        platform="grok",
+    ) == grok_session_url
+
     with pytest.raises(ValueError, match="does not belong"):
         resolve_agent_session_target(
             "project_session",
@@ -468,8 +483,29 @@ def test_action_parser_requires_one_json_object() -> None:
     assert parse_agent_action('```json\n{"action":"bodycheck"}\n```') == {
         "action": "bodycheck"
     }
+    assert parse_agent_action(
+        "Here is the next action:\n{\"action\":\"read\",\"path\":\"README.md\"}"
+    ) == {
+        "action": "read",
+        "path": "README.md",
+    }
+    with pytest.raises(ValueError, match="more than one"):
+        parse_agent_action(
+            '{"action":"read","path":"README.md"}\n'
+            '{"action":"bodycheck"}'
+        )
     with pytest.raises(ValueError, match="exactly one JSON"):
         parse_agent_action("I will inspect the project.")
+
+
+def test_provider_progress_status_is_not_treated_as_a_controller_response() -> None:
+    assert not _is_web_response_complete(
+        "Working for 1s",
+        is_generating=False,
+        submitted_at=0,
+        stable_since=10,
+        now=20,
+    )
 
 
 def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(

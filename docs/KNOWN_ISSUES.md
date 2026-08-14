@@ -1,6 +1,6 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.1.1-codex.1`
+Documentation version: `v1.1.1-codex.2`
 
 ## Touch-safe iPad sidebar contract established on 12 Aug 2026
 
@@ -26,8 +26,10 @@ Documentation version: `v1.1.1-codex.1`
 
 - X, Grok, and ChatGPT acquisition depends on already authenticated host browser sessions. Their
   remote pages, APIs, and anti-automation behavior can change independently of this project.
-- The application deliberately binds to the LAN and has no authentication layer. It is suitable
-  only for trusted local networks and must not be publicly exposed.
+- The application deliberately binds to the LAN. Cache and Local resources routes do not have a
+  login layer, while the Agent control plane requires its six-digit password for private-network
+  requests. The application remains suitable only for trusted local networks and must not be
+  publicly exposed.
 - X media acquisition relies on yt-dlp's browser-cookie integration. A browser, cookie-store, or
   yt-dlp compatibility change can block downloads even when the local web console remains healthy.
 - Grok and ChatGPT caches retain local catalog and recovery state. A source-specific reset removes

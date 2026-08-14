@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.6.0-codex.1`
+Documentation version: `v1.6.0-codex.2`
 
 ## Runtime flow
 
@@ -36,6 +36,8 @@ registers the local-media browser, and serves the Flask routes.
   recent root ChatGPT sessions, projects, and project sessions for the Agent sidebar.
 - `app/core/agent_session_sources.py`: the provider-neutral Agent session and Project adapter;
   it maps ChatGPT Projects, Gemini Notebooks, and Grok Projects into one URL and source contract.
+- `app/core/agent_access_security.py`: the Agent password resolver, constant-time password
+  comparison, and loopback/private-network request boundary.
 - `app/core/computer_use_agent.py`: selected ChatGPT, Gemini, or Grok Web session targets, bounded context
   packages, the local JSON action protocol, project path confinement, command policy, and
   mandatory bodycheck ordering for the optional Agent workspace.
@@ -210,8 +212,10 @@ user-owned locations above.
   login-repair workflow without explicit product direction.
 - Agent source context is an external data transfer to the selected ChatGPT account. The local UI
   discloses that boundary; tests never submit real project data or open authenticated profiles.
-- The Flask server binds to the LAN by design, but it has no authentication boundary. Trusted-LAN
-  operation is therefore an operating requirement, not an optional convenience.
+- The Flask server binds to the LAN by design. Cache and Local resources routes remain trusted-LAN
+  surfaces. The Agent control plane accepts loopback directly and requires a signed session after
+  a six-digit password unlock for RFC1918 or IPv6 ULA requests; public and host-rebinding requests
+  are rejected.
 
 ## Testing boundary
 

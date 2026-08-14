@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.10.0-codex.1`
+Documentation version: `v3.10.0-codex.2`
 
 ## Purpose
 
@@ -67,7 +67,10 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
   layer rejects file-writing redirection, deletion, moving, installation, downloads, publishing,
   environment enumeration, and Git-history mutation.
 - Stop ends Web-provider generation and terminates the current local process group.
-- The Flask control routes accept host-loopback traffic and same-origin browser requests only.
+- The Flask control routes accept host-loopback traffic directly. Private-network requests must
+  first unlock `/agent` with the six-digit password gate; the successful signed session also
+  authorizes same-origin `/api/agent/*` requests. Public and host-rebinding requests are rejected.
+  The default password is `195135`, and `CACHELIKES_AGENT_PASSWORD` overrides it before launch.
 - Project context and requested source files are transmitted to the selected Web account only
   when a task is sent. Selecting a ChatGPT session reads its existing conversation history for
   display and does not write those remote messages to the local cache.
