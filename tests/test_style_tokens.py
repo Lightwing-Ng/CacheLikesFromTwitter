@@ -890,7 +890,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.76.0-codex.1 */",
+        "/* Code version: v2.76.0-codex.2 */",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
         "width: 22px;",
@@ -940,3 +940,13 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         "@media (max-width: 1100px) {",
     ):
         assert token in stylesheet
+
+
+def test_agent_composer_right_aligns_model_selector_with_action_gap() -> None:
+    """Keep the model selector visually grouped with the circular submit action."""
+    stylesheet = _stylesheet()
+    footer_start = stylesheet.rfind(".agent-composer-footer {")
+    footer_rule = stylesheet[footer_start:stylesheet.index("\n}", footer_start)]
+
+    assert "justify-content: flex-end;" in footer_rule
+    assert "gap: 12px;" in footer_rule
