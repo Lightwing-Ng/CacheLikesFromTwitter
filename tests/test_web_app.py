@@ -661,7 +661,7 @@ class WebAppTests(unittest.TestCase):
         self.assertLess(response_position, prompt_form_position)
         self.assertIn(
             '<article class="report-card workspace-article-card agent-task-card">\n'
-            '                    <article class="report-card workspace-article-card agent-response-card"',
+            '                    <article class="agent-response-card"',
             local_body,
         )
 

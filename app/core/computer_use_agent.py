@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in ChatGPT Web.
 
-Code version: v3.4.0-codex.2
+Code version: v3.4.1-codex.1
 """
 
 from __future__ import annotations
@@ -61,6 +61,7 @@ MAX_COMMAND_TIMEOUT_SECONDS = 1_800
 MAX_ACTION_OUTPUT_CHARS = 48_000
 MAX_FILE_READ_CHARS = 120_000
 MAX_ACTION_JSON_CHARS = 800_000
+MAX_INVALID_ACTION_RETRIES = 3
 WEB_RESPONSE_MINIMUM_SECONDS = 1.5
 WEB_RESPONSE_STABLE_SECONDS = 1.0
 WEB_TURN_TIMEOUT_SECONDS = 1_800
@@ -1408,7 +1409,12 @@ def _run_web_action_loop(
     """Exchange JSON actions and compact observations in one ChatGPT conversation."""
     _verify_chatgpt_page(page, browser_kind, selected_target_url)
     _select_chat_mode(page, browser_kind)
-    _select_chatgpt_model(page, browser_kind, settings.model)
+    model_selected = _select_chatgpt_model(page, browser_kind, settings.model)
+    if not model_selected:
+        update(
+            phase="preparing",
+            message="ChatGPT Web did not expose a model selector; keeping the selected session's current model.",
+        )
     attached = _attach_context_file(page, browser_kind, context_path)
     update(
         phase="submitting",
@@ -1431,14 +1437,21 @@ def _run_web_action_loop(
     conversation_url = str(page.url or "")
     activity: list[dict[str, str]] = []
 
-    for turn_index in range(1, settings.max_turns + 1):
+    turn_index = 0
+    invalid_action_retries = 0
+    while turn_index < settings.max_turns:
         if should_stop():
             _stop_web_generation(page, browser_kind)
-            return "", str(page.url or conversation_url), turn_index - 1, controller.state.bodycheck_current
+            return "", str(page.url or conversation_url), turn_index, controller.state.bodycheck_current
 
         try:
             action = parse_agent_action(response)
         except ValueError as exc:
+            invalid_action_retries += 1
+            if invalid_action_retries > MAX_INVALID_ACTION_RETRIES:
+                raise RuntimeError(
+                    "ChatGPT returned too many invalid controller actions in a row."
+                ) from exc
             observation = {
                 "ok": False,
                 "error": str(exc),
@@ -1447,7 +1460,7 @@ def _run_web_action_loop(
             response = _submit_and_wait(
                 page,
                 browser_kind,
-                _observation_message(turn_index, observation),
+                _observation_message(turn_index + 1, observation),
                 should_stop,
                 on_submitted=lambda: update(
                     phase="running",
@@ -1456,6 +1469,8 @@ def _run_web_action_loop(
             )
             continue
 
+        invalid_action_retries = 0
+        turn_index += 1
         action_name = str(action.get("action") or "").strip().lower()
         if action_name == "final":
             if not controller.state.bodycheck_current:
@@ -1641,8 +1656,13 @@ def _select_chat_mode(page: Any, browser_kind: str) -> None:
         chat_mode.first.click()
 
 
-def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> None:
-    """Require the selected ChatGPT model to be active in the remote composer."""
+def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
+    """Select a remote model when ChatGPT exposes a compatible menu.
+
+    ChatGPT does not expose the model-control menu for every account, conversation,
+    or product surface. In that case, preserve the already-selected remote model and
+    continue the local controller run instead of claiming that a model was changed.
+    """
     del browser_kind
     selected_model = str(model or DEFAULT_CHATGPT_MODEL).strip().lower()
     option = next(
@@ -1706,15 +1726,20 @@ def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> None:
         {"label": option["remote_label"]},
     )
     if isinstance(result, dict) and result.get("ok"):
-        return
+        return True
     available = []
+    reason = "model-control-unavailable"
     if isinstance(result, dict):
         available = [str(value) for value in result.get("available", []) if str(value).strip()]
+        reason = str(result.get("reason") or reason)
     available_text = ", ".join(dict.fromkeys(available)) or "none"
-    raise RuntimeError(
-        f"ChatGPT Web does not expose the selected model {option['remote_label']}. "
-        f"Available models: {available_text}."
+    LOGGER.info(
+        "ChatGPT Web did not expose model %s (%s; available: %s); retaining the current remote model.",
+        option["remote_label"],
+        reason,
+        available_text,
     )
+    return False
 
 
 def _attach_context_file(page: Any, browser_kind: str, context_path: Path) -> bool:

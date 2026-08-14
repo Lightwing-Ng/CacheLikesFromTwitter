@@ -1,6 +1,6 @@
 # ChatGPT Web Computer Use Agent
 
-Documentation version: `v2.3.0-codex.3`
+Documentation version: `v2.3.1-codex.1`
 
 ## Purpose
 
@@ -30,10 +30,15 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
 5. Chromium browsers attach the package directly when ChatGPT exposes a file input, wait for the
    attachment to enable Send, click the control, and confirm that ChatGPT accepted the prompt.
    Safari uses the same prompt and streams requested project context through controller observations.
+   If ChatGPT does not expose its optional model menu in the selected conversation, the controller
+   keeps the conversation's current remote model instead of failing or claiming a model switch.
 6. ChatGPT returns exactly one JSON action at a time. The controller supports `list`, `read`,
    `search`, `replace`, `write`, `run`, `bodycheck`, and `final`.
-7. The controller rejects a final answer until `bodycheck` succeeds after the latest edit.
-8. The local page renders the final Markdown and links to the visible ChatGPT conversation.
+7. A malformed non-JSON reply receives up to three strict-format corrections without spending the
+   configured controller-action budget. This keeps a recoverable web-model formatting lapse from
+   prematurely ending a valid task, while still bounding retries.
+8. The controller rejects a final answer until `bodycheck` succeeds after the latest edit.
+9. The local page renders the final Markdown and links to the visible ChatGPT conversation.
 
 ## Safety boundary
 

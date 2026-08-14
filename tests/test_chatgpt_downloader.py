@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.35.0-codex.1
+# Code version: v1.36.0-codex.1
 
 from __future__ import annotations
 
@@ -101,12 +101,14 @@ def test_chatgpt_history_cache_persists_every_user_and_assistant_message(tmp_pat
             "user-node": {
                 "message": {
                     "author": {"role": "user"},
+                    "create_time": 1771059600,
                     "content": {"parts": ["Please summarize this"]},
                 }
             },
             "assistant-node": {
                 "message": {
                     "author": {"role": "assistant"},
+                    "create_time": 1771059900,
                     "content": {"parts": [{"text": "Here is the summary."}]},
                 }
             },
@@ -122,6 +124,10 @@ def test_chatgpt_history_cache_persists_every_user_and_assistant_message(tmp_pat
     assert [row["content_text"] for row in extracted] == [
         "Please summarize this",
         "Here is the summary.",
+    ]
+    assert [row["last_seen_at"] for row in extracted] == [
+        "2026-02-14T09:00:00Z",
+        "2026-02-14T09:05:00Z",
     ]
 
     history_store = ChatGPTHistoryStore(tmp_path / "llm" / "chatgpt" / "history.parquet")
@@ -147,6 +153,10 @@ def test_chatgpt_history_cache_persists_every_user_and_assistant_message(tmp_pat
         "Please summarize this",
         "Here is the summary.",
     ]
+    assert [row["last_seen_at"] for row in rows] == [
+        "2026-02-14T09:00:00Z",
+        "2026-02-14T09:05:00Z",
+    ]
 
 
 def test_chatgpt_history_cache_skips_sessions_already_in_the_store(tmp_path: Path) -> None:
@@ -159,6 +169,7 @@ def test_chatgpt_history_cache_skips_sessions_already_in_the_store(tmp_path: Pat
                 "user": {
                     "message": {
                         "author": {"role": "user"},
+                        "create_time": 1771059600,
                         "content": {"parts": ["Already cached"]},
                     }
                 }
@@ -180,6 +191,55 @@ def test_chatgpt_history_cache_skips_sessions_already_in_the_store(tmp_path: Pat
 
     assert (processed, new_messages, unchanged_sessions) == (1, 0, 1)
     api_get.assert_not_called()
+
+
+def test_chatgpt_history_cache_refreshes_legacy_capture_times(tmp_path: Path) -> None:
+    conversation_url = "https://chatgpt.com/c/session-legacy-time"
+    captured_at = "2026-08-12T08:00:00Z"
+    legacy_payload = {
+        "mapping": {
+            "user": {
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"parts": ["Legacy message"]},
+                }
+            }
+        }
+    }
+    refreshed_payload = {
+        "mapping": {
+            "user": {
+                "message": {
+                    "author": {"role": "user"},
+                    "create_time": 1771059600,
+                    "content": {"parts": ["Legacy message"]},
+                }
+            }
+        }
+    }
+    history_store = ChatGPTHistoryStore(tmp_path / "llm" / "chatgpt" / "history.parquet")
+    history_store.replace_conversation(conversation_url, legacy_payload, captured_at)
+    history_store.save()
+
+    with patch(
+        "app.core.chatgpt_downloader._get_chatgpt_api_json_via_page",
+        return_value=refreshed_payload,
+    ) as api_get:
+        processed, new_messages, unchanged_sessions = cache_chatgpt_conversation_history(
+            history_store,
+            [conversation_url],
+            object(),
+            {},
+            TaskState("test"),
+            lambda: False,
+        )
+
+    rows = read_parquet_rows(history_store.path)
+    assert (processed, new_messages, unchanged_sessions) == (1, 0, 1)
+    assert rows is not None
+    assert rows[0]["first_seen_at"] == captured_at
+    assert rows[0]["last_seen_at"] == "2026-02-14T09:00:00Z"
+    api_get.assert_called_once()
 
 
 class _FakeResponse:

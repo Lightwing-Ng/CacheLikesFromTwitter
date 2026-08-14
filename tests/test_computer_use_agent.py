@@ -1,6 +1,6 @@
 """Focused tests for the ChatGPT Web Computer Use controller.
 
-Code version: v3.4.0-codex.2
+Code version: v3.4.1-codex.1
 """
 
 from __future__ import annotations
@@ -20,6 +20,8 @@ from app.core.computer_use_agent import (
     ComputerUseSettingsStore,
     WorkspaceController,
     _chatgpt_target_is_open,
+    _run_web_action_loop,
+    _select_chatgpt_model,
     _submit_chromium_prompt,
     _wait_for_chromium_composer,
     _web_last_text,
@@ -74,6 +76,18 @@ def test_settings_validate_workspace_environment_browser_and_limits() -> None:
             validate_computer_use_settings({**asdict(settings), "model": "unknown-model"})
         with pytest.raises(ValueError, match="official ChatGPT HTTPS host"):
             validate_computer_use_settings({**asdict(settings), "target_url": "https://example.com"})
+
+
+def test_model_selection_keeps_the_remote_default_when_the_menu_is_not_exposed() -> None:
+    class _Page:
+        def evaluate(self, _expression: str, _argument: dict[str, str]) -> dict[str, object]:
+            return {
+                "ok": False,
+                "reason": "power-control-not-found",
+                "available": [],
+            }
+
+    assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is False
 
 
 def test_host_operating_system_detection_uses_supported_host_keys(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -291,6 +305,59 @@ def test_action_parser_requires_one_json_object() -> None:
     }
     with pytest.raises(ValueError, match="exactly one JSON"):
         parse_agent_action("I will inspect the project.")
+
+
+def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://chatgpt.com/c/example"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace), max_turns=2),
+        lambda: False,
+    )
+    responses = iter(
+        (
+            "I will inspect the project.",
+            '{"action":"bodycheck"}',
+            '{"action":"final","summary":"Done."}',
+        )
+    )
+    submitted: list[str] = []
+
+    def submit(_page: object, _browser: str, message: str, _should_stop: object, **_kwargs: object) -> str:
+        submitted.append(message)
+        return next(responses)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_chatgpt_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chatgpt_model", lambda *_args: True)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Inspect the project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=ComputerUseSettings(workspace_path=str(workspace), max_turns=2),
+        session_mode="recent",
+        selected_target_url="https://chatgpt.com/c/example",
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+    )
+
+    assert result == ("Done.", "https://chatgpt.com/c/example", 2, True)
+    assert len(submitted) == 3
+    assert "Controller observation for turn 1" in submitted[1]
 
 
 def test_workspace_controller_stays_inside_project_and_requires_current_bodycheck() -> None:

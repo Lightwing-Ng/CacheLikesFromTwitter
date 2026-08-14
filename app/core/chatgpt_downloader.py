@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.40.0-codex.1
+# Code version: v1.41.0-codex.1
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field, replace
+from datetime import UTC, datetime
 from pathlib import Path
 from queue import Empty, Queue
 from threading import Event, RLock, Thread
@@ -242,6 +243,34 @@ def _chatgpt_message_text(message: object) -> str:
     return "\n\n".join(dict.fromkeys(values))
 
 
+def _chatgpt_message_timestamp(message: object, fallback: str) -> str:
+    """Return a ChatGPT message's original UTC timestamp when the API exposes one."""
+    if not isinstance(message, dict):
+        return fallback
+    for key in ("create_time", "update_time"):
+        raw_value = message.get(key)
+        if raw_value is None or isinstance(raw_value, bool):
+            continue
+        try:
+            if isinstance(raw_value, (int, float)):
+                parsed = datetime.fromtimestamp(float(raw_value), tz=UTC)
+            else:
+                normalized = str(raw_value).strip()
+                if not normalized:
+                    continue
+                try:
+                    parsed = datetime.fromtimestamp(float(normalized), tz=UTC)
+                except ValueError:
+                    parsed = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=UTC)
+                    parsed = parsed.astimezone(UTC)
+            return parsed.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except (OverflowError, OSError, TypeError, ValueError):
+            continue
+    return fallback
+
+
 def _extract_chatgpt_conversation_messages(
     payload: dict[str, object],
     conversation_url: str,
@@ -272,6 +301,7 @@ def _extract_chatgpt_conversation_messages(
             turn_index = 0
         message_index = len(messages)
         message_key = f"{conversation_id}:{node_id}"
+        message_timestamp = _chatgpt_message_timestamp(message, captured_at)
         messages.append(
             {
                 "schema_version": CHATGPT_HISTORY_SCHEMA_VERSION,
@@ -290,7 +320,7 @@ def _extract_chatgpt_conversation_messages(
                 "source_links": [],
                 "model_label": "",
                 "first_seen_at": captured_at,
-                "last_seen_at": captured_at,
+                "last_seen_at": message_timestamp,
             }
         )
     return messages
@@ -320,6 +350,22 @@ class ChatGPTHistoryStore:
         return bool(conversation_id) and any(
             str(row.get("conversation_id") or "") == conversation_id
             for row in self._rows_by_key.values()
+        )
+
+    def conversation_needs_timestamp_refresh(self, conversation_url: str) -> bool:
+        """Return whether cached rows still use the pre-original-timestamp format."""
+        conversation_id = chatgpt_conversation_id(conversation_url)
+        rows = [
+            row
+            for row in self._rows_by_key.values()
+            if str(row.get("conversation_id") or "") == conversation_id
+        ]
+        if not rows:
+            return False
+        return any(
+            str(row.get("first_seen_at") or "").strip()
+            == str(row.get("last_seen_at") or "").strip()
+            for row in rows
         )
 
     def replace_conversation(self, conversation_url: str, payload: dict[str, object], captured_at: str) -> tuple[int, bool]:
@@ -376,7 +422,9 @@ def cache_chatgpt_conversation_history(
         api_url = _chatgpt_conversation_api_url(conversation_url)
         if not api_url:
             continue
-        if history_store.has_conversation(conversation_url):
+        if history_store.has_conversation(conversation_url) and not history_store.conversation_needs_timestamp_refresh(
+            conversation_url
+        ):
             processed += 1
             unchanged_sessions += 1
             continue
