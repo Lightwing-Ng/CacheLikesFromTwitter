@@ -26,11 +26,11 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Reuse existing project patterns for naming, layout, and error handling.
 - Prefer clear, maintainable code over clever one-liners.
 - Avoid introducing new dependencies unless strictly necessary.
-- For UI work, treat `/Users/lightwing/Desktop/antigravity/app` as this project's sibling
+- For UI work, treat `../antigravity/app` as this project's sibling
   and visual source of truth. Read `STYLE_REFERENCE.md` before changing markup, CSS,
   assets, or UI behavior.
 - Before changing a UI pattern shared with the sibling project, read the single local
-  synchronization ledger at `/Users/lightwing/Desktop/SHARED_UI_SYNC.md` and follow its
+  synchronization ledger at `../SHARED_UI_SYNC.md` and follow its
   mandatory workflow. The ledger is component-specific: whichever sibling has the newest
   verified implementation leads that component until the other sibling is synchronized.
 - A task scoped only to this repository does not authorize editing the sibling. When a

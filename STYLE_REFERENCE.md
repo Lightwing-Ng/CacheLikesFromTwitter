@@ -2,7 +2,7 @@
 
 ## Authority
 
-`/Users/lightwing/Desktop/antigravity/app` is the sibling project and the visual source
+`../antigravity/app` is the sibling project and the visual source
 of truth for CacheLikesFromTwitter. When a UI decision is not explicitly constrained by
 this project, follow the current implementation in that sibling project.
 
@@ -13,7 +13,7 @@ routes, assets, or JavaScript into this downloader.
 
 ## Color Token Source
 
-The canonical palette is `/Users/lightwing/Desktop/antigravity/config.toml`, under
+The canonical palette is `../antigravity/config.toml`, under
 `[ui.theme.light]` and `[ui.theme.dark]`. `app/web/static/style.css` mirrors those
 values through its `--theme-*`, status-color, glass, focus, and scrollbar tokens.
 
@@ -24,7 +24,7 @@ hex values or derive a separate palette in this project.
 ## Required Workflow for UI Changes
 
 1. Inspect the relevant reference files first. Start with
-   `/Users/lightwing/Desktop/antigravity/app/web/static/assets/css/app.css`, then follow
+   `../antigravity/app/web/static/assets/css/app.css`, then follow
    its imports in `foundation/`, `layout/`, `components/`, and `views/`.
 2. Reuse the reference project's token names, font stack, spacing, corner radii, surface
    treatment, motion curves, and accessibility states where they apply to existing

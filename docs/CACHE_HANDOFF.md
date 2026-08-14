@@ -52,7 +52,7 @@ the top of the Cache sidebar:
 
 The control is shared markup in `app/web/templates/_cache_page.html`, behavior in
 `app/web/static/cache-page.js`, and styling in `app/web/static/style.css`. Changes to
-this component also require reading `/Users/lightwing/Desktop/SHARED_UI_SYNC.md` and
+this component also require reading `../SHARED_UI_SYNC.md` and
 updating its `Cache-page Text/Media control` row. This repository is currently the
 leading implementation and the sibling remains `Pending`.
 
@@ -341,7 +341,7 @@ Read these files together before changing Cache behavior:
 - `app/core/chat_history_browser.py`: source path mapping and Local resources queries.
 - `app/core/resource_persistence.py`: typed Parquet schemas and atomic writes.
 - `tests/test_grok_history.py`: deterministic Grok Text regression coverage.
-- `/Users/lightwing/Desktop/SHARED_UI_SYNC.md`: shared-component synchronization ledger.
+- `../SHARED_UI_SYNC.md`: shared-component synchronization ledger.
 
 When adding a new LLM source, update the source allowlist, source-specific path map,
 aggregate `all` path tuple, source switcher, Cache Text link, persistence schema, status

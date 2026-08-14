@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.10.0-codex.1
+# Code version: v1.10.1-codex.1
 
 from __future__ import annotations
 
@@ -32,17 +32,15 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8666
 DEFAULT_CHROME_USER_DATA_DIR = Path.home() / "Library/Application Support/Google/Chrome"
 DEFAULT_CHROME_PROFILE_DIRECTORY = "Default"
-DEFAULT_SHADOW_BACKUP_DESTINATION = Path(
-    "/Users/lightwing/Library/CloudStorage/OneDrive-Personal/AICaches"
+DEFAULT_SHADOW_BACKUP_DESTINATION = (
+    Path.home() / "AICaches"
 )
 DEFAULT_DOWNLOAD_WORKERS = 4
 DEFAULT_MAX_MEDIA_FILE_SIZE_MIB = 50
 MIN_MAX_MEDIA_FILE_SIZE_MIB = 1
 MAX_MAX_MEDIA_FILE_SIZE_MIB = 10_240
-DEFAULT_CHATGPT_PROJECT_URL = (
-    "https://chatgpt.com/g/g-p-69522aca2f788191b337866d5c03c59e-studio208cm/project"
-)
-DEFAULT_CHATGPT_PROJECT_NAME = "Studio208cm"
+DEFAULT_CHATGPT_PROJECT_URL = "https://chatgpt.com/g/g-p-demo-project/project"
+DEFAULT_CHATGPT_PROJECT_NAME = "demo-project"
 DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS = 30.0
 DEFAULT_CHATGPT_SCAN_WAIT_SECONDS = 0.5
 DEFAULT_GEMINI_MAX_CONVERSATIONS = 1_000

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.77.3-codex.1
+# Code version: v1.77.4-codex.1
 
 from __future__ import annotations
 
@@ -921,7 +921,7 @@ class WebAppTests(unittest.TestCase):
                     "/api/agent/ask",
                     json={
                         "prompt": "Inspect fonts",
-                        "workspace_path": "/Users/lightwing/Desktop/CacheLikesFromTwitter",
+                        "workspace_path": str(Path(__file__).resolve().parents[1]),
                         "operating_system": "macos",
                         "browser": "safari",
                         "model": "gpt-5.6-sol",
@@ -1779,7 +1779,7 @@ class WebAppTests(unittest.TestCase):
     def test_browser_card_uses_filename_metadata_and_binary_size_units(self) -> None:
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
-            media_path = root / "chatgpt" / "Studio208cm" / "img_file.png"
+            media_path = root / "chatgpt" / "demo-project" / "img_file.png"
             media_path.parent.mkdir(parents=True)
             media_path.write_bytes(b"x" * 1_805_089)
             (media_path.parent / ".chatgpt_catalog.json").write_text(
@@ -1828,7 +1828,7 @@ class WebAppTests(unittest.TestCase):
     def test_browser_paginates_chatgpt_by_session_and_labels_the_latest_image(self) -> None:
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
-            project_dir = root / "chatgpt" / "Studio208cm"
+            project_dir = root / "chatgpt" / "demo-project"
             project_dir.mkdir(parents=True)
             for filename in ("new-old.png", "new-latest.png", "older-session.png"):
                 (project_dir / filename).write_bytes(filename.encode("utf-8"))
@@ -1938,7 +1938,7 @@ class WebAppTests(unittest.TestCase):
     def test_legacy_gemini_browser_url_falls_back_to_chatgpt_media_sessions(self) -> None:
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
-            project_dir = root / "chatgpt" / "Studio208cm"
+            project_dir = root / "chatgpt" / "demo-project"
             project_dir.mkdir(parents=True)
             for filename in ("new-session.png", "older-session.png"):
                 (project_dir / filename).write_bytes(filename.encode("utf-8"))
@@ -2188,7 +2188,7 @@ class WebAppTests(unittest.TestCase):
     def test_browser_session_refresh_route_uses_a_temporary_session_url(self) -> None:
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
-            project_dir = root / "chatgpt" / "Studio208cm"
+            project_dir = root / "chatgpt" / "demo-project"
             project_dir.mkdir(parents=True)
             media_path = project_dir / "img_file.png"
             media_path.write_bytes(b"chatgpt-image")

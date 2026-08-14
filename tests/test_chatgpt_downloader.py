@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.36.0-codex.1
+# Code version: v1.36.1-codex.1
 
 from __future__ import annotations
 
@@ -277,7 +277,7 @@ def test_chatgpt_url_helpers_accept_original_estuary_assets() -> None:
     assert looks_like_image(PNG_PAYLOAD)
     assert not looks_like_image(b"<html>not an image</html>")
     assert chatgpt_target_dir(DEFAULT_CHATGPT_PROJECT_NAME).name == DEFAULT_CHATGPT_PROJECT_NAME
-    assert _chatgpt_project_id(DEFAULT_CHATGPT_PROJECT_URL) == "g-p-69522aca2f788191b337866d5c03c59e"
+    assert _chatgpt_project_id(DEFAULT_CHATGPT_PROJECT_URL) == "g-p-demo-project"
 
 
 def test_chatgpt_keeps_original_images_from_every_message_role() -> None:
@@ -459,8 +459,8 @@ def test_chatgpt_project_index_keeps_only_current_project_images() -> None:
         context,
         DEFAULT_CHATGPT_PROJECT_URL,
         [
-            "https://chatgpt.com/g/g-p-69522aca2f788191b337866d5c03c59e-studio208cm/c/project-first",
-            "https://chatgpt.com/g/g-p-69522aca2f788191b337866d5c03c59e-studio208cm/c/project-second",
+            "https://chatgpt.com/g/g-p-demo-project/c/project-first",
+            "https://chatgpt.com/g/g-p-demo-project/c/project-second",
         ],
         request_headers,
         TaskState("test"),
@@ -943,7 +943,7 @@ def test_chatgpt_image_retries_platform_network_error_messages(message: str) -> 
 
 
 def test_chatgpt_missing_image_assets_are_skipped_without_repeat_attempts(tmp_path: Path) -> None:
-    catalog = ChatGPTImageCatalog.build(tmp_path / "chatgpt" / "Studio208cm")
+    catalog = ChatGPTImageCatalog.build(tmp_path / "chatgpt" / "demo-project")
     candidate = ChatGPTImageCandidate(
         source_url=_chatgpt_file_download_url("file_historical_missing"),
         file_id="file_historical_missing",
@@ -1008,7 +1008,7 @@ def test_chatgpt_resolves_api_assets_to_their_original_download_url(tmp_path: Pa
         request_headers={"authorization": "Bearer test-token", "oai-device-id": "device-id"},
     )
     context = _ResolvingContext()
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     catalog = ChatGPTImageCatalog.build(target_dir)
 
     assert download_chatgpt_image(context, catalog, target_dir, candidate)
@@ -1069,7 +1069,7 @@ def test_chatgpt_refreshes_an_expired_project_index_image_url(tmp_path: Path) ->
         request_headers={"authorization": "Bearer test-token", "oai-device-id": "device-id"},
     )
     context = _RefreshingContext()
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     catalog = ChatGPTImageCatalog.build(target_dir)
 
     assert download_chatgpt_image(context, catalog, target_dir, candidate)
@@ -1121,7 +1121,7 @@ def test_chatgpt_prefers_a_rendered_original_url_over_an_unresolved_api_asset() 
 
 
 def test_chatgpt_catalog_registers_downloads_and_skips_complete_files(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     candidate = ChatGPTImageCandidate(
         source_url="https://chatgpt.com/backend-api/estuary/content?id=file_demo",
         file_id="file_demo",
@@ -1158,7 +1158,7 @@ def test_chatgpt_catalog_registers_downloads_and_skips_complete_files(tmp_path: 
 
 
 def test_chatgpt_catalog_merges_known_prompt_metadata_into_current_candidates(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     catalog = ChatGPTImageCatalog.build(target_dir)
     cached_candidate = ChatGPTImageCandidate(
         source_url="https://chatgpt.com/backend-api/estuary/content?id=file_known",
@@ -1186,7 +1186,7 @@ def test_chatgpt_catalog_merges_known_prompt_metadata_into_current_candidates(tm
 
 
 def test_chatgpt_catalog_prunes_missing_entries_during_load(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     candidate = ChatGPTImageCandidate(
         source_url="https://chatgpt.com/backend-api/estuary/content?id=file_valid",
         file_id="file_valid",
@@ -1220,7 +1220,7 @@ def test_chatgpt_catalog_prunes_missing_entries_during_load(tmp_path: Path) -> N
 
 
 def test_chatgpt_catalog_prunes_signature_only_corrupt_images_during_load(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     candidate = ChatGPTImageCandidate(
         source_url="https://chatgpt.com/backend-api/estuary/content?id=file_corrupt",
         file_id="file_corrupt",
@@ -1252,7 +1252,7 @@ def test_chatgpt_catalog_prunes_signature_only_corrupt_images_during_load(tmp_pa
 
 
 def test_chatgpt_catalog_prunes_cached_thumbnail_encodings_during_load(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     thumbnail_path = target_dir / "img_file_thumbnail.webp"
     thumbnail_path.parent.mkdir(parents=True)
     thumbnail_payload = _visual_test_image_payload("WEBP")
@@ -1289,7 +1289,7 @@ def test_chatgpt_catalog_prunes_cached_thumbnail_encodings_during_load(tmp_path:
 
 
 def test_chatgpt_skips_images_above_the_universal_cache_size_limit(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     candidate = ChatGPTImageCandidate(
         source_url="https://chatgpt.com/backend-api/estuary/content?id=file_oversized",
         file_id="file_oversized",
@@ -1311,7 +1311,7 @@ def test_chatgpt_skips_images_above_the_universal_cache_size_limit(tmp_path: Pat
 
 
 def test_chatgpt_catalog_removes_lower_quality_visual_duplicates(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     target_dir.mkdir(parents=True)
     high_content = _visual_test_image_payload("JPEG", quality=90)
     low_content = _visual_test_image_payload("JPEG", quality=20)
@@ -1363,7 +1363,7 @@ def test_chatgpt_catalog_removes_lower_quality_visual_duplicates(tmp_path: Path)
 
 
 def test_chatgpt_catalog_does_not_keep_an_incoming_lower_quality_duplicate(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     target_dir.mkdir(parents=True)
     high_content = _visual_test_image_payload("JPEG", quality=90)
     low_content = _visual_test_image_payload("JPEG", quality=20)
@@ -1423,7 +1423,7 @@ def test_chatgpt_retries_a_transient_direct_image_failure(tmp_path: Path) -> Non
         def __init__(self) -> None:
             self.request = _RetryRequest()
 
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     candidate = ChatGPTImageCandidate(
         source_url="https://chatgpt.com/backend-api/estuary/content?id=file_retry",
         file_id="file_retry",
@@ -1441,7 +1441,7 @@ def test_chatgpt_retries_a_transient_direct_image_failure(tmp_path: Path) -> Non
 
 
 def test_chatgpt_streams_first_party_original_through_safari(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     candidate = ChatGPTImageCandidate(
         source_url="https://chatgpt.com/backend-api/estuary/content?id=file_safari",
         file_id="file_safari",
@@ -1469,7 +1469,7 @@ def test_chatgpt_streams_first_party_original_through_safari(tmp_path: Path) -> 
 
 
 def test_chatgpt_does_not_cache_index_thumbnail_when_safari_original_is_gone(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     direct_url = "https://chatgpt.com/backend-api/estuary/content?id=file_safari_fallback"
     fallback_url = direct_url + "&encoding=thumbnail"
     candidate = ChatGPTImageCandidate(
@@ -1506,7 +1506,7 @@ def test_chatgpt_does_not_cache_index_thumbnail_when_safari_original_is_gone(tmp
 
 
 def test_chatgpt_reset_removes_only_the_dedicated_cache(tmp_path: Path) -> None:
-    target_dir = tmp_path / "chatgpt" / "Studio208cm"
+    target_dir = tmp_path / "chatgpt" / "demo-project"
     candidate = ChatGPTImageCandidate(
         source_url="https://chatgpt.com/backend-api/estuary/content?id=file_reset",
         file_id="file_reset",
@@ -1702,7 +1702,7 @@ def test_chatgpt_project_api_collects_authoritative_session_titles() -> None:
         )
 
     assert conversation_urls == [
-        "https://chatgpt.com/g/g-p-69522aca2f788191b337866d5c03c59e-studio208cm/"
+        "https://chatgpt.com/g/g-p-demo-project/"
         f"c/{conversation_id}"
     ]
     assert titles_by_id == {conversation_id: "master 21"}
@@ -2028,8 +2028,8 @@ def test_chatgpt_parallel_iterator_partitions_conversations_across_bounded_worke
             _iter_chatgpt_conversation_results(
                 urls,
                 object(),
-                ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
-                tmp_path / "Studio208cm",
+                ChatGPTImageCatalog.build(tmp_path / "demo-project"),
+                tmp_path / "demo-project",
                 60,
                 0.5,
                 lambda: False,
@@ -2063,8 +2063,8 @@ def test_chatgpt_project_index_iterator_partitions_direct_image_downloads(tmp_pa
             _iter_chatgpt_index_image_results(
                 candidates,
                 object(),
-                ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
-                tmp_path / "Studio208cm",
+                ChatGPTImageCatalog.build(tmp_path / "demo-project"),
+                tmp_path / "demo-project",
                 lambda: False,
                 worker_count=3,
             )
@@ -2089,8 +2089,8 @@ def test_chatgpt_project_index_iterator_does_not_start_workers_after_stop(tmp_pa
             _iter_chatgpt_index_image_results(
                 [candidate],
                 object(),
-                ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
-                tmp_path / "Studio208cm",
+                ChatGPTImageCatalog.build(tmp_path / "demo-project"),
+                tmp_path / "demo-project",
                 should_stop=lambda: True,
                 worker_count=3,
             )
@@ -2101,7 +2101,7 @@ def test_chatgpt_project_index_iterator_does_not_start_workers_after_stop(tmp_pa
 
 
 def test_chatgpt_project_index_iterator_skips_complete_files_before_worker_start(tmp_path: Path) -> None:
-    target_dir = tmp_path / "Studio208cm"
+    target_dir = tmp_path / "demo-project"
     target_dir.mkdir()
     existing_path = target_dir / "img_file_existing.png"
     existing_path.write_bytes(PNG_PAYLOAD)
@@ -2186,8 +2186,8 @@ def test_chatgpt_project_index_worker_refreshes_authorization_before_download(tm
         _chatgpt_index_image_worker(
             [candidate],
             object(),
-            ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
-            tmp_path / "Studio208cm",
+            ChatGPTImageCatalog.build(tmp_path / "demo-project"),
+            tmp_path / "demo-project",
             lambda: False,
             result_queue,
         )
@@ -2223,8 +2223,8 @@ def test_chatgpt_project_index_worker_retries_transient_startup_failure(tmp_path
         _chatgpt_index_image_worker(
             [candidate],
             object(),
-            ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
-            tmp_path / "Studio208cm",
+            ChatGPTImageCatalog.build(tmp_path / "demo-project"),
+            tmp_path / "demo-project",
             lambda: False,
             result_queue,
         )
@@ -2258,8 +2258,8 @@ def test_chatgpt_project_index_iterator_bounds_worker_cleanup_wait(tmp_path: Pat
                 _iter_chatgpt_index_image_results(
                     [candidate],
                     object(),
-                    ChatGPTImageCatalog.build(tmp_path / "Studio208cm"),
-                    tmp_path / "Studio208cm",
+                    ChatGPTImageCatalog.build(tmp_path / "demo-project"),
+                    tmp_path / "demo-project",
                     lambda: False,
                     worker_count=1,
                 )

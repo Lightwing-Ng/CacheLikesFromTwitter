@@ -16,7 +16,7 @@ command-line coding-agent runtime, MCP connection, or third-party agent bridge.
 
 ## Visual Style Reference
 
-This is a sibling project of `/Users/lightwing/Desktop/antigravity/app`. Its visual
+This is a sibling project of `../antigravity/app`. Its visual
 language is the source of truth for shared application-shell, typography, surface,
 control, and motion decisions. Read [STYLE_REFERENCE.md](STYLE_REFERENCE.md) before
 making any UI change.

@@ -1,6 +1,6 @@
 """Read-only local media browser tests.
 
-Code version: v1.10.2-codex.1
+Code version: v1.10.3-codex.1
 """
 
 from __future__ import annotations
@@ -393,7 +393,7 @@ def test_chatgpt_direct_session_uses_its_recorded_title(tmp_path: Path) -> None:
 
 def test_legacy_chatgpt_tombstone_hydrates_source_metadata_from_catalog(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
-    project_dir = root / "chatgpt" / "Studio208cm"
+    project_dir = root / "chatgpt" / "demo-project"
     media_path = project_dir / "img_file-123.png"
     _write_media(media_path, b"chatgpt-image")
     catalog_path = project_dir / ".chatgpt_catalog.json"
@@ -419,7 +419,7 @@ def test_legacy_chatgpt_tombstone_hydrates_source_metadata_from_catalog(tmp_path
     assert deletion_rows is not None
     tombstone_row = next(row for row in deletion_rows if row["stable_id"] == active_item.stable_id)
     tombstone_row["chatgpt_session_key"] = ""
-    tombstone_row["creator"] = "Studio208cm"
+    tombstone_row["creator"] = "demo-project"
     write_parquet_rows_atomic(deletion_path, deletion_rows, DELETED_MEDIA_SCHEMA)
     catalog_payload["entries"]["file-123"].update(
         {
@@ -484,48 +484,48 @@ def test_chatgpt_branch_families_stay_contiguous_for_every_sort(
     sort: str,
     expected: list[str],
 ) -> None:
-    branch_family = "studio208cm:master:0809b"
-    other_family = "studio208cm:master:0808d"
+    branch_family = "demo-project:master:0809b"
+    other_family = "demo-project:master:0808d"
     items = (
         replace(
             _item("session-one-current.png", "2026-08-06T12:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="session-one",
             chatgpt_branch_key=branch_family,
         ),
         replace(
             _item("session-two-branch.png", "2026-08-06T11:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="session-two-branch",
             chatgpt_branch_key=other_family,
         ),
         replace(
             _item("session-one-branch.png", "2026-08-07T12:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="session-one-branch",
             chatgpt_branch_key=branch_family,
         ),
         replace(
             _item("session-one-old.png", "2026-08-05T12:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="session-one",
             chatgpt_branch_key=branch_family,
         ),
         replace(
             _item("session-two-newer.png", "2026-08-05T18:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="session-two",
             chatgpt_branch_key=other_family,
         ),
         replace(
             _item("session-two-old.png", "2026-08-05T06:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="session-two",
             chatgpt_branch_key=other_family,
         ),
@@ -535,25 +535,25 @@ def test_chatgpt_branch_families_stay_contiguous_for_every_sort(
 
 
 def test_chatgpt_absolute_sort_ignores_session_grouping() -> None:
-    branch_family = "studio208cm:master:0810a"
+    branch_family = "demo-project:master:0810a"
     items = (
         replace(
             _item("first-session-new.png", "2026-08-10T12:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="first-session",
             chatgpt_branch_key=branch_family,
         ),
         replace(
             _item("second-session-middle.png", "2026-08-09T12:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="second-session",
         ),
         replace(
             _item("first-session-old.png", "2026-08-08T12:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="first-session",
             chatgpt_branch_key=branch_family,
         ),
@@ -567,13 +567,13 @@ def test_chatgpt_absolute_sort_ignores_session_grouping() -> None:
 
 
 def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() -> None:
-    shared_branch = "studio208cm:master:0810a"
+    shared_branch = "demo-project:master:0810a"
     items = (
         replace(
             _item("new-session-old.png", "2026-08-01T00:00:00Z"),
             source="chatgpt",
             creator="Newest session",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="new-session",
             chatgpt_branch_key=shared_branch,
         ),
@@ -581,7 +581,7 @@ def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() 
             _item("older-session-latest.png", "2026-08-08T12:00:00Z"),
             source="chatgpt",
             creator="Older session",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="older-session",
             chatgpt_branch_key=shared_branch,
         ),
@@ -589,7 +589,7 @@ def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() 
             _item("new-session-latest.png", "2026-08-09T12:00:00Z"),
             source="chatgpt",
             creator="Newest session",
-            project_name="Studio208cm",
+            project_name="demo-project",
             source_url="https://chatgpt.com/c/new-session",
             chatgpt_session_key="new-session",
             chatgpt_branch_key=shared_branch,
@@ -598,7 +598,7 @@ def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() 
             _item("older-session-old.png", "2026-08-02T00:00:00Z"),
             source="chatgpt",
             creator="Older session",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="older-session",
             chatgpt_branch_key=shared_branch,
         ),
@@ -630,7 +630,7 @@ def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() 
         "older-session-old.png",
     ]
     assert targeted_page.current_page == 2
-    assert targeted_page.current_session_key == "chatgpt:session:studio208cm:older-session"
+    assert targeted_page.current_session_key == "chatgpt:session:demo-project:older-session"
     assert targeted_page.current_session_label == "Older session"
 
 
@@ -640,14 +640,14 @@ def test_chatgpt_pagination_recovers_legacy_tombstone_session_from_url() -> None
         replace(
             _item("active.png", "2026-08-09T00:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             source_url=conversation_url,
             chatgpt_session_key="shared-session",
         ),
         replace(
             _item("deleted.png", "2026-08-08T00:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             source_url=conversation_url,
             chatgpt_session_key="",
             is_deleted=True,
@@ -670,13 +670,13 @@ def test_catalog_query_uses_session_pagination_only_for_the_chatgpt_filter(
         replace(
             _item("chatgpt-one.png", "2026-08-09T00:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="session-one",
         ),
         replace(
             _item("chatgpt-two.png", "2026-08-08T00:00:00Z"),
             source="chatgpt",
-            project_name="Studio208cm",
+            project_name="demo-project",
             chatgpt_session_key="session-two",
         ),
         _item("x-item.png", "2026-08-10T00:00:00Z"),
