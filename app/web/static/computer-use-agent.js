@@ -1,4 +1,4 @@
-/* Code version: v3.9.2-codex.1 */
+/* Code version: v3.9.3-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -78,6 +78,10 @@
     let remoteSessionHistoryLoading = false;
     let remoteSessionHistoryError = "";
     let remoteSessionHistoryRequestId = 0;
+    let agentPaginationRangeCloseTimer = 0;
+    let agentPaginationRangeEventsBound = false;
+    let agentPaginationRangePinnedPicker = null;
+    let agentPaginationRangeFocusRestore = null;
     const paginationMotion = window.CACHELIKES_PAGINATION_MOTION;
 
     async function requestJson(url, options = {}) {
@@ -984,17 +988,254 @@
         if (startPage > 1) {
             items.push({kind: "previous", page: startPage - 1});
             items.push({kind: "page", page: 1});
-            items.push({kind: "ellipsis"});
+            items.push({
+                kind: "ellipsis",
+                position: "leading",
+                firstPage: 1,
+                lastPage: startPage - 1,
+            });
         }
         for (let page = startPage; page <= endPage; page += 1) {
             items.push({kind: "page", page, isActive: page === currentPage});
         }
         if (endPage < totalPages) {
-            items.push({kind: "ellipsis"});
+            items.push({
+                kind: "ellipsis",
+                position: "trailing",
+                firstPage: endPage + 1,
+                lastPage: totalPages,
+            });
             items.push({kind: "page", page: totalPages});
             items.push({kind: "next", page: endPage + 1});
         }
         return items;
+    }
+
+    function buildAgentPaginationRanges(firstPage, lastPage, chunkSize = 5) {
+        if (firstPage > lastPage) return [];
+        const ranges = [];
+        for (let startPage = firstPage; startPage <= lastPage; startPage += chunkSize) {
+            ranges.push([startPage, Math.min(startPage + chunkSize - 1, lastPage)]);
+        }
+        const lastRange = ranges[ranges.length - 1];
+        if (
+            ranges.length > 1
+            && lastRange[1] - lastRange[0] + 1 < chunkSize
+        ) {
+            ranges[ranges.length - 2][1] = lastRange[1];
+            ranges.pop();
+        }
+        return ranges;
+    }
+
+    function agentPaginationRangeElements(picker) {
+        return {
+            trigger: picker?.querySelector("[data-pagination-range-trigger]") || null,
+            menu: picker?.querySelector("[data-pagination-range-menu]") || null,
+        };
+    }
+
+    function agentPaginationRangePickers() {
+        return elements.responsePagination
+            ? Array.from(elements.responsePagination.querySelectorAll(".browser-pagination-range-picker"))
+            : [];
+    }
+
+    function positionAgentPaginationRangeMenu(picker) {
+        const {menu} = agentPaginationRangeElements(picker);
+        if (!menu || !picker.classList.contains("is-open")) return;
+        menu.classList.remove("is-below");
+        menu.style.removeProperty("--pagination-range-menu-shift-x");
+        menu.style.removeProperty("--pagination-range-menu-max-height");
+        const pickerRect = picker.getBoundingClientRect();
+        const viewportInset = 12;
+        const menuGap = 8;
+        const spaceAbove = Math.max(96, pickerRect.top - viewportInset - menuGap);
+        const spaceBelow = Math.max(96, window.innerHeight - pickerRect.bottom - viewportInset - menuGap);
+        const grid = menu.querySelector(".browser-pagination-range-grid");
+        const style = window.getComputedStyle(menu);
+        const paddingTop = Number.parseFloat(style.paddingTop) || 0;
+        const paddingBottom = Number.parseFloat(style.paddingBottom) || 0;
+        const naturalMenuHeight = (grid?.scrollHeight || 0) + paddingTop + paddingBottom;
+        if (naturalMenuHeight > spaceAbove && spaceBelow > spaceAbove) menu.classList.add("is-below");
+        const availableHeight = menu.classList.contains("is-below") ? spaceBelow : spaceAbove;
+        menu.style.setProperty("--pagination-range-menu-max-height", `${availableHeight}px`);
+        menu.classList.toggle("is-scrollable", naturalMenuHeight > menu.clientHeight + 1);
+        const menuWidth = menu.offsetWidth;
+        const idealMenuLeft = pickerRect.left + (pickerRect.width / 2) - (menuWidth / 2);
+        let horizontalShift = 0;
+        if (idealMenuLeft < viewportInset) {
+            horizontalShift = viewportInset - idealMenuLeft;
+        } else if (idealMenuLeft + menuWidth > window.innerWidth - viewportInset) {
+            horizontalShift = window.innerWidth - viewportInset - idealMenuLeft - menuWidth;
+        }
+        menu.style.setProperty("--pagination-range-menu-shift-x", `${horizontalShift}px`);
+    }
+
+    function setAgentPaginationRangePickerOpen(picker, shouldOpen, {focusFirst = false} = {}) {
+        if (!picker) return;
+        const {trigger, menu} = agentPaginationRangeElements(picker);
+        picker.classList.toggle("is-open", shouldOpen);
+        trigger?.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+        menu?.setAttribute("aria-hidden", shouldOpen ? "false" : "true");
+        if (!shouldOpen) {
+            menu?.classList.remove("is-below", "is-scrollable");
+            menu?.style.removeProperty("--pagination-range-menu-shift-x");
+            menu?.style.removeProperty("--pagination-range-menu-max-height");
+            return;
+        }
+        agentPaginationRangePickers().forEach((otherPicker) => {
+            if (otherPicker !== picker) setAgentPaginationRangePickerOpen(otherPicker, false);
+        });
+        window.requestAnimationFrame(() => {
+            positionAgentPaginationRangeMenu(picker);
+            if (focusFirst) menu?.querySelector(".browser-pagination-range-option")?.focus();
+        });
+    }
+
+    function cancelAgentPaginationRangeClose() {
+        if (!agentPaginationRangeCloseTimer) return;
+        window.clearTimeout(agentPaginationRangeCloseTimer);
+        agentPaginationRangeCloseTimer = 0;
+    }
+
+    function scheduleAgentPaginationRangeClose(picker) {
+        cancelAgentPaginationRangeClose();
+        if (agentPaginationRangePinnedPicker === picker) return;
+        agentPaginationRangeCloseTimer = window.setTimeout(() => {
+            agentPaginationRangeCloseTimer = 0;
+            if (!picker.matches(":hover") && !picker.contains(document.activeElement)) {
+                setAgentPaginationRangePickerOpen(picker, false);
+            }
+        }, 140);
+    }
+
+    function bindAgentPaginationRangeInteractions() {
+        const pickers = agentPaginationRangePickers();
+        pickers.forEach((picker) => {
+            const {trigger, menu} = agentPaginationRangeElements(picker);
+            picker.addEventListener("pointerenter", () => {
+                cancelAgentPaginationRangeClose();
+                setAgentPaginationRangePickerOpen(picker, true);
+            });
+            picker.addEventListener("pointerleave", () => scheduleAgentPaginationRangeClose(picker));
+            picker.addEventListener("focusin", () => {
+                cancelAgentPaginationRangeClose();
+                if (agentPaginationRangeFocusRestore === picker) {
+                    agentPaginationRangeFocusRestore = null;
+                    return;
+                }
+                setAgentPaginationRangePickerOpen(picker, true);
+            });
+            picker.addEventListener("focusout", () => scheduleAgentPaginationRangeClose(picker));
+            trigger?.addEventListener("click", () => {
+                cancelAgentPaginationRangeClose();
+                const shouldPin = agentPaginationRangePinnedPicker !== picker;
+                if (agentPaginationRangePinnedPicker && agentPaginationRangePinnedPicker !== picker) {
+                    setAgentPaginationRangePickerOpen(agentPaginationRangePinnedPicker, false);
+                }
+                agentPaginationRangePinnedPicker = shouldPin ? picker : null;
+                setAgentPaginationRangePickerOpen(picker, shouldPin || picker.matches(":hover"));
+            });
+            trigger?.addEventListener("keydown", (event) => {
+                if (event.key !== "ArrowDown") return;
+                event.preventDefault();
+                agentPaginationRangePinnedPicker = picker;
+                setAgentPaginationRangePickerOpen(picker, true, {focusFirst: true});
+            });
+            menu?.addEventListener("keydown", (event) => {
+                const options = Array.from(menu.querySelectorAll(".browser-pagination-range-option"));
+                const currentIndex = options.indexOf(document.activeElement);
+                let nextIndex = currentIndex;
+                if (event.key === "ArrowDown" || event.key === "ArrowRight") nextIndex = Math.min(options.length - 1, currentIndex + 1);
+                else if (event.key === "ArrowUp" || event.key === "ArrowLeft") nextIndex = Math.max(0, currentIndex - 1);
+                else if (event.key === "Home") nextIndex = 0;
+                else if (event.key === "End") nextIndex = options.length - 1;
+                else return;
+                event.preventDefault();
+                options[nextIndex]?.focus();
+            });
+        });
+        if (agentPaginationRangeEventsBound) return;
+        agentPaginationRangeEventsBound = true;
+        document.addEventListener("pointerdown", (event) => {
+            const pagination = elements.responsePagination;
+            if (pagination?.contains(event.target)) return;
+            agentPaginationRangePinnedPicker = null;
+            agentPaginationRangePickers().forEach((picker) => setAgentPaginationRangePickerOpen(picker, false));
+        });
+        document.addEventListener("keydown", (event) => {
+            if (event.key !== "Escape") return;
+            const openPicker = agentPaginationRangePickers().find((picker) => picker.classList.contains("is-open"));
+            if (!openPicker) return;
+            event.preventDefault();
+            agentPaginationRangePinnedPicker = null;
+            const trigger = agentPaginationRangeElements(openPicker).trigger;
+            const shouldRestoreFocus = document.activeElement !== trigger;
+            setAgentPaginationRangePickerOpen(openPicker, false);
+            if (shouldRestoreFocus && trigger) {
+                agentPaginationRangeFocusRestore = openPicker;
+                trigger.focus();
+            } else {
+                agentPaginationRangeFocusRestore = null;
+            }
+        });
+        window.addEventListener("resize", () => {
+            agentPaginationRangePickers().forEach(positionAgentPaginationRangeMenu);
+        }, {passive: true});
+    }
+
+    function createAgentPaginationRangePicker(item, pagination) {
+        const picker = document.createElement("span");
+        picker.className = "local-store-page-ellipsis browser-pagination-range-picker";
+        picker.dataset.paginationEllipsis = item.position;
+
+        const direction = item.position === "leading" ? "earlier" : "later";
+        const trigger = document.createElement("button");
+        trigger.type = "button";
+        trigger.className = "browser-pagination-range-trigger";
+        trigger.setAttribute("aria-label", `Show ${direction} conversation pages`);
+        trigger.setAttribute("aria-haspopup", "menu");
+        trigger.setAttribute("aria-expanded", "false");
+        trigger.dataset.paginationRangeTrigger = "";
+        const menuId = `agent_response_pagination_ranges_${item.position}`;
+        trigger.setAttribute("aria-controls", menuId);
+        const dots = document.createElement("span");
+        dots.className = "local-store-page-ellipsis-dots";
+        dots.setAttribute("aria-hidden", "true");
+        trigger.append(dots);
+
+        const menu = document.createElement("span");
+        menu.id = menuId;
+        menu.className = "browser-pagination-range-menu";
+        menu.setAttribute("role", "menu");
+        menu.setAttribute("aria-label", `${direction[0].toUpperCase()}${direction.slice(1)} conversation pages`);
+        menu.setAttribute("aria-hidden", "true");
+        menu.dataset.paginationRangeMenu = "";
+        const grid = document.createElement("span");
+        grid.className = "browser-pagination-range-grid";
+        buildAgentPaginationRanges(item.firstPage, item.lastPage).forEach(([rangeStart, rangeEnd]) => {
+            const option = document.createElement("button");
+            option.type = "button";
+            option.className = "browser-pagination-range-option";
+            option.setAttribute("role", "menuitem");
+            option.dataset.paginationRangeStart = String(rangeStart);
+            option.dataset.paginationRangeEnd = String(rangeEnd);
+            option.setAttribute("aria-label", `Conversation pages ${rangeStart} through ${rangeEnd}`);
+            option.textContent = `${rangeStart}-${rangeEnd}`;
+            option.addEventListener("click", () => {
+                const targetPage = Number(option.dataset.paginationRangeStart);
+                const nextAnimationState = paginationMotion?.capturePaginationAnimation(pagination, targetPage);
+                agentPaginationRangePinnedPicker = null;
+                setAgentPaginationRangePickerOpen(picker, false);
+                responseHistoryPage = targetPage;
+                renderAgentResponsePage({animationState: nextAnimationState});
+            });
+            grid.append(option);
+        });
+        menu.append(grid);
+        picker.append(trigger, menu);
+        return picker;
     }
 
     function positionAgentPaginationIndicator({immediate = false} = {}) {
@@ -1009,6 +1250,9 @@
     function renderAgentResponsePagination({animationState = null} = {}) {
         const pagination = elements.responsePagination;
         if (!pagination) return;
+        agentPaginationRangePinnedPicker = null;
+        agentPaginationRangeFocusRestore = null;
+        cancelAgentPaginationRangeClose();
         const totalPages = responseHistory.length;
         responseHistoryPage = Math.min(
             Math.max(normalizePaginationPage(responseHistoryPage), 1),
@@ -1030,13 +1274,7 @@
         const items = buildAgentPaginationItems(totalPages, responseHistoryPage);
         const controls = items.map((item) => {
             if (item.kind === "ellipsis") {
-                const ellipsis = document.createElement("span");
-                ellipsis.className = "local-store-page-ellipsis";
-                ellipsis.setAttribute("aria-hidden", "true");
-                const dots = document.createElement("span");
-                dots.className = "local-store-page-ellipsis-dots";
-                ellipsis.append(dots);
-                return ellipsis;
+                return createAgentPaginationRangePicker(item, pagination);
             }
 
             const button = document.createElement("button");
@@ -1072,6 +1310,7 @@
         });
         pagination.style.setProperty("--local-store-pagination-slots", String(items.length));
         pagination.replaceChildren(indicator, ...controls);
+        bindAgentPaginationRangeInteractions();
         window.requestAnimationFrame(() => {
             if (animationState && paginationMotion) {
                 paginationMotion.animatePaginationIndicator(pagination, animationState);

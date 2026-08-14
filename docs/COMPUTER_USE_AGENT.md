@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.9.2-codex.1`
+Documentation version: `v3.9.3-codex.1`
 
 ## Purpose
 
@@ -50,11 +50,12 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
    ChatGPT recent session or project session is selected, the page fetches that conversation's
    read-only mapping through the selected signed-in browser and loads its user/assistant history
    into the same response article. The response card keeps one question-and-answer pair per page,
-   opens on the newest page, and uses the shared paginator to revisit earlier exchanges. The
-   question header and Markdown answer each have an independent vertical scroll region and reuse
-   the standard expand/collapse control. The composer remains a non-shrinking bottom flex item so
-   long responses cannot push it out of view. The sidebar session trigger follows the selected or
-   newly completed conversation title.
+   opens on the newest page, and uses the shared paginator to revisit earlier exchanges. Its
+   ellipsis controls open the shared grouped page-range menu, including keyboard navigation and
+   Escape-to-close behavior. The question header and Markdown answer each have an independent
+   vertical scroll region and reuse the standard expand/collapse control. The composer remains a
+   non-shrinking bottom flex item so long responses cannot push it out of view. The sidebar session
+   trigger follows the selected or newly completed conversation title.
 
 ## Safety boundary
 

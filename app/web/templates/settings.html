@@ -1,4 +1,4 @@
-<!-- Code version: v1.23.1-codex.1 -->
+<!-- Code version: v1.24.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.80.4-codex.5') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.80.7-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
@@ -271,17 +271,28 @@
                                         </select>
                                         <span class="field-help">The Agent uses the host operating system automatically. Windows stores its own prompt now but remains unavailable on this Mac.</span>
                                     </label>
-                                    <div class="field">
-                                        <span>Terminal permissions</span>
-                                        <button
-                                            type="button"
-                                            class="secondary-button"
-                                            data-agent-terminal-authorization-button
-                                        >
-                                            Open terminal permissions
-                                        </button>
-                                        <span class="field-help" data-agent-terminal-authorization-status aria-live="polite" hidden></span>
-                                    </div>
+                                    <section
+                                        class="settings-action-package settings-callout-card-primary settings-agent-terminal-action"
+                                        aria-labelledby="agent_terminal_permissions_heading"
+                                    >
+                                        <span class="settings-nav-icon-shell settings-action-package-icon-shell settings-callout-icon-shell" aria-hidden="true">
+                                            <span class="icon icon-settings-agent"></span>
+                                        </span>
+                                        <div class="settings-action-package-copy settings-callout-text">
+                                            <p class="settings-service-name" id="agent_terminal_permissions_heading">Terminal permissions</p>
+                                            <p class="settings-service-note">Open the host permission pane required by the local Agent controller.</p>
+                                            <p class="settings-service-note settings-agent-terminal-authorization-status" data-agent-terminal-authorization-status aria-live="polite" hidden></p>
+                                        </div>
+                                        <div class="settings-action-package-form">
+                                            <button
+                                                type="button"
+                                                class="settings-inline-button settings-inline-button-primary"
+                                                data-agent-terminal-authorization-button
+                                            >
+                                                Open terminal permissions
+                                            </button>
+                                        </div>
+                                    </section>
                                     <div class="field-grid compact-config-grid settings-agent-limit-grid">
                                         <label class="field">
                                             <span>Context Markdown limit (MiB)</span>
@@ -434,37 +445,44 @@
                                         Mirror deletions removes cloud-only files from this destination during the next sync.
                                     </p>
                                 </section>
-                                <section class="shadow-backup-actions" aria-labelledby="shadow_backup_sync_heading">
-                                    <div>
-                                        <p class="workspace-kicker">Cloud sync</p>
-                                        <h3 id="shadow_backup_sync_heading">Synchronize now</h3>
+                                <section
+                                    class="settings-action-package settings-callout-card-primary shadow-backup-actions"
+                                    aria-labelledby="shadow_backup_sync_heading"
+                                >
+                                    <span class="settings-nav-icon-shell settings-action-package-icon-shell settings-callout-icon-shell" aria-hidden="true">
+                                        <span class="icon icon-settings-cloud"></span>
+                                    </span>
+                                    <div class="settings-action-package-copy settings-callout-text">
+                                        <p class="settings-service-name" id="shadow_backup_sync_heading">Synchronize now</p>
+                                        <p class="settings-service-note shadow-backup-status" id="shadow_backup_status" data-phase="{{ shadow_backup_snapshot.phase }}" aria-live="polite">
+                                            <span
+                                                class="suggestion-loading-spinner shadow-backup-status-spinner"
+                                                data-shadow-backup-status-spinner
+                                                aria-hidden="true"
+                                                {% if not shadow_backup_snapshot.running %}hidden{% endif %}
+                                            ></span>
+                                            <span data-shadow-backup-status-copy>{{ shadow_backup_snapshot.message }}</span>
+                                        </p>
+                                        <p class="settings-service-note shadow-backup-last-synced" id="shadow_backup_last_synced" {% if not shadow_backup_snapshot.last_synced_at %}hidden{% endif %}>
+                                            Last successful sync: {{ shadow_backup_snapshot.last_synced_at }}
+                                        </p>
                                     </div>
-                                    <p class="shadow-backup-status" id="shadow_backup_status" data-phase="{{ shadow_backup_snapshot.phase }}" aria-live="polite">
-                                        <span
-                                            class="suggestion-loading-spinner shadow-backup-status-spinner"
-                                            data-shadow-backup-status-spinner
-                                            aria-hidden="true"
-                                            {% if not shadow_backup_snapshot.running %}hidden{% endif %}
-                                        ></span>
-                                        <span data-shadow-backup-status-copy>{{ shadow_backup_snapshot.message }}</span>
-                                    </p>
-                                    <p class="shadow-backup-last-synced" id="shadow_backup_last_synced" {% if not shadow_backup_snapshot.last_synced_at %}hidden{% endif %}>
-                                        Last successful sync: {{ shadow_backup_snapshot.last_synced_at }}
-                                    </p>
-                                    <button
-                                        type="submit"
-                                        form="settings_form"
-                                        formaction="{{ url_for('start_shadow_backup_sync') }}"
-                                        formmethod="post"
-                                        class="secondary-button shadow-backup-sync-button"
-                                        id="shadow_backup_sync_now"
-                                        data-wait-title="Starting cloud sync"
-                                        data-wait-copy="Comparing the local cache with the selected cloud destination and preparing the one-way mirror."
-                                        onclick="return !document.getElementById('shadow_backup_mirror_deletions').checked || window.confirm('Mirror local deletions to the cloud? Cloud-only files in this destination will be permanently removed.')"
-                                        {% if not saved_config.shadow_backup_enabled or shadow_backup_snapshot.running %}disabled{% endif %}
-                                    >
-                                        Sync now
-                                    </button>
+                                    <div class="settings-action-package-form">
+                                        <button
+                                            type="submit"
+                                            form="settings_form"
+                                            formaction="{{ url_for('start_shadow_backup_sync') }}"
+                                            formmethod="post"
+                                            class="settings-inline-button settings-inline-button-primary shadow-backup-sync-button"
+                                            id="shadow_backup_sync_now"
+                                            data-wait-title="Starting cloud sync"
+                                            data-wait-copy="Comparing the local cache with the selected cloud destination and preparing the one-way mirror."
+                                            onclick="return !document.getElementById('shadow_backup_mirror_deletions').checked || window.confirm('Mirror local deletions to the cloud? Cloud-only files in this destination will be permanently removed.')"
+                                            {% if not saved_config.shadow_backup_enabled or shadow_backup_snapshot.running %}disabled{% endif %}
+                                        >
+                                            Sync now
+                                        </button>
+                                    </div>
                                 </section>
                             </section>
 

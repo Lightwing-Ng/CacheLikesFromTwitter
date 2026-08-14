@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.8.1-codex.1
+Code version: v1.8.3-codex.1
 """
 
 from __future__ import annotations
@@ -403,6 +403,57 @@ def test_cache_shared_settings_link_opens_the_downloads_category(
         expect(page.locator('[data-settings-category="downloads"]')).to_have_class(
             re.compile(r"\bis-active\b")
         )
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_cache_action_row_switches_stop_visibility_with_running_state(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Verify the primary Cache action uses the idle and running layouts."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/grok",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        action_row = page.locator("[data-cache-action-row]")
+        stop_form = page.locator(".cache-action-row .sidebar-form-stop")
+        start_button = page.locator("#start_button")
+        expect(action_row).to_have_attribute("data-action-running", "false")
+        expect(stop_form).to_be_hidden()
+        expect(start_button).to_have_text("Start")
+        idle_start_right = start_button.evaluate(
+            """button => {
+                return button.getBoundingClientRect().right;
+            }"""
+        )
+        assert idle_start_right >= action_row.evaluate(
+            "row => row.getBoundingClientRect().right - 2"
+        )
+
+        def fulfill_running_status(route) -> None:
+            response = route.fetch()
+            payload = response.json()
+            payload["running"] = True
+            route.fulfill(response=response, json=payload)
+
+        page.route("**/api/cache/grok/status", fulfill_running_status)
+        page.reload(wait_until="domcontentloaded")
+        expect(action_row).to_have_attribute("data-action-running", "true")
+        expect(page.locator(".cache-action-row .sidebar-form-start")).to_be_hidden()
+        expect(stop_form).to_be_visible()
+        stop_button = stop_form.locator("#stop_button")
+        expect(stop_button).to_have_class(re.compile(r"\bdanger-button\b"))
+        running_stop_right = stop_button.evaluate(
+            "button => button.getBoundingClientRect().right"
+        )
+        assert abs(running_stop_right - idle_start_right) <= 2
     finally:
         context.close()
 

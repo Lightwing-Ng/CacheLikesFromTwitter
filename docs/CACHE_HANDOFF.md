@@ -1,6 +1,6 @@
 # Cache handoff and operating runbook
 
-Documentation version: `v1.2.0-codex.1`
+Documentation version: `v1.2.2-codex.1`
 
 This is the authoritative handoff document for the second Dock item, `Cache`.
 Read it before changing Cache routes, source switching, Text/Media behavior, local
@@ -62,13 +62,16 @@ Grok has two independent runtimes. This split is intentional:
 
 | Operation | UI action | Start route | Status route | Implementation |
 | --- | --- | --- | --- | --- |
-| Grok media | `Start sync` | `POST /cache/grok/start` | `GET /api/cache/grok/status` | `GrokDownloadService` and `grok_downloader.py` |
+| Grok media | `Start` | `POST /cache/grok/start` | `GET /api/cache/grok/status` | `GrokDownloadService` and `grok_downloader.py` |
 | Grok Text | `Cache text history` | `POST /cache/grok/text/start` | `GET /api/cache/grok/text/status` | `GrokHistoryService` and `grok_history.py` |
 
 Text synchronization must not be implemented by scraping the currently visible Grok
 sidebar or by extending the media downloader with unrelated counters. The Text action
 uses the selected Edge profile in an isolated Chromium context, so it can read the
 authenticated session without taking over the foreground Edge window.
+
+The shared media action occupies one right-aligned slot: idle shows `Start`, and a
+running task replaces it in place with the existing red `Stop` form button.
 
 The Text worker performs this sequence:
 

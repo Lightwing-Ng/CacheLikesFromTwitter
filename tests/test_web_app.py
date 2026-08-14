@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.77.1-codex.1
+# Code version: v1.77.3-codex.1
 
 from __future__ import annotations
 
@@ -82,6 +82,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(labels, sorted(labels, key=str.casefold))
         self.assertEqual([source.key for source in CACHE_SOURCE_VIEWS], ["chatgpt", "gemini", "grok", "x"])
         self.assertEqual(len({source.template_name for source in CACHE_SOURCE_VIEWS}), len(CACHE_SOURCE_VIEWS))
+        self.assertEqual({source.start_button_label for source in CACHE_SOURCE_VIEWS}, {"Start"})
 
     def test_cache_source_switcher_uses_one_complete_registry_on_gemini(self) -> None:
         app = create_app()
@@ -291,7 +292,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="status_progress_value"', chatgpt_body)
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
-        self.assertIn('cache-page.js?v=cache-page-v1.7.2-codex.1', chatgpt_body)
+        self.assertIn('cache-page.js?v=cache-page-v1.7.4-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
         self.assertIn('data-cache-content-mode', grok_body)
@@ -308,6 +309,14 @@ class WebAppTests(unittest.TestCase):
             gemini_body,
         )
         self.assertIn('href="/cache/gemini"', gemini_body)
+        for body in (index_body, grok_body, chatgpt_body, gemini_body):
+            with self.subTest(cache_action_state=body[:40]):
+                self.assertIn('data-cache-action-row', body)
+                self.assertIn('data-action-running="false"', body)
+                stop_form_start = body.index('class="sidebar-form sidebar-form-stop"')
+                stop_form_end = body.index(">", stop_form_start)
+                self.assertIn("hidden", body[stop_form_start:stop_form_end])
+                self.assertIn(">Start</button>", body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.2.0-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
@@ -328,6 +337,11 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("function initializeNumberSteppers()", numeric_input_script)
         self.assertNotIn("function initializeNumberSteppers()", cache_page_script)
         self.assertIn("data.progress_unit", cache_page_script)
+        self.assertIn('const cacheActionRow = document.querySelector("[data-cache-action-row]");', cache_page_script)
+        self.assertIn('cacheActionRow.dataset.actionRunning = String(isRunning);', cache_page_script)
+        self.assertIn('const startAction = document.querySelector(".sidebar-form-start");', cache_page_script)
+        self.assertIn('startAction.hidden = isRunning;', cache_page_script)
+        self.assertIn('stopAction.hidden = !isRunning;', cache_page_script)
         for source, body in (
             ("x", index_body),
             ("grok", grok_body),
@@ -395,7 +409,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.16.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.80.4-codex.5"
+                    "style-v2.80.7-codex.1"
                 )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
@@ -537,6 +551,12 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(settings_body.count("data-settings-directory-picker"), 2)
         self.assertIn('data-shadow-backup-status-spinner', settings_body)
         self.assertIn('formaction="/settings/shadow-backup/sync"', settings_body)
+        self.assertEqual(settings_body.count('class="settings-action-package settings-callout-card-primary'), 2)
+        self.assertIn('class="settings-action-package settings-callout-card-primary settings-agent-terminal-action"', settings_body)
+        self.assertIn('class="settings-action-package settings-callout-card-primary shadow-backup-actions"', settings_body)
+        self.assertIn('class="icon icon-settings-agent"', settings_body)
+        self.assertIn('class="icon icon-settings-cloud"', settings_body)
+        self.assertIn('class="settings-inline-button settings-inline-button-primary shadow-backup-sync-button"', settings_body)
         self.assertIn('shadow-backup-settings.js?v=shadow-backup-settings-v1.3.0-codex.1', settings_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', settings_body)
         self.assertIn("Danger zone", settings_body)
@@ -651,7 +671,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.2.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.9.2-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.9.3-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-role="browser-session-account"', local_body)
@@ -937,7 +957,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.9.2-codex.1',
+            'computer-use-agent-v3.9.3-codex.1',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'suggestion-loading-spinner agent-empty-response-spinner',
@@ -1080,6 +1100,12 @@ class WebAppTests(unittest.TestCase):
             "renderTerminalExecution(lastPayload.runtime)",
             'elements.responseAnswer.innerHTML = entry?.response_html || ""',
             "buildAgentPaginationItems(totalPages, responseHistoryPage)",
+            "function buildAgentPaginationRanges(firstPage, lastPage, chunkSize = 5)",
+            "createAgentPaginationRangePicker(item, pagination)",
+            "bindAgentPaginationRangeInteractions()",
+            "agentPaginationRangeFocusRestore",
+            'data-pagination-range-trigger',
+            'data-pagination-range-menu',
             "paginationMotion?.capturePaginationAnimation(",
             "bindCompletedAgentSession(agent)",
             "loadSelectedSessionHistory(input.value)",
@@ -1553,7 +1579,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.80.4-codex.5", body)
+            self.assertIn("style-v2.80.7-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.27.1-codex.1', body)

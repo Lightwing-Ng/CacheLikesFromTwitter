@@ -1,6 +1,6 @@
 """Presentation registry for cache source pages."""
 
-# Code version: v1.3.6-codex.1
+# Code version: v1.3.7-codex.1
 
 from __future__ import annotations
 
@@ -71,7 +71,7 @@ _CACHE_SOURCE_VIEWS = (
         browser_config_field="gemini_browser",
         require_browser_ready=True,
         start_form_id="start_form_gemini",
-        start_button_label="Start sync",
+        start_button_label="Start",
         start_wait_title="Starting Gemini history sync",
         start_wait_copy="Preparing the selected browser session and caching Gemini sessions to Parquet.",
         stop_wait_title="Stopping Gemini history sync",
@@ -99,7 +99,7 @@ _CACHE_SOURCE_VIEWS = (
         browser_config_field="x_browser",
         require_browser_ready=False,
         start_form_id="start_form",
-        start_button_label="Start caching",
+        start_button_label="Start",
         start_wait_title="Starting X cache",
         start_wait_copy="Preparing the signed-in X session and starting the local cache task.",
         stop_wait_title="Stopping X cache",
@@ -121,7 +121,7 @@ _CACHE_SOURCE_VIEWS = (
         browser_config_field="grok_browser",
         require_browser_ready=True,
         start_form_id="start_form_grok",
-        start_button_label="Start sync",
+        start_button_label="Start",
         start_wait_title="Starting Grok sync",
         start_wait_copy="Preparing the selected browser session and starting the local Grok media sync.",
         stop_wait_title="Stopping Grok sync",
@@ -146,7 +146,7 @@ _CACHE_SOURCE_VIEWS = (
         browser_config_field="chatgpt_browser",
         require_browser_ready=True,
         start_form_id="start_form_chatgpt",
-        start_button_label="Start sync",
+        start_button_label="Start",
         start_wait_title="Starting ChatGPT sync",
         start_wait_copy="Preparing the selected browser session and starting the original-resolution image sync.",
         stop_wait_title="Stopping ChatGPT sync",

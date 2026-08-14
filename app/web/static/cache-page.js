@@ -1,4 +1,4 @@
-/* Code version: v1.7.1-codex.1 */
+/* Code version: v1.7.4-codex.1 */
 
 (() => {
     "use strict";
@@ -24,6 +24,9 @@
     const phaseValue = document.getElementById("phase_value");
     const startButton = document.getElementById("start_button");
     const stopButton = document.getElementById("stop_button");
+    const cacheActionRow = document.querySelector("[data-cache-action-row]");
+    const startAction = document.querySelector(".sidebar-form-start");
+    const stopAction = document.querySelector(".sidebar-form-stop");
     const browserSessionPanel = document.querySelector("[data-browser-session-panel]");
     const statusProgress = document.getElementById("status_progress");
     const statusProgressAudit = document.getElementById("status_progress_audit");
@@ -651,10 +654,14 @@
         const browserDownloadReady = browserSessionPanel
             ? browserSessionPanel.dataset.browserDownloadReady !== "false"
             : true;
-        const shouldDisableStart = Boolean(data.running) || !browserDownloadReady;
-        const shouldDisableStop = !Boolean(data.running);
+        const isRunning = Boolean(data.running);
+        const shouldDisableStart = isRunning || !browserDownloadReady;
+        const shouldDisableStop = !isRunning;
         if (startButton && startButton.disabled !== shouldDisableStart) startButton.disabled = shouldDisableStart;
         if (stopButton && stopButton.disabled !== shouldDisableStop) stopButton.disabled = shouldDisableStop;
+        if (cacheActionRow) cacheActionRow.dataset.actionRunning = String(isRunning);
+        if (startAction) startAction.hidden = isRunning;
+        if (stopAction) stopAction.hidden = !isRunning;
     }
 
     function renderStatus(data) {

@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.1-codex.1
+Code version: v1.47.3-codex.1
 """
 
 from pathlib import Path
@@ -94,6 +94,12 @@ def test_cache_sidebar_cards_and_url_inputs_use_the_shared_control_treatment() -
     url_input_rule = stylesheet[url_input_start:stylesheet.index("\n}", url_input_start)]
     action_row_start = stylesheet.index('.page[data-cache-source="grok"] .sidebar-action-row {')
     action_row_rule = stylesheet[action_row_start:stylesheet.index("\n}", action_row_start)]
+    action_slot_start = stylesheet.index(".cache-action-row {")
+    action_slot_rule = stylesheet[action_slot_start:stylesheet.index("\n}", action_slot_start)]
+    action_slot_buttons_start = stylesheet.index(".cache-action-row .sidebar-form-stop,")
+    action_slot_buttons_rule = stylesheet[
+        action_slot_buttons_start:stylesheet.index("\n}", action_slot_buttons_start)
+    ]
 
     for token in (
         "border: var(--frosted-glass-border);",
@@ -106,6 +112,9 @@ def test_cache_sidebar_cards_and_url_inputs_use_the_shared_control_treatment() -
     assert 'font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;' in url_input_rule
     assert "font-weight: var(--font-weight-regular);" in url_input_rule
     assert "padding-block: 10px;" in action_row_rule
+    assert "grid-template-columns: minmax(0, 1fr);" in action_slot_rule
+    assert "grid-column: 1;" in action_slot_buttons_rule
+    assert "justify-self: end;" in action_slot_buttons_rule
 
 
 def test_settings_directory_picker_uses_the_folder_icon() -> None:
@@ -136,19 +145,24 @@ def test_browser_grid_cards_stretch_to_the_row_height() -> None:
     assert "align-items: stretch;" in selector_rule
 
 
-def test_settings_save_action_reuses_the_sibling_action_package() -> None:
-    """Keep the Settings save control on the sibling composite-card pattern."""
+def test_settings_action_packages_reuse_the_sibling_composite_card() -> None:
+    """Keep Settings action surfaces on the sibling composite-card pattern."""
     stylesheet = _stylesheet()
 
     expected_fragments = (
         ".settings-action-package {",
         "grid-template-columns: 36px minmax(0, 1fr);",
+        "--settings-action-package-row-gap: 8px;",
         "--settings-action-package-max-width: 680px;",
+        "background: var(--settings-action-package-background);",
+        "border: var(--settings-action-package-border);",
         ".settings-action-package-icon-shell {",
         ".settings-action-package-copy {",
         "display: contents;",
         ".settings-action-package-form {",
         "justify-self: end;",
+        ".settings-action-package:has(.settings-service-name) {",
+        "--settings-action-button-min-height: 32px;",
         ".settings-inline-button-primary {",
     )
     for fragment in expected_fragments:
@@ -955,7 +969,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.80.4-codex.5 */",
+        "/* Code version: v2.80.7-codex.1 */",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
         "width: 22px;",

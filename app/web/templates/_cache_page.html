@@ -1,4 +1,4 @@
-{# Code version: v1.14.3-codex.1 #}
+{# Code version: v1.14.5-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,14 +8,14 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.80.4-codex.5') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.80.7-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.2.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.8.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.7.2-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.7.4-codex.1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -185,18 +185,23 @@
                     href="{{ url_for('settings') }}#settings-downloads"
                 >Open shared cache settings</a>
                 {% endif %}
-                <div class="sidebar-action-row">
+                <div
+                    class="sidebar-action-row cache-action-row"
+                    data-cache-action-row
+                    data-action-running="{{ 'true' if snapshot.running else 'false' }}"
+                >
                     <form
                         action="{{ url_for('stop_cache_source', source_key=cache_source.key) }}"
                         method="post"
                         class="sidebar-form sidebar-form-stop"
+                        {% if not snapshot.running %}hidden{% endif %}
                         data-wait-title="{{ cache_source.stop_wait_title }}"
                         data-wait-copy="{{ cache_source.stop_wait_copy }}"
                     >
                         <button type="submit" class="danger-button stop-button sidebar-action-button" id="stop_button" {% if not snapshot.running %}disabled{% endif %}>Stop</button>
                     </form>
                     <div class="sidebar-form sidebar-form-start">
-                        <button type="submit" form="{{ cache_source.start_form_id }}" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled{% endif %}>{{ cache_source.start_button_label }}</button>
+                        <button type="submit" form="{{ cache_source.start_form_id }}" class="primary-button sidebar-action-button" id="start_button" {% if snapshot.running %}disabled hidden{% endif %}>{{ cache_source.start_button_label }}</button>
                     </div>
                 </div>
                 {% block secondary_actions %}{% endblock %}
