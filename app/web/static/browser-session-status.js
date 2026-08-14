@@ -1,4 +1,4 @@
-/* Code version: v1.0.0-codex.1 */
+/* Code version: v1.1.0-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v4:";
@@ -62,7 +62,7 @@
     function initBrowserSessionStatus(root, options = {}) {
         if (!root) return null;
 
-        const platform = String(options.platform || root.dataset.browserSessionPlatform || "").trim().toLowerCase();
+        let platform = String(options.platform || root.dataset.browserSessionPlatform || "").trim().toLowerCase();
         const statusCard = root.querySelector('[data-role="browser-session-status"]');
         const statusAccount = root.querySelector('[data-role="browser-session-account"]');
         const statusMessage = root.querySelector('[data-role="browser-session-message"]');
@@ -153,7 +153,8 @@
                 return;
             }
 
-            const cacheKey = `${SESSION_CACHE_PREFIX}${platform}:${activeBrowser}`;
+            const requestPlatform = platform;
+            const cacheKey = `${SESSION_CACHE_PREFIX}${requestPlatform}:${activeBrowser}`;
             const cachedStatus = readCachedStatus(cacheKey);
             if (cachedStatus && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
                 setStatus(cachedStatus.payload, activeBrowser);
@@ -164,9 +165,9 @@
             }
 
             try {
-                const payload = await requestBrowserStatus(platform, activeBrowser);
+                const payload = await requestBrowserStatus(requestPlatform, activeBrowser);
                 writeSessionValue(cacheKey, JSON.stringify({cached_at: Date.now(), payload}));
-                if (activeBrowser !== browserId) return;
+                if (activeBrowser !== browserId || platform !== requestPlatform) return;
                 setStatus(payload, browserId);
             } catch (error) {
                 if (activeBrowser !== browserId) return;
@@ -182,6 +183,15 @@
         const controller = {
             setBrowser(browserId) {
                 void load(String(browserId || "").trim().toLowerCase());
+            },
+            setPlatform(platformId) {
+                const nextPlatform = String(platformId || "").trim().toLowerCase();
+                if (nextPlatform === platform) return;
+                platform = nextPlatform;
+                root.dataset.browserSessionPlatform = nextPlatform;
+                lastPayload = null;
+                clearStatus();
+                void load(activeBrowser);
             },
             refresh() {
                 return load(activeBrowser);

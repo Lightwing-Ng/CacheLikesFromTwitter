@@ -51,12 +51,14 @@ from app.core.config import (
 )
 from app.core.computer_use_agent import (
     BROWSER_OPTIONS as AGENT_BROWSER_OPTIONS,
-    CHATGPT_MODEL_OPTIONS as AGENT_MODEL_OPTIONS,
+    AGENT_MODEL_OPTIONS_BY_PLATFORM,
+    AGENT_PLATFORM_OPTIONS,
     OPERATING_SYSTEM_OPTIONS as AGENT_OPERATING_SYSTEM_OPTIONS,
     ComputerUseAgentService,
     ComputerUseSettingsStore,
     is_loopback_address,
     launch_terminal_authorization,
+    open_agent_in_default_browser,
     open_chatgpt_in_default_browser,
     validate_computer_use_settings,
 )
@@ -756,7 +758,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             ),
             operating_system_options=AGENT_OPERATING_SYSTEM_OPTIONS,
             browser_options=AGENT_BROWSER_OPTIONS,
-            model_options=AGENT_MODEL_OPTIONS,
+            platform_options=AGENT_PLATFORM_OPTIONS,
+            model_options_by_platform=AGENT_MODEL_OPTIONS_BY_PLATFORM,
             render_prompt_markdown=render_prompt_markdown,
         )
 
@@ -779,6 +782,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 workspace_path=str(payload.get("workspace_path", "")),
                 operating_system=str(payload.get("operating_system", "")),
                 browser=str(payload.get("browser", "")),
+                platform=str(payload.get("platform", computer_use_settings.settings.platform)),
                 model=str(payload.get("model", computer_use_settings.settings.model)),
             )
         except (RuntimeError, ValueError) as exc:
@@ -808,12 +812,16 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.post("/api/agent/open-conversation")
     def open_agent_conversation():
-        """Open the current Agent ChatGPT target in the system default browser."""
+        """Open the current Agent Web target in the system default browser."""
         require_local_agent_request()
         snapshot = computer_use_agent_service.snapshot()
         try:
-            result = open_chatgpt_in_default_browser(
-                str(snapshot.get("conversation_url", ""))
+            platform = str(snapshot.get("platform", computer_use_settings.settings.platform))
+            target_url = str(snapshot.get("conversation_url", ""))
+            result = (
+                open_chatgpt_in_default_browser(target_url)
+                if platform == "chatgpt"
+                else open_agent_in_default_browser(platform, target_url)
             )
         except RuntimeError as exc:
             return jsonify({"error": str(exc)}), 409
@@ -829,6 +837,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 str(payload.get("workspace_path", "")),
                 saved_config,
                 operating_system=str(payload.get("operating_system", "")),
+                platform=str(payload.get("platform", "")),
                 browser=str(payload.get("browser", "")),
                 model=str(payload.get("model", "")),
                 session_mode=str(payload.get("session_mode", "new")),

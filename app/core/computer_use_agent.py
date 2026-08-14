@@ -1,6 +1,6 @@
-"""Browser-mediated Computer Use agent for signed-in ChatGPT Web.
+"""Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.4.1-codex.1
+Code version: v3.5.0-codex.1
 """
 
 from __future__ import annotations
@@ -39,6 +39,10 @@ from .state import utc_now
 LOGGER = logging.getLogger(__name__)
 CHATGPT_HOME_URL = "https://chatgpt.com/"
 CHATGPT_HOSTS = {"chatgpt.com", "www.chatgpt.com"}
+GEMINI_HOME_URL = "https://gemini.google.com/app"
+GEMINI_HOSTS = {"gemini.google.com"}
+GROK_HOME_URL = "https://grok.com/"
+GROK_HOSTS = {"grok.com", "www.grok.com"}
 DEFAULT_AGENT_SETTINGS_PATH = (
     Path.home()
     / "Library/Application Support/CacheLikesFromTwitter/computer-use-agent.json"
@@ -75,15 +79,61 @@ WEB_PROGRESS_TEXT = {"thinking", "working", "searching", "analyzing", "generatin
 SUPPORTED_BROWSERS = frozenset({"chrome", "edge", "safari"})
 SUPPORTED_OPERATING_SYSTEMS = frozenset({"macos", "windows"})
 SUPPORTED_AGENT_SESSION_MODES = frozenset({"new", "recent", "project_new", "project_session"})
+SUPPORTED_AGENT_PLATFORMS = frozenset({"chatgpt", "gemini", "grok"})
+DEFAULT_AGENT_PLATFORM = "chatgpt"
 DEFAULT_CHATGPT_MODEL = "gpt-5.6-sol"
 CHATGPT_MODEL_OPTIONS = (
     {
         "key": DEFAULT_CHATGPT_MODEL,
         "label": "GPT-5.6 Sol",
+        "ui_label": "5.6 Sol",
         "remote_label": "GPT-5.6 Sol",
     },
 )
 SUPPORTED_CHATGPT_MODELS = frozenset(option["key"] for option in CHATGPT_MODEL_OPTIONS)
+GEMINI_MODEL_OPTIONS = (
+    {
+        "key": "gemini-3.1-pro",
+        "label": "Gemini 3.1 Pro",
+        "ui_label": "3.1 Pro",
+        "remote_labels": ("Gemini 3.1 Pro", "3.1 Pro"),
+    },
+)
+GROK_MODEL_OPTIONS = (
+    {
+        "key": "grok-auto",
+        "label": "Auto",
+        "ui_label": "Auto",
+        "remote_labels": ("Auto", "自動", "自动"),
+    },
+)
+AGENT_MODEL_OPTIONS_BY_PLATFORM = {
+    "chatgpt": CHATGPT_MODEL_OPTIONS,
+    "gemini": GEMINI_MODEL_OPTIONS,
+    "grok": GROK_MODEL_OPTIONS,
+}
+AGENT_PLATFORM_OPTIONS = (
+    {
+        "key": "chatgpt",
+        "label": "ChatGPT",
+        "home_url": CHATGPT_HOME_URL,
+        "hosts": CHATGPT_HOSTS,
+    },
+    {
+        "key": "gemini",
+        "label": "Gemini",
+        "home_url": GEMINI_HOME_URL,
+        "hosts": GEMINI_HOSTS,
+    },
+    {
+        "key": "grok",
+        "label": "Grok",
+        "home_url": GROK_HOME_URL,
+        "hosts": GROK_HOSTS,
+    },
+)
+AGENT_PLATFORM_BY_KEY = {option["key"]: option for option in AGENT_PLATFORM_OPTIONS}
+AGENT_MODEL_OPTIONS = CHATGPT_MODEL_OPTIONS
 OPERATING_SYSTEM_OPTIONS = (
     {
         "key": "macos",
@@ -188,6 +238,7 @@ class ComputerUseSettings:
 
     workspace_path: str = str(PROJECT_ROOT)
     operating_system: str = "macos"
+    platform: str = DEFAULT_AGENT_PLATFORM
     browser: str = "edge"
     model: str = DEFAULT_CHATGPT_MODEL
     target_url: str = CHATGPT_HOME_URL
@@ -213,7 +264,7 @@ class AgentRunSnapshot:
 
     running: bool = False
     phase: str = "idle"
-    message: str = "Ready to use the signed-in ChatGPT Web session."
+    message: str = "Ready to use a signed-in Web AI session."
     engine: str = "computer_use"
     prompt: str = ""
     workspace_path: str = ""
@@ -228,6 +279,8 @@ class AgentRunSnapshot:
     turn_count: int = 0
     bodycheck_passed: bool = False
     session_mode: str = "new"
+    platform: str = DEFAULT_AGENT_PLATFORM
+    model: str = DEFAULT_CHATGPT_MODEL
 
 
 @dataclass(slots=True)
@@ -328,13 +381,50 @@ def launch_terminal_authorization(operating_system: str) -> dict[str, Any]:
     }
 
 
-def open_chatgpt_in_default_browser(target_url: str = "") -> dict[str, Any]:
-    """Open a trusted ChatGPT target through the host system's default browser."""
-    destination = (
-        normalize_chatgpt_conversation_url(target_url)
-        or normalize_chatgpt_project_url(target_url)
-        or CHATGPT_HOME_URL
-    )
+def _platform_model_options(platform: str) -> tuple[dict[str, Any], ...]:
+    """Return the supported remote model choices for one web platform."""
+    return tuple(AGENT_MODEL_OPTIONS_BY_PLATFORM.get(platform, ()))
+
+
+def _platform_home_url(platform: str) -> str:
+    """Return the official home URL for one supported web platform."""
+    option = AGENT_PLATFORM_BY_KEY.get(platform)
+    if option is None:
+        raise ValueError("Choose ChatGPT, Gemini, or Grok for the Web Agent.")
+    return str(option["home_url"])
+
+
+def _platform_hosts(platform: str) -> set[str]:
+    """Return the official HTTPS hosts accepted for one web platform."""
+    option = AGENT_PLATFORM_BY_KEY.get(platform)
+    if option is None:
+        raise ValueError("Choose ChatGPT, Gemini, or Grok for the Web Agent.")
+    return set(option["hosts"])
+
+
+def _normalize_web_agent_target(platform: str, target_url: str = "") -> str:
+    """Normalize one safe target without allowing cross-site browser navigation."""
+    if platform == "chatgpt":
+        return (
+            normalize_chatgpt_conversation_url(target_url)
+            or normalize_chatgpt_project_url(target_url)
+            or CHATGPT_HOME_URL
+        )
+    candidate = str(target_url or "").strip()
+    parts = urlsplit(candidate)
+    if (
+        parts.scheme == "https"
+        and (parts.hostname or "").lower() in _platform_hosts(platform)
+        and parts.path
+    ):
+        return candidate
+    return _platform_home_url(platform)
+
+
+def open_agent_in_default_browser(platform: str = DEFAULT_AGENT_PLATFORM, target_url: str = "") -> dict[str, Any]:
+    """Open one trusted Web Agent target through the host system's default browser."""
+    selected_platform = str(platform or DEFAULT_AGENT_PLATFORM).strip().lower()
+    destination = _normalize_web_agent_target(selected_platform, target_url)
     process_options: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
@@ -353,14 +443,24 @@ def open_chatgpt_in_default_browser(target_url: str = "") -> dict[str, Any]:
         subprocess.Popen(command, **process_options)
     except OSError as exc:
         raise RuntimeError(
-            f"Could not open ChatGPT in the system default browser: {exc}"
+            f"Could not open {selected_platform.title()} in the system default browser: {exc}"
         ) from exc
 
     return {
         "opened": True,
+        "platform": selected_platform,
         "url": destination,
-        "targeted_conversation": bool(normalize_chatgpt_conversation_url(target_url)),
+        "targeted_conversation": bool(
+            selected_platform == "chatgpt" and normalize_chatgpt_conversation_url(target_url)
+        ),
     }
+
+
+def open_chatgpt_in_default_browser(target_url: str = "") -> dict[str, Any]:
+    """Open a trusted ChatGPT target through the host system's default browser."""
+    result = open_agent_in_default_browser("chatgpt", target_url)
+    result.pop("platform", None)
+    return result
 
 
 def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettings:
@@ -373,18 +473,28 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
     if operating_system not in SUPPORTED_OPERATING_SYSTEMS:
         raise ValueError("The Agent operating system must be macOS or Windows.")
 
+    platform = str(payload.get("platform", DEFAULT_AGENT_PLATFORM)).strip().lower()
+    if platform not in SUPPORTED_AGENT_PLATFORMS:
+        raise ValueError("The Agent platform must be ChatGPT, Gemini, or Grok.")
+
     browser = str(payload.get("browser", "edge")).strip().lower()
     if browser not in SUPPORTED_BROWSERS:
         raise ValueError("The Agent browser must be Safari, Edge, or Chrome.")
+    if platform != "chatgpt" and browser == "safari":
+        raise ValueError("Gemini and Grok Agent sessions require Edge or Chrome.")
 
-    model = str(payload.get("model", DEFAULT_CHATGPT_MODEL)).strip().lower()
-    if model not in SUPPORTED_CHATGPT_MODELS:
-        raise ValueError("Choose a supported ChatGPT model.")
+    default_model = _platform_model_options(platform)[0]["key"]
+    model = str(payload.get("model", default_model)).strip().lower()
+    supported_models = frozenset(option["key"] for option in _platform_model_options(platform))
+    if model not in supported_models:
+        platform_label = AGENT_PLATFORM_BY_KEY[platform]["label"]
+        raise ValueError(f"Choose a supported {platform_label} model.")
 
-    target_url = str(payload.get("target_url", CHATGPT_HOME_URL)).strip()
+    target_url = str(payload.get("target_url", _platform_home_url(platform))).strip()
     target_parts = urlsplit(target_url)
-    if target_parts.scheme != "https" or (target_parts.hostname or "").lower() not in CHATGPT_HOSTS:
-        raise ValueError("The Agent target must use the official ChatGPT HTTPS host.")
+    if target_parts.scheme != "https" or (target_parts.hostname or "").lower() not in _platform_hosts(platform):
+        platform_label = AGENT_PLATFORM_BY_KEY[platform]["label"]
+        raise ValueError(f"The Agent target must use the official {platform_label} HTTPS host.")
 
     context_limit_mib = _bounded_int(
         payload.get("context_limit_mib", DEFAULT_CONTEXT_LIMIT_MIB),
@@ -419,6 +529,7 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
     return ComputerUseSettings(
         workspace_path=str(workspace),
         operating_system=operating_system,
+        platform=platform,
         browser=browser,
         model=model,
         target_url=target_url,
@@ -494,6 +605,7 @@ class ComputerUseSettingsStore:
         workspace_path: str,
         operating_system: str,
         browser: str,
+        platform: str = DEFAULT_AGENT_PLATFORM,
         model: str | None = None,
     ) -> ComputerUseSettings:
         candidate = asdict(self.settings)
@@ -501,10 +613,13 @@ class ComputerUseSettingsStore:
             {
                 "workspace_path": workspace_path,
                 "operating_system": operating_system,
+                "platform": platform,
                 "browser": browser,
                 "model": model or self.settings.model,
             }
         )
+        if platform != self.settings.platform:
+            candidate["target_url"] = _platform_home_url(platform)
         return self.update(validate_computer_use_settings(candidate))
 
     def snapshot(self) -> dict[str, Any]:
@@ -540,11 +655,21 @@ def resolve_agent_session_target(
     session_mode: str,
     conversation_url: str = "",
     project_url: str = "",
+    platform: str = DEFAULT_AGENT_PLATFORM,
 ) -> str:
-    """Resolve one UI session choice to a verified ChatGPT Web target URL."""
+    """Resolve one UI session choice to a verified Web Agent target URL."""
     mode = str(session_mode or "new").strip().lower()
     if mode not in SUPPORTED_AGENT_SESSION_MODES:
-        raise ValueError("Choose a supported ChatGPT session source.")
+        raise ValueError("Choose a supported Web Agent session source.")
+    selected_platform = str(platform or DEFAULT_AGENT_PLATFORM).strip().lower()
+    if selected_platform not in SUPPORTED_AGENT_PLATFORMS:
+        raise ValueError("Choose ChatGPT, Gemini, or Grok for the Web Agent.")
+    if selected_platform != "chatgpt":
+        if mode != "new":
+            raise ValueError(
+                f"{AGENT_PLATFORM_BY_KEY[selected_platform]['label']} currently starts a new Web session only."
+            )
+        return _platform_home_url(selected_platform)
     if mode == "new":
         return CHATGPT_HOME_URL
 
@@ -568,13 +693,18 @@ def resolve_agent_session_target(
     return normalized_conversation_url
 
 
-def agent_session_opening_message(session_mode: str, browser_label: str) -> str:
-    """Describe the selected ChatGPT session source in the live Agent status."""
+def agent_session_opening_message(
+    session_mode: str,
+    browser_label: str,
+    platform: str = DEFAULT_AGENT_PLATFORM,
+) -> str:
+    """Describe the selected Web Agent session source in the live Agent status."""
+    platform_label = AGENT_PLATFORM_BY_KEY.get(platform, AGENT_PLATFORM_BY_KEY[DEFAULT_AGENT_PLATFORM])["label"]
     messages = {
-        "new": "Opening a new signed-in ChatGPT Web session",
-        "recent": "Joining the selected recent ChatGPT Web session",
-        "project_new": "Opening a new session in the selected ChatGPT project",
-        "project_session": "Joining the selected session in the ChatGPT project",
+        "new": f"Opening a new signed-in {platform_label} Web session",
+        "recent": f"Joining the selected recent {platform_label} Web session",
+        "project_new": f"Opening a new session in the selected {platform_label} project",
+        "project_session": f"Joining the selected session in the {platform_label} project",
     }
     return f"{messages.get(session_mode, messages['new'])} in {browser_label}."
 
@@ -585,7 +715,7 @@ def build_context_markdown(
     settings: ComputerUseSettings,
     destination: Path,
 ) -> tuple[Path, int]:
-    """Build a bounded initial context bundle for a fresh ChatGPT conversation."""
+    """Build a bounded initial context bundle for a fresh Web Agent conversation."""
     byte_limit = settings.context_limit_mib * 1_024 * 1_024
     sections = [
         "# Local Computer Use task\n",
@@ -724,19 +854,19 @@ def _path_has_ignored_part(relative: Path) -> bool:
 
 
 def parse_agent_action(response: str) -> dict[str, Any]:
-    """Parse one strict JSON controller action from a ChatGPT response."""
+    """Parse one strict JSON controller action from a Web provider response."""
     text = str(response or "").strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", text, flags=re.DOTALL | re.IGNORECASE)
     if fenced:
         text = fenced.group(1).strip()
     if len(text) > MAX_ACTION_JSON_CHARS:
-        raise ValueError("ChatGPT returned an action that exceeds the controller limit.")
+        raise ValueError("The Web provider returned an action that exceeds the controller limit.")
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
-        raise ValueError("ChatGPT must return exactly one JSON controller action.") from exc
+        raise ValueError("The Web provider must return exactly one JSON controller action.") from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("action"), str):
-        raise ValueError("ChatGPT returned an invalid controller action.")
+        raise ValueError("The Web provider returned an invalid controller action.")
     return payload
 
 
@@ -1097,7 +1227,7 @@ def _stop_macos_idle_sleep_assertion(process: subprocess.Popen[Any] | None) -> N
 
 
 class ComputerUseAgentService:
-    """Run a fresh ChatGPT Web action loop for one selected local project."""
+    """Run a fresh Web Agent action loop for one selected local project."""
 
     def __init__(
         self,
@@ -1126,6 +1256,7 @@ class ComputerUseAgentService:
         config: CrawlConfig,
         *,
         operating_system: str | None = None,
+        platform: str | None = None,
         browser: str | None = None,
         model: str | None = None,
         session_mode: str = "new",
@@ -1142,6 +1273,7 @@ class ComputerUseAgentService:
             {
                 "workspace_path": workspace_path,
                 "operating_system": operating_system or base.operating_system,
+                "platform": platform or base.platform,
                 "browser": browser or base.browser,
                 "model": model or base.model,
             }
@@ -1152,8 +1284,13 @@ class ComputerUseAgentService:
                 "Windows execution is not available on this macOS host yet. Choose macOS to run the task."
             )
         workspace = resolve_workspace_path(settings.workspace_path)
-        target_url = resolve_agent_session_target(session_mode, conversation_url, project_url)
         normalized_session_mode = str(session_mode or "new").strip().lower()
+        target_url = resolve_agent_session_target(
+            normalized_session_mode,
+            conversation_url,
+            project_url,
+            settings.platform,
+        )
         self._settings_store.update(settings)
 
         with self._lock:
@@ -1166,12 +1303,15 @@ class ComputerUseAgentService:
                 message=agent_session_opening_message(
                     normalized_session_mode,
                     settings.browser.title(),
+                    settings.platform,
                 ),
                 prompt=clean_prompt,
                 workspace_path=str(workspace),
                 conversation_url=target_url,
                 started_at=utc_now(),
                 session_mode=normalized_session_mode,
+                platform=settings.platform,
+                model=settings.model,
             )
             self._worker = Thread(
                 target=self._run,
@@ -1266,7 +1406,7 @@ class ComputerUseAgentService:
                 self._snapshot.message = (
                     "Agent request stopped."
                     if stopped
-                    else "ChatGPT Web completed the project task after local bodycheck."
+                    else f"{AGENT_PLATFORM_BY_KEY[settings.platform]['label']} Web completed the project task after local bodycheck."
                 )
                 self._snapshot.response = response
                 self._snapshot.conversation_url = conversation_url
@@ -1293,7 +1433,7 @@ class ComputerUseAgentService:
                     setattr(self._snapshot, key, value)
 
 
-def run_chatgpt_web_computer_use(
+def run_web_computer_use(
     *,
     prompt: str,
     workspace: Path,
@@ -1307,7 +1447,7 @@ def run_chatgpt_web_computer_use(
     session_mode: str = "new",
     read_only: bool = False,
 ) -> tuple[str, str, int, bool]:
-    """Run one selected ChatGPT Web session as a local controller action loop."""
+    """Run one selected Web AI session as a local controller action loop."""
     descriptor = browser_descriptors(config)[settings.browser]
     controller = WorkspaceController(
         workspace,
@@ -1316,13 +1456,18 @@ def run_chatgpt_web_computer_use(
         process_changed,
         read_only=read_only,
     )
-    selected_target_url = target_url or settings.target_url
-    initial_message = _initial_chatgpt_message(
+    selected_target_url = target_url or (
+        _platform_home_url(settings.platform)
+        if settings.platform != DEFAULT_AGENT_PLATFORM
+        else settings.target_url
+    )
+    initial_message = _initial_web_agent_message(
         prompt,
         workspace,
         settings,
         context_path,
         session_mode,
+        settings.platform,
     )
 
     if descriptor.engine == "safari":
@@ -1336,6 +1481,7 @@ def run_chatgpt_web_computer_use(
                 controller=controller,
                 context_path=context_path,
                 settings=settings,
+                platform=settings.platform,
                 session_mode=session_mode,
                 selected_target_url=selected_target_url,
                 should_stop=should_stop,
@@ -1359,6 +1505,7 @@ def run_chatgpt_web_computer_use(
                 controller=controller,
                 context_path=context_path,
                 settings=settings,
+                platform=settings.platform,
                 session_mode=session_mode,
                 selected_target_url=selected_target_url,
                 should_stop=should_stop,
@@ -1366,19 +1513,21 @@ def run_chatgpt_web_computer_use(
             )
 
 
-def _initial_chatgpt_message(
+def _initial_web_agent_message(
     prompt: str,
     workspace: Path,
     settings: ComputerUseSettings,
     context_path: Path,
     session_mode: str,
+    platform: str = DEFAULT_AGENT_PLATFORM,
 ) -> str:
+    platform_label = AGENT_PLATFORM_BY_KEY.get(platform, AGENT_PLATFORM_BY_KEY[DEFAULT_AGENT_PLATFORM])["label"]
     session_instruction = {
-        "new": "Start a new root-level ChatGPT conversation for this task.",
-        "recent": "Continue the selected existing root-level ChatGPT conversation for this task.",
-        "project_new": "Start a new conversation inside the selected ChatGPT project for this task.",
-        "project_session": "Continue the selected existing conversation inside the selected ChatGPT project for this task.",
-    }.get(session_mode, "Start a new root-level ChatGPT conversation for this task.")
+        "new": f"Start a new root-level {platform_label} Web conversation for this task.",
+        "recent": f"Continue the selected existing root-level {platform_label} Web conversation for this task.",
+        "project_new": f"Start a new conversation inside the selected {platform_label} project for this task.",
+        "project_session": f"Continue the selected existing conversation inside the selected {platform_label} project for this task.",
+    }.get(session_mode, f"Start a new root-level {platform_label} Web conversation for this task.")
     return (
         settings.system_prompt
         + "\n\nA local context Markdown file is attached when the browser supports direct attachment. "
@@ -1393,6 +1542,31 @@ def _initial_chatgpt_message(
     )
 
 
+def _initial_chatgpt_message(
+    prompt: str,
+    workspace: Path,
+    settings: ComputerUseSettings,
+    context_path: Path,
+    session_mode: str,
+) -> str:
+    """Keep the previous ChatGPT-specific helper as a compatibility wrapper."""
+    return _initial_web_agent_message(
+        prompt,
+        workspace,
+        settings,
+        context_path,
+        session_mode,
+        "chatgpt",
+    )
+
+
+def run_chatgpt_web_computer_use(
+    **kwargs: Any,
+) -> tuple[str, str, int, bool]:
+    """Compatibility wrapper for callers that still use the old runner name."""
+    return run_web_computer_use(**kwargs)
+
+
 def _run_web_action_loop(
     *,
     page: Any,
@@ -1405,23 +1579,31 @@ def _run_web_action_loop(
     selected_target_url: str,
     should_stop: Callable[[], bool],
     update: Callable[..., None],
+    platform: str = DEFAULT_AGENT_PLATFORM,
 ) -> tuple[str, str, int, bool]:
-    """Exchange JSON actions and compact observations in one ChatGPT conversation."""
-    _verify_chatgpt_page(page, browser_kind, selected_target_url)
-    _select_chat_mode(page, browser_kind)
-    model_selected = _select_chatgpt_model(page, browser_kind, settings.model)
+    """Exchange JSON actions and compact observations in one Web AI conversation."""
+    _verify_agent_page(page, browser_kind, platform, selected_target_url)
+    if platform == "chatgpt":
+        _select_chat_mode(page, browser_kind)
+    model_selected = _select_web_model(page, browser_kind, platform, settings.model)
     if not model_selected:
         update(
             phase="preparing",
-            message="ChatGPT Web did not expose a model selector; keeping the selected session's current model.",
+            message=(
+                f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Web did not expose a model selector; "
+                "keeping the selected session's current model."
+            ),
         )
     attached = _attach_context_file(page, browser_kind, context_path)
     update(
         phase="submitting",
         message=(
-            "Uploading the local Markdown context and opening the selected ChatGPT session."
+            f"Uploading the local Markdown context and opening the selected {AGENT_PLATFORM_BY_KEY[platform]['label']} Web session."
             if attached
-            else "Opening the selected ChatGPT session; the controller will stream context on demand."
+            else (
+                f"Opening the selected {AGENT_PLATFORM_BY_KEY[platform]['label']} Web session; "
+                "the controller will stream context on demand."
+            )
         ),
     )
     response = _submit_and_wait(
@@ -1429,9 +1611,10 @@ def _run_web_action_loop(
         browser_kind,
         initial_message,
         should_stop,
+        platform=platform,
         on_submitted=lambda: update(
             phase="running",
-            message="Prompt sent to ChatGPT Web; waiting for the first controller action.",
+            message=f"Prompt sent to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web; waiting for the first controller action.",
         ),
     )
     conversation_url = str(page.url or "")
@@ -1450,7 +1633,7 @@ def _run_web_action_loop(
             invalid_action_retries += 1
             if invalid_action_retries > MAX_INVALID_ACTION_RETRIES:
                 raise RuntimeError(
-                    "ChatGPT returned too many invalid controller actions in a row."
+                    f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned too many invalid controller actions in a row."
                 ) from exc
             observation = {
                 "ok": False,
@@ -1462,9 +1645,10 @@ def _run_web_action_loop(
                 browser_kind,
                 _observation_message(turn_index + 1, observation),
                 should_stop,
+                platform=platform,
                 on_submitted=lambda: update(
                     phase="running",
-                    message="Correction sent to ChatGPT Web; waiting for a valid controller action.",
+                    message=f"Correction sent to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web; waiting for a valid controller action.",
                 ),
             )
             continue
@@ -1485,16 +1669,17 @@ def _run_web_action_loop(
                         },
                     ),
                     should_stop,
+                    platform=platform,
                     on_submitted=lambda: update(
                         phase="running",
-                        message="Bodycheck requirement sent; waiting for the next ChatGPT action.",
+                        message=f"Bodycheck requirement sent; waiting for the next {AGENT_PLATFORM_BY_KEY[platform]['label']} action.",
                     ),
                 )
                 continue
             final_response = _render_final_action(action)
             update(
                 phase="finalizing",
-                message="ChatGPT returned a final result after the current bodycheck.",
+                message=f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned a final result after the current bodycheck.",
                 response=final_response,
                 conversation_url=str(page.url or conversation_url),
                 turn_count=turn_index,
@@ -1513,7 +1698,7 @@ def _run_web_action_loop(
         )
         update(
             phase="running",
-            message=f"ChatGPT requested local {action_name or 'controller'} action.",
+            message=f"{AGENT_PLATFORM_BY_KEY[platform]['label']} requested local {action_name or 'controller'} action.",
             activity=activity,
             conversation_url=str(page.url or conversation_url),
             turn_count=turn_index,
@@ -1536,14 +1721,15 @@ def _run_web_action_loop(
             browser_kind,
             _observation_message(turn_index, observation),
             should_stop,
+            platform=platform,
             on_submitted=lambda: update(
                 phase="running",
-                message="Controller observation sent; waiting for the next ChatGPT action.",
+                message=f"Controller observation sent; waiting for the next {AGENT_PLATFORM_BY_KEY[platform]['label']} action.",
             ),
         )
 
     raise RuntimeError(
-        f"ChatGPT reached the configured {settings.max_turns:,}-turn limit before returning final."
+        f"{AGENT_PLATFORM_BY_KEY[platform]['label']} reached the configured {settings.max_turns:,}-turn limit before returning final."
     )
 
 
@@ -1601,6 +1787,111 @@ def _verify_chatgpt_page(
     )
     if signed_out:
         raise RuntimeError(f"{settings_browser_label(browser_kind)} is not signed in to ChatGPT Web.")
+
+
+def _web_composer_selector(platform: str) -> str:
+    """Return the least-specific composer contract accepted for one provider."""
+    return {
+        "chatgpt": "#prompt-textarea",
+        "gemini": 'textarea, [contenteditable="true"]',
+        "grok": 'textarea, [contenteditable="true"]',
+    }.get(platform, 'textarea, [contenteditable="true"]')
+
+
+def _web_assistant_selector(platform: str) -> str:
+    """Return ordered assistant message selectors for one provider."""
+    return {
+        "chatgpt": '[data-message-author-role="assistant"]',
+        "gemini": 'model-response, [data-test-id="model-response"], .model-response-text, message-content',
+        "grok": (
+            '[data-testid="assistant-message"], [data-testid*="assistant" i], '
+            '[data-testid*="response" i], [data-role="assistant"], '
+            '[data-message-author-role="assistant"]'
+        ),
+    }.get(platform, '[data-message-author-role="assistant"]')
+
+
+def _web_target_is_open(platform: str, target_url: str, current_url: str) -> bool:
+    """Check that a provider page stayed on its official host and selected path."""
+    target = urlsplit(str(target_url or ""))
+    current = urlsplit(str(current_url or ""))
+    hosts = _platform_hosts(platform)
+    if (target.hostname or "").lower() not in hosts or (current.hostname or "").lower() not in hosts:
+        return False
+    if platform == "chatgpt":
+        return _chatgpt_target_is_open(target_url, current_url)
+    target_path = target.path.rstrip("/") or "/"
+    current_path = current.path.rstrip("/") or "/"
+    return current_path == target_path or current_path.startswith(f"{target_path}/")
+
+
+def _wait_for_web_composer(page: Any, platform: str) -> None:
+    """Wait for a provider's composer without bringing its background window forward."""
+    selector = _web_composer_selector(platform)
+    last_error: Exception | None = None
+    for attempt in range(1, CHATGPT_COMPOSER_RELOAD_ATTEMPTS + 1):
+        try:
+            page.locator(selector).first.wait_for(
+                state="visible",
+                timeout=CHATGPT_COMPOSER_TIMEOUT_SECONDS * 1_000,
+            )
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt >= CHATGPT_COMPOSER_RELOAD_ATTEMPTS:
+                break
+            page.reload(wait_until="domcontentloaded", timeout=90_000)
+    platform_label = AGENT_PLATFORM_BY_KEY.get(platform, AGENT_PLATFORM_BY_KEY[DEFAULT_AGENT_PLATFORM])["label"]
+    raise RuntimeError(
+        f"The Chromium browser loaded {platform_label}, but its message composer did not become ready after one reload."
+    ) from last_error
+
+
+def _verify_agent_page(
+    page: Any,
+    browser_kind: str,
+    platform: str,
+    selected_target_url: str | None = None,
+) -> None:
+    """Verify one provider's authenticated composer before any project content is sent."""
+    if platform == "chatgpt":
+        _verify_chatgpt_page(page, browser_kind, selected_target_url)
+        return
+    if browser_kind == "safari":
+        raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Agent sessions require Edge or Chrome.")
+    _wait_for_web_composer(page, platform)
+    current_url = str(page.url or "")
+    if (urlsplit(current_url).hostname or "").lower() not in _platform_hosts(platform):
+        raise RuntimeError(f"The selected browser did not reach {AGENT_PLATFORM_BY_KEY[platform]['label']} Web.")
+    if selected_target_url and not _web_target_is_open(platform, selected_target_url, current_url):
+        raise RuntimeError(
+            f"The selected {AGENT_PLATFORM_BY_KEY[platform]['label']} session did not finish opening in the browser."
+        )
+    signed_out = bool(
+        page.evaluate(
+            r"""() => {
+                const visible = (element) => element && element.getClientRects().length > 0
+                    && getComputedStyle(element).visibility !== 'hidden'
+                    && getComputedStyle(element).display !== 'none';
+                const bodyText = (document.body?.innerText || '').trim();
+                const account = document.querySelector(
+                    '[aria-label^="Google Account"], [aria-label*="Google Account:"], '
+                    '[data-testid*="account" i], [data-testid*="profile" i]'
+                );
+                const composer = document.querySelector('textarea, [contenteditable="true"]');
+                const authAction = [...document.querySelectorAll('a,button')].some((element) =>
+                    visible(element) && /^(sign in|log in|sign up)$/i.test(
+                        (element.innerText || element.textContent || '').trim()
+                    )
+                );
+                return Boolean(authAction && !account && !composer && bodyText);
+            }"""
+        )
+    )
+    if signed_out:
+        raise RuntimeError(
+            f"{settings_browser_label(browser_kind)} is not signed in to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web."
+        )
 
 
 def _wait_for_chromium_composer(page: Any) -> None:
@@ -1742,6 +2033,87 @@ def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
     return False
 
 
+def _select_web_model(page: Any, browser_kind: str, platform: str, model: str) -> bool:
+    """Select a provider model when its page exposes a compatible model menu."""
+    if platform == "chatgpt":
+        return _select_chatgpt_model(page, browser_kind, model)
+    options = _platform_model_options(platform)
+    option = next((candidate for candidate in options if candidate["key"] == model), None)
+    if option is None:
+        raise ValueError(f"Choose a supported {AGENT_PLATFORM_BY_KEY[platform]['label']} model.")
+    remote_labels = tuple(option.get("remote_labels") or (option.get("label", ""),))
+    result = page.evaluate(
+        r"""async ({remoteLabels, platform}) => {
+            const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            const isVisible = (element) => {
+                const style = window.getComputedStyle(element);
+                return element.getClientRects().length > 0
+                    && style.visibility !== 'hidden'
+                    && style.display !== 'none';
+            };
+            const matches = (value) => {
+                const normalized = normalize(value);
+                return remoteLabels.some((label) => {
+                    const target = normalize(label);
+                    return normalized === target || normalized.includes(target);
+                });
+            };
+            const labelFor = (element) => `${element.getAttribute('aria-label') || ''} ${element.innerText || element.textContent || ''}`.trim();
+            const triggers = [...document.querySelectorAll('button, [role="button"]')]
+                .filter(isVisible)
+                .filter((element) => !element.closest('[role="menu"], [role="listbox"]'));
+            const trigger = triggers.find((element) => {
+                const label = labelFor(element);
+                const normalized = normalize(label);
+                if (matches(label)) return true;
+                if (platform === 'gemini' && /mode picker|model|模式|模型|选择|選擇/i.test(normalized)) return true;
+                return platform === 'grok' && /model|mode|auto|grok|模式|模型|选择|選擇|自動|自动/i.test(normalized);
+            });
+            if (!trigger) return {ok: false, reason: 'model-control-not-found', available: []};
+            if (matches(labelFor(trigger))) return {ok: true, selected: normalize(labelFor(trigger)), available: []};
+            trigger.click();
+            let candidates = [];
+            for (let attempt = 0; attempt < 10; attempt += 1) {
+                await new Promise((resolve) => window.setTimeout(resolve, 100));
+                candidates = [...document.querySelectorAll('[role="menuitem"], [role="option"], button')]
+                    .filter(isVisible)
+                    .filter((element) => element !== trigger)
+                    .filter((element) => !/send|submit|attach|upload|dictate/i.test(labelFor(element)));
+                const choice = candidates.find((element) => matches(labelFor(element)));
+                if (choice) {
+                    choice.click();
+                    return {
+                        ok: true,
+                        selected: normalize(labelFor(choice)),
+                        available: candidates.map(labelFor).filter(Boolean),
+                    };
+                }
+            }
+            return {
+                ok: false,
+                reason: 'model-not-exposed',
+                available: candidates.map(labelFor).filter(Boolean),
+            };
+        }""",
+        {"remoteLabels": list(remote_labels), "platform": platform},
+    )
+    if isinstance(result, dict) and result.get("ok"):
+        return True
+    available = []
+    reason = "model-control-unavailable"
+    if isinstance(result, dict):
+        available = [str(value) for value in result.get("available", []) if str(value).strip()]
+        reason = str(result.get("reason") or reason)
+    LOGGER.info(
+        "%s Web did not expose model %s (%s; available: %s); retaining the current remote model.",
+        AGENT_PLATFORM_BY_KEY[platform]["label"],
+        remote_labels[0],
+        reason,
+        ", ".join(dict.fromkeys(available)) or "none",
+    )
+    return False
+
+
 def _attach_context_file(page: Any, browser_kind: str, context_path: Path) -> bool:
     """Attach Markdown directly where supported; Safari streams context on demand."""
     if browser_kind == "safari":
@@ -1759,7 +2131,7 @@ def _attach_context_file(page: Any, browser_kind: str, context_path: Path) -> bo
         file_input.first.set_input_files(str(context_path))
         return True
     except Exception as exc:
-        LOGGER.info("ChatGPT context attachment fell back to on-demand reads: %s", exc)
+        LOGGER.info("Web context attachment fell back to on-demand reads: %s", exc)
         return False
 
 
@@ -1769,15 +2141,20 @@ def _submit_and_wait(
     message: str,
     should_stop: Callable[[], bool],
     on_submitted: Callable[[], None] | None = None,
+    platform: str = DEFAULT_AGENT_PLATFORM,
 ) -> str:
-    """Submit one message and wait for one stable assistant response."""
-    selector = '[data-message-author-role="assistant"]'
-    baseline = _web_count(page, browser_kind, selector)
-    baseline_response = _web_last_text(page, browser_kind, selector)
+    """Submit one message and wait for one stable provider response."""
+    selector = _web_assistant_selector(platform)
+    baseline = _platform_web_count(page, browser_kind, platform, selector)
+    baseline_response = _platform_web_last_text(page, browser_kind, platform, selector)
     if browser_kind == "safari":
+        if platform != "chatgpt":
+            raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Agent sessions require Edge or Chrome.")
         _submit_safari_prompt(page, message)
-    else:
+    elif platform == "chatgpt":
         _submit_chromium_prompt(page, message, should_stop)
+    else:
+        _submit_chromium_web_prompt(page, platform, message, should_stop)
     if on_submitted is not None and not should_stop():
         on_submitted()
 
@@ -1790,8 +2167,8 @@ def _submit_and_wait(
         if should_stop():
             _stop_web_generation(page, browser_kind)
             return response
-        count = _web_count(page, browser_kind, selector)
-        latest_response = _web_last_text(page, browser_kind, selector)
+        count = _platform_web_count(page, browser_kind, platform, selector)
+        latest_response = _platform_web_last_text(page, browser_kind, platform, selector)
         if count > baseline or (latest_response and latest_response != baseline_response):
             response = latest_response
         now = time.monotonic()
@@ -1808,7 +2185,112 @@ def _submit_and_wait(
         ):
             return response
         _web_wait(page, browser_kind, 500)
-    raise RuntimeError("ChatGPT did not finish the controller turn within 30 minutes.")
+    raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} did not finish the controller turn within 30 minutes.")
+
+
+def _web_user_selector(platform: str) -> str:
+    """Return provider-specific user message selectors for submission acceptance."""
+    return {
+        "chatgpt": '[data-message-author-role="user"]',
+        "gemini": 'user-query, [data-test-id="user-query-content"]',
+        "grok": '[data-testid*="user" i], [data-role="user"], [data-message-author-role="user"]',
+    }.get(platform, '[data-message-author-role="user"]')
+
+
+def _submit_chromium_web_prompt(
+    page: Any,
+    platform: str,
+    message: str,
+    should_stop: Callable[[], bool],
+) -> None:
+    """Fill a non-ChatGPT Chromium composer and click its enabled semantic send control."""
+    user_selector = _web_user_selector(platform)
+    baseline_user_count = _web_count(page, "chromium", user_selector, platform)
+    page.locator(_web_composer_selector(platform)).first.fill(message)
+
+    deadline = time.monotonic() + CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS
+    last_state: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        if should_stop():
+            return
+        result = page.evaluate(
+            r"""({platform}) => {
+                const isVisible = (element) => {
+                    const style = window.getComputedStyle(element);
+                    return element.getClientRects().length > 0
+                        && style.visibility !== 'hidden'
+                        && style.display !== 'none';
+                };
+                const labelFor = (button) => `${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''} ${button.innerText || button.textContent || ''}`.trim();
+                const composer = document.querySelector('textarea, [contenteditable="true"]');
+                const scope = composer?.closest('form') || composer?.parentElement?.parentElement || document;
+                const scopedButtons = [...scope.querySelectorAll('button')].filter(isVisible);
+                const allButtons = [...document.querySelectorAll('button')].filter(isVisible);
+                const buttons = [...new Set([...scopedButtons, ...allButtons])];
+                const sendButtons = buttons.filter((button) => {
+                    const label = labelFor(button);
+                    const testId = button.getAttribute('data-testid') || '';
+                    return /send|submit|ask|发送|傳送|傳送訊息|发送消息|提交|提問|提问/i.test(label)
+                        && !/attach|upload|share|feedback|copy|附加|上传|上傳/i.test(label)
+                        || /send|submit|ask|chat-submit/i.test(testId);
+                });
+                const sendButton = sendButtons.find((button) =>
+                    !button.disabled && button.getAttribute('aria-disabled') !== 'true'
+                );
+                if (sendButton) {
+                    sendButton.click();
+                    return {
+                        clicked: true,
+                        ariaLabel: sendButton.getAttribute('aria-label') || '',
+                        dataTestId: sendButton.getAttribute('data-testid') || '',
+                    };
+                }
+                return {
+                    clicked: false,
+                    platform,
+                    sendButtons: sendButtons.map((button) => ({
+                        ariaLabel: button.getAttribute('aria-label') || '',
+                        dataTestId: button.getAttribute('data-testid') || '',
+                        disabled: Boolean(button.disabled || button.getAttribute('aria-disabled') === 'true'),
+                    })),
+                };
+            }""",
+            {"platform": platform},
+        )
+        if isinstance(result, dict):
+            last_state = result
+            if result.get("clicked"):
+                break
+        page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+    else:
+        details = json.dumps(last_state, ensure_ascii=False, separators=(",", ":"))[:500]
+        raise RuntimeError(
+            f"The Chromium browser did not expose an enabled {AGENT_PLATFORM_BY_KEY[platform]['label']} send button: {details}"
+        )
+
+    accepted_deadline = time.monotonic() + CHROMIUM_SUBMISSION_ACCEPT_TIMEOUT_SECONDS
+    while time.monotonic() < accepted_deadline:
+        if should_stop():
+            return
+        composer_empty = bool(
+            page.evaluate(
+                """() => {
+                    const composer = document.querySelector('textarea, [contenteditable="true"]');
+                    if (!composer) return true;
+                    return !(composer.value || composer.innerText || composer.textContent || '').trim();
+                }"""
+            )
+        )
+        if (
+            composer_empty
+            or _web_count(page, "chromium", user_selector, platform) > baseline_user_count
+            or _web_is_generating(page, "chromium")
+        ):
+            return
+        page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+    raise RuntimeError(
+        f"The Chromium browser clicked Send, but {AGENT_PLATFORM_BY_KEY[platform]['label']} did not accept the prompt."
+    )
 
 
 def _submit_safari_prompt(page: Any, message: str) -> None:
@@ -1999,13 +2481,17 @@ def _is_web_response_complete(
     return now - stable_since >= WEB_RESPONSE_STABLE_SECONDS
 
 
-def _web_count(page: Any, browser_kind: str, selector: str) -> int:
+def _web_count(page: Any, browser_kind: str, selector: str, platform: str = DEFAULT_AGENT_PLATFORM) -> int:
+    """Count provider message nodes through the active browser surface."""
+    del platform
     if browser_kind == "safari":
         return int(page.evaluate("(selector) => document.querySelectorAll(selector).length", selector) or 0)
     return int(page.locator(selector).count())
 
 
-def _web_last_text(page: Any, browser_kind: str, selector: str) -> str:
+def _web_last_text(page: Any, browser_kind: str, selector: str, platform: str = DEFAULT_AGENT_PLATFORM) -> str:
+    """Read the last rendered provider response without storing the page."""
+    del platform
     if browser_kind == "safari":
         return str(
             page.evaluate(
@@ -2024,6 +2510,20 @@ def _web_last_text(page: Any, browser_kind: str, selector: str) -> str:
     return elements.last.inner_text(timeout=5_000).strip()
 
 
+def _platform_web_count(page: Any, browser_kind: str, platform: str, selector: str) -> int:
+    """Keep the legacy ChatGPT helper call shape while supporting other providers."""
+    if platform == "chatgpt":
+        return _web_count(page, browser_kind, selector)
+    return _web_count(page, browser_kind, selector, platform)
+
+
+def _platform_web_last_text(page: Any, browser_kind: str, platform: str, selector: str) -> str:
+    """Read one provider's latest assistant node through the shared helper."""
+    if platform == "chatgpt":
+        return _web_last_text(page, browser_kind, selector)
+    return _web_last_text(page, browser_kind, selector, platform)
+
+
 def _web_is_generating(page: Any, browser_kind: str) -> bool:
     del browser_kind
     return bool(
@@ -2036,6 +2536,7 @@ def _web_is_generating(page: Any, browser_kind: str) -> bool:
                     && button.getAttribute('aria-disabled') !== 'true'
                     && (
                         /stop\s+(generating|response|answering|streaming)/.test(text)
+                        || /停止(?:生成|回答|串流|流式传输|流式傳輸)?/.test(text)
                         || /stop-(button|generating|response|streaming)/.test(testId)
                     );
             })"""
@@ -2055,6 +2556,7 @@ def _stop_web_generation(page: Any, browser_kind: str) -> None:
                     && candidate.getAttribute('aria-disabled') !== 'true'
                     && (
                         /stop\s+(generating|response|answering|streaming)/.test(text)
+                        || /停止(?:生成|回答|串流|流式传输|流式傳輸)?/.test(text)
                         || /stop-(button|generating|response|streaming)/.test(testId)
                     );
             });

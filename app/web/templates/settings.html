@@ -247,8 +247,8 @@
                             >
                                 <div class="settings-category-heading">
                                     <p class="workspace-kicker">Agent</p>
-                                    <h3 id="settings_agent_heading">Computer Use Agent</h3>
-                                    <p>Use an already signed-in ChatGPT Web account for reasoning while a bounded local controller reads, changes, runs, and verifies the selected project.</p>
+                                    <h3 id="settings_agent_heading">Web Computer Use Agent</h3>
+                                    <p>Use an already signed-in ChatGPT, Gemini, or Grok Web account for reasoning while a bounded local controller reads, changes, runs, and verifies the selected project.</p>
                                 </div>
                                 <div class="settings-category-fields">
                                     <div class="settings-agent-runtime-status" data-ready="{{ 'true' if agent_runtime_snapshot.ready else 'false' }}">
@@ -286,7 +286,7 @@
                                         <label class="field">
                                             <span>Context Markdown limit (MiB)</span>
                                             <input class="text-input-control agent-monospace-input" name="agent_context_limit_mib" type="number" min="1" max="512" value="{{ agent_settings.context_limit_mib }}" required>
-                                            <span class="field-help">ChatGPT currently caps each uploaded file at 512 MB and each text or document file at 2 million tokens. The lower limit wins.</span>
+                                        <span class="field-help">The selected Web provider may impose its own upload and context limits, including a ceiling of 2 million tokens per document; this local Markdown package limit is the lower safety bound.</span>
                                         </label>
                                         <label class="field">
                                             <span>Maximum controller turns</span>
@@ -309,7 +309,7 @@
                                         <textarea class="text-input-control settings-agent-system-prompt" name="agent_windows_system_prompt" rows="10" spellcheck="false" required>{{ agent_settings.windows_system_prompt }}</textarea>
                                         <span class="field-help">Stored separately for the future PowerShell and Windows controller.</span>
                                     </label>
-                                    <p class="settings-agent-privacy-note">Project context and requested file contents are sent to the selected ChatGPT account. Consumer ChatGPT data controls and file retention apply.</p>
+                                    <p class="settings-agent-privacy-note">Project context and requested file contents are sent to the selected Web provider account. That provider's data controls and retention policy apply.</p>
                                 </div>
                             </section>
 

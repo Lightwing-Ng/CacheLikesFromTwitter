@@ -618,11 +618,19 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.0.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.4.0-codex.2', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.1.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.5.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-role="browser-session-account"', local_body)
+        self.assertIn('data-agent-platform-input', local_body)
+        self.assertIn('data-agent-combobox-option="gemini"', local_body)
+        self.assertIn('data-agent-combobox-option="grok"', local_body)
+        self.assertIn('data-agent-remote-label="Gemini 3.1 Pro"', local_body)
+        self.assertIn('data-agent-remote-label="Auto"', local_body)
+        self.assertIn('ChatGPT · 5.6 Sol', local_body)
+        self.assertIn('Gemini · 3.1 Pro', local_body)
+        self.assertIn('Grok · Auto', local_body)
         self.assertIn('data-agent-combobox-option="safari"', local_body)
         self.assertIn('data-agent-heading', local_body)
         self.assertIn('data-agent-prompt-input', local_body)
@@ -800,8 +808,12 @@ class WebAppTests(unittest.TestCase):
         script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
 
         self.assertIn('elements.promptOs.value = selectedOs()', script)
+        self.assertIn('elements.promptPlatform.value = selectedPlatform()', script)
         self.assertIn('elements.promptBrowser.value = selectedBrowser()', script)
         self.assertIn('elements.modelInput.value = selectedModel()', script)
+        self.assertIn('syncModelOptionsForPlatform()', script)
+        self.assertIn('browserStatusController?.setPlatform?.(platform)', script)
+        self.assertIn('platform: selectedPlatform()', script)
         self.assertIn('selectedValue(".agent-model-combobox", "gpt-5.6-sol")', script)
         self.assertIn('selectedValue(".agent-browser-combobox", "edge")', script)
         self.assertIn('elements.ask.classList.toggle("is-stop", running)', script)
@@ -851,10 +863,62 @@ class WebAppTests(unittest.TestCase):
             'name="session_mode" value="new"',
             'name="conversation_url" value=""',
             'name="project_url" value=""',
-            'computer-use-agent-v3.4.0-codex.2',
+            'computer-use-agent-v3.5.0-codex.1',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, body)
+
+    def test_agent_page_exposes_the_three_web_provider_model_pairs(self) -> None:
+        app = create_app()
+
+        with app.test_client() as client:
+            body = client.get("/agent").get_data(as_text=True)
+
+        self.assertIn('<span class="field-label">Web service</span>', body)
+        self.assertIn('data-browser-session-platform="chatgpt"', body)
+        self.assertIn('data-agent-combobox-option="gpt-5.6-sol"', body)
+        self.assertIn('data-agent-combobox-option="gemini-3.1-pro"', body)
+        self.assertIn('data-agent-combobox-option="grok-auto"', body)
+        self.assertIn('placeholder="Ask ChatGPT Web to inspect, change, and verify this project', body)
+
+    def test_agent_preferences_accept_gemini_and_grok_model_choices(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            workspace = Path(raw_root) / "Selected Project"
+            workspace.mkdir()
+            initial_settings = ComputerUseSettings(workspace_path=str(workspace))
+            with patch(
+                "app.core.computer_use_agent.load_computer_use_settings",
+                return_value=initial_settings,
+            ):
+                app = create_app()
+                with patch("app.core.computer_use_agent.save_computer_use_settings"):
+                    with app.test_client() as client:
+                        gemini_response = client.post(
+                            "/api/agent/preferences",
+                            json={
+                                "workspace_path": str(workspace),
+                                "operating_system": "macos",
+                                "platform": "gemini",
+                                "browser": "edge",
+                                "model": "gemini-3.1-pro",
+                            },
+                        )
+                        grok_response = client.post(
+                            "/api/agent/preferences",
+                            json={
+                                "workspace_path": str(workspace),
+                                "operating_system": "macos",
+                                "platform": "grok",
+                                "browser": "chrome",
+                                "model": "grok-auto",
+                            },
+                        )
+
+        self.assertEqual(gemini_response.status_code, 200)
+        self.assertEqual(gemini_response.get_json()["settings"]["model"], "gemini-3.1-pro")
+        self.assertEqual(grok_response.status_code, 200)
+        self.assertEqual(grok_response.get_json()["settings"]["platform"], "grok")
+        self.assertEqual(grok_response.get_json()["settings"]["model"], "grok-auto")
 
     def test_agent_source_routes_are_loopback_only_and_delegate_selected_browser(self) -> None:
         app = create_app()

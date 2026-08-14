@@ -1,4 +1,4 @@
-/* Code version: v3.4.0-codex.2 */
+/* Code version: v3.5.0-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -18,6 +18,7 @@
         readinessMessage: document.getElementById("agent_readiness_message"),
         workspacePath: promptForm.querySelector('input[name="workspace_path"]'),
         promptOs: promptForm.querySelector("[data-agent-prompt-os]"),
+        promptPlatform: promptForm.querySelector("[data-agent-prompt-platform]"),
         promptBrowser: promptForm.querySelector("[data-agent-prompt-browser]"),
         modelInput: promptForm.querySelector("[data-agent-model-input]"),
         promptSessionMode: promptForm.querySelector("[data-agent-prompt-session-mode]"),
@@ -28,6 +29,7 @@
         activityCount: document.getElementById("agent_activity_count"),
         activityList: document.getElementById("agent_activity_list"),
         browserSession: document.querySelector("[data-agent-browser-session]"),
+        platformCombobox: document.querySelector(".agent-platform-combobox"),
         sessionSource: document.querySelector("[data-agent-session-source]"),
         sessionMode: document.querySelector("[data-agent-session-mode]"),
         sessionModeCombobox: document.querySelector(".agent-session-mode-combobox"),
@@ -88,8 +90,23 @@
         return selectedValue(".agent-browser-combobox", "edge");
     }
 
+    function selectedPlatform() {
+        return selectedValue(".agent-platform-combobox", "chatgpt");
+    }
+
     function selectedModel() {
         return selectedValue(".agent-model-combobox", "gpt-5.6-sol");
+    }
+
+    function selectedPlatformLabel() {
+        return document.querySelector(".agent-platform-combobox [data-agent-combobox-selected-label]")?.textContent?.trim() || "Web AI";
+    }
+
+    function selectedPlatformHomeUrl() {
+        const option = Array.from(
+            document.querySelectorAll(".agent-platform-combobox [data-agent-combobox-option]"),
+        ).find((candidate) => candidate.dataset.agentComboboxOption === selectedPlatform());
+        return option?.dataset.agentPlatformHomeUrl || "https://chatgpt.com/";
     }
 
     function selectedBrowserLabel() {
@@ -97,10 +114,11 @@
     }
 
     function selectedSessionMode() {
-        return elements.sessionMode?.value || "new";
+        return selectedPlatform() === "chatgpt" ? (elements.sessionMode?.value || "new") : "new";
     }
 
     function selectedConversationUrl() {
+        if (selectedPlatform() !== "chatgpt") return "";
         if (selectedSessionMode() === "recent") return elements.recentSessionUrl?.value || "";
         if (selectedSessionMode() === "project") return elements.projectSessionUrl?.value === "new" ? "" : elements.projectSessionUrl?.value || "";
         return "";
@@ -110,24 +128,72 @@
         return elements.projectUrl?.value || "";
     }
 
+    function syncModelOptionsForPlatform() {
+        const platform = selectedPlatform();
+        const combobox = document.querySelector(".agent-model-combobox");
+        const input = elements.modelInput;
+        const menu = combobox?.querySelector("[data-agent-combobox-menu]");
+        if (!combobox || !(input instanceof HTMLInputElement) || !menu) return;
+        const options = Array.from(menu.querySelectorAll("[data-agent-combobox-option]"));
+        const visibleOptions = options.filter((option) => option.dataset.agentPlatform === platform);
+        options.forEach((option) => {
+            option.hidden = option.dataset.agentPlatform !== platform;
+        });
+        let selectedOption = visibleOptions.find((option) => option.dataset.agentComboboxOption === input.value);
+        if (!selectedOption) selectedOption = visibleOptions[0];
+        if (!selectedOption) return;
+        input.value = selectedOption.dataset.agentComboboxOption || "";
+        const label = combobox.querySelector("[data-agent-combobox-selected-label]");
+        if (label) label.textContent = selectedOption.dataset.agentComboboxLabel || "";
+        const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
+        if (trigger) trigger.setAttribute("aria-label", `Model: ${selectedOption.dataset.agentComboboxLabel || ""}`);
+        options.forEach((option) => {
+            const isSelected = option === selectedOption;
+            option.classList.toggle("is-selected", isSelected);
+            option.classList.toggle("is-active", isSelected);
+            option.setAttribute("aria-selected", String(isSelected));
+        });
+    }
+
+    function syncPlatformState() {
+        const platform = selectedPlatform();
+        if (elements.promptPlatform instanceof HTMLInputElement) elements.promptPlatform.value = platform;
+        if (elements.browserSession) elements.browserSession.dataset.browserSessionPlatform = platform;
+        syncModelOptionsForPlatform();
+        const isChatgpt = platform === "chatgpt";
+        if (elements.sessionSource) elements.sessionSource.hidden = !isChatgpt;
+        if (!isChatgpt) {
+            if (elements.sessionMode instanceof HTMLInputElement) elements.sessionMode.value = "new";
+            if (elements.recentSessionField) elements.recentSessionField.hidden = true;
+            if (elements.projectField) elements.projectField.hidden = true;
+            if (elements.projectSessionField) elements.projectSessionField.hidden = true;
+        }
+        browserStatusController?.setPlatform?.(platform);
+    }
+
     function syncConversationLink(agent) {
         if (!elements.conversationLink) return;
         const recordedUrl = String(agent?.conversation_url || "").trim();
+        const platform = String(agent?.platform || selectedPlatform()).trim().toLowerCase();
         const targetUrl = recordedUrl.startsWith("https://chatgpt.com/")
+            || recordedUrl.startsWith("https://gemini.google.com/")
+            || recordedUrl.startsWith("https://grok.com/")
             ? recordedUrl
-            : "https://chatgpt.com/";
+            : selectedPlatformHomeUrl();
         const hasRecordedTarget = Boolean(recordedUrl);
+        const platformLabel = platform === selectedPlatform() ? selectedPlatformLabel() : platform;
         elements.conversationLink.href = targetUrl;
         elements.conversationLink.setAttribute(
             "aria-label",
-            hasRecordedTarget ? "Open ChatGPT conversation" : "Open ChatGPT",
+            hasRecordedTarget ? `Open ${platformLabel} conversation` : `Open ${platformLabel}`,
         );
         elements.conversationLink.title = hasRecordedTarget
-            ? "Open ChatGPT conversation"
-            : "Open ChatGPT";
+            ? `Open ${platformLabel} conversation`
+            : `Open ${platformLabel}`;
     }
 
     function sessionChoiceReady() {
+        if (selectedPlatform() !== "chatgpt") return true;
         const mode = selectedSessionMode();
         if (mode === "new") return true;
         if (mode === "recent") return Boolean(elements.recentSessionUrl?.value);
@@ -163,7 +229,8 @@
     }
 
     function updateSessionChoiceInputs() {
-        const mode = selectedSessionMode();
+        const isChatgpt = selectedPlatform() === "chatgpt";
+        const mode = isChatgpt ? selectedSessionMode() : "new";
         const projectSessionValue = elements.projectSessionUrl?.value || "new";
         const executionMode = mode === "project"
             ? (projectSessionValue === "new" ? "project_new" : "project_session")
@@ -180,6 +247,7 @@
             if (trigger) trigger.disabled = !projectSelected;
         }
         if (elements.sessionSource) {
+            elements.sessionSource.hidden = !isChatgpt;
             elements.sessionSource.dataset.agentSessionMode = executionMode;
         }
     }
@@ -305,6 +373,7 @@
 
     function syncExecutionChoices() {
         if (elements.promptOs instanceof HTMLInputElement) elements.promptOs.value = selectedOs();
+        if (elements.promptPlatform instanceof HTMLInputElement) elements.promptPlatform.value = selectedPlatform();
         if (elements.promptBrowser instanceof HTMLInputElement) elements.promptBrowser.value = selectedBrowser();
         if (elements.modelInput instanceof HTMLInputElement) elements.modelInput.value = selectedModel();
     }
@@ -313,6 +382,7 @@
         return {
             workspace_path: elements.workspacePath?.value || "",
             operating_system: selectedOs(),
+            platform: selectedPlatform(),
             browser: selectedBrowser(),
             model: selectedModel(),
         };
@@ -383,6 +453,22 @@
                 closeCombobox(combobox);
                 syncExecutionChoices();
                 schedulePreferenceSave();
+                if (combobox.classList.contains("agent-platform-combobox")) {
+                    sourceBrowser = "";
+                    sourcesLoaded = false;
+                    sourceRequestId += 1;
+                    projectSessionRequestId += 1;
+                    chatgptSources = {recent_sessions: [], projects: []};
+                    if (elements.recentSessionUrl instanceof HTMLInputElement) elements.recentSessionUrl.value = "";
+                    if (elements.projectUrl instanceof HTMLInputElement) elements.projectUrl.value = "";
+                    if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
+                    clearProjectSessionChoice();
+                    setComboboxValue(elements.recentSessionCombobox, "", "Recent sessions");
+                    setComboboxLoading(elements.recentSessionCombobox, true);
+                    setComboboxValue(elements.projectCombobox, "", "Recent projects");
+                    setComboboxLoading(elements.projectCombobox, true);
+                    syncPlatformState();
+                }
                 if (combobox.classList.contains("agent-browser-combobox")) {
                     sourceBrowser = "";
                     sourcesLoaded = false;
@@ -470,6 +556,7 @@
     }
 
     async function loadChatgptSources() {
+        if (selectedPlatform() !== "chatgpt") return;
         if (!lastBrowserStatus?.can_download || !selectedBrowser()) return;
         if (sourcesLoading && sourceBrowser === selectedBrowser()) return;
         if (sourcesLoaded && sourceBrowser === selectedBrowser()) return;
@@ -518,6 +605,7 @@
     }
 
     function readinessState(payload) {
+        const platformLabel = selectedPlatformLabel();
         const runtime = payload.runtime || {};
         if (selectedOs() !== "macos") {
             const hostOperatingSystem = runtime.host_operating_system || "this host";
@@ -533,25 +621,25 @@
         if (!lastBrowserStatus) {
             return {
                 ready: false,
-                message: `Checking the signed-in ChatGPT account in ${selectedBrowserLabel()}...`,
+                message: `Checking the signed-in ${platformLabel} account in ${selectedBrowserLabel()}...`,
             };
         }
         if (!lastBrowserStatus.can_download) {
             return {
                 ready: false,
-                message: lastBrowserStatus.message || `${selectedBrowserLabel()} is not signed in to ChatGPT Web.`,
+                message: lastBrowserStatus.message || `${selectedBrowserLabel()} is not signed in to ${platformLabel} Web.`,
             };
         }
         return {
             ready: true,
-            message: lastBrowserStatus.message || `${selectedBrowserLabel()} is ready for ChatGPT Web.`,
+            message: lastBrowserStatus.message || `${selectedBrowserLabel()} is ready for ${platformLabel} Web.`,
         };
     }
 
     function initializeBrowserSessionStatus() {
         if (!elements.browserSession || !window.CACHELIKES_BROWSER_SESSION_STATUS?.init) return;
         browserStatusController = window.CACHELIKES_BROWSER_SESSION_STATUS.init(elements.browserSession, {
-            platform: "chatgpt",
+            platform: selectedPlatform(),
             getBrowser: selectedBrowser,
             onStateChange(payload, browserId, state) {
                 lastBrowserStatus = state === "cleared"
@@ -608,8 +696,16 @@
         const agent = lastPayload.agent || {};
         const readiness = readinessState(lastPayload);
         const running = Boolean(agent.running);
+        const platformLabel = selectedPlatformLabel();
         syncExecutionChoices();
+        syncPlatformState();
         syncConversationLink(agent);
+
+        const heading = document.querySelector("[data-agent-heading]");
+        if (heading) heading.textContent = `${platformLabel} Web Agent`;
+        if (elements.promptInput) {
+            elements.promptInput.placeholder = `Ask ${platformLabel} Web to inspect, change, and verify this project…`;
+        }
 
         setChip(elements.phaseChip, agent.phase || "idle", agent.phase || "idle");
         if (elements.statusMessage) {
@@ -630,7 +726,7 @@
             elements.ask.disabled = (!readiness.ready || !sessionChoiceReady()) && !running;
             elements.ask.classList.toggle("is-stop", running);
             elements.ask.dataset.agentAction = running ? "stop" : "ask";
-            const label = running ? "Stop Agent task" : "Ask ChatGPT Web";
+            const label = running ? "Stop Agent task" : `Ask ${platformLabel} Web`;
             elements.ask.setAttribute("aria-label", label);
             elements.ask.setAttribute("title", label);
         }
@@ -642,7 +738,7 @@
                 return;
             }
             const isRuntimeChoice = trigger.closest(
-                ".agent-browser-combobox, .agent-model-combobox, .agent-session-mode-combobox"
+                ".agent-platform-combobox, .agent-browser-combobox, .agent-model-combobox, .agent-session-mode-combobox"
             );
             if (isRuntimeChoice) trigger.disabled = false;
         });
@@ -705,6 +801,7 @@
 
     initializeComboboxes();
     initializeBrowserSessionStatus();
+    syncPlatformState();
     updateSessionChoiceInputs();
     syncProjectPath(elements.projectPath?.value || elements.workspacePath?.value || "");
     syncExecutionChoices();

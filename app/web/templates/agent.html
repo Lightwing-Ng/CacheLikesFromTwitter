@@ -1,4 +1,4 @@
-<!-- Code version: v3.4.1-codex.1 -->
+<!-- Code version: v3.5.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -14,6 +14,9 @@
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
+{% set selected_platform = platform_options | selectattr('key', 'equalto', settings.platform) | list | first %}
+{% set selected_model_options = model_options_by_platform.get(settings.platform, ()) %}
+{% set selected_model = selected_model_options | selectattr('key', 'equalto', settings.model) | list | first %}
 <main class="page agent-page">
     <button type="button" class="sidebar-toggle" id="sidebar_toggle" aria-label="Toggle sidebar" aria-expanded="true">
         <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
@@ -64,8 +67,42 @@
 
                 <div class="agent-connect-fields">
                     <label class="field">
+                        <span class="field-label">Web service</span>
+                        <div class="trade-strategy-combobox agent-combobox agent-platform-combobox" data-agent-combobox>
+                            <input type="hidden" name="platform" value="{{ settings.platform }}" data-agent-combobox-input data-agent-platform-input>
+                            <button
+                                type="button"
+                                class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger"
+                                data-agent-combobox-trigger
+                                aria-haspopup="listbox"
+                                aria-expanded="false"
+                                aria-label="Web service: {{ selected_platform.label }}"
+                            >
+                                <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>{{ selected_platform.label }}</span>
+                                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                            </button>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose Web service" hidden>
+                                {% for platform in platform_options %}
+                                <button
+                                    type="button"
+                                    class="trade-strategy-dropdown-option agent-combobox-option{% if settings.platform == platform.key %} is-selected is-active{% endif %}"
+                                    data-agent-combobox-option="{{ platform.key }}"
+                                    data-agent-combobox-label="{{ platform.label }}"
+                                    data-agent-platform-home-url="{{ platform.home_url }}"
+                                    role="option"
+                                    aria-selected="{{ 'true' if settings.platform == platform.key else 'false' }}"
+                                    tabindex="-1"
+                                >
+                                    <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                    <span class="trade-strategy-dropdown-text">{{ platform.label }}</span>
+                                </button>
+                                {% endfor %}
+                            </div>
+                        </div>
+                    </label>
+                    <label class="field">
                         <span class="field-label">Browser</span>
-                        <div class="agent-browser-session-field" data-agent-browser-session data-browser-session-platform="chatgpt">
+                        <div class="agent-browser-session-field" data-agent-browser-session data-browser-session-platform="{{ settings.platform }}">
                         <div class="trade-strategy-combobox agent-combobox agent-browser-combobox" data-agent-combobox>
                             <input type="hidden" name="browser" value="{{ settings.browser }}" data-agent-combobox-input>
                             {% set selected_browser = browser_options | selectattr('key', 'equalto', settings.browser) | list | first %}
@@ -105,12 +142,12 @@
                             </div>
                         </div>
                         {% from "_browser_session_status.html" import render_browser_session_status %}
-                        {{ render_browser_session_status("No signed-in ChatGPT account detected", "Ready to use ChatGPT Web") }}
+                        {{ render_browser_session_status("No signed-in Web AI account detected", "Ready to use Web Agent") }}
                         </div>
                     </label>
                 </div>
 
-                <div class="agent-session-source" data-agent-session-source>
+                <div class="agent-session-source" data-agent-session-source{% if settings.platform != 'chatgpt' %} hidden{% endif %}>
                     <label class="field">
                         <span class="field-label">ChatGPT session</span>
                         <div class="trade-strategy-combobox agent-combobox agent-session-mode-combobox" data-agent-combobox>
@@ -226,7 +263,7 @@
                 <article class="report-card workspace-summary-card workspace-article-card agent-summary-card">
                     <div class="report-heading-row">
                         <div>
-                            <h2 data-agent-heading>ChatGPT Web Agent</h2>
+                            <h2 data-agent-heading>{{ selected_platform.label }} Web Agent</h2>
                         </div>
                         <span class="status-chip status-{{ agent_snapshot.phase }}" id="agent_phase_chip">{{ agent_snapshot.phase }}</span>
                     </div>
@@ -244,12 +281,12 @@
                             <a
                                 class="browser-media-round-action browser-media-source-link agent-conversation-link"
                                 id="agent_conversation_link"
-                                href="https://chatgpt.com/"
+                                href="{{ selected_platform.home_url }}"
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 data-agent-open-conversation
-                                aria-label="Open ChatGPT"
-                                title="Open ChatGPT"
+                                aria-label="Open {{ selected_platform.label }}"
+                                title="Open {{ selected_platform.label }}"
                             >
                                 <span class="icon browser-media-source-link-icon" aria-hidden="true"></span>
                             </a>
@@ -279,47 +316,51 @@
                     <form id="agent_prompt_form" class="agent-prompt-form">
                 <input type="hidden" name="workspace_path" value="{{ settings.workspace_path }}" data-agent-workspace-input>
                 <input type="hidden" name="operating_system" value="{{ settings.operating_system }}" data-agent-prompt-os>
+                <input type="hidden" name="platform" value="{{ settings.platform }}" data-agent-prompt-platform>
                 <input type="hidden" name="browser" value="{{ settings.browser }}" data-agent-prompt-browser>
                 <input type="hidden" name="session_mode" value="new" data-agent-prompt-session-mode>
                         <input type="hidden" name="conversation_url" value="" data-agent-prompt-conversation-url>
                         <input type="hidden" name="project_url" value="" data-agent-prompt-project-url>
                         <label class="field agent-composer-field">
                             <span class="agent-composer-shell">
-                                <textarea class="text-input-control agent-prompt-input" name="prompt" rows="4" placeholder="Ask ChatGPT Web to inspect, change, and verify this project…" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
+                                <textarea class="text-input-control agent-prompt-input" name="prompt" rows="4" placeholder="Ask {{ selected_platform.label }} Web to inspect, change, and verify this project…" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
                                 <span class="agent-composer-footer">
                                     <span class="trade-strategy-combobox agent-combobox agent-model-combobox" data-agent-combobox>
                                         <input type="hidden" name="model" value="{{ settings.model }}" data-agent-combobox-input data-agent-model-input>
-                                        {% set selected_model = model_options | selectattr('key', 'equalto', settings.model) | list | first %}
                                         <button
                                             type="button"
                                             class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger agent-model-trigger"
                                             data-agent-combobox-trigger
                                             aria-haspopup="listbox"
                                             aria-expanded="false"
-                                            aria-label="Model: {{ selected_model.label }}"
+                                            aria-label="Model: {{ selected_model.ui_label | default(selected_model.label, true) }}"
                                         >
-                                            <span class="trade-strategy-trigger-label agent-model-trigger-label" data-agent-combobox-selected-label>{{ selected_model.label }}</span>
+                                            <span class="trade-strategy-trigger-label agent-model-trigger-label" data-agent-combobox-selected-label>{{ selected_model.ui_label | default(selected_model.label, true) }}</span>
                                             <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                                         </button>
-                                        <span class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-model-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose ChatGPT model" hidden>
-                                            {% for model in model_options %}
+                                        <span class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-model-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose {{ selected_platform.label }} model" hidden>
+                                            {% for platform in platform_options %}
+                                            {% for model in model_options_by_platform.get(platform.key, ()) %}
                                             <button
                                                 type="button"
-                                                class="trade-strategy-dropdown-option agent-combobox-option{% if settings.model == model.key %} is-selected is-active{% endif %}"
+                                                class="trade-strategy-dropdown-option agent-combobox-option{% if settings.platform == platform.key and settings.model == model.key %} is-selected is-active{% endif %}"
                                                 data-agent-combobox-option="{{ model.key }}"
-                                                data-agent-combobox-label="{{ model.label }}"
+                                                data-agent-combobox-label="{{ model.ui_label | default(model.label, true) }}"
+                                                data-agent-platform="{{ platform.key }}"
+                                                data-agent-remote-label="{{ model.remote_label | default(model.label, true) }}"
                                                 role="option"
-                                                aria-selected="{{ 'true' if settings.model == model.key else 'false' }}"
+                                                aria-selected="{{ 'true' if settings.platform == platform.key and settings.model == model.key else 'false' }}"
                                                 tabindex="-1"
                                             >
                                                 <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                                                <span class="trade-strategy-dropdown-text">{{ model.label }}</span>
+                                                <span class="trade-strategy-dropdown-text">{{ platform.label }} · {{ model.ui_label | default(model.label, true) }}</span>
                                             </button>
+                                            {% endfor %}
                                             {% endfor %}
                                         </span>
                                     </span>
                                     <span class="agent-composer-actions">
-                                        <button type="button" class="agent-composer-submit{% if agent_snapshot.running %} is-stop{% endif %}" id="agent_ask_button" data-agent-action="{{ 'stop' if agent_snapshot.running else 'ask' }}" aria-label="{{ 'Stop Agent task' if agent_snapshot.running else 'Ask ChatGPT Web' }}" title="{{ 'Stop Agent task' if agent_snapshot.running else 'Ask ChatGPT Web' }}"{% if not agent_snapshot.running %} disabled{% endif %}>
+                                        <button type="button" class="agent-composer-submit{% if agent_snapshot.running %} is-stop{% endif %}" id="agent_ask_button" data-agent-action="{{ 'stop' if agent_snapshot.running else 'ask' }}" aria-label="{{ 'Stop Agent task' if agent_snapshot.running else 'Ask ' ~ selected_platform.label ~ ' Web' }}" title="{{ 'Stop Agent task' if agent_snapshot.running else 'Ask ' ~ selected_platform.label ~ ' Web' }}"{% if not agent_snapshot.running %} disabled{% endif %}>
                                             <span class="icon agent-composer-submit-icon" aria-hidden="true"></span>
                                         </button>
                                     </span>
@@ -338,7 +379,7 @@
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.16.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.0.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.0.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.4.0-codex.2') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.1.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.5.0-codex.1') }}"></script>
 </body>
 </html>

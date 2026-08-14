@@ -1,6 +1,6 @@
-"""Focused tests for the ChatGPT Web Computer Use controller.
+"""Focused tests for the Web Computer Use controller.
 
-Code version: v3.4.1-codex.1
+Code version: v3.5.0-codex.1
 """
 
 from __future__ import annotations
@@ -13,6 +13,8 @@ import time
 import pytest
 
 from app.core.computer_use_agent import (
+    AGENT_MODEL_OPTIONS_BY_PLATFORM,
+    AGENT_PLATFORM_OPTIONS,
     AgentRunSnapshot,
     DEFAULT_CHATGPT_MODEL,
     ComputerUseAgentService,
@@ -22,6 +24,7 @@ from app.core.computer_use_agent import (
     _chatgpt_target_is_open,
     _run_web_action_loop,
     _select_chatgpt_model,
+    _select_web_model,
     _submit_chromium_prompt,
     _wait_for_chromium_composer,
     _web_last_text,
@@ -31,6 +34,7 @@ from app.core.computer_use_agent import (
     is_loopback_address,
     launch_terminal_authorization,
     open_chatgpt_in_default_browser,
+    open_agent_in_default_browser,
     parse_agent_action,
     save_computer_use_settings,
     _submit_and_wait,
@@ -78,6 +82,53 @@ def test_settings_validate_workspace_environment_browser_and_limits() -> None:
             validate_computer_use_settings({**asdict(settings), "target_url": "https://example.com"})
 
 
+def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None:
+    assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok"]
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["gemini"][0]["ui_label"] == "3.1 Pro"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["ui_label"] == "Auto"
+
+    with TemporaryDirectory() as raw_root:
+        for platform, model, target_url in (
+            ("chatgpt", "gpt-5.6-sol", "https://chatgpt.com/"),
+            ("gemini", "gemini-3.1-pro", "https://gemini.google.com/app"),
+            ("grok", "grok-auto", "https://grok.com/"),
+        ):
+            settings = validate_computer_use_settings(
+                {
+                    "workspace_path": raw_root,
+                    "operating_system": "macos",
+                    "platform": platform,
+                    "browser": "chrome",
+                    "model": model,
+                    "target_url": target_url,
+                }
+            )
+            assert settings.platform == platform
+            assert settings.model == model
+
+        with pytest.raises(ValueError, match="require Edge or Chrome"):
+            validate_computer_use_settings(
+                {
+                    "workspace_path": raw_root,
+                    "platform": "gemini",
+                    "browser": "safari",
+                    "model": "gemini-3.1-pro",
+                    "target_url": "https://gemini.google.com/app",
+                }
+            )
+        with pytest.raises(ValueError, match="official Gemini HTTPS host"):
+            validate_computer_use_settings(
+                {
+                    "workspace_path": raw_root,
+                    "platform": "gemini",
+                    "browser": "edge",
+                    "model": "gemini-3.1-pro",
+                    "target_url": "https://example.com/",
+                }
+            )
+
+
 def test_model_selection_keeps_the_remote_default_when_the_menu_is_not_exposed() -> None:
     class _Page:
         def evaluate(self, _expression: str, _argument: dict[str, str]) -> dict[str, object]:
@@ -88,6 +139,43 @@ def test_model_selection_keeps_the_remote_default_when_the_menu_is_not_exposed()
             }
 
     assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is False
+
+
+def test_non_chatgpt_model_selection_uses_the_provider_menu_when_exposed() -> None:
+    class _Page:
+        def evaluate(self, _expression: str, _argument: dict[str, object]) -> dict[str, object]:
+            return {"ok": True, "selected": "gemini 3.1 pro", "available": ["Gemini 3.1 Pro"]}
+
+    assert _select_web_model(_Page(), "chromium", "gemini", "gemini-3.1-pro") is True
+
+
+def test_non_chatgpt_sessions_start_at_the_provider_home() -> None:
+    assert resolve_agent_session_target("new", platform="gemini") == "https://gemini.google.com/app"
+    assert resolve_agent_session_target("new", platform="grok") == "https://grok.com/"
+    with pytest.raises(ValueError, match="starts a new Web session only"):
+        resolve_agent_session_target(
+            "recent",
+            conversation_url="https://grok.com/c/example",
+            platform="grok",
+        )
+
+
+def test_open_agent_in_default_browser_accepts_gemini_home(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    launched: list[list[str]] = []
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **_options: launched.append(command),
+    )
+
+    result = open_agent_in_default_browser("gemini", "https://gemini.google.com/app/demo")
+
+    assert result["platform"] == "gemini"
+    assert result["url"] == "https://gemini.google.com/app/demo"
+    assert launched == [["/usr/bin/open", "https://gemini.google.com/app/demo"]]
 
 
 def test_host_operating_system_detection_uses_supported_host_keys(monkeypatch: pytest.MonkeyPatch) -> None:
