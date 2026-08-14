@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.7.0-codex.1
+Code version: v3.9.0-codex.1
 """
 
 from __future__ import annotations
@@ -22,15 +22,12 @@ import time
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from .agent_session_sources import normalize_agent_conversation_url, normalize_agent_project_url
 from .browser_sessions import (
     browser_descriptors,
     goto_with_retry,
     launch_chromium_context,
     sync_playwright_or_error,
-)
-from .chatgpt_agent_sources import (
-    normalize_chatgpt_conversation_url,
-    normalize_chatgpt_project_url,
 )
 from .config import CrawlConfig, PROJECT_ROOT, resolve_runtime_root
 from .safari_automation import SafariContext
@@ -470,20 +467,12 @@ def _platform_hosts(platform: str) -> set[str]:
 
 def _normalize_web_agent_target(platform: str, target_url: str = "") -> str:
     """Normalize one safe target without allowing cross-site browser navigation."""
-    if platform == "chatgpt":
-        return (
-            normalize_chatgpt_conversation_url(target_url)
-            or normalize_chatgpt_project_url(target_url)
-            or CHATGPT_HOME_URL
-        )
-    candidate = str(target_url or "").strip()
-    parts = urlsplit(candidate)
-    if (
-        parts.scheme == "https"
-        and (parts.hostname or "").lower() in _platform_hosts(platform)
-        and parts.path
-    ):
-        return candidate
+    normalized_target_url = (
+        normalize_agent_conversation_url(platform, target_url)
+        or normalize_agent_project_url(platform, target_url)
+    )
+    if normalized_target_url:
+        return normalized_target_url
     return _platform_home_url(platform)
 
 
@@ -516,9 +505,7 @@ def open_agent_in_default_browser(platform: str = DEFAULT_AGENT_PLATFORM, target
         "opened": True,
         "platform": selected_platform,
         "url": destination,
-        "targeted_conversation": bool(
-            selected_platform == "chatgpt" and normalize_chatgpt_conversation_url(target_url)
-        ),
+        "targeted_conversation": bool(normalize_agent_conversation_url(selected_platform, target_url)),
     }
 
 
@@ -735,32 +722,28 @@ def resolve_agent_session_target(
     selected_platform = str(platform or DEFAULT_AGENT_PLATFORM).strip().lower()
     if selected_platform not in SUPPORTED_AGENT_PLATFORMS:
         raise ValueError("Choose ChatGPT, Gemini, or Grok for the Web Agent.")
-    if selected_platform != "chatgpt":
-        if mode != "new":
-            raise ValueError(
-                f"{AGENT_PLATFORM_BY_KEY[selected_platform]['label']} currently starts a new Web session only."
-            )
-        return _platform_home_url(selected_platform)
     if mode == "new":
-        return CHATGPT_HOME_URL
+        return _platform_home_url(selected_platform)
 
-    normalized_project_url = normalize_chatgpt_project_url(project_url)
+    platform_label = AGENT_PLATFORM_BY_KEY[selected_platform]["label"]
+    normalized_project_url = normalize_agent_project_url(selected_platform, project_url)
     if mode == "project_new":
         if not normalized_project_url:
-            raise ValueError("Choose a ChatGPT project before starting a new project session.")
+            raise ValueError(f"Choose a {platform_label} Project before starting a new Project session.")
         return normalized_project_url
 
-    normalized_conversation_url = normalize_chatgpt_conversation_url(conversation_url)
+    normalized_conversation_url = normalize_agent_conversation_url(selected_platform, conversation_url)
     if not normalized_conversation_url:
-        raise ValueError("Choose a recent ChatGPT session before joining it.")
+        raise ValueError(f"Choose a recent {platform_label} session before joining it.")
     if mode == "project_session":
         if not normalized_project_url:
-            raise ValueError("Choose the ChatGPT project that owns this session.")
-        project_path = urlsplit(normalized_project_url).path.rstrip("/")
-        project_path = project_path[: -len("/project")] if project_path.endswith("/project") else project_path
-        conversation_path = urlsplit(normalized_conversation_url).path.rstrip("/")
-        if not conversation_path.startswith(f"{project_path}/c/"):
-            raise ValueError("The selected session does not belong to the selected ChatGPT project.")
+            raise ValueError(f"Choose the {platform_label} Project that owns this session.")
+        if selected_platform == "chatgpt":
+            project_path = urlsplit(normalized_project_url).path.rstrip("/")
+            project_path = project_path[: -len("/project")] if project_path.endswith("/project") else project_path
+            conversation_path = urlsplit(normalized_conversation_url).path.rstrip("/")
+            if not conversation_path.startswith(f"{project_path}/c/"):
+                raise ValueError("The selected session does not belong to the selected Project.")
     return normalized_conversation_url
 
 
@@ -774,8 +757,8 @@ def agent_session_opening_message(
     messages = {
         "new": f"Opening a new signed-in {platform_label} Web session",
         "recent": f"Joining the selected recent {platform_label} Web session",
-        "project_new": f"Opening a new session in the selected {platform_label} project",
-        "project_session": f"Joining the selected session in the {platform_label} project",
+        "project_new": "Opening a new session in the selected Project",
+        "project_session": "Joining the selected session in the selected Project",
     }
     return f"{messages.get(session_mode, messages['new'])} in {browser_label}."
 
@@ -1413,7 +1396,7 @@ class ComputerUseAgentService:
                 prompt=clean_prompt,
                 workspace_path=str(workspace),
                 conversation_url=target_url,
-                project_url=normalize_chatgpt_project_url(project_url),
+                project_url=normalize_agent_project_url(settings.platform, project_url),
                 session_title=resolved_session_title,
                 history=existing_history,
                 started_at=utc_now(),
@@ -1655,8 +1638,8 @@ def _initial_web_agent_message(
     session_instruction = {
         "new": f"Start a new root-level {platform_label} Web conversation for this task.",
         "recent": f"Continue the selected existing root-level {platform_label} Web conversation for this task.",
-        "project_new": f"Start a new conversation inside the selected {platform_label} project for this task.",
-        "project_session": f"Continue the selected existing conversation inside the selected {platform_label} project for this task.",
+        "project_new": "Start a new conversation inside the selected Project for this task.",
+        "project_session": "Continue the selected existing conversation inside the selected Project for this task.",
     }.get(session_mode, f"Start a new root-level {platform_label} Web conversation for this task.")
     return (
         settings.system_prompt

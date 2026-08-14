@@ -1,6 +1,6 @@
 """Presentation registry for cache source pages."""
 
-# Code version: v1.3.7-codex.1
+# Code version: v1.3.9-codex.1
 
 from __future__ import annotations
 
@@ -36,7 +36,8 @@ class CacheSourceView:
     group_label: str = "Cache"
     include_in_llm_switcher: bool = False
     preserve_icon_color: bool = False
-    show_common_config: bool = True
+    show_shared_settings_link: bool = True
+    show_content_mode: bool = False
     show_progress_audit: bool = False
     show_progress_value: bool = False
     show_progress_detail: bool = False
@@ -82,7 +83,7 @@ _CACHE_SOURCE_VIEWS = (
         group_key="llm",
         group_label="Chats",
         preserve_icon_color=True,
-        show_common_config=False,
+        show_content_mode=True,
         show_progress_value=True,
         show_progress_detail=True,
     ),
@@ -116,7 +117,7 @@ _CACHE_SOURCE_VIEWS = (
         icon_filename="images/grok.svg",
         document_title="CacheLikesFromTwitter Grok",
         overview_title="Grok library overview",
-        browser_panel_label="Browser",
+        browser_panel_label="Authorized browser",
         browser_empty_message="No signed-in account detected",
         browser_config_field="grok_browser",
         require_browser_ready=True,
@@ -130,6 +131,7 @@ _CACHE_SOURCE_VIEWS = (
         progress_aria_label="Grok sync progress",
         banner_storage_key="cachelikes:grok-status-banner-dismissed",
         include_in_llm_switcher=True,
+        show_content_mode=True,
         show_progress_audit=True,
         show_progress_detail=True,
     ),
@@ -155,6 +157,7 @@ _CACHE_SOURCE_VIEWS = (
         progress_aria_label="ChatGPT sync progress",
         banner_storage_key="cachelikes:chatgpt-status-banner-dismissed",
         include_in_llm_switcher=True,
+        show_content_mode=True,
         show_progress_audit=True,
         show_progress_value=True,
         show_progress_detail=True,

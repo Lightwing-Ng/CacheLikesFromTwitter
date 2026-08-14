@@ -1,4 +1,4 @@
-/* Code version: v3.9.3-codex.1 */
+/* Code version: v3.11.0-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -61,11 +61,12 @@
     let preferenceTimer = null;
     let activitySignature = "";
     let sourceBrowser = "";
+    let sourcePlatform = "";
     let sourcesLoaded = false;
     let sourcesLoading = false;
     let sourceRequestId = 0;
     let projectSessionRequestId = 0;
-    let chatgptSources = {recent_sessions: [], projects: []};
+    let agentSources = {recent_sessions: [], projects: []};
     let projectSessions = [];
     let sessionTitleOverride = "";
     let boundAgentSessionSignature = "";
@@ -140,11 +141,10 @@
     }
 
     function selectedSessionMode() {
-        return selectedPlatform() === "chatgpt" ? (elements.sessionMode?.value || "new") : "new";
+        return elements.sessionMode?.value || "new";
     }
 
     function selectedConversationUrl() {
-        if (selectedPlatform() !== "chatgpt") return "";
         if (selectedSessionMode() === "recent") return elements.recentSessionUrl?.value || "";
         if (selectedSessionMode() === "project") return elements.projectSessionUrl?.value === "new" ? "" : elements.projectSessionUrl?.value || "";
         return "";
@@ -152,6 +152,14 @@
 
     function isChatgptConversationUrl(value) {
         return /^https:\/\/chatgpt\.com\/(?:g\/[^/]+\/)?c\/[^/]+\/?$/i.test(String(value || "").trim());
+    }
+
+    function isAgentConversationUrl(platform, value) {
+        const candidate = String(value || "").trim();
+        if (platform === "chatgpt") return isChatgptConversationUrl(candidate);
+        if (platform === "gemini") return /^https:\/\/gemini\.google\.com\/app\/[A-Za-z0-9_-]+\/?$/i.test(candidate);
+        if (platform === "grok") return /^https:\/\/grok\.com\/c\/[A-Za-z0-9_-]+\/?$/i.test(candidate);
+        return false;
     }
 
     function historyUrlKey(value) {
@@ -241,14 +249,25 @@
             elements.browserSession.dataset.browserSessionAccountLabel = selectedPlatformLabel();
         }
         syncModelOptionsForPlatform();
-        const isChatgpt = platform === "chatgpt";
-        if (elements.sessionSource) elements.sessionSource.hidden = !isChatgpt;
-        if (!isChatgpt) {
-            if (elements.sessionMode instanceof HTMLInputElement) elements.sessionMode.value = "new";
-            if (elements.recentSessionField) elements.recentSessionField.hidden = true;
-            if (elements.projectField) elements.projectField.hidden = true;
-            if (elements.projectSessionField) elements.projectSessionField.hidden = true;
-        }
+        const sessionLabel = elements.sessionSource?.querySelector("[data-agent-session-platform-label]");
+        if (sessionLabel) sessionLabel.textContent = "Session source";
+        const sessionModeMenu = elements.sessionModeCombobox?.querySelector("[data-agent-combobox-menu]");
+        Array.from(sessionModeMenu?.querySelectorAll("[data-agent-combobox-option]") || []).forEach((option) => {
+            const supportedPlatforms = String(option.dataset.agentSessionPlatforms || "chatgpt,gemini,grok")
+                .split(",")
+                .map((item) => item.trim())
+                .filter(Boolean);
+            option.hidden = !supportedPlatforms.includes(platform);
+        });
+        const recentMenu = elements.recentSessionCombobox?.querySelector("[data-agent-combobox-menu]");
+        recentMenu?.setAttribute("aria-label", "Choose a recent session");
+        const projectMenu = elements.projectCombobox?.querySelector("[data-agent-combobox-menu]");
+        projectMenu?.setAttribute("aria-label", "Choose a recent project");
+        const projectSessionMenu = elements.projectSessionCombobox?.querySelector("[data-agent-combobox-menu]");
+        projectSessionMenu?.setAttribute("aria-label", "Choose a session in this project");
+        const sessionSourceMenu = elements.sessionModeCombobox?.querySelector("[data-agent-combobox-menu]");
+        sessionSourceMenu?.setAttribute("aria-label", "Choose a session source");
+        if (elements.sessionSource) elements.sessionSource.hidden = false;
         browserStatusController?.setPlatform?.(platform);
     }
 
@@ -274,7 +293,6 @@
     }
 
     function sessionChoiceReady() {
-        if (selectedPlatform() !== "chatgpt") return true;
         const mode = selectedSessionMode();
         if (mode === "new") return true;
         if (mode === "recent") return Boolean(elements.recentSessionUrl?.value);
@@ -349,8 +367,7 @@
     }
 
     function updateSessionChoiceInputs() {
-        const isChatgpt = selectedPlatform() === "chatgpt";
-        const mode = isChatgpt ? selectedSessionMode() : "new";
+        const mode = selectedSessionMode();
         const projectSessionValue = elements.projectSessionUrl?.value || "new";
         const executionMode = mode === "project"
             ? (projectSessionValue === "new" ? "project_new" : "project_session")
@@ -368,7 +385,6 @@
             if (trigger) trigger.disabled = !projectSelected;
         }
         if (elements.sessionSource) {
-            elements.sessionSource.hidden = !isChatgpt;
             elements.sessionSource.dataset.agentSessionMode = executionMode;
         }
         syncSessionModeTrigger();
@@ -645,7 +661,7 @@
                     sourcesLoaded = false;
                     sourceRequestId += 1;
                     projectSessionRequestId += 1;
-                    chatgptSources = {recent_sessions: [], projects: []};
+                    agentSources = {recent_sessions: [], projects: []};
                     if (elements.recentSessionUrl instanceof HTMLInputElement) elements.recentSessionUrl.value = "";
                     if (elements.projectUrl instanceof HTMLInputElement) elements.projectUrl.value = "";
                     if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
@@ -662,7 +678,7 @@
                     sourceBrowser = "";
                     sourcesLoaded = false;
                     projectSessionRequestId += 1;
-                    chatgptSources = {recent_sessions: [], projects: []};
+                    agentSources = {recent_sessions: [], projects: []};
                     if (elements.recentSessionUrl instanceof HTMLInputElement) elements.recentSessionUrl.value = "";
                     if (elements.projectUrl instanceof HTMLInputElement) elements.projectUrl.value = "";
                     if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
@@ -688,13 +704,13 @@
                         if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
                         setComboboxValue(elements.projectCombobox, "", "Choose a recent project");
                         clearProjectSessionChoice();
-                        if (!sourcesLoaded) loadChatgptSources();
+                        if (!sourcesLoaded) loadAgentSources();
                     } else if (input.value === "project") {
                         if (elements.recentSessionUrl instanceof HTMLInputElement) elements.recentSessionUrl.value = "";
                         if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
                         setComboboxValue(elements.recentSessionCombobox, "", "Choose a recent session");
                         clearProjectSessionChoice();
-                        if (!sourcesLoaded) loadChatgptSources();
+                        if (!sourcesLoaded) loadAgentSources();
                     }
                     updateSessionChoiceInputs();
                 }
@@ -745,8 +761,12 @@
         if (!projectUrl) return;
         const requestId = ++projectSessionRequestId;
         try {
-            const query = new URLSearchParams({browser: selectedBrowser(), project_url: projectUrl});
-            const payload = await requestJson(`/api/agent/chatgpt-project-sessions?${query.toString()}`);
+            const query = new URLSearchParams({
+                platform: selectedPlatform(),
+                browser: selectedBrowser(),
+                project_url: projectUrl,
+            });
+            const payload = await requestJson(`/api/agent/project-sessions?${query.toString()}`);
             if (requestId !== projectSessionRequestId || projectUrl !== selectedProjectUrl()) return;
             populateProjectSessionChoices(payload.sessions || []);
         } catch (_error) {
@@ -805,14 +825,24 @@
         }
     }
 
-    async function loadChatgptSources() {
-        if (selectedPlatform() !== "chatgpt") return;
+    async function loadAgentSources() {
         if (!lastBrowserStatus?.can_download || !selectedBrowser()) return;
-        if (sourcesLoading && sourceBrowser === selectedBrowser()) return;
-        if (sourcesLoaded && sourceBrowser === selectedBrowser()) return;
+        if (
+            sourcesLoading
+            && sourceBrowser === selectedBrowser()
+            && sourcePlatform === selectedPlatform()
+        ) return;
+        if (
+            sourcesLoaded
+            && sourceBrowser === selectedBrowser()
+            && sourcePlatform === selectedPlatform()
+        ) return;
         const browserName = selectedBrowser();
+        const platform = selectedPlatform();
+        const platformLabel = selectedPlatformLabel();
         const requestId = ++sourceRequestId;
         sourceBrowser = browserName;
+        sourcePlatform = platform;
         sourcesLoading = true;
         if (elements.recentSessionCombobox) {
             const trigger = elements.recentSessionCombobox.querySelector("[data-agent-combobox-trigger]");
@@ -833,10 +863,14 @@
             setComboboxLoading(elements.projectCombobox, true);
         }
         try {
-            const query = new URLSearchParams({browser: browserName});
-            const payload = await requestJson(`/api/agent/chatgpt-sources?${query.toString()}`);
-            if (requestId !== sourceRequestId || browserName !== selectedBrowser()) return;
-            chatgptSources = payload;
+            const query = new URLSearchParams({platform, browser: browserName});
+            const payload = await requestJson(`/api/agent/sources?${query.toString()}`);
+            if (
+                requestId !== sourceRequestId
+                || browserName !== selectedBrowser()
+                || platform !== selectedPlatform()
+            ) return;
+            agentSources = payload;
             populateListCombobox(
                 elements.recentSessionCombobox,
                 payload.recent_sessions,
@@ -850,9 +884,9 @@
             sourcesLoaded = true;
         } catch (_error) {
             if (requestId !== sourceRequestId) return;
-            chatgptSources = {recent_sessions: [], projects: []};
-            setComboboxValue(elements.recentSessionCombobox, "", "Could not load recent sessions");
-            setComboboxValue(elements.projectCombobox, "", "Could not load recent projects");
+            agentSources = {recent_sessions: [], projects: []};
+            setComboboxValue(elements.recentSessionCombobox, "", `Could not load ${platformLabel} sessions`);
+            setComboboxValue(elements.projectCombobox, "", `Could not load ${platformLabel} projects`);
             setComboboxLoading(elements.recentSessionCombobox, false);
             setComboboxLoading(elements.projectCombobox, false);
         } finally {
@@ -861,9 +895,10 @@
     }
 
     function bindCompletedAgentSession(agent) {
-        if (String(agent?.platform || "") !== "chatgpt" || agent?.running) return;
+        const platform = String(agent?.platform || selectedPlatform()).trim().toLowerCase();
+        if (platform !== selectedPlatform() || agent?.running) return;
         const conversationUrl = String(agent?.conversation_url || "").trim();
-        if (!/^https:\/\/chatgpt\.com\/(?:g\/[^/]+\/)?c\/[^/]+\/?$/i.test(conversationUrl)) return;
+        if (!isAgentConversationUrl(platform, conversationUrl)) return;
         const signature = `${agent.started_at || ""}|${agent.finished_at || ""}|${conversationUrl}`;
         if (!agent.finished_at || signature === boundAgentSessionSignature) return;
         boundAgentSessionSignature = signature;
@@ -872,13 +907,15 @@
         sessionTitleOverride = sessionTitle;
         sourceBrowser = "";
         sourcesLoaded = false;
-        if (String(agent.session_mode || "").startsWith("project")) {
+        const projectUrl = String(agent.project_url || "").trim();
+        if (String(agent.session_mode || "").startsWith("project") && projectUrl) {
             if (elements.sessionMode instanceof HTMLInputElement) elements.sessionMode.value = "project";
             if (elements.projectUrl instanceof HTMLInputElement) {
-                elements.projectUrl.value = String(agent.project_url || elements.projectUrl.value || "");
+                elements.projectUrl.value = projectUrl;
             }
+            selectSessionListValue(elements.projectCombobox, projectUrl, "Selected project");
             selectSessionListValue(elements.projectSessionCombobox, conversationUrl, sessionTitle);
-            if (elements.projectUrl?.value) loadProjectSessions(elements.projectUrl.value);
+            loadProjectSessions(projectUrl);
         } else {
             if (elements.sessionMode instanceof HTMLInputElement) elements.sessionMode.value = "recent";
             selectSessionListValue(elements.recentSessionCombobox, conversationUrl, sessionTitle);
@@ -1433,7 +1470,7 @@
         renderTerminalExecution(lastPayload.runtime);
         renderActivity(agent.activity, running);
         updateSessionChoiceInputs();
-        if (readiness.ready && !running) loadChatgptSources();
+        if (readiness.ready && !running) loadAgentSources();
 
         if (elements.ask) {
             elements.ask.disabled = (!readiness.ready || !sessionChoiceReady()) && !running;

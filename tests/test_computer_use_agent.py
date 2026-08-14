@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.7.0-codex.1
+Code version: v3.8.0-codex.1
 """
 
 from __future__ import annotations
@@ -150,14 +150,46 @@ def test_non_chatgpt_model_selection_uses_the_provider_menu_when_exposed() -> No
     assert _select_web_model(_Page(), "chromium", "gemini", "gemini-3.1-pro") is True
 
 
-def test_non_chatgpt_sessions_start_at_the_provider_home() -> None:
+def test_all_web_agent_platforms_support_new_recent_and_project_targets() -> None:
     assert resolve_agent_session_target("new", platform="gemini") == "https://gemini.google.com/app"
     assert resolve_agent_session_target("new", platform="grok") == "https://grok.com/"
-    with pytest.raises(ValueError, match="starts a new Web session only"):
+    assert resolve_agent_session_target(
+        "recent",
+        conversation_url="https://gemini.google.com/app/gemini-session",
+        platform="gemini",
+    ) == "https://gemini.google.com/app/gemini-session"
+    assert resolve_agent_session_target(
+        "recent",
+        conversation_url="https://www.grok.com/c/grok-session/",
+        platform="grok",
+    ) == "https://grok.com/c/grok-session"
+    with pytest.raises(ValueError, match="Choose a recent Gemini session"):
         resolve_agent_session_target(
             "recent",
-            conversation_url="https://grok.com/c/example",
-            platform="grok",
+            conversation_url="https://example.com/c/session",
+            platform="gemini",
+        )
+    assert resolve_agent_session_target(
+        "project_new",
+        project_url="https://gemini.google.com/notebook/notebook-1",
+        platform="gemini",
+    ) == "https://gemini.google.com/notebook/notebook-1"
+    assert resolve_agent_session_target(
+        "project_new",
+        project_url="https://www.grok.com/project/project-1",
+        platform="grok",
+    ) == "https://grok.com/project/project-1?tab=conversations"
+    assert resolve_agent_session_target(
+        "project_session",
+        conversation_url="https://www.grok.com/c/grok-session/",
+        project_url="https://grok.com/project/project-1?tab=conversations",
+        platform="grok",
+    ) == "https://grok.com/c/grok-session"
+    with pytest.raises(ValueError, match="Choose a Gemini Project"):
+        resolve_agent_session_target(
+            "project_new",
+            project_url="https://example.com/notebook/notebook-1",
+            platform="gemini",
         )
 
 
@@ -491,6 +523,67 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
     assert result == ("Done.", "https://chatgpt.com/c/example", 2, True)
     assert len(submitted) == 3
     assert "Controller observation for turn 1" in submitted[1]
+
+
+@pytest.mark.parametrize(
+    ("platform", "target_url", "model"),
+    (
+        ("gemini", "https://gemini.google.com/app/gemini-session", "gemini-3.1-pro"),
+        ("grok", "https://grok.com/c/grok-session", "grok-auto"),
+    ),
+)
+def test_recent_gemini_and_grok_targets_enter_the_shared_agentic_action_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    target_url: str,
+    model: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = target_url
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace), platform=platform, model=model),
+        lambda: False,
+    )
+    verified: list[tuple[str, str]] = []
+    responses = iter((
+        '{"action":"bodycheck"}',
+        '{"action":"final","summary":"Done."}',
+    ))
+
+    def verify(_page: object, _browser: str, selected_platform: str, selected_target: str) -> None:
+        verified.append((selected_platform, selected_target))
+
+    def submit(_page: object, _browser: str, _message: str, _should_stop: object, **_kwargs: object) -> str:
+        return next(responses)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", verify)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Inspect the project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=ComputerUseSettings(workspace_path=str(workspace), platform=platform, model=model),
+        session_mode="recent",
+        selected_target_url=target_url,
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+        platform=platform,
+    )
+
+    assert result == ("Done.", target_url, 2, True)
+    assert verified == [(platform, target_url)]
 
 
 def test_workspace_controller_stays_inside_project_and_requires_current_bodycheck() -> None:

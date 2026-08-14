@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.5.1-codex.1`
+Documentation version: `v1.6.0-codex.1`
 
 ## Runtime flow
 
@@ -34,7 +34,9 @@ registers the local-media browser, and serves the Flask routes.
   content validation.
 - `app/core/chatgpt_agent_sources.py`: authenticated browser-mediated catalogs of the 20 most
   recent root ChatGPT sessions, projects, and project sessions for the Agent sidebar.
-- `app/core/computer_use_agent.py`: selected ChatGPT Web session targets, bounded context
+- `app/core/agent_session_sources.py`: the provider-neutral Agent session and Project adapter;
+  it maps ChatGPT Projects, Gemini Notebooks, and Grok Projects into one URL and source contract.
+- `app/core/computer_use_agent.py`: selected ChatGPT, Gemini, or Grok Web session targets, bounded context
   packages, the local JSON action protocol, project path confinement, command policy, and
   mandatory bodycheck ordering for the optional Agent workspace.
 - `app/core/cache_catalog.py` and `app/core/local_media_browser.py`: durable local indexes,
@@ -159,12 +161,12 @@ the Flask application. The browser route allows only readable supported media be
 cache root. Deleting an item moves it to a recoverable hidden browser-trash area and records a
 tombstone; restoring it moves the retained preview back to its original safe path.
 
-### ChatGPT Web Computer Use Agent
+### Web Computer Use Agent
 
 ```text
 selected local project
-  -> selected browser's recent session/project catalog
-  -> new or selected signed-in ChatGPT Web conversation
+  -> provider-neutral recent session/Project catalog
+  -> new or selected signed-in ChatGPT, Gemini, or Grok Web conversation
   -> bounded Markdown context package
   -> one JSON controller action at a time
   -> confined local read/change/check
@@ -176,8 +178,8 @@ selected local project
 The web model never receives direct process or filesystem authority. The local controller resolves
 every path below the selected project, separates explicit file actions from a restricted command
 layer, bounds turns and output, and rejects final completion after an edit until bodycheck passes.
-The browser target is validated as an official ChatGPT root session, project, or project session
-before each task; the selection is run-scoped and the default remains a new root session.
+The provider adapter validates each official root session, Project, or Project session before the
+task; the selection is run-scoped and the default remains a new root session.
 Chromium tasks clone the selected Edge or Chrome profile into an offscreen, minimized temporary
 context, suppress browser prompts, and clean the task-owned profile on exit. Stale cleanup is
 restricted to abandoned application-prefixed temporary directories older than 24 hours; the

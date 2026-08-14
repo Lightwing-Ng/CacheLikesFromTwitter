@@ -1,4 +1,4 @@
-{# Code version: v1.14.5-codex.1 #}
+{# Code version: v1.14.7-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -62,7 +62,7 @@
             <section class="hero">
                 <h1>{{ cache_source.group_label }}</h1>
             </section>
-            {% if cache_source.key in ["chatgpt", "grok", "gemini"] %}
+            {% if cache_source.show_content_mode %}
             <section class="sidebar-section cache-page-content-mode-section">
                 <div
                     class="browser-content-mode-control cache-page-content-mode-control"
@@ -179,7 +179,7 @@
                     >
                     {% block source_fields %}{% endblock %}
                 </form>
-                {% if cache_source.show_common_config %}
+                {% if cache_source.show_shared_settings_link %}
                 <a
                     class="ghost-link cache-settings-link"
                     href="{{ url_for('settings') }}#settings-downloads"

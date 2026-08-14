@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.8.3-codex.1
+Code version: v1.8.5-codex.1
 """
 
 from __future__ import annotations
@@ -180,6 +180,41 @@ def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
             assert options.evaluate_all(
                 "elements => elements.map(element => element.dataset.cacheSourceSwitcherPath)"
             ) == expected_paths
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_cache_sidebars_reuse_the_chatgpt_base_contract(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Verify all provider sidebars reuse ChatGPT's shared control structure."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/chatgpt",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        for page_source in ("chatgpt", "gemini", "grok"):
+            if page_source != "chatgpt":
+                page.goto(f"{sidebar_server_url}/cache/{page_source}", wait_until="domcontentloaded")
+
+            aside = page.locator("xpath=/html/body/main/div/aside")
+            expect(aside).to_have_count(1)
+            expect(aside.locator(":scope > .hero")).to_have_count(1)
+            expect(aside.locator(":scope > .cache-page-content-mode-section")).to_have_count(1)
+            expect(aside.locator("[data-cache-source-switcher]")).to_have_count(1)
+            expect(aside.locator("[data-cache-source-switcher-option]")).to_have_count(4)
+            expect(aside.locator("[data-browser-session-panel]")).to_have_count(1)
+            expect(aside.locator(".browser-session-panel-label")).to_have_text("Authorized browser")
+            expect(aside.locator(".cache-settings-link")).to_have_count(1)
+            expect(aside.locator("[data-cache-action-row]")).to_have_count(1)
+            expect(aside.locator("#start_button")).to_have_count(1)
+            expect(aside.locator("#stop_button")).to_have_count(1)
     finally:
         context.close()
 
@@ -816,6 +851,317 @@ def test_sidebar_state_remains_consistent_across_overlay_transitions(
         expect(toggle).to_have_attribute("aria-expanded", "false")
         _assert_hidden_backdrop(page)
         _assert_toggle_hit_target(page)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("platform", "platform_label", "session_url"),
+    (
+        ("gemini", "Gemini", "https://gemini.google.com/app/gemini-recent-session"),
+        ("grok", "Grok", "https://grok.com/c/grok-recent-session"),
+    ),
+)
+def test_agent_recent_provider_sessions_submit_agentic_task_target(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    platform: str,
+    platform_label: str,
+    session_url: str,
+) -> None:
+    """Verify Gemini and Grok serialize a selected recent session into Agent execution."""
+    captured_ask_payloads: list[dict[str, str]] = []
+    source_requests: list[str] = []
+
+    def agent_payload(selected_platform: str) -> dict[str, object]:
+        return {
+            "runtime": {
+                "ready": True,
+                "host_operating_system": "macos",
+                "message": "Computer Use is ready on this Mac.",
+                "terminal_execution": {
+                    "ready": True,
+                    "status_label": "Granted",
+                    "message": "Terminal execution is available.",
+                },
+            },
+            "agent": {
+                "running": False,
+                "phase": "idle",
+                "message": "Ready to use a signed-in Web AI session.",
+                "prompt": "",
+                "response": "",
+                "response_html": "",
+                "history": [],
+                "activity": [],
+                "conversation_url": "",
+                "project_url": "",
+                "session_title": "",
+                "session_mode": "new",
+                "platform": selected_platform,
+                "model": "gemini-3.1-pro" if selected_platform == "gemini" else "grok-auto",
+                "finished_at": "",
+            },
+        }
+
+    def fulfill_agent_status(route) -> None:
+        route.fulfill(json=agent_payload(platform))
+
+    def fulfill_browser_status(route) -> None:
+        browser_id = "chrome" if "browser=chrome" in route.request.url else "edge"
+        route.fulfill(
+            json={
+                "platform": platform,
+                "browser": browser_id,
+                "browser_label": browser_id.title(),
+                "logged_in": True,
+                "can_download": True,
+                "account_name": f"{platform_label} account",
+                "message": f"{browser_id.title()} is ready for {platform_label} Web.",
+            }
+        )
+
+    def fulfill_preferences(route) -> None:
+        payload = route.request.post_data_json or {}
+        route.fulfill(json=agent_payload(str(payload.get("platform") or platform)))
+
+    def fulfill_sources(route) -> None:
+        source_requests.append(route.request.url)
+        route.fulfill(
+            json={
+                "platform": platform,
+                "browser_label": "Edge",
+                "recent_sessions": [
+                    {
+                        "id": f"{platform}-recent-session",
+                        "title": f"{platform_label} selected session",
+                        "url": session_url,
+                        "updated_at": "2026-08-14T04:00:00Z",
+                    }
+                ],
+                "projects": [],
+                "limit": 20,
+            }
+        )
+
+    def fulfill_ask(route) -> None:
+        captured_ask_payloads.append(route.request.post_data_json or {})
+        route.fulfill(json=agent_payload(platform))
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 900},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/preferences", fulfill_preferences)
+    page.route("**/api/agent/sources**", fulfill_sources)
+    page.route("**/api/agent/ask", fulfill_ask)
+    try:
+        page.goto(f"{sidebar_server_url}/agent", wait_until="domcontentloaded")
+        page.get_by_role("button", name="Web service: ChatGPT", exact=True).click()
+        page.locator(
+            f'.agent-platform-combobox [data-agent-combobox-option="{platform}"]'
+        ).click()
+        expect(page.get_by_role("button", name=f"Web service: {platform_label}", exact=True)).to_be_visible()
+
+        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        page.locator(
+            '.agent-session-mode-combobox [data-agent-combobox-option="recent"]'
+        ).click()
+        recent_option = page.locator(
+            f'[data-agent-session-list="recent"] [data-agent-combobox-option="{session_url}"]'
+        )
+        expect(recent_option).to_have_count(1)
+        page.locator('[data-agent-session-list="recent"] [data-agent-combobox-trigger]').click()
+        expect(recent_option).to_be_visible()
+        recent_option.click()
+
+        expect(page.locator('[data-agent-prompt-session-mode]')).to_have_value("recent")
+        expect(page.locator('[data-agent-prompt-conversation-url]')).to_have_value(session_url)
+        expect(page.locator('[data-agent-prompt-session-title]')).to_have_value(
+            f"{platform_label} selected session"
+        )
+        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        expect(
+            page.locator('.agent-session-mode-combobox [data-agent-combobox-option="project"]')
+        ).to_be_visible()
+        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        expect(page.locator("#agent_ask_button")).to_be_enabled()
+
+        page.locator('[data-agent-prompt-input]').fill(f"Inspect the {platform_label} task workspace.")
+        with page.expect_request(re.compile(r"/api/agent/ask$")):
+            page.locator("#agent_ask_button").click()
+        assert len(captured_ask_payloads) == 1
+        assert captured_ask_payloads[0]["platform"] == platform
+        assert captured_ask_payloads[0]["session_mode"] == "recent"
+        assert captured_ask_payloads[0]["conversation_url"] == session_url
+        assert captured_ask_payloads[0]["session_title"] == f"{platform_label} selected session"
+        assert any(f"platform={platform}" in url for url in source_requests)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("platform", "platform_label", "project_url"),
+    (
+        ("gemini", "Gemini", "https://gemini.google.com/notebook/gemini-project"),
+        ("grok", "Grok", "https://grok.com/project/grok-project?tab=conversations"),
+    ),
+)
+def test_agent_provider_projects_submit_agentic_task_target(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    platform: str,
+    platform_label: str,
+    project_url: str,
+) -> None:
+    """Verify provider-native project containers serialize as one Project choice."""
+    captured_ask_payloads: list[dict[str, str]] = []
+    source_requests: list[str] = []
+    project_session_requests: list[str] = []
+
+    def agent_payload(selected_platform: str) -> dict[str, object]:
+        return {
+            "runtime": {
+                "ready": True,
+                "host_operating_system": "macos",
+                "message": "Computer Use is ready on this Mac.",
+                "terminal_execution": {
+                    "ready": True,
+                    "status_label": "Granted",
+                    "message": "Terminal execution is available.",
+                },
+            },
+            "agent": {
+                "running": False,
+                "phase": "idle",
+                "message": "Ready to use a signed-in Web AI session.",
+                "prompt": "",
+                "response": "",
+                "response_html": "",
+                "history": [],
+                "activity": [],
+                "conversation_url": "",
+                "project_url": "",
+                "session_title": "",
+                "session_mode": "new",
+                "platform": selected_platform,
+                "model": "gemini-3.1-pro" if selected_platform == "gemini" else "grok-auto",
+                "finished_at": "",
+            },
+        }
+
+    def fulfill_agent_status(route) -> None:
+        route.fulfill(json=agent_payload(platform))
+
+    def fulfill_browser_status(route) -> None:
+        browser_id = "chrome" if "browser=chrome" in route.request.url else "edge"
+        route.fulfill(
+            json={
+                "platform": platform,
+                "browser": browser_id,
+                "browser_label": browser_id.title(),
+                "logged_in": True,
+                "can_download": True,
+                "account_name": f"{platform_label} account",
+                "message": f"{browser_id.title()} is ready for {platform_label} Web.",
+            }
+        )
+
+    def fulfill_preferences(route) -> None:
+        payload = route.request.post_data_json or {}
+        route.fulfill(json=agent_payload(str(payload.get("platform") or platform)))
+
+    def fulfill_sources(route) -> None:
+        source_requests.append(route.request.url)
+        route.fulfill(
+            json={
+                "platform": platform,
+                "browser_label": "Edge",
+                "recent_sessions": [],
+                "projects": [
+                    {
+                        "id": f"{platform}-project",
+                        "title": f"{platform_label} project",
+                        "url": project_url,
+                        "updated_at": "2026-08-14T04:00:00Z",
+                    }
+                ],
+                "limit": 20,
+            }
+        )
+
+    def fulfill_project_sessions(route) -> None:
+        project_session_requests.append(route.request.url)
+        route.fulfill(
+            json={
+                "platform": platform,
+                "project_url": project_url,
+                "sessions": [],
+                "limit": 20,
+            }
+        )
+
+    def fulfill_ask(route) -> None:
+        captured_ask_payloads.append(route.request.post_data_json or {})
+        route.fulfill(json=agent_payload(platform))
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 900},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/preferences", fulfill_preferences)
+    page.route("**/api/agent/sources**", fulfill_sources)
+    page.route("**/api/agent/project-sessions**", fulfill_project_sessions)
+    page.route("**/api/agent/ask", fulfill_ask)
+    try:
+        page.goto(f"{sidebar_server_url}/agent", wait_until="domcontentloaded")
+        page.get_by_role("button", name="Web service: ChatGPT", exact=True).click()
+        page.locator(
+            f'.agent-platform-combobox [data-agent-combobox-option="{platform}"]'
+        ).click()
+        expect(page.get_by_role("button", name=f"Web service: {platform_label}", exact=True)).to_be_visible()
+
+        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        page.locator(
+            '.agent-session-mode-combobox [data-agent-combobox-option="project"]'
+        ).click()
+        project_option = page.locator(
+            f'[data-agent-session-list="projects"] [data-agent-combobox-option="{project_url}"]'
+        )
+        expect(project_option).to_have_count(1)
+        page.locator('[data-agent-session-list="projects"] [data-agent-combobox-trigger]').click()
+        expect(project_option).to_be_visible()
+        project_option.click()
+
+        expect(page.locator('[data-agent-prompt-session-mode]')).to_have_value("project_new")
+        expect(page.locator('[data-agent-prompt-project-url]')).to_have_value(project_url)
+        expect(page.locator('[data-agent-prompt-conversation-url]')).to_have_value("")
+        expect(page.locator("#agent_ask_button")).to_be_enabled()
+
+        page.locator('[data-agent-prompt-input]').fill(f"Inspect the {platform_label} project workspace.")
+        with page.expect_request(re.compile(r"/api/agent/ask$")):
+            page.locator("#agent_ask_button").click()
+        assert len(captured_ask_payloads) == 1
+        assert captured_ask_payloads[0]["platform"] == platform
+        assert captured_ask_payloads[0]["session_mode"] == "project_new"
+        assert captured_ask_payloads[0]["project_url"] == project_url
+        assert captured_ask_payloads[0]["conversation_url"] == ""
+        assert any(f"platform={platform}" in url for url in source_requests)
+        assert any("project_url=" in url for url in project_session_requests)
     finally:
         context.close()
 

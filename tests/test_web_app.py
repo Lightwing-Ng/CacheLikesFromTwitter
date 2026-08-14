@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.77.4-codex.1
+# Code version: v1.77.5-codex.1
 
 from __future__ import annotations
 
@@ -83,6 +83,14 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual([source.key for source in CACHE_SOURCE_VIEWS], ["chatgpt", "gemini", "grok", "x"])
         self.assertEqual(len({source.template_name for source in CACHE_SOURCE_VIEWS}), len(CACHE_SOURCE_VIEWS))
         self.assertEqual({source.start_button_label for source in CACHE_SOURCE_VIEWS}, {"Start"})
+        self.assertEqual(
+            {source.key for source in CACHE_SOURCE_VIEWS if source.show_content_mode},
+            {"chatgpt", "gemini", "grok"},
+        )
+        self.assertEqual(
+            {source.key for source in CACHE_SOURCE_VIEWS if source.browser_panel_label == "Authorized browser"},
+            {"chatgpt", "gemini", "grok"},
+        )
 
     def test_cache_source_switcher_uses_one_complete_registry_on_gemini(self) -> None:
         app = create_app()
@@ -263,7 +271,7 @@ class WebAppTests(unittest.TestCase):
         for body in (index_body, grok_body, chatgpt_body):
             self.assertIn('href="/settings#settings-downloads"', body)
             self.assertNotIn('class="cache-common-config', body)
-        self.assertNotIn('href="/settings#settings-downloads"', gemini_body)
+        self.assertIn('href="/settings#settings-downloads"', gemini_body)
         self.assertIn("ChatGPT cache overview", chatgpt_body)
         self.assertIn("Sessions discovered", chatgpt_body)
         self.assertGreaterEqual(chatgpt_body.count('href="/cache/chatgpt"'), 2)
@@ -672,7 +680,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.2.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.9.3-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.11.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-role="browser-session-account"', local_body)
@@ -958,7 +966,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.9.3-codex.1',
+            'computer-use-agent-v3.11.0-codex.1',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'suggestion-loading-spinner agent-empty-response-spinner',
@@ -970,6 +978,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('function syncSessionModeTrigger()', script)
         self.assertIn('syncComboboxTriggerFromOption(combobox, option)', script)
         self.assertIn("selectedOption?.dataset.agentComboboxLabel", script)
+        self.assertNotIn('data-agent-session-platforms="chatgpt"', body)
 
     def test_agent_page_exposes_the_three_web_provider_model_pairs(self) -> None:
         app = create_app()
@@ -1070,6 +1079,59 @@ class WebAppTests(unittest.TestCase):
         sessions.assert_called_once()
         history.assert_called_once()
         self.assertIn("<p>The project uses Inter.</p>", history_response.get_json()["history"][0]["response_html"])
+
+    def test_agent_provider_source_route_reuses_one_recent_session_contract(self) -> None:
+        app = create_app()
+        payload = {
+            "platform": "gemini",
+            "browser_label": "Edge",
+            "recent_sessions": [
+                {
+                    "id": "gemini-session",
+                    "title": "Gemini task",
+                    "url": "https://gemini.google.com/app/gemini-session",
+                    "updated_at": "",
+                }
+            ],
+            "projects": [],
+            "limit": 20,
+        }
+        with patch("app.web.app.list_agent_sources", return_value=payload) as sources:
+            with app.test_client() as client:
+                response = client.get("/api/agent/sources?platform=gemini&browser=edge")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), payload)
+        sources.assert_called_once()
+        self.assertEqual(sources.call_args.args[:2], ("gemini", "edge"))
+
+    def test_agent_project_route_reuses_one_project_session_contract(self) -> None:
+        app = create_app()
+        project_url = "https://grok.com/project/project-1?tab=conversations"
+        payload = {
+            "platform": "grok",
+            "project_url": project_url,
+            "sessions": [
+                {
+                    "id": "grok-session",
+                    "title": "Grok project task",
+                    "url": "https://grok.com/c/grok-session",
+                    "updated_at": "",
+                }
+            ],
+            "limit": 20,
+        }
+        with patch("app.web.app.list_agent_project_sessions", return_value=payload) as sessions:
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/agent/project-sessions?platform=grok&browser=edge&project_url="
+                    "https://grok.com/project/project-1?tab=conversations"
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), payload)
+        sessions.assert_called_once()
+        self.assertEqual(sessions.call_args.args[:3], ("grok", "edge", project_url))
 
     def test_agent_session_history_route_rejects_non_chatgpt_urls(self) -> None:
         app = create_app()

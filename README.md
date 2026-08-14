@@ -1,16 +1,18 @@
 # CacheLikesFromTwitter
 
-Documentation version: `v1.10.0-codex.1`
+Documentation version: `v1.11.0-codex.1`
 
 CacheLikesFromTwitter is a local Flask web console that caches media from the
 currently signed-in X account's Likes timeline, Grok's Files library, and a
 configured ChatGPT project or session. It stores media locally and provides
 a browser for reviewing, deleting, and restoring cached files.
 
-Its Agent workspace uses the selected authenticated Safari, Edge, or Chrome ChatGPT Web session.
-It defaults to a new root-level session, while the sidebar can join one of the 20 most recent root
-sessions, start a session in one of the 20 most recent projects, or join one of a project's 20 most
-recent sessions. ChatGPT supplies reasoning while a bounded local macOS Computer Use controller
+Its Agent workspace uses the selected authenticated Web session for ChatGPT, Gemini, or Grok.
+The sidebar exposes one provider-neutral Project concept: ChatGPT Projects, Gemini Notebooks, and
+Grok Projects are adapted behind the same Project selector and execution contract. It defaults to
+a new root-level session, while the sidebar can join one of the 20 most recent sessions, start a
+session in one of the 20 most recent Projects, or join one of a Project's 20 most recent sessions.
+The selected Web provider supplies reasoning while a bounded local macOS Computer Use controller
 reads, changes, runs, and verifies only the selected project. This fallback uses no API,
 command-line coding-agent runtime, MCP connection, or third-party agent bridge.
 

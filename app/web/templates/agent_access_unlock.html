@@ -1,0 +1,266 @@
+{# Code version: v1.0.0-codex.1 #}
+<!doctype html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Unlock Agent</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
+    <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.80.9-codex.1') }}">
+    <style>
+        .agent-access-overlay {
+            isolation: isolate;
+            background: color-mix(in srgb, var(--bg) 76%, transparent);
+            backdrop-filter: blur(18px) saturate(1.08);
+            -webkit-backdrop-filter: blur(18px) saturate(1.08);
+        }
+
+        .agent-access-dialog {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr);
+            gap: 0;
+            width: min(380px, calc(100vw - 32px));
+            padding: 24px;
+            border: 1px solid color-mix(in srgb, var(--theme-glass-highlight) 58%, var(--theme-glass-border));
+            border-radius: var(--radius-panel);
+            background: color-mix(in srgb, var(--glass-surface-background-dense) 94%, transparent);
+            box-shadow:
+                0 34px 90px -44px color-mix(in srgb, var(--theme-shadow) 68%, transparent),
+                0 14px 34px -24px var(--theme-shadow-ambient),
+                inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 82%, transparent);
+            backdrop-filter: blur(32px) saturate(1.28);
+            -webkit-backdrop-filter: blur(32px) saturate(1.28);
+            font-family: var(--font-family-base);
+        }
+
+        .agent-access-dialog::after {
+            background: linear-gradient(
+                180deg,
+                color-mix(in srgb, var(--color-white-adaptive) 14%, transparent) 0%,
+                transparent 58%
+            );
+        }
+
+        .agent-access-heading {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            min-height: 36px;
+            padding-right: calc(var(--workspace-modal-close-size) + 10px);
+        }
+
+        .agent-access-icon {
+            flex: 0 0 var(--workspace-modal-icon-size);
+            width: var(--workspace-modal-icon-size);
+            height: var(--workspace-modal-icon-size);
+            background-color: var(--accent-fill);
+            mask: url("/static/images/key.circle.fill.svg") center / contain no-repeat;
+            -webkit-mask: url("/static/images/key.circle.fill.svg") center / contain no-repeat;
+        }
+
+        .agent-access-title {
+            margin: 0;
+            color: var(--text);
+            font-size: 20px;
+            font-weight: var(--font-weight-semibold);
+            letter-spacing: -0.015em;
+            line-height: 1.2;
+        }
+
+        .agent-access-copy {
+            position: relative;
+            z-index: 1;
+            max-width: 310px;
+            margin: 10px 0 0 calc(var(--workspace-modal-icon-size) + 12px);
+            color: var(--muted);
+            font-size: var(--font-ui-body);
+            line-height: 1.45;
+            text-align: left;
+        }
+
+        .agent-access-form {
+            position: relative;
+            z-index: 1;
+            display: grid;
+            gap: 16px;
+            margin-top: 22px;
+        }
+
+        .agent-access-field {
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+            width: fit-content;
+            max-width: 100%;
+            min-height: 36px;
+            margin: 0 auto;
+            cursor: text;
+        }
+
+        .agent-access-native-input {
+            position: absolute;
+            inset: 0;
+            z-index: 1;
+            width: 100%;
+            height: 100%;
+            margin: 0;
+            border: 0;
+            opacity: 0;
+            cursor: text;
+        }
+
+        .agent-access-slot {
+            position: relative;
+            display: block;
+            width: 28px;
+            height: 28px;
+            user-select: none;
+        }
+
+        .agent-access-slot:nth-of-type(4) {
+            margin-inline-start: 12px;
+        }
+
+        .agent-access-slot::before {
+            content: "";
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 20px;
+            height: 1px;
+            border-radius: var(--radius-pill);
+            background: color-mix(in srgb, var(--theme-text) 28%, transparent);
+            transform: translate(-50%, -50%);
+            transition: width 160ms var(--motion-standard), height 160ms var(--motion-standard), background 160ms var(--motion-standard), border-radius 160ms var(--motion-standard);
+        }
+
+        .agent-access-slot.is-filled::before {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text);
+        }
+
+        .agent-access-field:focus-within .agent-access-slot:not(.is-filled)::before {
+            background: color-mix(in srgb, var(--accent) 58%, transparent);
+        }
+
+        .agent-access-error {
+            margin: -2px 0 0;
+            color: var(--theme-error-strong);
+            font-size: var(--font-form-label);
+            line-height: 1.45;
+            text-align: center;
+        }
+
+        .agent-access-actions {
+            display: flex;
+            align-items: center;
+            justify-content: flex-end;
+        }
+
+        .agent-access-button {
+            width: auto;
+            min-width: 0;
+            min-height: 32px;
+            padding: 0 18px;
+            border: 0;
+            border-radius: var(--radius-pill);
+            background: var(--accent-fill);
+            color: var(--accent-contrast);
+            box-shadow: 0 8px 18px -12px var(--accent-shadow-strong), inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 42%, transparent);
+            font: var(--font-weight-semibold) var(--font-ui-body) / 1 var(--font-family-base);
+            cursor: pointer;
+        }
+
+        .agent-access-button:disabled {
+            background: color-mix(in srgb, var(--muted) 28%, transparent);
+            color: color-mix(in srgb, var(--accent-contrast) 72%, transparent);
+            box-shadow: inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 26%, transparent);
+            cursor: default;
+        }
+
+        .agent-access-button:focus-visible,
+        .agent-access-native-input:focus-visible {
+            outline: 2px solid var(--accent);
+            outline-offset: 3px;
+        }
+
+        @media (max-width: 420px) {
+            .agent-access-dialog {
+                width: calc(100vw - 24px);
+                padding: 20px;
+            }
+
+            .agent-access-slot {
+                width: 26px;
+                height: 26px;
+            }
+
+            .agent-access-field {
+                gap: 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="workspace-modal-overlay agent-access-overlay" role="presentation">
+        <section class="workspace-modal-dialog agent-access-dialog" role="dialog" aria-modal="true" aria-labelledby="agent_access_title" aria-describedby="agent_access_copy">
+            <a class="workspace-modal-close" href="/" aria-label="Back to Local resources">
+                <span class="cache-wait-modal-close-icon" aria-hidden="true"></span>
+            </a>
+            <header class="agent-access-heading">
+                <span class="icon agent-access-icon" aria-hidden="true"></span>
+                <h1 class="agent-access-title" id="agent_access_title">Unlock Agent</h1>
+            </header>
+            <p class="agent-access-copy" id="agent_access_copy">Enter the password to open the local Agent control panel.</p>
+            <form class="agent-access-form" method="post" action="/agent/unlock" id="agent_access_form">
+                <label class="agent-access-field" for="agent_access_password" aria-label="Agent password">
+                    <input class="agent-access-native-input"
+                           id="agent_access_password"
+                           name="password"
+                           type="password"
+                           inputmode="numeric"
+                           pattern="[0-9]{6}"
+                           minlength="6"
+                           maxlength="6"
+                           autocomplete="current-password"
+                           autofocus
+                           required>
+                    {% for _ in range(6) %}<span class="agent-access-slot" aria-hidden="true"></span>{% endfor %}
+                </label>
+                {% if error_message %}<p class="agent-access-error" role="alert">{{ error_message }}</p>{% endif %}
+                <div class="agent-access-actions">
+                    <button class="agent-access-button" id="agent_access_submit" type="submit" disabled>Unlock</button>
+                </div>
+            </form>
+        </section>
+    </main>
+<script>
+    (() => {
+        const input = document.getElementById("agent_access_password");
+        const submit = document.getElementById("agent_access_submit");
+        const slots = Array.from(document.querySelectorAll(".agent-access-slot"));
+        if (!(input instanceof HTMLInputElement) || !(submit instanceof HTMLButtonElement)) return;
+
+        const sync = () => {
+            input.value = input.value.replace(/\D/g, "").slice(0, 6);
+            slots.forEach((slot, index) => {
+                slot.classList.toggle("is-filled", index < input.value.length);
+            });
+            submit.disabled = input.value.length !== 6;
+        };
+
+        input.addEventListener("input", sync);
+        input.addEventListener("change", sync);
+        sync();
+    })();
+</script>
+</body>
+</html>

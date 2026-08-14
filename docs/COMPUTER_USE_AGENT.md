@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.9.3-codex.1`
+Documentation version: `v3.10.0-codex.1`
 
 ## Purpose
 
@@ -10,11 +10,12 @@ Edge or Chrome as the supported background Chromium browsers. ChatGPT also remai
 Safari for the existing session flows. Edge is the default because its Chromium controller does
 not depend on desktop clicks; Chrome uses the same isolated controller.
 
-The default is a new root-level session. ChatGPT can also join one of the 20 most recent root
-sessions, start a session in one of the 20 most recent projects, or join one of that project's
-20 most recent sessions. Gemini and Grok currently start a new root-level Web conversation.
-The selected Web provider supplies reasoning; a bounded local macOS controller performs project
-actions and returns compact observations to the same conversation.
+The default is a new root-level session. Every provider can also join one of the 20 most recent
+sessions, start a session in one of the 20 most recent Projects, or join one of that Project's 20
+most recent sessions. The adapter maps ChatGPT Projects, Gemini Notebooks, and Grok Projects to
+the same Project contract, so the Agent UI and execution loop do not expose provider-specific
+container names. The selected Web provider supplies reasoning; a bounded local macOS controller
+performs project actions and returns compact observations to the same conversation.
 
 This route uses no API, command-line coding-agent runtime, MCP connection, or third-party agent bridge.
 ChatGPT plan limits, file-upload limits, data controls, storage, and retention still apply.
@@ -29,7 +30,7 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
    detection never opens an authorization surface.
    The browser status card also reports whether the host Terminal or PowerShell executable is
    available and the selected project currently grants read, write, and directory-entry access.
-2. Keep `New session` or choose a recent root session/project and, for a project, either
+2. Keep `New session` or choose a recent session/Project and, for a Project, either
    `New session in project` or one of its recent sessions.
 3. Enter a task. The service validates the selected provider's official URL and opens it in the
    selected browser profile.

@@ -1,4 +1,4 @@
-<!-- Code version: v3.9.3-codex.1 -->
+<!-- Code version: v3.11.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -160,9 +160,9 @@
                     </label>
                 </div>
 
-                <div class="agent-session-source" data-agent-session-source{% if settings.platform != 'chatgpt' %} hidden{% endif %}>
+                <div class="agent-session-source" data-agent-session-source>
                     <label class="field">
-                        <span class="field-label">ChatGPT session</span>
+                        <span class="field-label" data-agent-session-platform-label>Session source</span>
                         <div class="trade-strategy-combobox agent-combobox agent-session-mode-combobox" data-agent-combobox>
                             <input type="hidden" value="new" data-agent-combobox-input data-agent-session-mode>
                             <button
@@ -171,7 +171,7 @@
                                 data-agent-combobox-trigger
                                 aria-haspopup="listbox"
                                 aria-expanded="false"
-                                aria-label="ChatGPT session: New session"
+                                aria-label="Session source: New session"
                             >
                                 <span class="browser-session-trigger-leading">
                                     <span class="browser-picker-selected-icon-shell">
@@ -181,7 +181,7 @@
                                 </span>
                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
-                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose ChatGPT session source" hidden>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose a session source" hidden>
                                 <button type="button" class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active" data-agent-combobox-option="new" data-agent-combobox-label="New session" data-agent-combobox-icon="{{ url_for('static', filename='images/plus.circle.svg') }}" role="option" aria-selected="true" tabindex="-1">
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
                                     <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/plus.circle.svg') }}" alt="" aria-hidden="true">
@@ -212,7 +212,7 @@
                                 </span>
                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
-                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a recent ChatGPT session" hidden></div>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a recent {{ selected_platform.label }} session" hidden></div>
                         </div>
                     </div>
 
@@ -227,7 +227,7 @@
                                 </span>
                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
-                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a recent ChatGPT project" hidden></div>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a recent project" hidden></div>
                         </div>
                     </div>
 
@@ -242,7 +242,7 @@
                                 </span>
                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
-                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a session in this ChatGPT project" hidden></div>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a session in this project" hidden></div>
                         </div>
                     </div>
                 </div>
@@ -409,6 +409,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.2.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.9.3-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.11.0-codex.1') }}"></script>
 </body>
 </html>

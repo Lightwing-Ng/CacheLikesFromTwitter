@@ -1,0 +1,219 @@
+"""Focused tests for the provider-neutral Agent session source adapter.
+
+Code version: v1.1.0-codex.1
+"""
+
+from __future__ import annotations
+
+from unittest.mock import patch
+
+from app.core.agent_session_sources import (
+    list_agent_project_sessions,
+    list_agent_sources,
+    normalize_agent_conversation_url,
+    normalize_agent_project_url,
+)
+from app.core.config import CrawlConfig
+from app.core.gemini_downloader import GeminiConversationLink
+from app.core.grok_history import GrokConversation
+
+
+def test_agent_conversation_url_normalization_is_provider_specific() -> None:
+    assert normalize_agent_conversation_url(
+        "gemini",
+        "https://gemini.google.com/app/session-1/?hl=en",
+    ) == "https://gemini.google.com/app/session-1"
+    assert normalize_agent_conversation_url(
+        "grok",
+        "https://www.grok.com/c/session-2/",
+    ) == "https://grok.com/c/session-2"
+    assert normalize_agent_conversation_url(
+        "chatgpt",
+        "https://www.chatgpt.com/c/session-3?messageId=ignored",
+    ) == "https://chatgpt.com/c/session-3"
+    assert normalize_agent_conversation_url("grok", "https://example.com/c/session") == ""
+
+
+def test_agent_project_url_normalization_hides_provider_specific_routes() -> None:
+    assert normalize_agent_project_url(
+        "chatgpt",
+        "https://chatgpt.com/g/g-p-demo/project?tab=chat",
+    ) == "https://chatgpt.com/g/g-p-demo/project"
+    assert normalize_agent_project_url(
+        "gemini",
+        "https://gemini.google.com/notebook/notebook-1/?hl=en",
+    ) == "https://gemini.google.com/notebook/notebook-1"
+    assert normalize_agent_project_url(
+        "grok",
+        "https://www.grok.com/project/project-1?tab=conversations",
+    ) == "https://grok.com/project/project-1?tab=conversations"
+    assert normalize_agent_project_url("grok", "https://example.com/project/project-1") == ""
+
+
+def test_gemini_sources_reuse_the_existing_history_link_collector() -> None:
+    links = [
+        GeminiConversationLink(
+            conversation_id="gemini-1",
+            url="https://gemini.google.com/app/gemini-1",
+            title="Gemini session",
+        )
+    ]
+    with patch(
+        "app.core.agent_session_sources._run_chromium_source_collection",
+        return_value=links,
+    ) as collector:
+        payload = list_agent_sources("gemini", "edge", CrawlConfig())
+
+    assert payload["platform"] == "gemini"
+    assert payload["projects"] == []
+    assert payload["recent_sessions"] == [
+        {
+            "id": "gemini-1",
+            "title": "Gemini session",
+            "url": "https://gemini.google.com/app/gemini-1",
+            "updated_at": "",
+        }
+    ]
+    assert collector.call_args.args[0] == "edge"
+    assert collector.call_args.args[1].gemini_max_conversations == 20
+    assert collector.call_args.args[2] == "https://gemini.google.com/app"
+
+
+def test_grok_sources_reuse_the_existing_authenticated_conversations_api() -> None:
+    conversations = [
+        GrokConversation(
+            conversation_id="grok-1",
+            title="Grok session",
+            created_at="2026-08-14T01:00:00Z",
+            updated_at="2026-08-14T02:00:00Z",
+            url="https://grok.com/c/grok-1",
+        )
+    ]
+    with patch(
+        "app.core.agent_session_sources._run_chromium_source_collection",
+        return_value=conversations,
+    ) as collector:
+        payload = list_agent_sources("grok", "chrome", CrawlConfig())
+
+    assert payload["platform"] == "grok"
+    assert payload["recent_sessions"][0] == {
+        "id": "grok-1",
+        "title": "Grok session",
+        "url": "https://grok.com/c/grok-1",
+        "updated_at": "2026-08-14T02:00:00Z",
+    }
+    assert collector.call_args.args[:3] == ("chrome", CrawlConfig(), "https://grok.com/")
+
+
+def test_chatgpt_sources_still_use_the_existing_project_capable_adapter() -> None:
+    existing_payload = {"recent_sessions": [], "projects": [{"url": "project"}]}
+    with patch(
+        "app.core.agent_session_sources.list_chatgpt_agent_sources",
+        return_value=existing_payload,
+    ) as sources:
+        payload = list_agent_sources("chatgpt", "edge", CrawlConfig())
+
+    assert payload == {**existing_payload, "platform": "chatgpt"}
+    sources.assert_called_once()
+
+
+def test_gemini_sources_expose_notebooks_as_shared_projects() -> None:
+    with patch(
+        "app.core.agent_session_sources._run_chromium_source_collection",
+        return_value={
+            "recent_sessions": [
+                {
+                    "conversation_id": "gemini-1",
+                    "title": "Gemini session",
+                    "url": "https://gemini.google.com/app/gemini-1",
+                }
+            ],
+            "projects": [
+                {
+                    "id": "notebook-1",
+                    "title": "Research notebook",
+                    "url": "https://gemini.google.com/notebook/notebook-1",
+                    "updated_at": "",
+                }
+            ],
+        },
+    ):
+        payload = list_agent_sources("gemini", "edge", CrawlConfig())
+
+    assert payload["projects"] == [
+        {
+            "id": "notebook-1",
+            "title": "Research notebook",
+            "url": "https://gemini.google.com/notebook/notebook-1",
+            "updated_at": "",
+        }
+    ]
+
+
+def test_grok_sources_expose_projects_as_shared_projects() -> None:
+    with patch(
+        "app.core.agent_session_sources._run_chromium_source_collection",
+        return_value={
+            "recent_sessions": [],
+            "projects": [
+                {
+                    "id": "project-1",
+                    "title": "Research project",
+                    "url": "https://grok.com/project/project-1?tab=conversations",
+                    "updated_at": "",
+                }
+            ],
+        },
+    ):
+        payload = list_agent_sources("grok", "edge", CrawlConfig())
+
+    assert payload["projects"][0]["url"] == "https://grok.com/project/project-1?tab=conversations"
+
+
+def test_project_session_listing_uses_one_contract_for_gemini_and_grok() -> None:
+    project_cases = (
+        (
+            "gemini",
+            "https://gemini.google.com/notebook/notebook-1",
+            "https://gemini.google.com/app/gemini-session",
+        ),
+        (
+            "grok",
+            "https://grok.com/project/project-1?tab=conversations",
+            "https://grok.com/c/grok-session",
+        ),
+    )
+    for platform, project_url, session_url in project_cases:
+        with patch(
+            "app.core.agent_session_sources._run_chromium_source_collection",
+            return_value=[
+                {
+                    "id": "selected-session",
+                    "title": "Selected session",
+                    "url": session_url,
+                    "updated_at": "",
+                }
+            ],
+        ) as collector:
+            payload = list_agent_project_sessions(platform, "edge", project_url, CrawlConfig())
+
+        assert payload["platform"] == platform
+        assert payload["project_url"] == project_url
+        assert payload["sessions"][0]["url"] == session_url
+        assert collector.call_args.args[2] == project_url
+
+
+def test_chatgpt_project_session_listing_keeps_existing_adapter() -> None:
+    with patch(
+        "app.core.agent_session_sources.list_chatgpt_project_sessions",
+        return_value={"project_url": "https://chatgpt.com/g/g-p-demo/project", "sessions": []},
+    ) as sessions:
+        payload = list_agent_project_sessions(
+            "chatgpt",
+            "edge",
+            "https://chatgpt.com/g/g-p-demo/project",
+            CrawlConfig(),
+        )
+
+    assert payload["platform"] == "chatgpt"
+    sessions.assert_called_once()

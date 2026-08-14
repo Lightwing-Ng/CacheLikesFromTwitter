@@ -1,10 +1,12 @@
 """Flask application for the local web console."""
 
-# Code version: v1.35.0-codex.1
+# Code version: v1.37.0-codex.1
 
 from __future__ import annotations
 
 import atexit
+import os
+import secrets
 from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass, replace
 from html import escape as escape_html
@@ -13,11 +15,17 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit
 
-from flask import Flask, Response, abort, jsonify, redirect, render_template, request, send_file, url_for
+from flask import Flask, Response, abort, jsonify, make_response, redirect, render_template, request, send_file, session, url_for
 from markdown_it import MarkdownIt
 from markupsafe import Markup
 
 from app.core.browser_sessions import browser_descriptors, build_browser_options, probe_browser_session
+from app.core.agent_access_security import (
+    AGENT_ACCESS_SESSION_KEY,
+    is_allowed_agent_network_request,
+    validate_agent_access_password,
+)
+from app.core.agent_session_sources import list_agent_project_sessions, list_agent_sources
 from app.core.chatgpt_downloader import (
     build_chatgpt_initial_snapshot,
     chatgpt_conversation_id,
@@ -358,6 +366,12 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         __name__,
         template_folder=str(Path(__file__).resolve().parent / "templates"),
         static_folder=str(Path(__file__).resolve().parent / "static"),
+    )
+    app.config.update(
+        SECRET_KEY=os.environ.get("CACHELIKES_SESSION_SECRET", "").strip()
+        or secrets.token_urlsafe(32),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
     )
 
     media_catalog = LocalMediaCatalog(local_store_root or LOCAL_STORE_ROOT)
@@ -716,10 +730,31 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             agent_runtime_snapshot=computer_use_settings.snapshot(),
         )
 
-    def require_local_agent_request() -> None:
-        """Keep the local Computer Use control plane on the host loopback interface."""
+    def is_agent_access_unlocked() -> bool:
+        """Allow the host itself to bypass the LAN gate after validating the request network."""
+        return is_loopback_address(request.remote_addr) or bool(
+            session.get(AGENT_ACCESS_SESSION_KEY)
+        )
+
+    def render_agent_access_unlock(error_message: str = "", status_code: int = 200):
+        """Render the no-store Agent password gate."""
+        response = make_response(
+            render_template(
+                "agent_access_unlock.html",
+                error_message=error_message,
+                version=APP_VERSION,
+            ),
+            status_code,
+        )
+        response.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+    def require_local_agent_request(*, allow_locked: bool = False) -> None:
+        """Keep the Agent control plane on loopback or a private network with a password gate."""
         host_name = urlsplit(f"//{request.host}").hostname
-        if not is_loopback_address(request.remote_addr) or not is_loopback_address(host_name):
+        if not is_allowed_agent_network_request(request.remote_addr, host_name):
             abort(403)
         origin = request.headers.get("Origin", "").strip()
         if origin:
@@ -735,6 +770,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 expected_parts.port,
             ):
                 abort(403)
+        if not allow_locked and not is_agent_access_unlocked():
+            abort(401)
 
     def build_agent_snapshot() -> dict[str, Any]:
         """Add safe rendered Markdown to the Agent status payload."""
@@ -756,7 +793,9 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.get("/agent")
     def agent():
-        require_local_agent_request()
+        require_local_agent_request(allow_locked=True)
+        if not is_agent_access_unlocked():
+            return render_agent_access_unlock()
         agent_settings = computer_use_settings.settings
         runtime_snapshot = computer_use_settings.snapshot()
         return render_template(
@@ -774,6 +813,15 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             model_options_by_platform=AGENT_MODEL_OPTIONS_BY_PLATFORM,
             render_prompt_markdown=render_prompt_markdown,
         )
+
+    @app.post("/agent/unlock")
+    def unlock_agent():
+        """Unlock the Agent control plane for the current private-network session."""
+        require_local_agent_request(allow_locked=True)
+        if not validate_agent_access_password(request.form.get("password")):
+            return render_agent_access_unlock("The password is incorrect.", status_code=401)
+        session[AGENT_ACCESS_SESSION_KEY] = True
+        return redirect(url_for("agent"), code=303)
 
     @app.get("/api/agent/status")
     def agent_status():
@@ -878,6 +926,18 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             return jsonify({"error": str(exc)}), 409
         return jsonify(payload)
 
+    @app.get("/api/agent/sources")
+    def agent_sources():
+        """Load recent sessions for any selected Web Agent provider."""
+        require_local_agent_request()
+        platform = request.args.get("platform", computer_use_settings.settings.platform).strip().lower()
+        browser_name = request.args.get("browser", "").strip().lower()
+        try:
+            payload = list_agent_sources(platform, browser_name, saved_config)
+        except (RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(payload)
+
     @app.get("/api/agent/chatgpt-project-sessions")
     def agent_chatgpt_project_sessions():
         """Load recent sessions for one selected ChatGPT project."""
@@ -886,6 +946,19 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         project_url = request.args.get("project_url", "").strip()
         try:
             payload = list_chatgpt_project_sessions(browser_name, project_url, saved_config)
+        except (RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(payload)
+
+    @app.get("/api/agent/project-sessions")
+    def agent_project_sessions():
+        """Load recent sessions inside one provider-neutral Agent Project."""
+        require_local_agent_request()
+        platform = request.args.get("platform", computer_use_settings.settings.platform).strip().lower()
+        browser_name = request.args.get("browser", "").strip().lower()
+        project_url = request.args.get("project_url", "").strip()
+        try:
+            payload = list_agent_project_sessions(platform, browser_name, project_url, saved_config)
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify(payload)
