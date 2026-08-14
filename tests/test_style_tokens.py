@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.44.0-codex.1
+Code version: v1.44.0-codex.3
 """
 
 from pathlib import Path
@@ -41,6 +41,29 @@ def test_typography_matches_the_sibling_font_contract() -> None:
     )
     for token in expected_tokens:
         assert token in stylesheet
+
+
+def test_routine_labels_use_restrained_font_weights() -> None:
+    """Keep ordinary labels readable while reserving bold for explicit emphasis."""
+    stylesheet = _stylesheet()
+
+    expected_rules = {
+        ".workspace-kicker,": "font-weight: var(--font-weight-semibold);",
+        ".browser-session-panel-label {": "font-weight: var(--font-weight-regular);",
+        ".field > span,": "font-weight: var(--font-weight-regular);",
+        ".field > .field-help {": "font-weight: var(--font-weight-regular);",
+        ".cache-common-config-title {": "font-weight: var(--font-weight-regular);",
+        ".cache-number-label {": "font-weight: var(--font-weight-regular);",
+        ".summary-row dt {": "font-weight: var(--font-weight-regular);",
+        ".events-table thead th {": "font-weight: var(--font-weight-semibold);",
+        ".browser-content-mode-option span {": "font-weight: var(--font-weight-regular);",
+    }
+
+    for selector, declaration in expected_rules.items():
+        selector_start = stylesheet.index(selector)
+        selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+        assert declaration in selector_rule
+        assert "font-weight: var(--font-weight-bold);" not in selector_rule
 
 
 def test_settings_fields_use_a_single_column_layout() -> None:
@@ -867,8 +890,9 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-                "/* Code version: v2.75.0-codex.1 */",
-        ".dock-brand-icon {",
+        "/* Code version: v2.76.0-codex.1 */",
+        ".dock-icon-agent",
+        'mask: url("/static/images/arrow.uturn.up.circle.svg")',
         "width: 22px;",
         "height: 22px;",
         "/* Browser-mediated Computer Use Agent. */",
@@ -878,6 +902,9 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-os-combobox .browser-picker-selected-icon-shell {",
         ".agent-os-combobox .browser-picker-option-icon {",
         ".agent-os-combobox .agent-combobox-option {",
+        ".agent-combobox-loading-spinner {",
+        ".agent-combobox-dropdown .trade-strategy-dropdown-option,",
+        "font-weight: var(--font-weight-regular);",
         ".agent-combobox.is-agent-combobox-open .agent-combobox-dropdown:not([hidden]) {",
         ".agent-runtime-log-open-icon {",
         'mask: url("/static/images/finder.svg") center/contain no-repeat;',

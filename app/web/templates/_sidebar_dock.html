@@ -1,4 +1,4 @@
-{# Code version: v1.8.3-codex.2 #}
+{# Code version: v1.8.3-codex.3 #}
 {% set cache_source_keys = cache_sources | map(attribute="key") | list %}
 {% set llm_cache_source_keys = llm_cache_sources | map(attribute="key") | list %}
 <nav class="sidebar-dock" aria-label="Workspace sections">
@@ -11,7 +11,7 @@
         aria-label="Agent"
         {% if dock_section == 'agent' %}aria-current="page"{% endif %}
     >
-        <img class="dock-brand-icon" src="{{ url_for('static', filename='images/arrow.uturn.up.circle.svg', v='arrow-uturn-up-circle-v1.0.0-codex.1') }}" alt="">
+        <span class="icon dock-icon dock-icon-agent" aria-hidden="true"></span>
         <span class="sidebar-dock-label" aria-hidden="true">Agent</span>
     </a>
     <a

@@ -1,10 +1,12 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.0-codex.1
+Code version: v1.6.1-codex.2
 """
 
 from __future__ import annotations
 
+import os
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -19,6 +21,7 @@ from app.core.browser_sessions import (
     extract_x_account_from_source,
     detect_safari_x_account_handle,
     fetch_safari_page_snapshot,
+    _housekeep_stale_chromium_profiles,
     is_grok_security_verification_page,
     launch_chromium_context,
     parse_grok_account_label,
@@ -150,6 +153,10 @@ def test_background_chromium_launch_args_keep_the_window_offscreen() -> None:
         "--start-minimized",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-session-crashed-bubble",
+        "--noerrdialogs",
+        "--disable-notifications",
+        "--disable-prompt-on-repost",
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
@@ -203,12 +210,44 @@ def test_chromium_context_defaults_to_an_isolated_background_profile(tmp_path: P
 
     with launch_chromium_context(playwright, descriptor, headless=False) as launched_context:
         assert launched_context is context
+        temporary_profile_root = Path(str(chromium.calls[0]["user_data_dir"])).parent
+        assert temporary_profile_root.is_dir()
 
     assert len(chromium.calls) == 1
     launch_kwargs = chromium.calls[0]
     assert Path(str(launch_kwargs["user_data_dir"])) != source_user_data_dir
     assert launch_kwargs["headless"] is False
     assert launch_kwargs["args"] == build_chromium_launch_args(descriptor)
+    assert not temporary_profile_root.exists()
+
+
+def test_stale_chromium_profiles_are_removed_without_touching_other_temp_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    descriptor = BrowserDescriptor(
+        browser_id="edge",
+        label="Edge",
+        icon_filename="images/browser.edge.png",
+        engine="chromium",
+        user_data_dir=tmp_path / "Edge",
+        profile_directory="Default",
+        channel="msedge",
+    )
+    stale_profile = tmp_path / "cachelikes-edge-stale"
+    fresh_profile = tmp_path / "cachelikes-edge-fresh"
+    unrelated_path = tmp_path / "other-application-data"
+    stale_profile.mkdir()
+    fresh_profile.mkdir()
+    unrelated_path.mkdir()
+    stale_time = time.time() - 2 * 24 * 60 * 60
+    os.utime(stale_profile, (stale_time, stale_time))
+    monkeypatch.setattr("app.core.browser_sessions.tempfile.gettempdir", lambda: str(tmp_path))
+
+    assert _housekeep_stale_chromium_profiles(descriptor) == 1
+    assert not stale_profile.exists()
+    assert fresh_profile.exists()
+    assert unrelated_path.exists()
 
 
 def test_clone_browser_profile_continues_when_macos_blocks_local_state(tmp_path: Path) -> None:
@@ -272,11 +311,12 @@ def test_safari_profile_link_detection_uses_the_rendered_navigation() -> None:
 
     assert "AppTabBar_Profile_Link" in run.call_args.kwargs["input"]
     assert "current tab of targetWindow" in run.call_args.kwargs["input"]
-    assert "set bounds of targetWindow to {-32000, -32000, -30720, -31100}" in run.call_args.kwargs["input"]
-    assert "set miniaturized of targetWindow to true" in run.call_args.kwargs["input"]
+    assert "set miniaturized of targetWindow to false" in run.call_args.kwargs["input"]
+    assert "set visible of targetWindow to true" in run.call_args.kwargs["input"]
+    assert "set bounds of targetWindow" not in run.call_args.kwargs["input"]
 
 
-def test_safari_page_snapshot_uses_an_offscreen_minimized_window() -> None:
+def test_safari_page_snapshot_uses_a_rendered_background_window() -> None:
     process = SimpleNamespace(
         returncode=0,
         stdout="https://grok.com/files\n<html>Grok</html>",
@@ -289,8 +329,9 @@ def test_safari_page_snapshot_uses_an_offscreen_minimized_window() -> None:
     script = run.call_args.kwargs["input"]
     assert snapshot == {"url": "https://grok.com/files", "source": "<html>Grok</html>"}
     assert "set previousWindowId to 0" in script
-    assert "set bounds of targetWindow to {-32000, -32000, -30720, -31100}" in script
-    assert "set miniaturized of targetWindow to true" in script
+    assert "set miniaturized of targetWindow to false" in script
+    assert "set visible of targetWindow to true" in script
+    assert "set bounds of targetWindow" not in script
     assert "set index of (first window whose id is previousWindowId) to 1" in script
 
 
@@ -317,8 +358,9 @@ def test_safari_likes_collection_uses_window_id_targeting() -> None:
     assert "set windowId to id of targetWindow" in script
     assert "current tab of targetWindow" in script
     assert "front document" not in script
-    assert "set bounds of targetWindow to {-32000, -32000, -30720, -31100}" in script
-    assert "set miniaturized of targetWindow to true" in script
+    assert "set miniaturized of targetWindow to false" in script
+    assert "set visible of targetWindow to true" in script
+    assert "set bounds of targetWindow" not in script
     assert urls == [
         "https://x.com/demo_user/status/123",
         "https://x.com/demo_user/status/456",

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.70.2-codex.1
+# Code version: v1.72.0-codex.2
 
 from __future__ import annotations
 
@@ -37,6 +37,9 @@ SETTINGS_DIRECTORY_PICKER_SCRIPT_PATH = (
 COMPUTER_USE_AGENT_SCRIPT_PATH = (
     Path(__file__).resolve().parents[1] / "app/web/static/computer-use-agent.js"
 )
+AGENT_SETTINGS_SCRIPT_PATH = (
+    Path(__file__).resolve().parents[1] / "app/web/static/agent-settings.js"
+)
 CACHE_PAGE_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/cache-page.js"
 CHATGPT_PAGE_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/chatgpt-page.js"
 PAGINATION_MOTION_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/pagination-motion.js"
@@ -57,6 +60,7 @@ THEME_MODE_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/t
 BROWSER_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app/web/templates/browser.html"
 PAGINATION_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app/web/templates/_pagination.html"
 WAITING_MODAL_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/waiting-modal.js"
+LANGUAGE_RENDERING_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/language-rendering.js"
 LOADING_SPINNER_ASSET_PATH = Path(__file__).resolve().parents[1] / "app/web/static/images/loading.spinner.svg"
 FAVICON_ASSET_PATH = Path(__file__).resolve().parents[1] / "app/web/static/images/favicon.svg"
 GEMINI_LOGO_ASSET_PATH = (
@@ -153,6 +157,36 @@ class WebAppTests(unittest.TestCase):
                 '<link rel="icon" type="image/svg+xml" href="/static/images/favicon.svg?v=',
                 body,
             )
+
+    def test_pages_load_the_global_simplified_chinese_language_boundary(self) -> None:
+        app = create_app()
+
+        with app.test_client() as client:
+            responses = (
+                client.get("/cache/x"),
+                client.get("/browser"),
+                client.get("/settings"),
+                client.get("/agent"),
+            )
+
+        for response in responses:
+            self.assertEqual(response.status_code, 200)
+            self.assertIn(
+                'src="/static/language-rendering.js?v=language-rendering-v1.0.0-codex.1"',
+                response.get_data(as_text=True),
+            )
+
+        script = LANGUAGE_RENDERING_SCRIPT_PATH.read_text(encoding="utf-8")
+        for fragment in (
+            'const SIMPLIFIED_CHINESE_LANGUAGE = "zh-CN";',
+            "const HAN_CHARACTER_PATTERN =",
+            "new MutationObserver",
+            "attributeFilter: LANGUAGE_TEXT_ATTRIBUTES,",
+            'document.addEventListener("input", (event) => {',
+            'boundary.setAttribute("lang", SIMPLIFIED_CHINESE_LANGUAGE);',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, script)
 
     def test_chatgpt_notice_names_the_selected_background_browser(self) -> None:
         with patch(
@@ -345,8 +379,8 @@ class WebAppTests(unittest.TestCase):
                     dock_markup.index('data-dock-section="settings"'),
                 )
                 self.assertIn('aria-label="Agent"', dock_markup)
-                self.assertIn('class="dock-brand-icon"', dock_markup)
-                self.assertIn('images/arrow.uturn.up.circle.svg', dock_markup)
+                self.assertIn('class="icon dock-icon dock-icon-agent"', dock_markup)
+                self.assertNotIn('class="dock-brand-icon"', dock_markup)
                 self.assertIn('data-dock-section="cache"', dock_markup)
                 self.assertIn('data-dock-section="local-resources"', dock_markup)
                 self.assertIn('data-dock-section="settings"', dock_markup)
@@ -367,7 +401,10 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.16.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                self.assertIn("style-v2.75.0-codex.1", body)
+                expected_style_version = (
+                    "style-v2.76.0-codex.1" if body is agent_body else "style-v2.75.0-codex.4"
+                )
+                self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
                 self.assertIn('class="global-quick-action-button global-theme-toggle"', body)
@@ -545,9 +582,10 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('data-agent-engine-copy', local_body)
         self.assertNotIn("With thanks to", local_body)
         self.assertNotIn('class="agent-open-source-credit"', local_body)
-        self.assertIn('data-agent-combobox-option="macos"', local_body)
-        self.assertIn('data-agent-combobox-option="windows"', local_body)
-        self.assertIn('data-agent-combobox-icon="/static/images/MSFT.svg"', local_body)
+        self.assertNotIn('class="trade-strategy-combobox agent-combobox agent-os-combobox"', local_body)
+        self.assertNotIn('data-agent-terminal-authorization-button', local_body)
+        self.assertNotIn('data-agent-terminal-authorization-status', local_body)
+        self.assertIn('name="operating_system" value="macos" data-agent-prompt-os', local_body)
         self.assertIn('data-agent-combobox-option="safari"', local_body)
         self.assertNotIn('name="port"', local_body)
         self.assertIn('id="agent_project_path"', local_body)
@@ -581,7 +619,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.0.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.1.0-codex.4', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.4.0-codex.2', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-role="browser-session-account"', local_body)
@@ -589,13 +627,23 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-heading', local_body)
         self.assertIn('data-agent-prompt-input', local_body)
         self.assertIn('data-agent-prompt-os', local_body)
+        self.assertIn('data-agent-model-input', local_body)
+        self.assertIn('data-agent-combobox-option="gpt-5.6-sol"', local_body)
+        self.assertIn('GPT-5.6 Sol', local_body)
         self.assertIn('id="agent_activity_panel"', local_body)
         self.assertIn(
             'class="agent-response-output browser-media-prompt-markdown"',
             local_body,
         )
         self.assertNotIn('data-agent-web-only', local_body)
-        self.assertIn("new session is the default", local_body)
+        self.assertNotIn("Starts a new root-level ChatGPT session for this task.", local_body)
+        self.assertNotIn("Choose where this task continues; new session is the default.", local_body)
+        self.assertIn('data-agent-combobox-spinner', local_body)
+        self.assertIn('class="browser-media-round-action browser-media-source-link agent-conversation-link"', local_body)
+        self.assertIn('href="https://chatgpt.com/"', local_body)
+        self.assertIn('data-agent-open-conversation', local_body)
+        self.assertIn('aria-label="Open ChatGPT"', local_body)
+        self.assertIn('class="icon browser-media-source-link-icon"', local_body)
         self.assertNotIn("Local control plane for a signed-in ChatGPT web session", local_body)
         self.assertNotIn("third-party agent bridge", local_body)
         self.assertNotIn("Allowed workspace root", local_body)
@@ -693,13 +741,72 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(payload["settings"]["workspace_path"], str(workspace.resolve()))
         save_computer_use_settings.assert_called_once()
 
+    def test_agent_terminal_authorization_route_is_local_and_platform_aware(self) -> None:
+        app = create_app()
+        opened = {
+            "opened": True,
+            "operating_system": "macos",
+            "application": "Terminal",
+            "destination": "System Settings > Privacy & Security > Full Disk Access",
+            "message": "System Settings opened.",
+        }
+
+        with patch("app.web.app.launch_terminal_authorization", return_value=opened) as launch:
+            with app.test_client() as client:
+                response = client.post(
+                    "/api/agent/terminal-authorization",
+                    json={"operating_system": "macos"},
+                )
+                remote_response = client.post(
+                    "/api/agent/terminal-authorization",
+                    json={"operating_system": "macos"},
+                    environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), opened)
+        self.assertEqual(remote_response.status_code, 403)
+        launch.assert_called_once_with("macos")
+
+    def test_agent_conversation_route_opens_the_current_target_in_the_default_browser(self) -> None:
+        app = create_app()
+        agent_service = app.extensions["computer_use_agent_service"]
+        snapshot = agent_service.snapshot()
+        snapshot["conversation_url"] = "https://chatgpt.com/c/current-session"
+        opened = {
+            "opened": True,
+            "url": "https://chatgpt.com/c/current-session",
+            "targeted_conversation": True,
+        }
+
+        with patch.object(agent_service, "snapshot", return_value=snapshot):
+            with patch(
+                "app.web.app.open_chatgpt_in_default_browser",
+                return_value=opened,
+            ) as open_browser:
+                with app.test_client() as client:
+                    response = client.post("/api/agent/open-conversation")
+                    remote_response = client.post(
+                        "/api/agent/open-conversation",
+                        environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), opened)
+        self.assertEqual(remote_response.status_code, 403)
+        open_browser.assert_called_once_with("https://chatgpt.com/c/current-session")
+
     def test_agent_sidebar_log_and_chat_composer_keep_runtime_targets_in_sync(self) -> None:
         script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
 
         self.assertIn('elements.promptOs.value = selectedOs()', script)
         self.assertIn('elements.promptBrowser.value = selectedBrowser()', script)
+        self.assertIn('elements.modelInput.value = selectedModel()', script)
+        self.assertIn('selectedValue(".agent-model-combobox", "gpt-5.6-sol")', script)
+        self.assertIn('selectedValue(".agent-browser-combobox", "edge")', script)
         self.assertIn('elements.ask.classList.toggle("is-stop", running)', script)
         self.assertIn('mutate("/api/agent/stop")', script)
+        self.assertIn('requestJson("/api/agent/open-conversation"', script)
         self.assertNotIn('document.getElementById("agent_stop_button")', script)
 
     def test_agent_session_source_contract_is_explicit_and_not_persisted(self) -> None:
@@ -714,9 +821,11 @@ class WebAppTests(unittest.TestCase):
                         "workspace_path": "/Users/lightwing/Desktop/CacheLikesFromTwitter",
                         "operating_system": "macos",
                         "browser": "safari",
+                        "model": "gpt-5.6-sol",
                         "session_mode": "recent",
                         "conversation_url": "https://chatgpt.com/c/recent-session",
                         "project_url": "",
+                        "read_only": True,
                     },
                 )
 
@@ -724,6 +833,8 @@ class WebAppTests(unittest.TestCase):
         start.assert_called_once()
         self.assertEqual(start.call_args.kwargs["session_mode"], "recent")
         self.assertEqual(start.call_args.kwargs["conversation_url"], "https://chatgpt.com/c/recent-session")
+        self.assertEqual(start.call_args.kwargs["model"], "gpt-5.6-sol")
+        self.assertTrue(start.call_args.kwargs["read_only"])
 
     def test_agent_page_exposes_nested_session_source_controls(self) -> None:
         app = create_app()
@@ -736,12 +847,11 @@ class WebAppTests(unittest.TestCase):
             'data-agent-session-list="recent"',
             'data-agent-session-list="projects"',
             'data-agent-session-list="project-sessions"',
-            'New session in project',
+            'Choose a project first',
             'name="session_mode" value="new"',
             'name="conversation_url" value=""',
             'name="project_url" value=""',
-            'data-agent-host-operating-system="macos"',
-            'computer-use-agent-v3.1.0-codex.4',
+            'computer-use-agent-v3.4.0-codex.2',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, body)
@@ -771,12 +881,12 @@ class WebAppTests(unittest.TestCase):
 
         for fragment in (
             'if (selectedOs() !== "macos")',
-            'const serverValue = elements.osCombobox?.dataset.agentHostOperatingSystem',
-            'autoSelectHostOperatingSystem()',
-            'option.click()',
             'if (!runtime.ready)',
             'lastBrowserStatus.can_download',
             'requestJson("/api/agent/preferences"',
+            'selectedValue(".agent-os-combobox", elements.promptOs?.value || "macos")',
+            'const sessionSourceChoice = trigger.closest(".agent-session-mode-combobox")',
+            'trigger.disabled = !sessionSourceChoice',
             'event.key !== "Enter" || event.shiftKey || event.isComposing',
             "promptForm.requestSubmit()",
             "renderActivity(agent.activity, running)",
@@ -788,6 +898,20 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn(fragment, script)
 
         self.assertNotIn("MCP runtime", script)
+
+    def test_agent_settings_client_owns_host_detection_and_terminal_authorization(self) -> None:
+        script = AGENT_SETTINGS_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        for fragment in (
+            'document.querySelector("[data-agent-settings-operating-system]")',
+            'document.querySelector("[data-agent-terminal-authorization-button]")',
+            'document.querySelector("[data-agent-terminal-authorization-status]")',
+            'operatingSystem.dataset.agentHostOperatingSystem',
+            'operatingSystem.dispatchEvent(new Event("change", {bubbles: true}))',
+            'fetch("/api/agent/terminal-authorization"',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, script)
 
     def test_chatgpt_cache_navigation_ignores_retired_agent_platform_query(self) -> None:
         app = create_app()
@@ -931,6 +1055,10 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-settings-panel="agent"', settings_body)
         self.assertIn('id="settings-agent"', settings_body)
         self.assertIn('name="agent_operating_system"', settings_body)
+        self.assertIn('data-agent-settings-operating-system', settings_body)
+        self.assertIn('data-agent-terminal-authorization-button', settings_body)
+        self.assertIn('data-agent-terminal-authorization-status', settings_body)
+        self.assertIn('agent-settings.js?v=agent-settings-v1.0.0-codex.1', settings_body)
         self.assertIn('name="agent_context_limit_mib"', settings_body)
         self.assertIn('name="agent_max_turns"', settings_body)
         self.assertIn('name="agent_command_timeout_seconds"', settings_body)
@@ -1204,7 +1332,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.75.0-codex.1", body)
+            self.assertIn("style-v2.75.0-codex.4", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.27.0-codex.1', body)
@@ -1413,7 +1541,10 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("browser-media-type", body)
         self.assertIn('class="browser-media-card-title" title="img_file.png">img_file.png</span>', body)
         self.assertNotIn("browser-media-card-description", body)
-        self.assertIn("Session name:</dt><dd title=\"A regular session\">A regular session</dd>", body)
+        self.assertIn(
+            'Session name:</dt><dd lang="zh-CN" title="A regular session">A regular session</dd>',
+            body,
+        )
         self.assertIn("Created on:</dt><dd>9 Aug 2026 07:09</dd>", body)
         self.assertIn("Size:</dt><dd>1.72 MiB</dd>", body)
         self.assertIn('class="browser-media-prompt"', body)

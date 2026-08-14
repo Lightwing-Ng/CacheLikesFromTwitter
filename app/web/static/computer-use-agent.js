@@ -1,4 +1,4 @@
-/* Code version: v3.1.0-codex.4 */
+/* Code version: v3.4.0-codex.2 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -19,6 +19,7 @@
         workspacePath: promptForm.querySelector('input[name="workspace_path"]'),
         promptOs: promptForm.querySelector("[data-agent-prompt-os]"),
         promptBrowser: promptForm.querySelector("[data-agent-prompt-browser]"),
+        modelInput: promptForm.querySelector("[data-agent-model-input]"),
         promptSessionMode: promptForm.querySelector("[data-agent-prompt-session-mode]"),
         promptConversationUrl: promptForm.querySelector("[data-agent-prompt-conversation-url]"),
         promptProjectUrl: promptForm.querySelector("[data-agent-prompt-project-url]"),
@@ -29,9 +30,7 @@
         browserSession: document.querySelector("[data-agent-browser-session]"),
         sessionSource: document.querySelector("[data-agent-session-source]"),
         sessionMode: document.querySelector("[data-agent-session-mode]"),
-        osCombobox: document.querySelector(".agent-os-combobox"),
         sessionModeCombobox: document.querySelector(".agent-session-mode-combobox"),
-        sessionHelp: document.querySelector("[data-agent-session-help]"),
         recentSessionField: document.querySelector("[data-agent-recent-session-field]"),
         recentSessionCombobox: document.querySelector('[data-agent-session-list="recent"]'),
         recentSessionUrl: document.querySelector("[data-agent-recent-session-url]"),
@@ -82,36 +81,19 @@
     }
 
     function selectedOs() {
-        return selectedValue(".agent-os-combobox", "macos");
+        return selectedValue(".agent-os-combobox", elements.promptOs?.value || "macos");
     }
 
     function selectedBrowser() {
-        return selectedValue(".agent-browser-combobox", "safari");
+        return selectedValue(".agent-browser-combobox", "edge");
+    }
+
+    function selectedModel() {
+        return selectedValue(".agent-model-combobox", "gpt-5.6-sol");
     }
 
     function selectedBrowserLabel() {
         return document.querySelector(".agent-browser-combobox [data-agent-combobox-selected-label]")?.textContent?.trim() || "selected browser";
-    }
-
-    function detectedHostOperatingSystem() {
-        const serverValue = elements.osCombobox?.dataset.agentHostOperatingSystem?.trim().toLowerCase();
-        if (serverValue === "macos" || serverValue === "windows") return serverValue;
-        const platform = String(
-            window.navigator?.userAgentData?.platform || window.navigator?.platform || ""
-        ).toLowerCase();
-        if (platform.includes("mac")) return "macos";
-        if (platform.includes("win")) return "windows";
-        return "";
-    }
-
-    function autoSelectHostOperatingSystem() {
-        const target = detectedHostOperatingSystem();
-        const input = elements.osCombobox?.querySelector("[data-agent-combobox-input]");
-        if (!target || !(input instanceof HTMLInputElement) || input.value === target) return;
-        const option = Array.from(
-            elements.osCombobox.querySelectorAll("[data-agent-combobox-option]")
-        ).find((candidate) => candidate.dataset.agentComboboxOption === target);
-        if (option instanceof HTMLButtonElement) option.click();
     }
 
     function selectedSessionMode() {
@@ -126,6 +108,23 @@
 
     function selectedProjectUrl() {
         return elements.projectUrl?.value || "";
+    }
+
+    function syncConversationLink(agent) {
+        if (!elements.conversationLink) return;
+        const recordedUrl = String(agent?.conversation_url || "").trim();
+        const targetUrl = recordedUrl.startsWith("https://chatgpt.com/")
+            ? recordedUrl
+            : "https://chatgpt.com/";
+        const hasRecordedTarget = Boolean(recordedUrl);
+        elements.conversationLink.href = targetUrl;
+        elements.conversationLink.setAttribute(
+            "aria-label",
+            hasRecordedTarget ? "Open ChatGPT conversation" : "Open ChatGPT",
+        );
+        elements.conversationLink.title = hasRecordedTarget
+            ? "Open ChatGPT conversation"
+            : "Open ChatGPT";
     }
 
     function sessionChoiceReady() {
@@ -175,14 +174,6 @@
         if (elements.recentSessionField) elements.recentSessionField.hidden = mode !== "recent";
         if (elements.projectField) elements.projectField.hidden = mode !== "project";
         if (elements.projectSessionField) elements.projectSessionField.hidden = mode !== "project";
-        if (elements.sessionHelp) {
-            const help = {
-                new: "Starts a new root-level ChatGPT session for this task.",
-                recent: "Joins one of the 20 most recent root-level sessions.",
-                project: "Choose a recent project, then start or join one of its sessions.",
-            };
-            elements.sessionHelp.textContent = help[mode] || help.new;
-        }
         if (elements.projectSessionCombobox) {
             const projectSelected = Boolean(selectedProjectUrl());
             const trigger = elements.projectSessionCombobox.querySelector("[data-agent-combobox-trigger]");
@@ -223,6 +214,21 @@
         return option;
     }
 
+    function setComboboxLoading(combobox, loading) {
+        if (!combobox) return;
+        const spinner = combobox.querySelector("[data-agent-combobox-spinner]");
+        const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
+        if (spinner) spinner.hidden = !loading;
+        if (!trigger) return;
+        if (loading) {
+            const fieldLabel = combobox.closest(".field")?.querySelector(".field-label")?.textContent?.trim() || "Option";
+            trigger.setAttribute("aria-label", `${fieldLabel}: Loading`);
+            trigger.setAttribute("aria-busy", "true");
+        } else {
+            trigger.removeAttribute("aria-busy");
+        }
+    }
+
     function populateListCombobox(combobox, items, emptyLabel, icon = "") {
         if (!combobox) return;
         const menu = combobox.querySelector("[data-agent-combobox-menu]");
@@ -246,10 +252,11 @@
             trigger.disabled = true;
             setComboboxValue(combobox, "", emptyLabel, icon);
         }
+        setComboboxLoading(combobox, false);
         updateSessionChoiceInputs();
     }
 
-    function clearProjectSessionChoice(label = "Choose a project first", allowNew = false) {
+    function clearProjectSessionChoice(label = "Choose a project first", allowNew = false, loading = false) {
         projectSessions = [];
         if (!elements.projectSessionCombobox) return;
         const menu = elements.projectSessionCombobox.querySelector("[data-agent-combobox-menu]");
@@ -258,6 +265,7 @@
             if (allowNew) menu.append(sourceOptionButton("new", "New session in project", "", true));
         }
         setComboboxValue(elements.projectSessionCombobox, "new", label);
+        setComboboxLoading(elements.projectSessionCombobox, loading);
         const trigger = elements.projectSessionCombobox.querySelector("[data-agent-combobox-trigger]");
         if (trigger) trigger.disabled = !allowNew;
         updateSessionChoiceInputs();
@@ -278,6 +286,7 @@
             menu.append(option);
         });
         setComboboxValue(elements.projectSessionCombobox, "new", "New session in project");
+        setComboboxLoading(elements.projectSessionCombobox, false);
         trigger.disabled = false;
         updateSessionChoiceInputs();
     }
@@ -297,6 +306,7 @@
     function syncExecutionChoices() {
         if (elements.promptOs instanceof HTMLInputElement) elements.promptOs.value = selectedOs();
         if (elements.promptBrowser instanceof HTMLInputElement) elements.promptBrowser.value = selectedBrowser();
+        if (elements.modelInput instanceof HTMLInputElement) elements.modelInput.value = selectedModel();
     }
 
     function preferencePayload() {
@@ -304,6 +314,7 @@
             workspace_path: elements.workspacePath?.value || "",
             operating_system: selectedOs(),
             browser: selectedBrowser(),
+            model: selectedModel(),
         };
     }
 
@@ -381,6 +392,10 @@
                     if (elements.projectUrl instanceof HTMLInputElement) elements.projectUrl.value = "";
                     if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
                     clearProjectSessionChoice();
+                    setComboboxValue(elements.recentSessionCombobox, "", "Recent sessions");
+                    setComboboxLoading(elements.recentSessionCombobox, true);
+                    setComboboxValue(elements.projectCombobox, "", "Recent projects");
+                    setComboboxLoading(elements.projectCombobox, true);
                     browserStatusController?.setBrowser(selectedBrowser());
                 }
                 if (combobox.classList.contains("agent-session-mode-combobox")) {
@@ -412,7 +427,7 @@
                 }
                 if (combobox === elements.projectCombobox) {
                     if (elements.projectUrl instanceof HTMLInputElement) elements.projectUrl.value = input.value;
-                    clearProjectSessionChoice("Loading project sessions…", true);
+                    clearProjectSessionChoice("Project session", true, true);
                     loadProjectSessions(input.value);
                     updateSessionChoiceInputs();
                 }
@@ -425,7 +440,9 @@
             menu.addEventListener("click", (event) => {
                 if (!(event.target instanceof Element)) return;
                 const option = event.target.closest("[data-agent-combobox-option]");
-                if (option && menu.contains(option)) selectOption(option);
+                if (option && menu.contains(option)) {
+                    selectOption(option);
+                }
             });
         });
 
@@ -446,10 +463,9 @@
             const payload = await requestJson(`/api/agent/chatgpt-project-sessions?${query.toString()}`);
             if (requestId !== projectSessionRequestId || projectUrl !== selectedProjectUrl()) return;
             populateProjectSessionChoices(payload.sessions || []);
-        } catch (error) {
+        } catch (_error) {
             if (requestId !== projectSessionRequestId) return;
             clearProjectSessionChoice("Project sessions unavailable", true);
-            if (elements.sessionHelp) elements.sessionHelp.textContent = error.message;
         }
     }
 
@@ -464,12 +480,14 @@
         if (elements.recentSessionCombobox) {
             const trigger = elements.recentSessionCombobox.querySelector("[data-agent-combobox-trigger]");
             if (trigger) trigger.disabled = true;
-            setComboboxValue(elements.recentSessionCombobox, "", "Loading recent sessions…");
+            setComboboxValue(elements.recentSessionCombobox, "", "Recent sessions");
+            setComboboxLoading(elements.recentSessionCombobox, true);
         }
         if (elements.projectCombobox) {
             const trigger = elements.projectCombobox.querySelector("[data-agent-combobox-trigger]");
             if (trigger) trigger.disabled = true;
-            setComboboxValue(elements.projectCombobox, "", "Loading recent projects…");
+            setComboboxValue(elements.projectCombobox, "", "Recent projects");
+            setComboboxLoading(elements.projectCombobox, true);
         }
         try {
             const query = new URLSearchParams({browser: browserName});
@@ -487,12 +505,13 @@
                 "No recent projects found",
             );
             sourcesLoaded = true;
-        } catch (error) {
+        } catch (_error) {
             if (requestId !== sourceRequestId) return;
             chatgptSources = {recent_sessions: [], projects: []};
             setComboboxValue(elements.recentSessionCombobox, "", "Could not load recent sessions");
             setComboboxValue(elements.projectCombobox, "", "Could not load recent projects");
-            if (elements.sessionHelp) elements.sessionHelp.textContent = error.message;
+            setComboboxLoading(elements.recentSessionCombobox, false);
+            setComboboxLoading(elements.projectCombobox, false);
         } finally {
             if (requestId === sourceRequestId) sourcesLoading = false;
         }
@@ -590,6 +609,7 @@
         const readiness = readinessState(lastPayload);
         const running = Boolean(agent.running);
         syncExecutionChoices();
+        syncConversationLink(agent);
 
         setChip(elements.phaseChip, agent.phase || "idle", agent.phase || "idle");
         if (elements.statusMessage) {
@@ -599,10 +619,6 @@
         if (elements.responseOutput) {
             elements.responseOutput.innerHTML = agent.response_html || "";
             elements.responseOutput.hidden = !agent.response;
-        }
-        if (elements.conversationLink) {
-            elements.conversationLink.hidden = !agent.conversation_url;
-            if (agent.conversation_url) elements.conversationLink.href = agent.conversation_url;
         }
         if (elements.readiness) elements.readiness.dataset.ready = String(readiness.ready);
         if (elements.readinessMessage) elements.readinessMessage.textContent = readiness.message;
@@ -621,18 +637,15 @@
         if (elements.projectChoose) elements.projectChoose.disabled = running;
         elements.comboboxTriggers.forEach((trigger) => {
             if (running) {
-                trigger.disabled = true;
+                const sessionSourceChoice = trigger.closest(".agent-session-mode-combobox");
+                trigger.disabled = !sessionSourceChoice;
                 return;
             }
             const isRuntimeChoice = trigger.closest(
-                ".agent-os-combobox, .agent-browser-combobox, .agent-session-mode-combobox"
+                ".agent-browser-combobox, .agent-model-combobox, .agent-session-mode-combobox"
             );
             if (isRuntimeChoice) trigger.disabled = false;
         });
-        if (elements.sessionModeCombobox) {
-            const trigger = elements.sessionModeCombobox.querySelector("[data-agent-combobox-trigger]");
-            if (trigger) trigger.disabled = running;
-        }
     }
 
     async function mutate(url, payload = {}) {
@@ -677,9 +690,20 @@
         syncProjectPath(elements.projectPath.value);
         schedulePreferenceSave();
     });
+    elements.conversationLink?.addEventListener("click", (event) => {
+        event.preventDefault();
+        requestJson("/api/agent/open-conversation", {
+            method: "POST",
+        }).catch((error) => {
+            if (elements.statusMessage) {
+                elements.statusMessage.hidden = false;
+                elements.statusMessage.textContent = error.message;
+            }
+            setChip(elements.phaseChip, "failed", "failed");
+        });
+    });
 
     initializeComboboxes();
-    autoSelectHostOperatingSystem();
     initializeBrowserSessionStatus();
     updateSessionChoiceInputs();
     syncProjectPath(elements.projectPath?.value || elements.workspacePath?.value || "");

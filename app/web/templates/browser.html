@@ -1,4 +1,4 @@
-<!-- Code version: v1.46.0-codex.1 -->
+<!-- Code version: v1.46.0-codex.2 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -6,8 +6,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <title>CacheLikesFromTwitter Browser</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
+    <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.75.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.75.0-codex.4') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.1.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
@@ -205,7 +206,7 @@
                         <div class="browser-heading-copy">
                             {% if filters.view == "text" and text_page.session_detail %}
                             <p class="workspace-kicker">Session</p>
-                            <h2>{{ text_page.current_session.conversation_title }}</h2>
+                            <h2 lang="zh-CN">{{ text_page.current_session.conversation_title }}</h2>
                             <p class="browser-session-detail-summary">{{ "{:,}".format(text_page.current_session.message_count) }} messages</p>
                             <div class="browser-session-detail-actions">
                                 <a class="ghost-link browser-session-back-link" href="{{ url_for('browser', view='text', source=filters.source, q=filters.q, sort=filters.sort, session_view='1', page=filters.session_page) }}">Back to all sessions</a>
@@ -534,7 +535,7 @@
                             <span class="browser-media-card-body">
                                 <span class="browser-media-card-title" title="{{ item.filename }}">{{ item.filename }}</span>
                                 <dl class="browser-media-card-metadata">
-                                    <div><dt>{{ attribution_label }}:</dt><dd title="{{ item.creator or item.project_name }}">{{ item.creator or item.project_name }}</dd></div>
+                                    <div><dt>{{ attribution_label }}:</dt><dd lang="zh-CN" title="{{ item.creator or item.project_name }}">{{ item.creator or item.project_name }}</dd></div>
                                     <div><dt>Created on:</dt><dd>{{ format_captured_at_timestamp_label(item.captured_at) }}</dd></div>
                                     <div><dt>Size:</dt><dd>{{ format_media_size(item.content_bytes) }}</dd></div>
                                 </dl>
@@ -564,7 +565,7 @@
                                 </div>
                                 <div class="browser-media-prompt-preview" id="browser_prompt_{{ item.stable_id }}" data-media-prompt-source>
                                     {% if item.prompt_markdown %}
-                                    <div class="browser-media-prompt-markdown">{{ render_prompt_markdown(item.prompt_markdown) }}</div>
+                                    <div class="browser-media-prompt-markdown" lang="zh-CN">{{ render_prompt_markdown(item.prompt_markdown) }}</div>
                                     {% else %}
                                     <p class="browser-media-prompt-unavailable">Run ChatGPT sync once to index this prompt.</p>
                                     {% endif %}
@@ -655,7 +656,7 @@
                                             {% endif %}
                                         </td>
                                         <td>
-                                            <div class="browser-session-table-message">{{ render_cached_message(message.content_text, message.content_html) }}</div>
+                                            <div class="browser-session-table-message" lang="zh-CN">{{ render_cached_message(message.content_text, message.content_html) }}</div>
                                             {% if message.media_refs or message.source_links %}
                                             <div class="browser-session-table-links">
                                                 {% for media_ref in message.media_refs %}<a href="{{ media_ref.href }}">Related media: {{ media_ref.label }}</a>{% endfor %}
@@ -687,7 +688,7 @@
                                     <tr data-chat-session-id="{{ session.stable_id }}">
                                         <td class="browser-session-table-number">{{ ((text_page.current_page - 1) * text_page.page_size) + loop.index }}</td>
                                         <td>
-                                            <a class="browser-session-table-title" href="{{ url_for('browser', view='text', source=filters.source, q=filters.q, sort=filters.sort, session_view='1', session=session.stable_id, session_page=filters.page, page=1) }}">{{ session.conversation_title }}</a>
+                                            <a class="browser-session-table-title" lang="zh-CN" href="{{ url_for('browser', view='text', source=filters.source, q=filters.q, sort=filters.sort, session_view='1', session=session.stable_id, session_page=filters.page, page=1) }}">{{ session.conversation_title }}</a>
                                             <span class="browser-session-table-id">{{ session.conversation_id }}</span>
                                         </td>
                                         <td class="browser-session-table-source">
@@ -733,11 +734,11 @@
                             <header class="browser-chat-message-header">
                                 <div class="browser-chat-message-identity">
                                     <span class="browser-chat-message-role browser-chat-message-role-{{ message.role }}">{{ message.author_label }}</span>
-                                    <a class="browser-chat-message-title" href="{{ message.conversation_url }}" target="_blank" rel="noopener noreferrer">{{ message.conversation_title }}</a>
+                                    <a class="browser-chat-message-title" lang="zh-CN" href="{{ message.conversation_url }}" target="_blank" rel="noopener noreferrer">{{ message.conversation_title }}</a>
                                 </div>
                                 <time datetime="{{ message.last_seen_at }}">{{ format_captured_at_timestamp_label(message.last_seen_at) }}</time>
                             </header>
-                            <div class="browser-chat-message-content">{{ render_cached_message(message.content_text, message.content_html) }}</div>
+                            <div class="browser-chat-message-content" lang="zh-CN">{{ render_cached_message(message.content_text, message.content_html) }}</div>
                             {% if message.media_refs or message.source_links or message.conversation_url %}
                             <footer class="browser-chat-message-links">
                                 {% for media_ref in message.media_refs %}

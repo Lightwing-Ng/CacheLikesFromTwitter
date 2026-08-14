@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.13.0-codex.1
+# Code version: v1.13.0-codex.2
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import contextlib
 import json
 import logging
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -64,10 +65,16 @@ BACKGROUND_CHROMIUM_WINDOW_ARGS = (
     "--start-minimized",
     "--no-first-run",
     "--no-default-browser-check",
+    "--disable-session-crashed-bubble",
+    "--noerrdialogs",
+    "--disable-notifications",
+    "--disable-prompt-on-repost",
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
 )
+CHROMIUM_TEMP_PROFILE_STALE_AFTER_SECONDS = 24 * 60 * 60
+_ACTIVE_CHROMIUM_PROFILE_ROOTS: set[Path] = set()
 
 
 @dataclass(frozen=True, slots=True)
@@ -497,6 +504,54 @@ def goto_with_retry(page, url: str, attempts: int = 3, timeout_ms: int = 120_000
         raise last_error
 
 
+def _housekeep_stale_chromium_profiles(descriptor: BrowserDescriptor) -> int:
+    """Remove only abandoned temporary profiles owned by this application."""
+    temp_root = Path(tempfile.gettempdir())
+    profile_prefix = f"cachelikes-{descriptor.browser_id}-"
+    try:
+        candidates = tuple(temp_root.iterdir())
+    except OSError as exc:
+        LOGGER.warning("Could not inspect Chromium temporary profiles in %s: %s", temp_root, exc)
+        return 0
+
+    now = time.time()
+    removed = 0
+    for candidate in candidates:
+        if (
+            not candidate.name.startswith(profile_prefix)
+            or candidate.is_symlink()
+            or not candidate.is_dir()
+            or candidate in _ACTIVE_CHROMIUM_PROFILE_ROOTS
+        ):
+            continue
+        try:
+            age = now - candidate.stat().st_mtime
+        except OSError:
+            continue
+        if age < CHROMIUM_TEMP_PROFILE_STALE_AFTER_SECONDS:
+            continue
+        try:
+            shutil.rmtree(candidate)
+        except OSError as exc:
+            LOGGER.warning("Could not remove stale Chromium temporary profile %s: %s", candidate, exc)
+        else:
+            removed += 1
+
+    if removed:
+        LOGGER.info(
+            "Removed %d stale %s Chromium temporary profile(s).",
+            removed,
+            descriptor.label,
+        )
+    return removed
+
+
+def _cleanup_cloned_browser_profile(temp_profile_dir: tempfile.TemporaryDirectory[str]) -> None:
+    """Release one cloned profile and remove its temporary directory."""
+    _ACTIVE_CHROMIUM_PROFILE_ROOTS.discard(Path(temp_profile_dir.name))
+    temp_profile_dir.cleanup()
+
+
 def launch_chromium_context(
     playwright,
     descriptor: BrowserDescriptor,
@@ -539,7 +594,7 @@ def launch_chromium_context(
         try:
             context = do_launch(temp_user_data_dir)
         except Exception:
-            temp_profile_dir.cleanup()
+            _cleanup_cloned_browser_profile(temp_profile_dir)
             raise
     else:
         try:
@@ -552,7 +607,7 @@ def launch_chromium_context(
             try:
                 context = do_launch(temp_user_data_dir)
             except Exception:
-                temp_profile_dir.cleanup()
+                _cleanup_cloned_browser_profile(temp_profile_dir)
                 raise
 
     if temp_profile_dir is None:
@@ -566,7 +621,7 @@ def launch_chromium_context(
             try:
                 context.close()
             finally:
-                temp_profile_dir.cleanup()
+                _cleanup_cloned_browser_profile(temp_profile_dir)
             return False
 
     return ManagedContext()
@@ -590,23 +645,12 @@ def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile
     if not source_profile_dir.exists():
         raise RuntimeError(f"{descriptor.label} profile directory was not found: {source_profile_dir}")
 
+    _housekeep_stale_chromium_profiles(descriptor)
     temp_dir = tempfile.TemporaryDirectory(prefix=f"cachelikes-{descriptor.browser_id}-")
     temp_root = Path(temp_dir.name)
+    _ACTIVE_CHROMIUM_PROFILE_ROOTS.add(temp_root)
     target_user_data_dir = temp_root / f"{descriptor.label.replace(' ', '')}UserData"
     target_profile_dir = target_user_data_dir / descriptor.profile_directory
-    target_user_data_dir.mkdir(parents=True, exist_ok=True)
-
-    local_state = source_user_data_dir / "Local State"
-    if local_state.exists():
-        local_state_target = target_user_data_dir / "Local State"
-        try:
-            local_state_target.write_bytes(local_state.read_bytes())
-        except PermissionError:
-            LOGGER.warning(
-                "macOS denied access to %s; continuing with the readable %s profile directory.",
-                local_state,
-                source_profile_dir,
-            )
 
     def ignore_transient_files(_directory: str, names: list[str]) -> set[str]:
         ignored = {
@@ -618,19 +662,32 @@ def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile
         ignored.update(name for name in names if name.endswith(".lock"))
         return ignored
 
-    import shutil
-
     try:
+        target_user_data_dir.mkdir(parents=True, exist_ok=True)
+        local_state = source_user_data_dir / "Local State"
+        if local_state.exists():
+            local_state_target = target_user_data_dir / "Local State"
+            try:
+                local_state_target.write_bytes(local_state.read_bytes())
+            except PermissionError:
+                LOGGER.warning(
+                    "macOS denied access to %s; continuing with the readable %s profile directory.",
+                    local_state,
+                    source_profile_dir,
+                )
         shutil.copytree(source_profile_dir, target_profile_dir, dirs_exist_ok=True, ignore=ignore_transient_files)
     except PermissionError as exc:
         denied_path = getattr(exc, "filename", None) or source_profile_dir
-        temp_dir.cleanup()
+        _cleanup_cloned_browser_profile(temp_dir)
         if sys.platform == "darwin":
             raise RuntimeError(
                 f"macOS denied access to the {descriptor.label} profile at {denied_path}. "
                 "Open System Settings > Privacy & Security > Full Disk Access and enable "
                 "the Python 3.13 or 3.14 runtime used by CacheLikesFromTwitter, then restart the cache service."
             ) from exc
+        raise
+    except OSError:
+        _cleanup_cloned_browser_profile(temp_dir)
         raise
     return target_user_data_dir, temp_dir
 

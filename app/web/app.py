@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.33.0-codex.4
+# Code version: v1.34.0-codex.3
 
 from __future__ import annotations
 
@@ -51,10 +51,13 @@ from app.core.config import (
 )
 from app.core.computer_use_agent import (
     BROWSER_OPTIONS as AGENT_BROWSER_OPTIONS,
+    CHATGPT_MODEL_OPTIONS as AGENT_MODEL_OPTIONS,
     OPERATING_SYSTEM_OPTIONS as AGENT_OPERATING_SYSTEM_OPTIONS,
     ComputerUseAgentService,
     ComputerUseSettingsStore,
     is_loopback_address,
+    launch_terminal_authorization,
+    open_chatgpt_in_default_browser,
     validate_computer_use_settings,
 )
 from app.core.gemini_downloader import build_gemini_initial_snapshot
@@ -753,6 +756,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             ),
             operating_system_options=AGENT_OPERATING_SYSTEM_OPTIONS,
             browser_options=AGENT_BROWSER_OPTIONS,
+            model_options=AGENT_MODEL_OPTIONS,
             render_prompt_markdown=render_prompt_markdown,
         )
 
@@ -775,6 +779,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 workspace_path=str(payload.get("workspace_path", "")),
                 operating_system=str(payload.get("operating_system", "")),
                 browser=str(payload.get("browser", "")),
+                model=str(payload.get("model", computer_use_settings.settings.model)),
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
@@ -785,6 +790,34 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 "agent": build_agent_snapshot(),
             }
         )
+
+    @app.post("/api/agent/terminal-authorization")
+    def open_agent_terminal_authorization():
+        """Open the host-native authorization surface for Terminal or PowerShell."""
+        require_local_agent_request()
+        payload = request.get_json(silent=True) or {}
+        try:
+            result = launch_terminal_authorization(
+                str(payload.get("operating_system", ""))
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(result)
+
+    @app.post("/api/agent/open-conversation")
+    def open_agent_conversation():
+        """Open the current Agent ChatGPT target in the system default browser."""
+        require_local_agent_request()
+        snapshot = computer_use_agent_service.snapshot()
+        try:
+            result = open_chatgpt_in_default_browser(
+                str(snapshot.get("conversation_url", ""))
+            )
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(result)
 
     @app.post("/api/agent/ask")
     def ask_agent():
@@ -797,9 +830,11 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 saved_config,
                 operating_system=str(payload.get("operating_system", "")),
                 browser=str(payload.get("browser", "")),
+                model=str(payload.get("model", "")),
                 session_mode=str(payload.get("session_mode", "new")),
                 conversation_url=str(payload.get("conversation_url", "")),
                 project_url=str(payload.get("project_url", "")),
+                read_only=bool(payload.get("read_only", False)),
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409

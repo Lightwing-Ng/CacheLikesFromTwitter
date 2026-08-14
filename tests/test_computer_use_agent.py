@@ -1,6 +1,6 @@
 """Focused tests for the ChatGPT Web Computer Use controller.
 
-Code version: v3.1.0-codex.2
+Code version: v3.4.0-codex.2
 """
 
 from __future__ import annotations
@@ -14,15 +14,24 @@ import pytest
 
 from app.core.computer_use_agent import (
     AgentRunSnapshot,
+    DEFAULT_CHATGPT_MODEL,
     ComputerUseAgentService,
     ComputerUseSettings,
     ComputerUseSettingsStore,
     WorkspaceController,
+    _chatgpt_target_is_open,
+    _submit_chromium_prompt,
+    _wait_for_chromium_composer,
+    _web_last_text,
+    _web_is_generating,
     build_context_markdown,
     detect_host_operating_system,
     is_loopback_address,
+    launch_terminal_authorization,
+    open_chatgpt_in_default_browser,
     parse_agent_action,
     save_computer_use_settings,
+    _submit_and_wait,
     validate_computer_use_settings,
     inspection_command_parts,
     resolve_agent_session_target,
@@ -32,6 +41,9 @@ from app.core.config import CrawlConfig
 
 
 def test_settings_validate_workspace_environment_browser_and_limits() -> None:
+    assert ComputerUseSettings().browser == "edge"
+    assert ComputerUseSettings().model == DEFAULT_CHATGPT_MODEL
+
     with TemporaryDirectory() as raw_root:
         settings = validate_computer_use_settings(
             {
@@ -58,6 +70,8 @@ def test_settings_validate_workspace_environment_browser_and_limits() -> None:
             validate_computer_use_settings({**asdict(settings), "operating_system": "linux"})
         with pytest.raises(ValueError, match="Safari, Edge, or Chrome"):
             validate_computer_use_settings({**asdict(settings), "browser": "firefox"})
+        with pytest.raises(ValueError, match="supported ChatGPT model"):
+            validate_computer_use_settings({**asdict(settings), "model": "unknown-model"})
         with pytest.raises(ValueError, match="official ChatGPT HTTPS host"):
             validate_computer_use_settings({**asdict(settings), "target_url": "https://example.com"})
 
@@ -73,6 +87,111 @@ def test_host_operating_system_detection_uses_supported_host_keys(monkeypatch: p
 
     monkeypatch.setattr(computer_use_agent.sys, "platform", "linux")
     assert detect_host_operating_system() == "macos"
+
+
+def test_terminal_authorization_opens_macos_full_disk_access(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    launched: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(computer_use_agent, "detect_host_operating_system", lambda: "macos")
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **options: launched.append((command, options)),
+    )
+
+    result = launch_terminal_authorization("macos")
+
+    assert result["opened"] is True
+    assert result["application"] == "Terminal"
+    assert launched[0][0] == [
+        "/usr/bin/open",
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+    ]
+    assert launched[0][1]["start_new_session"] is True
+
+
+def test_terminal_authorization_opens_windows_powershell_uac(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    launched: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(computer_use_agent, "detect_host_operating_system", lambda: "windows")
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **options: launched.append((command, options)),
+    )
+
+    result = launch_terminal_authorization("windows")
+
+    assert result["opened"] is True
+    assert result["application"] == "PowerShell"
+    assert launched[0][0][0] == "powershell.exe"
+    assert "-Verb RunAs" in launched[0][0][-1]
+
+
+def test_terminal_authorization_rejects_a_non_host_selection(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "detect_host_operating_system", lambda: "macos")
+
+    with pytest.raises(RuntimeError, match="PowerShell authorization can only open"):
+        launch_terminal_authorization("windows")
+
+
+def test_open_chatgpt_in_default_browser_prefers_the_recorded_conversation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    launched: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **options: launched.append((command, options)),
+    )
+
+    result = open_chatgpt_in_default_browser(
+        "https://www.chatgpt.com/c/session-123?messageId=abc"
+    )
+
+    assert result == {
+        "opened": True,
+        "url": "https://chatgpt.com/c/session-123",
+        "targeted_conversation": True,
+    }
+    assert launched == [
+        (
+            ["/usr/bin/open", "https://chatgpt.com/c/session-123"],
+            {
+                "stdin": computer_use_agent.subprocess.DEVNULL,
+                "stdout": computer_use_agent.subprocess.DEVNULL,
+                "stderr": computer_use_agent.subprocess.DEVNULL,
+                "start_new_session": True,
+            },
+        )
+    ]
+
+
+def test_open_chatgpt_in_default_browser_falls_back_to_chatgpt_home(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    launched: list[list[str]] = []
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **_options: launched.append(command),
+    )
+
+    result = open_chatgpt_in_default_browser("https://example.com/not-chatgpt")
+
+    assert result["url"] == "https://chatgpt.com/"
+    assert result["targeted_conversation"] is False
+    assert launched == [["/usr/bin/open", "https://chatgpt.com/"]]
 
 
 def test_agent_session_target_resolves_root_and_project_choices() -> None:
@@ -94,6 +213,15 @@ def test_agent_session_target_resolves_root_and_project_choices() -> None:
             conversation_url="https://chatgpt.com/c/root-session",
             project_url=project_url,
         )
+
+
+def test_chatgpt_target_check_requires_the_selected_conversation_path() -> None:
+    target = "https://chatgpt.com/c/session-123"
+
+    assert _chatgpt_target_is_open(target, "https://chatgpt.com/c/session-123?messageId=abc")
+    assert not _chatgpt_target_is_open(target, "https://chatgpt.com/")
+    assert not _chatgpt_target_is_open(target, "https://chatgpt.com/c/different-session")
+    assert not _chatgpt_target_is_open(target, "https://example.com/c/session-123")
 
 
 def test_saved_settings_are_owner_readable_only() -> None:
@@ -129,6 +257,28 @@ def test_context_markdown_contains_instructions_request_and_bounded_index() -> N
         assert "app.py" in content
         assert "bodycheck" in content
         assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_project_file_index_falls_back_when_rg_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "README.md").write_text("# Example\n", encoding="utf-8")
+    (workspace / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    ignored = workspace / "node_modules" / "dependency.js"
+    ignored.parent.mkdir()
+    ignored.write_text("ignored\n", encoding="utf-8")
+
+    def missing_rg(*_args: object, **_kwargs: object) -> str:
+        raise FileNotFoundError("rg")
+
+    monkeypatch.setattr(computer_use_agent, "_run_capture", missing_rg)
+
+    assert computer_use_agent._project_file_index(workspace) == ["README.md", "app.py"]
 
 
 def test_action_parser_requires_one_json_object() -> None:
@@ -204,20 +354,34 @@ def test_command_policy_allows_focused_checks() -> None:
     ]
 
 
-def test_agent_service_reports_browser_result_without_api_credentials() -> None:
+def test_agent_service_reports_browser_result_without_api_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     with TemporaryDirectory() as raw_root:
         root = Path(raw_root)
         workspace = root / "project"
         workspace.mkdir()
         settings_path = root / "settings.json"
         store = ComputerUseSettingsStore(settings_path)
+        sleep_assertion = object()
+        released_assertions: list[object] = []
+        monkeypatch.setattr(
+            "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+            lambda: sleep_assertion,
+        )
+        monkeypatch.setattr(
+            "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+            released_assertions.append,
+        )
 
         def runner(**kwargs):
             assert kwargs["prompt"] == "Inspect the workspace"
             assert kwargs["workspace"] == workspace.resolve()
-            assert kwargs["settings"].browser == "safari"
+            assert kwargs["settings"].browser == "edge"
+            assert kwargs["settings"].model == DEFAULT_CHATGPT_MODEL
             assert kwargs["session_mode"] == "new"
             assert kwargs["target_url"] == "https://chatgpt.com/"
+            assert not kwargs["read_only"]
             assert kwargs["context_path"].is_file()
             kwargs["update"](phase="running", message="Using local controller actions.")
             return "Verified result", "https://chatgpt.com/c/example", 4, True
@@ -237,6 +401,52 @@ def test_agent_service_reports_browser_result_without_api_credentials() -> None:
         assert snapshot["bodycheck_passed"]
         assert snapshot["session_mode"] == "new"
         assert "token" not in snapshot
+        assert released_assertions == [sleep_assertion]
+
+
+def test_macos_idle_sleep_assertion_uses_caffeinate_without_waking_display(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    executable = tmp_path / "caffeinate"
+    executable.write_text("", encoding="utf-8")
+
+    class _Process:
+        def __init__(self) -> None:
+            self.terminated = False
+
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def wait(self, timeout: int) -> int:
+            assert timeout == 3
+            return 0
+
+    process = _Process()
+    popen_calls: list[tuple[list[str], dict[str, object]]] = []
+
+    def fake_popen(command: list[str], **kwargs: object) -> _Process:
+        popen_calls.append((command, kwargs))
+        return process
+
+    monkeypatch.setattr(computer_use_agent.subprocess, "Popen", fake_popen)
+
+    assertion = computer_use_agent._start_macos_idle_sleep_assertion(
+        platform_name="darwin",
+        executable=executable,
+    )
+    computer_use_agent._stop_macos_idle_sleep_assertion(assertion)
+
+    assert popen_calls[0][0] == [str(executable), "-i"]
+    assert "-d" not in popen_calls[0][0]
+    assert "-u" not in popen_calls[0][0]
+    assert popen_calls[0][1]["start_new_session"] is True
+    assert process.terminated
 
 
 def test_agent_service_rejects_windows_execution_on_macos_host() -> None:
@@ -266,3 +476,270 @@ def test_snapshot_defaults_are_safe_and_idle() -> None:
     assert snapshot["phase"] == "idle"
     assert not snapshot["running"]
     assert snapshot["engine"] == "computer_use"
+
+
+def test_read_only_controller_rejects_mutating_actions(tmp_path: Path) -> None:
+    target = tmp_path / "README.md"
+    target.write_text("Before\n", encoding="utf-8")
+    controller = WorkspaceController(
+        tmp_path,
+        ComputerUseSettings(workspace_path=str(tmp_path)),
+        lambda: False,
+        read_only=True,
+    )
+
+    observation = controller.execute(
+        {"action": "replace", "path": "README.md", "old": "Before", "new": "After"}
+    )
+
+    assert not observation["ok"]
+    assert "read-only" in observation["error"]
+    assert target.read_text(encoding="utf-8") == "Before\n"
+
+
+def test_safari_submission_clicks_send_button_instead_of_dispatching_enter() -> None:
+    class _Page:
+        def __init__(self) -> None:
+            self.evaluate_calls: list[tuple[str, object]] = []
+            self.waits: list[int] = []
+
+        def evaluate(self, expression: str, argument: object = None) -> dict[str, object]:
+            self.evaluate_calls.append((expression, argument))
+            if "filled: true" in expression:
+                return {"filled": True, "tagName": "DIV", "contentEditable": True}
+            return {"clicked": True, "ariaLabel": "Send prompt", "dataTestId": "send-button"}
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+
+    page = _Page()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        counts = iter((0, 1))
+        monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: next(counts))
+        monkeypatch.setattr("app.core.computer_use_agent._web_last_text", lambda *_args: "done")
+        monkeypatch.setattr("app.core.computer_use_agent._web_is_generating", lambda *_args: False)
+        monkeypatch.setattr("app.core.computer_use_agent.WEB_RESPONSE_MINIMUM_SECONDS", 0)
+        monkeypatch.setattr("app.core.computer_use_agent.WEB_RESPONSE_STABLE_SECONDS", 0)
+        monkeypatch.setattr("app.core.computer_use_agent.time.monotonic", lambda: 0)
+
+        assert _submit_and_wait(page, "safari", "Inspect the project", lambda: False) == "done"
+
+    expressions = [expression for expression, _argument in page.evaluate_calls]
+    assert any("document.execCommand" in expression for expression in expressions)
+    assert any("sendButton.click()" in expression for expression in expressions)
+    assert all("KeyboardEvent" not in expression for expression in expressions)
+
+
+def test_safari_submission_waits_for_send_after_stop_answering() -> None:
+    class _Page:
+        def __init__(self) -> None:
+            self.evaluate_calls: list[tuple[str, object]] = []
+            self.waits: list[int] = []
+            self._send_attempts = 0
+
+        def evaluate(self, expression: str, argument: object = None) -> dict[str, object]:
+            self.evaluate_calls.append((expression, argument))
+            if "filled: true" in expression:
+                return {"filled": True, "tagName": "DIV", "contentEditable": True}
+            self._send_attempts += 1
+            if self._send_attempts == 1:
+                return {"clicked": False, "generating": True, "sendButtons": []}
+            return {"clicked": True, "ariaLabel": "Send prompt", "dataTestId": "send-button"}
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+
+    page = _Page()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        counts = iter((0, 1))
+        monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: next(counts))
+        monkeypatch.setattr("app.core.computer_use_agent._web_last_text", lambda *_args: "done")
+        monkeypatch.setattr("app.core.computer_use_agent._web_is_generating", lambda *_args: False)
+        monkeypatch.setattr("app.core.computer_use_agent.WEB_RESPONSE_MINIMUM_SECONDS", 0)
+        monkeypatch.setattr("app.core.computer_use_agent.WEB_RESPONSE_STABLE_SECONDS", 0)
+        monkeypatch.setattr("app.core.computer_use_agent.time.monotonic", lambda: 0)
+
+        assert _submit_and_wait(page, "safari", "Continue with the observation", lambda: False) == "done"
+
+    assert page.waits == [250]
+    assert len(page.evaluate_calls) == 3
+
+
+def test_safari_submission_accepts_a_changed_last_response_without_new_node() -> None:
+    class _Page:
+        def __init__(self) -> None:
+            self.evaluate_calls: list[tuple[str, object]] = []
+
+        def evaluate(self, expression: str, argument: object = None) -> dict[str, object]:
+            self.evaluate_calls.append((expression, argument))
+            if "filled: true" in expression:
+                return {"filled": True, "tagName": "DIV", "contentEditable": True}
+            return {"clicked": True, "ariaLabel": "Send prompt", "dataTestId": "send-button"}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    responses = iter(("previous response", '{"action":"search","query":"agent"}'))
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 4)
+        monkeypatch.setattr("app.core.computer_use_agent._web_last_text", lambda *_args: next(responses))
+        monkeypatch.setattr("app.core.computer_use_agent._web_is_generating", lambda *_args: False)
+        monkeypatch.setattr("app.core.computer_use_agent.WEB_RESPONSE_MINIMUM_SECONDS", 0)
+        monkeypatch.setattr("app.core.computer_use_agent.WEB_RESPONSE_STABLE_SECONDS", 0)
+        monkeypatch.setattr("app.core.computer_use_agent.time.monotonic", lambda: 0)
+
+        assert _submit_and_wait(page, "safari", "Continue with the observation", lambda: False) == (
+            '{"action":"search","query":"agent"}'
+        )
+
+
+def test_safari_generation_ignores_a_disabled_stop_answering_button() -> None:
+    class _Page:
+        def evaluate(self, expression: str, argument: object = None) -> bool:
+            del argument
+            assert "!button.disabled" in expression
+            return False
+
+    assert not _web_is_generating(_Page(), "safari")
+
+
+def test_chromium_submission_waits_for_attachment_then_clicks_send() -> None:
+    class _Composer:
+        def __init__(self) -> None:
+            self.value = ""
+
+        def fill(self, value: str) -> None:
+            self.value = value
+
+    class _Page:
+        def __init__(self) -> None:
+            self.composer = _Composer()
+            self.evaluate_calls: list[str] = []
+            self.waits: list[int] = []
+            self.send_attempts = 0
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "#prompt-textarea"
+            return self.composer
+
+        def evaluate(self, expression: str) -> object:
+            self.evaluate_calls.append(expression)
+            if "sendButton.click()" in expression:
+                self.send_attempts += 1
+                if self.send_attempts == 1:
+                    return {
+                        "clicked": False,
+                        "sendButtons": [
+                            {
+                                "ariaLabel": "Send prompt",
+                                "dataTestId": "send-button",
+                                "disabled": True,
+                            }
+                        ],
+                    }
+                return {
+                    "clicked": True,
+                    "ariaLabel": "Send prompt",
+                    "dataTestId": "send-button",
+                }
+            return True
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+
+    page = _Page()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 4)
+
+        _submit_chromium_prompt(page, "Inspect the project", lambda: False)
+
+    assert page.composer.value == "Inspect the project"
+    assert page.send_attempts == 2
+    assert page.waits == [250]
+    assert any("sendButton.click()" in expression for expression in page.evaluate_calls)
+
+
+def test_chromium_submission_reports_when_attachment_never_enables_send() -> None:
+    class _Composer:
+        def fill(self, _value: str) -> None:
+            return None
+
+    class _Page:
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "#prompt-textarea"
+            return _Composer()
+
+        def evaluate(self, expression: str) -> object:
+            assert "sendButton.click()" in expression
+            return {
+                "clicked": False,
+                "sendButtons": [
+                    {
+                        "ariaLabel": "Send prompt",
+                        "dataTestId": "send-button",
+                        "disabled": True,
+                    }
+                ],
+            }
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monotonic_values = iter((0, 0, 181))
+        monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
+        monkeypatch.setattr(
+            "app.core.computer_use_agent.time.monotonic",
+            lambda: next(monotonic_values),
+        )
+
+        with pytest.raises(RuntimeError, match="context attachment"):
+            _submit_chromium_prompt(_Page(), "Inspect the project", lambda: False)
+
+
+def test_chromium_last_response_is_empty_before_a_new_session_has_messages() -> None:
+    class _Locator:
+        def count(self) -> int:
+            return 0
+
+    class _Page:
+        def locator(self, selector: str) -> _Locator:
+            assert selector == '[data-message-author-role="assistant"]'
+            return _Locator()
+
+    assert _web_last_text(
+        _Page(),
+        "chromium",
+        '[data-message-author-role="assistant"]',
+    ) == ""
+
+
+def test_chromium_composer_reloads_once_after_a_stalled_page() -> None:
+    class _Composer:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        def wait_for(self, **_kwargs: object) -> None:
+            self.attempts += 1
+            if self.attempts == 1:
+                raise RuntimeError("stalled")
+
+    class _Page:
+        def __init__(self) -> None:
+            self.composer = _Composer()
+            self.reload_calls: list[dict[str, object]] = []
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "#prompt-textarea"
+            return self.composer
+
+        def reload(self, **kwargs: object) -> None:
+            self.reload_calls.append(kwargs)
+
+    page = _Page()
+
+    _wait_for_chromium_composer(page)
+
+    assert page.composer.attempts == 2
+    assert page.reload_calls == [{"wait_until": "domcontentloaded", "timeout": 90_000}]

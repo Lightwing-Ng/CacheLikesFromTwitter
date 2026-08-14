@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in ChatGPT Web.
 
-Code version: v3.1.0-codex.3
+Code version: v3.4.0-codex.2
 """
 
 from __future__ import annotations
@@ -64,10 +64,25 @@ MAX_ACTION_JSON_CHARS = 800_000
 WEB_RESPONSE_MINIMUM_SECONDS = 1.5
 WEB_RESPONSE_STABLE_SECONDS = 1.0
 WEB_TURN_TIMEOUT_SECONDS = 1_800
+CHATGPT_COMPOSER_TIMEOUT_SECONDS = 60
+CHATGPT_COMPOSER_RELOAD_ATTEMPTS = 2
+SAFARI_SEND_BUTTON_TIMEOUT_SECONDS = 15
+CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS = 180
+CHROMIUM_SUBMISSION_ACCEPT_TIMEOUT_SECONDS = 15
+WEB_SEND_BUTTON_POLL_MILLISECONDS = 250
 WEB_PROGRESS_TEXT = {"thinking", "working", "searching", "analyzing", "generating"}
 SUPPORTED_BROWSERS = frozenset({"chrome", "edge", "safari"})
 SUPPORTED_OPERATING_SYSTEMS = frozenset({"macos", "windows"})
 SUPPORTED_AGENT_SESSION_MODES = frozenset({"new", "recent", "project_new", "project_session"})
+DEFAULT_CHATGPT_MODEL = "gpt-5.6-sol"
+CHATGPT_MODEL_OPTIONS = (
+    {
+        "key": DEFAULT_CHATGPT_MODEL,
+        "label": "GPT-5.6 Sol",
+        "remote_label": "GPT-5.6 Sol",
+    },
+)
+SUPPORTED_CHATGPT_MODELS = frozenset(option["key"] for option in CHATGPT_MODEL_OPTIONS)
 OPERATING_SYSTEM_OPTIONS = (
     {
         "key": "macos",
@@ -172,7 +187,8 @@ class ComputerUseSettings:
 
     workspace_path: str = str(PROJECT_ROOT)
     operating_system: str = "macos"
-    browser: str = "safari"
+    browser: str = "edge"
+    model: str = DEFAULT_CHATGPT_MODEL
     target_url: str = CHATGPT_HOME_URL
     context_limit_mib: int = DEFAULT_CONTEXT_LIMIT_MIB
     max_turns: int = DEFAULT_MAX_TURNS
@@ -243,6 +259,109 @@ def detect_host_operating_system() -> str:
     return "macos"
 
 
+def launch_terminal_authorization(operating_system: str) -> dict[str, Any]:
+    """Open the native authorization surface for the selected host terminal."""
+    selected = str(operating_system or "").strip().lower()
+    if selected not in SUPPORTED_OPERATING_SYSTEMS:
+        raise ValueError("Choose macOS or Windows before opening terminal authorization.")
+
+    host = detect_host_operating_system()
+    if selected != host:
+        target_label = "PowerShell" if selected == "windows" else "Terminal"
+        host_label = "Windows" if host == "windows" else "macOS"
+        raise RuntimeError(
+            f"{target_label} authorization can only open while this app is running on "
+            f"{selected.title() if selected == 'windows' else 'macOS'}, not {host_label}."
+        )
+
+    process_options: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if selected == "macos":
+        command = [
+            "/usr/bin/open",
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
+        ]
+        process_options["start_new_session"] = True
+        destination = "System Settings > Privacy & Security > Full Disk Access"
+        application = "Terminal"
+        message = (
+            "System Settings opened to Full Disk Access. Enable the Terminal app that "
+            "starts CacheLikesFromTwitter."
+        )
+    else:
+        command = [
+            "powershell.exe",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoProfile' -Verb RunAs",
+        ]
+        creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+            subprocess,
+            "DETACHED_PROCESS",
+            0,
+        )
+        if creation_flags:
+            process_options["creationflags"] = creation_flags
+        destination = "Windows User Account Control"
+        application = "PowerShell"
+        message = (
+            "Windows requested administrator authorization for PowerShell. "
+            "Approve the UAC prompt to continue."
+        )
+
+    try:
+        subprocess.Popen(command, **process_options)
+    except OSError as exc:
+        raise RuntimeError(f"Could not open {application} authorization: {exc}") from exc
+
+    return {
+        "opened": True,
+        "operating_system": selected,
+        "application": application,
+        "destination": destination,
+        "message": message,
+    }
+
+
+def open_chatgpt_in_default_browser(target_url: str = "") -> dict[str, Any]:
+    """Open a trusted ChatGPT target through the host system's default browser."""
+    destination = (
+        normalize_chatgpt_conversation_url(target_url)
+        or normalize_chatgpt_project_url(target_url)
+        or CHATGPT_HOME_URL
+    )
+    process_options: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if sys.platform == "darwin":
+        command = ["/usr/bin/open", destination]
+        process_options["start_new_session"] = True
+    elif os.name == "nt":
+        command = ["cmd.exe", "/c", "start", "", destination]
+    else:
+        command = ["xdg-open", destination]
+        process_options["start_new_session"] = True
+
+    try:
+        subprocess.Popen(command, **process_options)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Could not open ChatGPT in the system default browser: {exc}"
+        ) from exc
+
+    return {
+        "opened": True,
+        "url": destination,
+        "targeted_conversation": bool(normalize_chatgpt_conversation_url(target_url)),
+    }
+
+
 def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettings:
     """Normalize and validate settings received from the local control page."""
     workspace = Path(str(payload.get("workspace_path", PROJECT_ROOT))).expanduser().resolve()
@@ -253,9 +372,13 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
     if operating_system not in SUPPORTED_OPERATING_SYSTEMS:
         raise ValueError("The Agent operating system must be macOS or Windows.")
 
-    browser = str(payload.get("browser", "safari")).strip().lower()
+    browser = str(payload.get("browser", "edge")).strip().lower()
     if browser not in SUPPORTED_BROWSERS:
         raise ValueError("The Agent browser must be Safari, Edge, or Chrome.")
+
+    model = str(payload.get("model", DEFAULT_CHATGPT_MODEL)).strip().lower()
+    if model not in SUPPORTED_CHATGPT_MODELS:
+        raise ValueError("Choose a supported ChatGPT model.")
 
     target_url = str(payload.get("target_url", CHATGPT_HOME_URL)).strip()
     target_parts = urlsplit(target_url)
@@ -296,6 +419,7 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
         workspace_path=str(workspace),
         operating_system=operating_system,
         browser=browser,
+        model=model,
         target_url=target_url,
         context_limit_mib=context_limit_mib,
         max_turns=max_turns,
@@ -369,6 +493,7 @@ class ComputerUseSettingsStore:
         workspace_path: str,
         operating_system: str,
         browser: str,
+        model: str | None = None,
     ) -> ComputerUseSettings:
         candidate = asdict(self.settings)
         candidate.update(
@@ -376,6 +501,7 @@ class ComputerUseSettingsStore:
                 "workspace_path": workspace_path,
                 "operating_system": operating_system,
                 "browser": browser,
+                "model": model or self.settings.model,
             }
         )
         return self.update(validate_computer_use_settings(candidate))
@@ -561,7 +687,7 @@ def _project_file_index(workspace: Path) -> list[str]:
     try:
         output = _run_capture(command, workspace, timeout=15)
         return output.splitlines()[:12_000]
-    except RuntimeError:
+    except (OSError, RuntimeError):
         paths: list[str] = []
         for path in workspace.rglob("*"):
             relative = path.relative_to(workspace)
@@ -622,18 +748,26 @@ class WorkspaceController:
         settings: ComputerUseSettings,
         should_stop: Callable[[], bool],
         process_changed: Callable[[subprocess.Popen[str] | None], None] | None = None,
+        read_only: bool = False,
     ) -> None:
         self.workspace = workspace.resolve()
         self.settings = settings
         self.state = ActionState()
         self.should_stop = should_stop
         self.process_changed = process_changed or (lambda _process: None)
+        self.read_only = read_only
 
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute one validated action and return a compact observation."""
         if self.should_stop():
             return {"ok": False, "stopped": True, "error": "Stop requested."}
         action = str(payload.get("action") or "").strip().lower()
+        if self.read_only and action not in {"list", "read", "search", "bodycheck"}:
+            return {
+                "ok": False,
+                "action": action,
+                "error": "This Agent task is read-only; only list, read, search, and bodycheck are allowed.",
+            }
         handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
             "list": self._list,
             "read": self._read,
@@ -926,6 +1060,41 @@ def _run_capture(command: list[str], cwd: Path, timeout: int) -> str:
     return process.stdout or ""
 
 
+def _start_macos_idle_sleep_assertion(
+    *,
+    platform_name: str | None = None,
+    executable: Path = Path("/usr/bin/caffeinate"),
+) -> subprocess.Popen[Any] | None:
+    """Keep macOS awake for one Agent task without waking the display."""
+    if (platform_name or sys.platform) != "darwin" or not executable.is_file():
+        return None
+    try:
+        return subprocess.Popen(
+            [str(executable), "-i"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError as exc:
+        LOGGER.warning("Could not prevent idle sleep for the Agent task: %s", exc)
+        return None
+
+
+def _stop_macos_idle_sleep_assertion(process: subprocess.Popen[Any] | None) -> None:
+    """Release one task-scoped macOS idle-sleep assertion."""
+    if process is None or process.poll() is not None:
+        return
+    try:
+        process.terminate()
+        process.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=3)
+    except OSError:
+        return
+
+
 class ComputerUseAgentService:
     """Run a fresh ChatGPT Web action loop for one selected local project."""
 
@@ -943,6 +1112,7 @@ class ComputerUseAgentService:
         self._stop_requested = Event()
         self._worker: Thread | None = None
         self._active_process: subprocess.Popen[str] | None = None
+        self._sleep_assertion: subprocess.Popen[Any] | None = None
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -956,9 +1126,11 @@ class ComputerUseAgentService:
         *,
         operating_system: str | None = None,
         browser: str | None = None,
+        model: str | None = None,
         session_mode: str = "new",
         conversation_url: str = "",
         project_url: str = "",
+        read_only: bool = False,
     ) -> None:
         clean_prompt = str(prompt or "").replace("\x00", "").strip()
         if not clean_prompt:
@@ -970,6 +1142,7 @@ class ComputerUseAgentService:
                 "workspace_path": workspace_path,
                 "operating_system": operating_system or base.operating_system,
                 "browser": browser or base.browser,
+                "model": model or base.model,
             }
         )
         settings = validate_computer_use_settings(candidate)
@@ -995,12 +1168,21 @@ class ComputerUseAgentService:
                 ),
                 prompt=clean_prompt,
                 workspace_path=str(workspace),
+                conversation_url=target_url,
                 started_at=utc_now(),
                 session_mode=normalized_session_mode,
             )
             self._worker = Thread(
                 target=self._run,
-                args=(clean_prompt, workspace, config, settings, target_url, normalized_session_mode),
+                args=(
+                    clean_prompt,
+                    workspace,
+                    config,
+                    settings,
+                    target_url,
+                    normalized_session_mode,
+                    bool(read_only),
+                ),
                 daemon=True,
             )
             self._worker.start()
@@ -1013,11 +1195,13 @@ class ComputerUseAgentService:
             self._snapshot.phase = "stopping"
             self._snapshot.message = "Stop requested. Ending the browser turn and active local command."
             process = self._active_process
+            sleep_assertion = self._sleep_assertion
         if process is not None and process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
             except OSError:
                 pass
+        _stop_macos_idle_sleep_assertion(sleep_assertion)
         return True
 
     def stop_at_exit(self) -> None:
@@ -1031,6 +1215,10 @@ class ComputerUseAgentService:
         with self._lock:
             self._active_process = process
 
+    def _set_sleep_assertion(self, process: subprocess.Popen[Any] | None) -> None:
+        with self._lock:
+            self._sleep_assertion = process
+
     def _run(
         self,
         prompt: str,
@@ -1039,7 +1227,10 @@ class ComputerUseAgentService:
         settings: ComputerUseSettings,
         target_url: str,
         session_mode: str,
+        read_only: bool,
     ) -> None:
+        sleep_assertion = _start_macos_idle_sleep_assertion()
+        self._set_sleep_assertion(sleep_assertion)
         try:
             run_directory = self._runtime_root / time.strftime("%Y%m%d-%H%M%S")
             context_path, context_bytes = build_context_markdown(
@@ -1062,6 +1253,7 @@ class ComputerUseAgentService:
                 settings=settings,
                 target_url=target_url,
                 session_mode=session_mode,
+                read_only=read_only,
                 should_stop=self._stop_requested.is_set,
                 update=self._update,
                 process_changed=self._set_active_process,
@@ -1090,6 +1282,8 @@ class ComputerUseAgentService:
                 self._snapshot.finished_at = utc_now()
         finally:
             self._set_active_process(None)
+            _stop_macos_idle_sleep_assertion(sleep_assertion)
+            self._set_sleep_assertion(None)
 
     def _update(self, **changes: Any) -> None:
         with self._lock:
@@ -1110,10 +1304,17 @@ def run_chatgpt_web_computer_use(
     process_changed: Callable[[subprocess.Popen[str] | None], None],
     target_url: str | None = None,
     session_mode: str = "new",
+    read_only: bool = False,
 ) -> tuple[str, str, int, bool]:
     """Run one selected ChatGPT Web session as a local controller action loop."""
     descriptor = browser_descriptors(config)[settings.browser]
-    controller = WorkspaceController(workspace, settings, should_stop, process_changed)
+    controller = WorkspaceController(
+        workspace,
+        settings,
+        should_stop,
+        process_changed,
+        read_only=read_only,
+    )
     selected_target_url = target_url or settings.target_url
     initial_message = _initial_chatgpt_message(
         prompt,
@@ -1135,6 +1336,7 @@ def run_chatgpt_web_computer_use(
                 context_path=context_path,
                 settings=settings,
                 session_mode=session_mode,
+                selected_target_url=selected_target_url,
                 should_stop=should_stop,
                 update=update,
             )
@@ -1157,6 +1359,7 @@ def run_chatgpt_web_computer_use(
                 context_path=context_path,
                 settings=settings,
                 session_mode=session_mode,
+                selected_target_url=selected_target_url,
                 should_stop=should_stop,
                 update=update,
             )
@@ -1198,12 +1401,14 @@ def _run_web_action_loop(
     context_path: Path,
     settings: ComputerUseSettings,
     session_mode: str,
+    selected_target_url: str,
     should_stop: Callable[[], bool],
     update: Callable[..., None],
 ) -> tuple[str, str, int, bool]:
     """Exchange JSON actions and compact observations in one ChatGPT conversation."""
-    _verify_chatgpt_page(page, browser_kind)
+    _verify_chatgpt_page(page, browser_kind, selected_target_url)
     _select_chat_mode(page, browser_kind)
+    _select_chatgpt_model(page, browser_kind, settings.model)
     attached = _attach_context_file(page, browser_kind, context_path)
     update(
         phase="submitting",
@@ -1213,7 +1418,16 @@ def _run_web_action_loop(
             else "Opening the selected ChatGPT session; the controller will stream context on demand."
         ),
     )
-    response = _submit_and_wait(page, browser_kind, initial_message, should_stop)
+    response = _submit_and_wait(
+        page,
+        browser_kind,
+        initial_message,
+        should_stop,
+        on_submitted=lambda: update(
+            phase="running",
+            message="Prompt sent to ChatGPT Web; waiting for the first controller action.",
+        ),
+    )
     conversation_url = str(page.url or "")
     activity: list[dict[str, str]] = []
 
@@ -1235,6 +1449,10 @@ def _run_web_action_loop(
                 browser_kind,
                 _observation_message(turn_index, observation),
                 should_stop,
+                on_submitted=lambda: update(
+                    phase="running",
+                    message="Correction sent to ChatGPT Web; waiting for a valid controller action.",
+                ),
             )
             continue
 
@@ -1252,6 +1470,10 @@ def _run_web_action_loop(
                         },
                     ),
                     should_stop,
+                    on_submitted=lambda: update(
+                        phase="running",
+                        message="Bodycheck requirement sent; waiting for the next ChatGPT action.",
+                    ),
                 )
                 continue
             final_response = _render_final_action(action)
@@ -1299,6 +1521,10 @@ def _run_web_action_loop(
             browser_kind,
             _observation_message(turn_index, observation),
             should_stop,
+            on_submitted=lambda: update(
+                phase="running",
+                message="Controller observation sent; waiting for the next ChatGPT action.",
+            ),
         )
 
     raise RuntimeError(
@@ -1336,25 +1562,61 @@ def _activity_detail(action: dict[str, Any]) -> str:
     return "Local controller"
 
 
-def _verify_chatgpt_page(page: Any, browser_kind: str) -> None:
+def _verify_chatgpt_page(
+    page: Any,
+    browser_kind: str,
+    selected_target_url: str | None = None,
+) -> None:
+    if browser_kind == "safari":
+        page.locator("#prompt-textarea").inner_text(timeout=60_000)
+    else:
+        _wait_for_chromium_composer(page)
     current_url = str(page.url or "")
     if (urlsplit(current_url).hostname or "").lower() not in CHATGPT_HOSTS:
         raise RuntimeError("The selected browser did not reach ChatGPT Web.")
-    if browser_kind == "safari":
-        page.locator("#prompt-textarea").inner_text(timeout=60_000)
-        signed_out = bool(
-            page.evaluate(
-                """() => Array.from(document.querySelectorAll('a,button')).some((element) => {
-                    const text = (element.innerText || element.textContent || '').trim().toLowerCase();
-                    return element.offsetParent !== null && /^(log in|sign up)$/.test(text);
-                })"""
-            )
+    if selected_target_url and not _chatgpt_target_is_open(selected_target_url, current_url):
+        raise RuntimeError("The selected ChatGPT session did not finish opening in the browser.")
+    signed_out = bool(
+        page.evaluate(
+            """() => Array.from(document.querySelectorAll('a,button')).some((element) => {
+                const text = (element.innerText || element.textContent || '').trim().toLowerCase();
+                return element.offsetParent !== null && /^(log in|sign up)$/.test(text);
+            })"""
         )
-    else:
-        page.locator("#prompt-textarea").wait_for(state="visible", timeout=60_000)
-        signed_out = page.get_by_role("button", name=re.compile("log in|sign up", re.IGNORECASE)).count() > 0
+    )
     if signed_out:
         raise RuntimeError(f"{settings_browser_label(browser_kind)} is not signed in to ChatGPT Web.")
+
+
+def _wait_for_chromium_composer(page: Any) -> None:
+    """Wait for ChatGPT's composer, reloading a stalled authenticated page once."""
+    last_error: Exception | None = None
+    for attempt in range(1, CHATGPT_COMPOSER_RELOAD_ATTEMPTS + 1):
+        try:
+            page.locator("#prompt-textarea").wait_for(
+                state="visible",
+                timeout=CHATGPT_COMPOSER_TIMEOUT_SECONDS * 1_000,
+            )
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt >= CHATGPT_COMPOSER_RELOAD_ATTEMPTS:
+                break
+            page.reload(wait_until="domcontentloaded", timeout=90_000)
+    raise RuntimeError(
+        "The Chromium browser loaded ChatGPT, but the message composer did not become ready after one reload."
+    ) from last_error
+
+
+def _chatgpt_target_is_open(target_url: str, current_url: str) -> bool:
+    """Require the selected ChatGPT path while permitting query-string changes."""
+    target = urlsplit(str(target_url or ""))
+    current = urlsplit(str(current_url or ""))
+    return (
+        (target.hostname or "").lower() in CHATGPT_HOSTS
+        and (current.hostname or "").lower() in CHATGPT_HOSTS
+        and (target.path.rstrip("/") or "/") == (current.path.rstrip("/") or "/")
+    )
 
 
 def settings_browser_label(browser_kind: str) -> str:
@@ -1365,7 +1627,7 @@ def _select_chat_mode(page: Any, browser_kind: str) -> None:
     """Select ordinary Chat mode when ChatGPT exposes a Chat/Work switch."""
     if browser_kind == "safari":
         page.evaluate(
-            """() => {
+            r"""() => {
                 const chat = Array.from(document.querySelectorAll('button[role="radio"]')).find((button) =>
                     (button.innerText || button.textContent || '').trim().toLowerCase() === 'chat'
                 );
@@ -1377,6 +1639,82 @@ def _select_chat_mode(page: Any, browser_kind: str) -> None:
     chat_mode = page.get_by_role("radio", name="Chat", exact=True)
     if chat_mode.count() and chat_mode.first.get_attribute("aria-checked") != "true":
         chat_mode.first.click()
+
+
+def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> None:
+    """Require the selected ChatGPT model to be active in the remote composer."""
+    del browser_kind
+    selected_model = str(model or DEFAULT_CHATGPT_MODEL).strip().lower()
+    option = next(
+        (candidate for candidate in CHATGPT_MODEL_OPTIONS if candidate["key"] == selected_model),
+        None,
+    )
+    if option is None:
+        raise ValueError("Choose a supported ChatGPT model.")
+
+    result = page.evaluate(
+        r"""({label}) => {
+            const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            const isVisible = (element) => {
+                const style = window.getComputedStyle(element);
+                return element.getClientRects().length > 0
+                    && style.visibility !== 'hidden'
+                    && style.display !== 'none';
+            };
+            const visibleMenus = () => Array.from(document.querySelectorAll('[role="menu"]')).filter(isVisible);
+            const powerLabels = new Set(['auto', 'low', 'medium', 'high', 'max', 'advanced', 'faster', 'smarter']);
+            const powerButton = Array.from(document.querySelectorAll('button')).find((button) =>
+                isVisible(button)
+                && powerLabels.has(normalize(button.innerText || button.textContent))
+                && !button.closest('[role="menu"]')
+            );
+            if (!powerButton) return {ok: false, reason: 'power-control-not-found', available: []};
+            powerButton.click();
+
+            const menu = visibleMenus().at(-1);
+            const modelItem = Array.from(menu?.querySelectorAll('[role="menuitem"][aria-haspopup="menu"]') || [])
+                .find((item) => normalize(item.innerText || item.textContent).startsWith('model'));
+            if (!modelItem) {
+                powerButton.click();
+                return {ok: false, reason: 'model-control-not-found', available: []};
+            }
+
+            const current = normalize(
+                modelItem.querySelector('[data-trailing-style], .trailing')?.innerText
+                || (modelItem.innerText || '').replace(/^model\s*/i, '')
+            );
+            if (current === normalize(label)) {
+                powerButton.click();
+                return {ok: true, selected: current, available: [current]};
+            }
+
+            modelItem.click();
+            const submenu = visibleMenus().at(-1);
+            const candidates = Array.from(submenu?.querySelectorAll('[role="menuitem"], [role="option"]') || [])
+                .filter(isVisible);
+            const choice = candidates.find((item) => normalize(item.innerText || item.textContent) === normalize(label));
+            if (choice) {
+                choice.click();
+                return {ok: true, selected: normalize(label), available: candidates.map((item) => normalize(item.innerText || item.textContent))};
+            }
+            return {
+                ok: false,
+                reason: 'model-not-exposed',
+                available: [current, ...candidates.map((item) => normalize(item.innerText || item.textContent))].filter(Boolean),
+            };
+        }""",
+        {"label": option["remote_label"]},
+    )
+    if isinstance(result, dict) and result.get("ok"):
+        return
+    available = []
+    if isinstance(result, dict):
+        available = [str(value) for value in result.get("available", []) if str(value).strip()]
+    available_text = ", ".join(dict.fromkeys(available)) or "none"
+    raise RuntimeError(
+        f"ChatGPT Web does not expose the selected model {option['remote_label']}. "
+        f"Available models: {available_text}."
+    )
 
 
 def _attach_context_file(page: Any, browser_kind: str, context_path: Path) -> bool:
@@ -1405,33 +1743,18 @@ def _submit_and_wait(
     browser_kind: str,
     message: str,
     should_stop: Callable[[], bool],
+    on_submitted: Callable[[], None] | None = None,
 ) -> str:
     """Submit one message and wait for one stable assistant response."""
     selector = '[data-message-author-role="assistant"]'
     baseline = _web_count(page, browser_kind, selector)
+    baseline_response = _web_last_text(page, browser_kind, selector)
     if browser_kind == "safari":
-        page.evaluate(
-            """({value}) => {
-                const composer = document.querySelector('#prompt-textarea');
-                if (!composer) throw new Error('ChatGPT composer was not found.');
-                composer.focus();
-                if (composer.tagName === 'TEXTAREA') {
-                    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
-                    if (setter) setter.call(composer, value); else composer.value = value;
-                } else {
-                    composer.textContent = value;
-                }
-                composer.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: value}));
-                composer.dispatchEvent(new KeyboardEvent('keydown', {bubbles: true, key: 'Enter', code: 'Enter'}));
-                composer.dispatchEvent(new KeyboardEvent('keyup', {bubbles: true, key: 'Enter', code: 'Enter'}));
-                return true;
-            }""",
-            {"value": message},
-        )
+        _submit_safari_prompt(page, message)
     else:
-        composer = page.locator("#prompt-textarea")
-        composer.fill(message)
-        composer.press("Enter")
+        _submit_chromium_prompt(page, message, should_stop)
+    if on_submitted is not None and not should_stop():
+        on_submitted()
 
     submitted_at = time.monotonic()
     stable_since = submitted_at
@@ -1443,8 +1766,9 @@ def _submit_and_wait(
             _stop_web_generation(page, browser_kind)
             return response
         count = _web_count(page, browser_kind, selector)
-        if count > baseline:
-            response = _web_last_text(page, browser_kind, selector)
+        latest_response = _web_last_text(page, browser_kind, selector)
+        if count > baseline or (latest_response and latest_response != baseline_response):
+            response = latest_response
         now = time.monotonic()
         if response != previous:
             previous = response
@@ -1460,6 +1784,178 @@ def _submit_and_wait(
             return response
         _web_wait(page, browser_kind, 500)
     raise RuntimeError("ChatGPT did not finish the controller turn within 30 minutes.")
+
+
+def _submit_safari_prompt(page: Any, message: str) -> None:
+    """Fill Safari's composer and wait for ChatGPT's visible send control."""
+    fill_result = page.evaluate(
+        """({value}) => {
+            const composer = document.querySelector('#prompt-textarea');
+            if (!composer) throw new Error('ChatGPT composer was not found.');
+            composer.focus();
+            if (composer.tagName === 'TEXTAREA') {
+                const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set;
+                if (setter) setter.call(composer, value); else composer.value = value;
+                composer.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: value}));
+            } else {
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(composer);
+                selection?.removeAllRanges();
+                selection?.addRange(range);
+                const inserted = Boolean(document.execCommand?.('insertText', false, value));
+                if (!inserted || composer.textContent !== value) {
+                    composer.textContent = value;
+                    composer.dispatchEvent(new InputEvent('input', {bubbles: true, inputType: 'insertText', data: value}));
+                }
+            }
+            return {filled: true, tagName: composer.tagName, contentEditable: composer.isContentEditable};
+        }""",
+        {"value": message},
+    )
+    if not isinstance(fill_result, dict) or not fill_result.get("filled"):
+        raise RuntimeError("Safari did not fill the ChatGPT composer.")
+
+    deadline = time.monotonic() + SAFARI_SEND_BUTTON_TIMEOUT_SECONDS
+    last_state: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        result = page.evaluate(
+            r"""() => {
+                const isVisible = (element) => {
+                    const style = window.getComputedStyle(element);
+                    return element.getClientRects().length > 0
+                        && style.visibility !== 'hidden'
+                        && style.display !== 'none';
+                };
+                const labelFor = (button) => `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`.trim();
+                const controls = Array.from(document.querySelectorAll('button')).filter(isVisible);
+                const sendButtons = controls.filter((button) => {
+                    const label = labelFor(button);
+                    return button.getAttribute('data-testid') === 'send-button'
+                        || /^(send|send prompt)$/i.test(label);
+                });
+                const sendButton = sendButtons.find((button) =>
+                    !button.disabled && button.getAttribute('aria-disabled') !== 'true'
+                );
+                if (sendButton) {
+                    sendButton.click();
+                    return {
+                        clicked: true,
+                        ariaLabel: sendButton.getAttribute('aria-label') || '',
+                        dataTestId: sendButton.getAttribute('data-testid') || '',
+                    };
+                }
+                const generating = controls.some((button) => {
+                    const label = labelFor(button);
+                    const testId = button.getAttribute('data-testid') || '';
+                    return /stop\s+(generating|response|answering)/i.test(label)
+                        || /stop-(button|generating|response)/i.test(testId);
+                });
+                return {
+                    clicked: false,
+                    generating,
+                    sendButtons: sendButtons.map((button) => ({
+                        ariaLabel: button.getAttribute('aria-label') || '',
+                        disabled: Boolean(button.disabled || button.getAttribute('aria-disabled') === 'true'),
+                    })),
+                };
+            }"""
+        )
+        if isinstance(result, dict):
+            last_state = result
+            if result.get("clicked"):
+                return
+        page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+
+    details = json.dumps(last_state, ensure_ascii=False, separators=(",", ":"))[:500]
+    raise RuntimeError(f"Safari did not expose an enabled ChatGPT send button: {details}")
+
+
+def _submit_chromium_prompt(
+    page: Any,
+    message: str,
+    should_stop: Callable[[], bool],
+) -> None:
+    """Fill Chromium's composer and click Send after any attachment is ready."""
+    user_selector = '[data-message-author-role="user"]'
+    baseline_user_count = _web_count(page, "chromium", user_selector)
+    composer = page.locator("#prompt-textarea")
+    composer.fill(message)
+
+    deadline = time.monotonic() + CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS
+    last_state: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        if should_stop():
+            return
+        result = page.evaluate(
+            r"""() => {
+                const isVisible = (element) => {
+                    const style = window.getComputedStyle(element);
+                    return element.getClientRects().length > 0
+                        && style.visibility !== 'hidden'
+                        && style.display !== 'none';
+                };
+                const labelFor = (button) => `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`.trim();
+                const controls = Array.from(document.querySelectorAll('button')).filter(isVisible);
+                const sendButtons = controls.filter((button) => {
+                    const label = labelFor(button);
+                    return button.getAttribute('data-testid') === 'send-button'
+                        || /^(send|send prompt)$/i.test(label);
+                });
+                const sendButton = sendButtons.find((button) =>
+                    !button.disabled && button.getAttribute('aria-disabled') !== 'true'
+                );
+                if (sendButton) {
+                    sendButton.click();
+                    return {
+                        clicked: true,
+                        ariaLabel: sendButton.getAttribute('aria-label') || '',
+                        dataTestId: sendButton.getAttribute('data-testid') || '',
+                    };
+                }
+                return {
+                    clicked: false,
+                    sendButtons: sendButtons.map((button) => ({
+                        ariaLabel: button.getAttribute('aria-label') || '',
+                        dataTestId: button.getAttribute('data-testid') || '',
+                        disabled: Boolean(button.disabled || button.getAttribute('aria-disabled') === 'true'),
+                    })),
+                };
+            }"""
+        )
+        if isinstance(result, dict):
+            last_state = result
+            if result.get("clicked"):
+                break
+        page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+    else:
+        details = json.dumps(last_state, ensure_ascii=False, separators=(",", ":"))[:500]
+        raise RuntimeError(
+            "The Chromium browser did not expose an enabled ChatGPT send button after "
+            f"waiting for the context attachment: {details}"
+        )
+
+    accepted_deadline = time.monotonic() + CHROMIUM_SUBMISSION_ACCEPT_TIMEOUT_SECONDS
+    while time.monotonic() < accepted_deadline:
+        if should_stop():
+            return
+        composer_empty = bool(
+            page.evaluate(
+                """() => {
+                    const composer = document.querySelector('#prompt-textarea');
+                    if (!composer) return true;
+                    return !(composer.innerText || composer.textContent || '').trim();
+                }"""
+            )
+        )
+        if (
+            composer_empty
+            or _web_count(page, "chromium", user_selector) > baseline_user_count
+            or _web_is_generating(page, "chromium")
+        ):
+            return
+        page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+    raise RuntimeError("The Chromium browser clicked Send, but ChatGPT did not accept the prompt.")
 
 
 def _is_web_response_complete(
@@ -1497,39 +1993,50 @@ def _web_last_text(page: Any, browser_kind: str, selector: str) -> str:
             )
             or ""
         )
-    return page.locator(selector).last.inner_text(timeout=5_000).strip()
+    elements = page.locator(selector)
+    if elements.count() == 0:
+        return ""
+    return elements.last.inner_text(timeout=5_000).strip()
 
 
 def _web_is_generating(page: Any, browser_kind: str) -> bool:
-    if browser_kind == "safari":
-        return bool(
-            page.evaluate(
-                """() => Array.from(document.querySelectorAll('button')).some((button) => {
-                    const text = `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`.toLowerCase();
-                    return button.offsetParent !== null && /stop generating|stop response/.test(text);
-                })"""
-            )
+    del browser_kind
+    return bool(
+        page.evaluate(
+            r"""() => Array.from(document.querySelectorAll('button')).some((button) => {
+                const text = `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`.toLowerCase();
+                const testId = (button.getAttribute('data-testid') || '').toLowerCase();
+                return button.offsetParent !== null
+                    && !button.disabled
+                    && button.getAttribute('aria-disabled') !== 'true'
+                    && (
+                        /stop\s+(generating|response|answering|streaming)/.test(text)
+                        || /stop-(button|generating|response|streaming)/.test(testId)
+                    );
+            })"""
         )
-    buttons = page.get_by_role("button", name=re.compile("stop generating|stop response", re.IGNORECASE))
-    return bool(buttons.count() and buttons.first.is_visible())
+    )
 
 
 def _stop_web_generation(page: Any, browser_kind: str) -> None:
-    if browser_kind == "safari":
-        page.evaluate(
-            """() => {
-                const button = Array.from(document.querySelectorAll('button')).find((candidate) => {
-                    const text = `${candidate.getAttribute('aria-label') || ''} ${candidate.innerText || candidate.textContent || ''}`.toLowerCase();
-                    return candidate.offsetParent !== null && /stop generating|stop response/.test(text);
-                });
-                if (button) button.click();
-                return Boolean(button);
-            }"""
-        )
-        return
-    buttons = page.get_by_role("button", name=re.compile("stop generating|stop response", re.IGNORECASE))
-    if buttons.count() and buttons.first.is_visible():
-        buttons.first.click()
+    del browser_kind
+    page.evaluate(
+        r"""() => {
+            const button = Array.from(document.querySelectorAll('button')).find((candidate) => {
+                const text = `${candidate.getAttribute('aria-label') || ''} ${candidate.innerText || candidate.textContent || ''}`.toLowerCase();
+                const testId = (candidate.getAttribute('data-testid') || '').toLowerCase();
+                return candidate.offsetParent !== null
+                    && !candidate.disabled
+                    && candidate.getAttribute('aria-disabled') !== 'true'
+                    && (
+                        /stop\s+(generating|response|answering|streaming)/.test(text)
+                        || /stop-(button|generating|response|streaming)/.test(testId)
+                    );
+            });
+            if (button) button.click();
+            return Boolean(button);
+        }"""
+    )
 
 
 def _web_wait(page: Any, browser_kind: str, milliseconds: int) -> None:

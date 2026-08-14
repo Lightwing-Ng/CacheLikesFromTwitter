@@ -1,16 +1,18 @@
-"""Disposable-browser E2E coverage for the responsive sidebar.
+"""Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.6.0-codex.2
+Code version: v1.7.0-codex.2
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from io import BytesIO
 from pathlib import Path
 import re
 from threading import Thread
 
 import pytest
+from PIL import Image, ImageChops
 from playwright.sync_api import (
     Browser,
     BrowserContext,
@@ -91,6 +93,7 @@ def _open_page(
     height: int,
     *,
     touch: bool,
+    init_script: str | None = None,
 ) -> tuple[Page, BrowserContext]:
     context = browser.new_context(
         viewport={"width": width, "height": height},
@@ -99,6 +102,8 @@ def _open_page(
         reduced_motion="reduce",
     )
     page = context.new_page()
+    if init_script:
+        page.add_init_script(init_script)
     page.goto(url, wait_until="domcontentloaded")
     return page, context
 
@@ -128,6 +133,153 @@ def _tap_toggle_center(page: Page, toggle) -> None:
     box = toggle.bounding_box()
     assert box is not None
     page.touchscreen.tap(box["x"] + (box["width"] / 2), box["y"] + (box["height"] / 2))
+
+
+def _decode_screenshot(png_bytes: bytes) -> Image.Image:
+    with Image.open(BytesIO(png_bytes)) as image:
+        return image.convert("RGBA")
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_simplified_chinese_language_boundary_runs_in_real_browser(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Verify the language boundary after startup and dynamic DOM mutations."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/x",
+        1_280,
+        900,
+        touch=False,
+        init_script="""
+            document.addEventListener("DOMContentLoaded", () => {
+                const button = document.createElement("button");
+                button.id = "language-rendering-startup-button";
+                button.textContent = "首屏简体中文";
+                document.body.append(button);
+            }, {once: true});
+        """,
+    )
+    try:
+        expect(page.locator('script[src*="language-rendering.js"]')).to_have_count(1)
+        expect(page.locator("#language-rendering-startup-button")).to_have_attribute(
+            "lang",
+            "zh-CN",
+        )
+
+        # This is the production browser-session trigger shape: the visible
+        # label is nested inside the button named by the original issue.
+        trigger = page.locator('[data-role="browser-picker-trigger"]')
+        expect(trigger).to_have_count(1)
+        selected_label = trigger.locator('[data-role="browser-picker-selected-label"]')
+        selected_label.evaluate("element => { element.textContent = '简体中文按钮'; }")
+        expect(selected_label).to_have_attribute("lang", "zh-CN")
+        assert selected_label.evaluate("element => element.matches(':lang(zh-CN)')")
+
+        page.evaluate(
+            """() => {
+                const button = document.createElement("button");
+                button.id = "language-rendering-dynamic-button";
+                button.textContent = "动态简体中文";
+                document.body.append(button);
+
+                const attributeButton = document.createElement("button");
+                attributeButton.id = "language-rendering-attribute-button";
+                attributeButton.textContent = "English fallback";
+                document.body.append(attributeButton);
+                attributeButton.setAttribute("aria-label", "简体中文标签");
+                attributeButton.setAttribute("title", "简体中文标题");
+
+                const input = document.createElement("input");
+                input.id = "language-rendering-input";
+                document.body.append(input);
+                input.value = "简体中文输入";
+                input.dispatchEvent(new Event("input", {bubbles: true}));
+
+                const traditional = document.createElement("span");
+                traditional.id = "language-rendering-traditional-boundary";
+                traditional.lang = "zh-Hant";
+                traditional.textContent = "繁體中文保留边界";
+                document.body.append(traditional);
+                traditional.textContent = "后续繁體中文仍保留边界";
+
+                const english = document.createElement("button");
+                english.id = "language-rendering-english-only";
+                english.textContent = "English only";
+                document.body.append(english);
+            }""",
+        )
+
+        expect(page.locator("#language-rendering-dynamic-button")).to_have_attribute(
+            "lang",
+            "zh-CN",
+        )
+        expect(page.locator("#language-rendering-attribute-button")).to_have_attribute(
+            "lang",
+            "zh-CN",
+        )
+        expect(page.locator("#language-rendering-input")).to_have_attribute("lang", "zh-CN")
+        expect(page.locator("#language-rendering-traditional-boundary")).to_have_attribute(
+            "lang",
+            "zh-Hant",
+        )
+        assert page.locator("#language-rendering-english-only").get_attribute("lang") is None
+
+        page.locator("#language-rendering-english-only").evaluate(
+            "element => { element.textContent = '后续动态简体中文'; }"
+        )
+        expect(page.locator("#language-rendering-english-only")).to_have_attribute(
+            "lang",
+            "zh-CN",
+        )
+
+        page.evaluate(
+            """() => {
+                const host = document.createElement("div");
+                host.id = "language-rendering-glyph-fixture";
+                host.style.cssText = "font-family: sans-serif; font-size: 64px; line-height: 1;";
+                const createSample = (id, language) => {
+                    const sample = document.createElement("span");
+                    sample.id = id;
+                    sample.style.cssText = "display: inline-block; white-space: nowrap;";
+                    if (language) sample.lang = language;
+                    sample.textContent = "骨直着令";
+                    host.append(sample);
+                };
+                createSample("language-rendering-glyph-target", "");
+                createSample("language-rendering-glyph-simplified", "zh-CN");
+                document.body.append(host);
+            }""",
+        )
+        expect(page.locator("#language-rendering-glyph-target")).to_have_attribute("lang", "zh-CN")
+        page.evaluate("() => document.fonts.ready")
+        target_glyph = _decode_screenshot(
+            page.locator("#language-rendering-glyph-target").screenshot()
+        )
+        simplified_glyph = _decode_screenshot(
+            page.locator("#language-rendering-glyph-simplified").screenshot()
+        )
+        assert target_glyph.size == simplified_glyph.size
+        assert ImageChops.difference(target_glyph, simplified_glyph).getbbox() is None
+
+        for page_index, entry_point in enumerate(("/cache/x", "/browser", "/settings", "/agent")):
+            page.goto(f"{sidebar_server_url}{entry_point}", wait_until="domcontentloaded")
+            expect(page.locator('script[src*="language-rendering.js"]')).to_have_count(1)
+            marker_id = f"language-rendering-entry-point-{page_index}"
+            page.evaluate(
+                """markerId => {
+                    const button = document.createElement("button");
+                    button.id = markerId;
+                    button.textContent = "全局简体中文入口";
+                    document.body.append(button);
+                }""",
+                marker_id,
+            )
+            expect(page.locator(f"#{marker_id}")).to_have_attribute("lang", "zh-CN")
+    finally:
+        context.close()
 
 
 @pytest.mark.integration
@@ -328,13 +480,13 @@ def test_agent_connection_selection_survives_cache_navigation(
         touch=False,
     )
     try:
-        page.get_by_role("button", name="Browser: Safari", exact=True).click()
+        page.get_by_role("button", name="Browser: Edge", exact=True).click()
         with page.expect_response(re.compile(r"/api/agent/preferences$")):
-            page.get_by_role("option", name="Edge", exact=True).click()
+            page.get_by_role("option", name="Chrome", exact=True).click()
         expect(page.locator('#agent_runtime_form input[name="browser"]')).to_have_value(
-            "edge"
+            "chrome"
         )
-        expect(page.get_by_role("button", name="Browser: Edge", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Browser: Chrome", exact=True)).to_be_visible()
 
         page.get_by_role("link", name="Cache", exact=True).click()
         expect(page).to_have_url(re.compile(r"/cache/chatgpt$"))
@@ -342,7 +494,7 @@ def test_agent_connection_selection_survives_cache_navigation(
         expect(page.locator('[data-dock-section="agent"]')).not_to_have_attribute("aria-current", "page")
         page.get_by_role("link", name="Agent", exact=True).click()
 
-        expect(page.get_by_role("button", name="Browser: Edge", exact=True)).to_be_visible()
+        expect(page.get_by_role("button", name="Browser: Chrome", exact=True)).to_be_visible()
     finally:
         context.close()
 

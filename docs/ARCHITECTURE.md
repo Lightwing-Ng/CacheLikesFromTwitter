@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.5.0-codex.1`
+Documentation version: `v1.5.0-codex.2`
 
 ## Runtime flow
 
@@ -168,6 +168,10 @@ every path below the selected project, separates explicit file actions from a re
 layer, bounds turns and output, and rejects final completion after an edit until bodycheck passes.
 The browser target is validated as an official ChatGPT root session, project, or project session
 before each task; the selection is run-scoped and the default remains a new root session.
+Chromium tasks clone the selected Edge or Chrome profile into an offscreen, minimized temporary
+context, suppress browser prompts, and clean the task-owned profile on exit. Stale cleanup is
+restricted to abandoned application-prefixed temporary directories older than 24 hours; the
+user's normal browser profile and unrelated temporary paths are not modified.
 
 ## Data ownership
 

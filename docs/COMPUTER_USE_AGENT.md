@@ -1,12 +1,14 @@
 # ChatGPT Web Computer Use Agent
 
-Documentation version: `v2.1.0-codex.1`
+Documentation version: `v2.3.0-codex.3`
 
 ## Purpose
 
 The Agent workspace is a browser-mediated fallback for times when the local coding-agent token
 pool is constrained. It opens the user's selected ChatGPT Web session in an already signed-in
-Safari, Edge, or Chrome session. A new root-level session is the default; the sidebar can also
+Safari, Edge, or Chrome session. Edge is the default because its Chromium controller does not
+depend on desktop clicks; Chrome uses the same controller, and Safari remains manually selectable.
+A new root-level session is the default; the sidebar can also
 join one of the 20 most recent root sessions, start a session in one of the 20 most recent
 projects, or join one of that project's 20 most recent sessions. ChatGPT supplies reasoning; a
 bounded local macOS controller performs project actions and returns compact observations to the
@@ -17,7 +19,7 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
 
 ## Execution loop
 
-1. Select one local project and an authenticated browser on `/agent`; the operating-system control detects the host and selects macOS or Windows automatically.
+1. Select one local project and an authenticated browser on `/agent`. Configure the operating system in Settings → Agent; the setting detects the host and selects macOS or Windows automatically. If local permissions are needed, explicitly use `Open terminal permissions` in Settings → Agent. macOS opens Full Disk Access for the Terminal that starts the service; Windows requests PowerShell administrator authorization through UAC. Automatic detection never opens an authorization surface.
 2. Keep `New session` or choose a recent root session/project and, for a project, either
    `New session in project` or one of its recent sessions.
 3. Enter a task. The service validates the selected official ChatGPT URL and opens it in the
@@ -25,8 +27,9 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
 4. The service builds one owner-readable Markdown context package containing the request,
    repository instruction files, a bounded file index, dirty-worktree status, and project entry
    files.
-5. Chromium browsers attach the package directly when ChatGPT exposes a file input. Safari uses
-   the same prompt and streams requested project context through controller observations.
+5. Chromium browsers attach the package directly when ChatGPT exposes a file input, wait for the
+   attachment to enable Send, click the control, and confirm that ChatGPT accepted the prompt.
+   Safari uses the same prompt and streams requested project context through controller observations.
 6. ChatGPT returns exactly one JSON action at a time. The controller supports `list`, `read`,
    `search`, `replace`, `write`, `run`, `bodycheck`, and `final`.
 7. The controller rejects a final answer until `bodycheck` succeeds after the latest edit.
@@ -62,8 +65,22 @@ Windows appears in the selector and has an independent prompt, but execution is 
 blocked on a macOS host until a PowerShell-backed controller and Windows browser-session adapter
 are implemented and verified.
 
+Edge and Chrome run through an isolated clone of the selected signed-in profile and operate the
+ChatGPT DOM directly. Their task windows are offscreen, minimized, and configured not to surface
+first-run, crash, notification, or repost prompts, so they do not steal focus or interrupt normal
+macOS use. The user's original profile is never opened for writing. A normal task exit closes the
+isolated context and removes its temporary profile; the next Chromium launch removes only abandoned
+`cachelikes-edge-*` or `cachelikes-chrome-*` directories older than 24 hours. Safari uses Apple
+Events and remains best treated as an interactive-session option.
+
+While an Agent task is running on macOS, the service holds an idle-sleep assertion and releases it
+as soon as the task finishes or fails. The display can turn off and the session can remain locked;
+the assertion does not wake the display. Closing a MacBook lid, choosing Sleep, restarting, losing
+network access, or ending the local service can still suspend or interrupt a task.
+
 ## Verification
 
-Default tests use temporary projects, fake browser runners, and isolated settings paths. They do
-not open authenticated profiles or submit real content to ChatGPT. A live signed-in browser run is
-manual and must be treated as an external data transfer.
+Default tests use temporary projects, fake browser runners, and isolated settings paths. Live
+read-only acceptance runs on 13 Aug 2026 reused one existing ChatGPT conversation in both Edge and
+Chrome, completed the controller action loop, and passed the local bodycheck. Any live signed-in
+browser run must be treated as an external data transfer.

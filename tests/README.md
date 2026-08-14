@@ -1,6 +1,6 @@
 # Test Suite
 
-Test-suite version: `v1.2.0-codex.1`
+Test-suite version: `v1.2.1-codex.1`
 
 The authoritative test workflow, coverage baseline, isolation contract, and CI behavior are
 documented in [docs/TESTING.md](../docs/TESTING.md). Use `./scripts/test.sh` for the normal
@@ -27,7 +27,8 @@ offline suite and `./scripts/check.sh` for the full quality gate.
 - `test_responsive_contract.py`: shared CSS and JavaScript breakpoints, independent compact-content
   and sidebar-overlay boundaries, global hidden behavior, and bootstrap load order.
 - `test_sidebar_e2e.py`: disposable Chromium coverage for target iPhone, iPad, and desktop
-  viewports, touch dismissal, viewport transitions, horizontal overflow, and toggle hit testing.
+  viewports, touch dismissal, viewport transitions, horizontal overflow, toggle hit testing,
+  and the runtime Simplified Chinese language-boundary contract.
 
 ## Isolation Rules
 

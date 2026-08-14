@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.4.0-codex.1`
+Documentation version: `v1.4.0-codex.3`
 
 ## Launch
 
@@ -31,8 +31,13 @@ it through router port forwarding, and do not publish it through a public tunnel
   hide, minimize, move offscreen, reuse, or accumulate Safari windows.
 - Chrome, Edge, and Safari support differs by source and automation engine; use the session probe
   in the console before a long sync.
-- The first Chromium-backed run works best after normal Chrome windows are closed, because a
-  profile lock can prevent Playwright from creating its isolated context.
+- Edge and Chrome tasks clone the selected profile into an offscreen, minimized temporary context.
+  They do not bring a browser window to the front, send desktop mouse or keyboard events, or
+  write to the user's normal profile. First-run, crash, notification, and repost prompts are
+  disabled for the task-owned context.
+- Normal task exit closes the isolated context and removes its temporary profile. Each subsequent
+  Chromium launch also removes only abandoned `cachelikes-edge-*` or `cachelikes-chrome-*`
+  directories older than 24 hours; unrelated temporary paths are not touched.
 - Do not add or repeatedly troubleshoot login flows as part of normal runtime operation. The
   application assumes an existing signed-in session.
 
@@ -43,9 +48,10 @@ it through router port forwarding, and do not publish it through a public tunnel
   Safari, Edge, or Chrome session. The Agent sidebar can also join one of the 20 most recent root
   sessions, start a session in one of the 20 most recent projects, or join one of a project's
   20 most recent sessions.
-- Settings → Agent controls the context limit, turn limit, command timeout, and per-operating-system
-  prompts. The Agent page detects the host and selects macOS or Windows automatically. macOS execution
-  is available; Windows is represented for future configuration and is blocked on the current host.
+- Settings → Agent controls the operating system, terminal permissions, context limit, turn limit,
+  command timeout, and per-operating-system prompts. The operating-system setting detects the host and
+  selects macOS or Windows automatically. macOS execution is available; Windows is represented for
+  future configuration and is blocked on the current host.
 - Chromium can attach the generated Markdown context directly. Safari falls back to compact
   on-demand reads because web content cannot programmatically assign a local file to a protected
   file input.
