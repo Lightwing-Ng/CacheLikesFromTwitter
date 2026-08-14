@@ -11,8 +11,7 @@ htmlcov/
 playwright-report/
 test-results/*
 !test-results/.gitkeep
-local_store/*
-!local_store/.gitkeep
+/local_store/
 logs/*
 !logs/.gitkeep
 grok_local/

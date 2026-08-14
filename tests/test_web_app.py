@@ -409,7 +409,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.16.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.80.7-codex.1"
+                    "style-v2.80.9-codex.1"
                 )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
@@ -556,6 +556,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('class="settings-action-package settings-callout-card-primary shadow-backup-actions"', settings_body)
         self.assertIn('class="icon icon-settings-agent"', settings_body)
         self.assertIn('class="icon icon-settings-cloud"', settings_body)
+        self.assertIn('data-agent-terminal-authorization-status aria-live="polite" hidden></span>', settings_body)
         self.assertIn('class="settings-inline-button settings-inline-button-primary shadow-backup-sync-button"', settings_body)
         self.assertIn('shadow-backup-settings.js?v=shadow-backup-settings-v1.3.0-codex.1', settings_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', settings_body)
@@ -1579,7 +1580,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.80.7-codex.1", body)
+            self.assertIn("style-v2.80.9-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.27.1-codex.1', body)

@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.3-codex.1
+Code version: v1.47.4-codex.1
 """
 
 from pathlib import Path
@@ -162,6 +162,8 @@ def test_settings_action_packages_reuse_the_sibling_composite_card() -> None:
         ".settings-action-package-form {",
         "justify-self: end;",
         ".settings-action-package:has(.settings-service-name) {",
+        ".settings-agent-terminal-authorization-status {",
+        ".settings-agent-terminal-authorization-status[hidden] {",
         "--settings-action-button-min-height: 32px;",
         ".settings-inline-button-primary {",
     )
@@ -969,7 +971,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.80.7-codex.1 */",
+        "/* Code version: v2.80.9-codex.1 */",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
         "width: 22px;",
