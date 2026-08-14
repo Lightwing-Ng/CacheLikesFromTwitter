@@ -1,11 +1,14 @@
 """Focused tests for Gemini session history Parquet persistence."""
 
-# Code version: v1.3.2-codex.1
+# Code version: v1.9.0-codex.1
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlencode
 
 import pyarrow.parquet as pq
 import pytest
@@ -13,16 +16,23 @@ import pytest
 from app.core.gemini_downloader import (
     GeminiConversationLink,
     GeminiHistoryStore,
+    GeminiNoCacheableMessagesError,
+    _build_gemini_history_rpc_page_request,
+    _decode_gemini_history_rpc_payloads,
+    _gemini_links_and_cursor_from_rpc_payload,
     _open_gemini_sidebar,
     _prepare_gemini_page_for_rendering,
     _read_gemini_conversation_links,
     _scroll_gemini_conversation_navigation,
     build_gemini_initial_snapshot,
+    gemini_discovery_checkpoint_path,
     gemini_conversation_id,
     gemini_history_path,
     inspect_gemini_bot_check,
     is_gemini_conversation_url,
     normalize_gemini_conversation_url,
+    load_gemini_discovery_checkpoint,
+    save_gemini_discovery_checkpoint,
     wait_for_gemini_bot_check_clear,
     collect_gemini_conversation_links,
 )
@@ -87,6 +97,83 @@ def test_open_gemini_sidebar_expands_the_independent_recents_list() -> None:
     assert page.waits == [1_000, 500]
 
 
+def test_gemini_history_rpc_response_exposes_links_and_cursor() -> None:
+    payload = [
+        None,
+        "next-page-token",
+        [
+            ["c_abc123", "First session"],
+            ["c_def456", "Second session"],
+        ],
+    ]
+    body = json.dumps([["wrb.fr", "MaZiqc", json.dumps(payload)]])
+
+    decoded = _decode_gemini_history_rpc_payloads(body)
+    links, cursor = _gemini_links_and_cursor_from_rpc_payload(decoded[0])
+
+    assert cursor == "next-page-token"
+    assert links == [
+        GeminiConversationLink("abc123", "https://gemini.google.com/app/abc123", "First session"),
+        GeminiConversationLink("def456", "https://gemini.google.com/app/def456", "Second session"),
+    ]
+
+
+def test_gemini_history_rpc_next_page_preserves_auth_fields() -> None:
+    batch = [[["MaZiqc", "[39,null,[0,null,1]]", None, "generic"]]]
+    request = SimpleNamespace(
+        url=(
+            "https://gemini.google.com/_/BardChatUi/data/batchexecute"
+            "?rpcids=MaZiqc&_reqid=123"
+        ),
+        post_data=urlencode({"f.req": json.dumps(batch), "at": "csrf-token"}),
+    )
+
+    url, body = _build_gemini_history_rpc_page_request(request, "cursor-value")
+    fields = parse_qs(body)
+    updated_batch = json.loads(fields["f.req"][0])
+
+    assert "rpcids=MaZiqc" in url
+    assert "_reqid=123" in url
+    assert fields["at"] == ["csrf-token"]
+    assert json.loads(updated_batch[0][0][1]) == [1_000, "cursor-value", [0, None, 1]]
+
+
+def test_gemini_discovery_checkpoint_round_trips_and_rejects_stale_data(
+    tmp_path: Path,
+) -> None:
+    links = [
+        GeminiConversationLink(
+            "abc123",
+            "https://gemini.google.com/app/abc123",
+            "First session",
+        ),
+        GeminiConversationLink(
+            "def456",
+            "https://gemini.google.com/app/def456",
+            "Second session",
+        ),
+    ]
+
+    checkpoint_path = save_gemini_discovery_checkpoint(links, tmp_path)
+
+    assert checkpoint_path == gemini_discovery_checkpoint_path(tmp_path)
+    assert load_gemini_discovery_checkpoint(tmp_path) == links
+    with patch(
+        "app.core.gemini_downloader.time.time",
+        return_value=checkpoint_path.stat().st_mtime + 86_401,
+    ):
+        assert load_gemini_discovery_checkpoint(tmp_path) == []
+
+
+def test_gemini_discovery_checkpoint_ignores_unreadable_data(tmp_path: Path) -> None:
+    checkpoint_path = gemini_discovery_checkpoint_path(tmp_path)
+    checkpoint_path.parent.mkdir(parents=True)
+    checkpoint_path.write_text("not json", encoding="utf-8")
+
+    assert load_gemini_discovery_checkpoint(tmp_path) == []
+
+
+
 def test_gemini_conversation_urls_are_canonical_and_host_scoped() -> None:
     source = "https://gemini.google.com/app/abc_123?utm_source=test#fragment"
 
@@ -123,6 +210,7 @@ def test_gemini_history_store_atomically_merges_and_replaces_conversations(tmp_p
     final_store = GeminiHistoryStore(path)
     assert final_store.cached_conversations == 2
     assert final_store.cached_messages == 4
+    assert final_store.cached_conversation_ids == {"conversation-a", "conversation-b"}
     first_rows = [row for row in final_store.rows if row["conversation_id"] == "conversation-a"]
     assert {row["first_seen_at"] for row in first_rows} == {"2026-08-12T05:00:00Z"}
     assert {row["last_seen_at"] for row in first_rows} == {"2026-08-12T06:00:00Z"}
@@ -137,6 +225,20 @@ def test_gemini_history_store_atomically_merges_and_replaces_conversations(tmp_p
     assert not unchanged
     assert final_store.cached_conversations == 2
     assert final_store.cached_messages == 3
+
+
+def test_gemini_history_store_rejects_sessions_without_text_rows(tmp_path: Path) -> None:
+    store = GeminiHistoryStore(gemini_history_path(tmp_path))
+    conversation = GeminiConversationLink(
+        "conversation-empty",
+        "https://gemini.google.com/app/conversation-empty",
+        "Media only",
+    )
+
+    with pytest.raises(GeminiNoCacheableMessagesError, match="no cacheable text"):
+        store.replace_conversation(conversation, [], "2026-08-14T08:00:00Z")
+
+    assert store.cached_conversations == 0
 
 
 def test_gemini_initial_snapshot_counts_cached_rows(tmp_path: Path) -> None:

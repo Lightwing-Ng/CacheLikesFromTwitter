@@ -9,7 +9,9 @@ from app.core.chatgpt_agent_sources import (
     _collect_projects,
     _collect_projects_from_api,
     _collect_root_sessions,
+    _conversation_history_items,
     _conversation_item,
+    _fetch_conversation_history,
     normalize_chatgpt_conversation_url,
     normalize_chatgpt_project_url,
 )
@@ -145,3 +147,100 @@ def test_conversation_item_can_build_project_session_url() -> None:
         {"id": "session-1", "title": "Project chat"},
         "https://chatgpt.com/g/g-p-demo-project/c/",
     )["url"] == "https://chatgpt.com/g/g-p-demo-project/c/session-1"
+
+
+def test_conversation_history_pairs_ordered_user_and_assistant_messages() -> None:
+    history = _conversation_history_items(
+        [
+            {
+                "message_index": 2,
+                "role": "assistant",
+                "content_text": "The first answer.",
+                "last_seen_at": "2026-08-14T01:02:00Z",
+            },
+            {
+                "message_index": 1,
+                "role": "user",
+                "content_text": "The first question.",
+                "last_seen_at": "2026-08-14T01:01:00Z",
+            },
+            {
+                "message_index": 4,
+                "role": "assistant",
+                "content_text": "The second answer.",
+                "last_seen_at": "2026-08-14T01:04:00Z",
+            },
+            {
+                "message_index": 3,
+                "role": "user",
+                "content_text": "The second question.",
+                "last_seen_at": "2026-08-14T01:03:00Z",
+            },
+        ]
+    )
+
+    assert history == [
+        {
+            "prompt": "The first question.",
+            "response": "The first answer.",
+            "started_at": "2026-08-14T01:01:00Z",
+            "finished_at": "2026-08-14T01:02:00Z",
+        },
+        {
+            "prompt": "The second question.",
+            "response": "The second answer.",
+            "started_at": "2026-08-14T01:03:00Z",
+            "finished_at": "2026-08-14T01:04:00Z",
+        },
+    ]
+
+
+def test_fetch_conversation_history_reads_authenticated_mapping_without_persistence() -> None:
+    context = _Context(
+        {
+            "/api/auth/session": {"accessToken": "fixture-token"},
+            "/backend-api/conversation/fixture-session": {
+                "title": "Fixture session",
+                "current_node": "assistant-node",
+                "mapping": {
+                    "root": {"message": None, "parent": None},
+                    "user-node": {
+                        "parent": "root",
+                        "message": {
+                            "author": {"role": "user"},
+                            "content": {"parts": ["Check the fonts"]},
+                            "create_time": "2026-08-14T01:01:00Z",
+                        }
+                    },
+                    "assistant-node": {
+                        "parent": "user-node",
+                        "message": {
+                            "author": {"role": "assistant"},
+                            "content": {"parts": ["The font stack is configured"]},
+                            "create_time": "2026-08-14T01:02:00Z",
+                        }
+                    },
+                    "alternate-assistant-node": {
+                        "parent": "user-node",
+                        "message": {
+                            "author": {"role": "assistant"},
+                            "content": {"parts": ["An alternate answer"]},
+                            "create_time": "2026-08-14T01:03:00Z",
+                        }
+                    },
+                },
+            },
+        }
+    )
+
+    payload = _fetch_conversation_history(context, "https://chatgpt.com/c/fixture-session")
+
+    assert payload["title"] == "Fixture session"
+    assert payload["history"] == [
+        {
+            "prompt": "Check the fonts",
+            "response": "The font stack is configured",
+            "started_at": "2026-08-14T01:01:00Z",
+            "finished_at": "2026-08-14T01:02:00Z",
+        }
+    ]

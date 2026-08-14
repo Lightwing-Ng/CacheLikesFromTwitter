@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.5.0-codex.1
+Code version: v3.7.0-codex.1
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ from app.core.computer_use_agent import (
     open_agent_in_default_browser,
     parse_agent_action,
     save_computer_use_settings,
+    terminal_execution_permission_snapshot,
     _submit_and_wait,
     validate_computer_use_settings,
     inspection_command_parts,
@@ -189,6 +190,50 @@ def test_host_operating_system_detection_uses_supported_host_keys(monkeypatch: p
 
     monkeypatch.setattr(computer_use_agent.sys, "platform", "linux")
     assert detect_host_operating_system() == "macos"
+
+
+def test_terminal_execution_permission_reports_selected_project_access(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "detect_host_operating_system", lambda: "macos")
+    monkeypatch.setattr(computer_use_agent.shutil, "which", lambda _name: "/bin/zsh")
+    monkeypatch.setattr(computer_use_agent.os, "access", lambda _path, _mode: True)
+
+    result = terminal_execution_permission_snapshot("macos", str(tmp_path))
+
+    assert result == {
+        "ready": True,
+        "status_label": "Granted",
+        "application": "Terminal",
+        "message": (
+            "Terminal command execution and read/write access to the selected project "
+            "are available."
+        ),
+    }
+
+
+def test_terminal_execution_permission_reports_project_denial(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "detect_host_operating_system", lambda: "macos")
+    monkeypatch.setattr(computer_use_agent.shutil, "which", lambda _name: "/bin/zsh")
+    monkeypatch.setattr(
+        computer_use_agent.os,
+        "access",
+        lambda path, mode: mode == computer_use_agent.os.X_OK and str(path) == "/bin/zsh",
+    )
+
+    result = terminal_execution_permission_snapshot("macos", str(tmp_path))
+
+    assert result["ready"] is False
+    assert result["status_label"] == "Not granted"
+    assert "does not have read/write access" in result["message"]
 
 
 def test_terminal_authorization_opens_macos_full_disk_access(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -555,8 +600,68 @@ def test_agent_service_reports_browser_result_without_api_credentials(
         assert snapshot["turn_count"] == 4
         assert snapshot["bodycheck_passed"]
         assert snapshot["session_mode"] == "new"
+        assert snapshot["session_title"] == "Inspect the workspace"
+        assert snapshot["history"] == [
+            {
+                "prompt": "Inspect the workspace",
+                "response": "Verified result",
+                "started_at": snapshot["started_at"],
+                "finished_at": snapshot["finished_at"],
+            }
+        ]
         assert "token" not in snapshot
         assert released_assertions == [sleep_assertion]
+
+
+def test_agent_service_keeps_one_question_answer_page_per_conversation() -> None:
+    with TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        workspace = root / "project"
+        workspace.mkdir()
+        store = ComputerUseSettingsStore(root / "settings.json")
+        prompts: list[str] = []
+
+        def runner(**kwargs):
+            prompts.append(kwargs["prompt"])
+            return (
+                f"Answer {len(prompts)}",
+                "https://chatgpt.com/c/profit-audit",
+                len(prompts),
+                True,
+            )
+
+        service = ComputerUseAgentService(store, runner=runner, runtime_root=root / "runtime")
+        service.start(
+            "审计这个项目的已实现盈利的计算方式",
+            str(workspace),
+            CrawlConfig(),
+            session_title="已实现盈利审计",
+        )
+        deadline = time.monotonic() + 2
+        while service.snapshot()["running"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        service.start(
+            "继续检查汇率边界",
+            str(workspace),
+            CrawlConfig(),
+            session_mode="recent",
+            conversation_url="https://chatgpt.com/c/profit-audit",
+        )
+        deadline = time.monotonic() + 2
+        while service.snapshot()["running"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        snapshot = service.snapshot()
+        assert snapshot["session_title"] == "已实现盈利审计"
+        assert [item["prompt"] for item in snapshot["history"]] == [
+            "审计这个项目的已实现盈利的计算方式",
+            "继续检查汇率边界",
+        ]
+        assert [item["response"] for item in snapshot["history"]] == [
+            "Answer 1",
+            "Answer 2",
+        ]
 
 
 def test_macos_idle_sleep_assertion_uses_caffeinate_without_waking_display(

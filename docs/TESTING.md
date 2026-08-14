@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.2.1-codex.1`
+Documentation version: `v1.2.2-codex.1`
 
 ## Supported commands
 
@@ -80,10 +80,9 @@ or lower the threshold to mask a gap.
 - Style-token, template, and responsive-contract tests protect durable UI boundaries directly.
 - Sidebar E2E tests start an isolated local Flask server and a clean headless Chromium context.
   They cover touch input, backdrop dismissal, viewport transitions, real hit testing through
-  `document.elementFromPoint()`, and execution of the Simplified Chinese language-boundary
-  observer across startup and dynamic DOM mutations. The language test also checks Chromium's
-  `:lang(zh-CN)` matching and pixel-equivalence with an explicit `zh-CN` rendering control;
-  it avoids a fixed screenshot baseline because installed CJK fonts differ across hosts.
+  `document.elementFromPoint()`, and the shared Chinese language boundary across startup and
+  dynamic DOM mutations. The language test checks source-text preservation, `:lang(zh-CN)`
+  matching, and the macOS-oriented glyph fixture without converting Unicode text.
 
 The current detailed module-to-behavior map is maintained in [tests/README.md](../tests/README.md).
 

@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.5.0-codex.2
+Code version: v3.7.0-codex.1
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import shlex
 import signal
 import subprocess
@@ -66,6 +67,7 @@ MAX_ACTION_OUTPUT_CHARS = 48_000
 MAX_FILE_READ_CHARS = 120_000
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
+MAX_AGENT_SESSION_HISTORY = 100
 WEB_RESPONSE_MINIMUM_SECONDS = 1.5
 WEB_RESPONSE_STABLE_SECONDS = 1.0
 WEB_TURN_TIMEOUT_SECONDS = 1_800
@@ -273,6 +275,9 @@ class AgentRunSnapshot:
     workspace_path: str = ""
     response: str = ""
     conversation_url: str = ""
+    project_url: str = ""
+    session_title: str = ""
+    history: list[dict[str, str]] = field(default_factory=list)
     activity: list[dict[str, str]] = field(default_factory=list)
     started_at: str = ""
     finished_at: str = ""
@@ -314,6 +319,64 @@ def detect_host_operating_system() -> str:
     if sys.platform.startswith("win") or os.name == "nt":
         return "windows"
     return "macos"
+
+
+def terminal_execution_permission_snapshot(
+    operating_system: str,
+    workspace_path: str,
+) -> dict[str, Any]:
+    """Report whether the local controller can execute in the selected project."""
+    selected = str(operating_system or "").strip().lower()
+    host = detect_host_operating_system()
+    application = "PowerShell" if selected == "windows" else "Terminal"
+    workspace = Path(str(workspace_path or "")).expanduser().resolve()
+
+    if selected not in SUPPORTED_OPERATING_SYSTEMS:
+        return {
+            "ready": False,
+            "status_label": "Not granted",
+            "application": application,
+            "message": "Choose macOS or Windows before checking terminal execution permission.",
+        }
+    if selected != host:
+        host_label = "Windows" if host == "windows" else "macOS"
+        return {
+            "ready": False,
+            "status_label": "Not granted",
+            "application": application,
+            "message": f"{application} execution is unavailable while the app runs on {host_label}.",
+        }
+
+    executable = shutil.which("powershell.exe" if selected == "windows" else "zsh")
+    workspace_access = (
+        workspace.is_dir()
+        and os.access(workspace, os.R_OK | os.W_OK | os.X_OK)
+    )
+    ready = bool(
+        executable
+        and os.access(executable, os.X_OK)
+        and workspace_access
+    )
+    if ready:
+        message = (
+            f"{application} command execution and read/write access to the selected project "
+            "are available."
+        )
+    elif not executable:
+        message = f"{application} could not be found on this host."
+    elif not workspace_access:
+        message = (
+            f"{application} does not have read/write access to the selected project. "
+            "Review its system privacy permissions."
+        )
+    else:
+        message = f"{application} command execution is unavailable."
+    return {
+        "ready": ready,
+        "status_label": "Granted" if ready else "Not granted",
+        "application": application,
+        "message": message,
+    }
 
 
 def launch_terminal_authorization(operating_system: str) -> dict[str, Any]:
@@ -629,6 +692,10 @@ class ComputerUseSettingsStore:
         settings = self.settings
         host_operating_system = detect_host_operating_system()
         host_ready = settings.operating_system == "macos" and host_operating_system == "macos"
+        terminal_execution = terminal_execution_permission_snapshot(
+            settings.operating_system,
+            settings.workspace_path,
+        )
         return {
             "ready": host_ready,
             "host_operating_system": host_operating_system,
@@ -642,6 +709,7 @@ class ComputerUseSettingsStore:
                     else "Windows execution is planned but is not available on this host yet."
                 )
             ),
+            "terminal_execution": terminal_execution,
             "settings": asdict(settings),
         }
 
@@ -1229,6 +1297,25 @@ def _stop_macos_idle_sleep_assertion(process: subprocess.Popen[Any] | None) -> N
         return
 
 
+def _agent_history_key(conversation_url: str) -> str:
+    """Return a stable in-memory key for one Web AI conversation."""
+    return str(conversation_url or "").strip().rstrip("/")
+
+
+def _clean_agent_session_title(value: str, fallback: str) -> str:
+    """Return a concise session title without accepting selector placeholders."""
+    candidate = " ".join(str(value or "").replace("\x00", "").split())
+    if candidate.casefold() in {
+        "new session",
+        "new session in project",
+        "recent sessions",
+        "recent projects",
+    }:
+        candidate = ""
+    clean_fallback = " ".join(str(fallback or "").replace("\x00", "").split())
+    return (candidate or clean_fallback)[:240]
+
+
 class ComputerUseAgentService:
     """Run a fresh Web Agent action loop for one selected local project."""
 
@@ -1247,6 +1334,8 @@ class ComputerUseAgentService:
         self._worker: Thread | None = None
         self._active_process: subprocess.Popen[str] | None = None
         self._sleep_assertion: subprocess.Popen[Any] | None = None
+        self._conversation_histories: dict[str, list[dict[str, str]]] = {}
+        self._conversation_titles: dict[str, str] = {}
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -1265,6 +1354,7 @@ class ComputerUseAgentService:
         session_mode: str = "new",
         conversation_url: str = "",
         project_url: str = "",
+        session_title: str = "",
         read_only: bool = False,
     ) -> None:
         clean_prompt = str(prompt or "").replace("\x00", "").strip()
@@ -1294,12 +1384,24 @@ class ComputerUseAgentService:
             project_url,
             settings.platform,
         )
+        clean_session_title = _clean_agent_session_title(session_title, "")
         self._settings_store.update(settings)
 
         with self._lock:
             if self._snapshot.running:
                 raise RuntimeError("An Agent request is already running.")
             self._stop_requested.clear()
+            history_key = _agent_history_key(target_url)
+            existing_history = (
+                []
+                if normalized_session_mode in {"new", "project_new"}
+                else [dict(item) for item in self._conversation_histories.get(history_key, [])]
+            )
+            resolved_session_title = (
+                clean_session_title
+                or self._conversation_titles.get(history_key, "")
+                or clean_prompt
+            )
             self._snapshot = AgentRunSnapshot(
                 running=True,
                 phase="starting",
@@ -1311,6 +1413,9 @@ class ComputerUseAgentService:
                 prompt=clean_prompt,
                 workspace_path=str(workspace),
                 conversation_url=target_url,
+                project_url=normalize_chatgpt_project_url(project_url),
+                session_title=resolved_session_title,
+                history=existing_history,
                 started_at=utc_now(),
                 session_mode=normalized_session_mode,
                 platform=settings.platform,
@@ -1404,6 +1509,27 @@ class ComputerUseAgentService:
             )
             with self._lock:
                 stopped = self._stop_requested.is_set()
+                finished_at = utc_now()
+                final_history_key = _agent_history_key(conversation_url or target_url)
+                history = [
+                    dict(item)
+                    for item in self._conversation_histories.get(
+                        final_history_key,
+                        self._snapshot.history,
+                    )
+                ]
+                if response.strip():
+                    history.append(
+                        {
+                            "prompt": prompt,
+                            "response": response,
+                            "started_at": self._snapshot.started_at,
+                            "finished_at": finished_at,
+                        }
+                    )
+                    history = history[-MAX_AGENT_SESSION_HISTORY:]
+                    self._conversation_histories[final_history_key] = history
+                    self._conversation_titles[final_history_key] = self._snapshot.session_title
                 self._snapshot.running = False
                 self._snapshot.phase = "stopped" if stopped else "finished"
                 self._snapshot.message = (
@@ -1413,9 +1539,10 @@ class ComputerUseAgentService:
                 )
                 self._snapshot.response = response
                 self._snapshot.conversation_url = conversation_url
+                self._snapshot.history = history
                 self._snapshot.turn_count = turn_count
                 self._snapshot.bodycheck_passed = bodycheck_passed
-                self._snapshot.finished_at = utc_now()
+                self._snapshot.finished_at = finished_at
         except Exception as exc:
             LOGGER.exception("Computer Use web-agent request failed.")
             with self._lock:

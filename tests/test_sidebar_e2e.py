@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.7.0-codex.2
+Code version: v1.8.1-codex.1
 """
 
 from __future__ import annotations
@@ -142,6 +142,273 @@ def _decode_screenshot(png_bytes: bytes) -> Image.Image:
 
 @pytest.mark.integration
 @pytest.mark.slow
+def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Verify every cache sidebar exposes the same complete source menu in Chromium."""
+    expected_sources = ["chatgpt", "gemini", "grok", "x"]
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/chatgpt",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        for page_source in ("chatgpt", "gemini", "grok"):
+            if page_source != "chatgpt":
+                page.goto(f"{sidebar_server_url}/cache/{page_source}", wait_until="domcontentloaded")
+
+            aside = page.locator("xpath=/html/body/main/div/aside")
+            expect(aside).to_have_count(1)
+            options = aside.locator("[data-cache-source-switcher-option]")
+            expect(options).to_have_count(len(expected_sources))
+            assert options.evaluate_all(
+                "elements => elements.map(element => element.dataset.cacheSourceSwitcherOption)"
+            ) == expected_sources
+            expected_paths = (
+                [
+                    "/cache/chatgpt",
+                    "/browser?view=text&session_view=1&q=&source=gemini&sort=newest",
+                    "/browser?view=text&session_view=1&q=&source=grok&sort=newest",
+                    "/cache/x",
+                ]
+                if page_source == "gemini"
+                else ["/cache/chatgpt", "/cache/gemini", "/cache/grok", "/cache/x"]
+            )
+            assert options.evaluate_all(
+                "elements => elements.map(element => element.dataset.cacheSourceSwitcherPath)"
+            ) == expected_paths
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_response_pagination_keeps_spatial_effects_visible(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Verify the Agent pagination shell is not clipped by its response ancestors."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/agent",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        contract = page.evaluate(
+            """() => {
+                const pagination = document.querySelector("#agent_response_pagination");
+                const output = document.querySelector("#agent_response_output");
+                const answer = document.querySelector("#agent_response_answer");
+                const card = output?.closest(".agent-response-card");
+                const task = card?.closest(".agent-task-card");
+                if (!pagination || !output || !answer || !card || !task) return null;
+
+                output.hidden = false;
+                pagination.hidden = false;
+                pagination.replaceChildren();
+                const indicator = document.createElement("span");
+                indicator.className = "local-store-pagination-indicator";
+                indicator.setAttribute("aria-hidden", "true");
+                pagination.append(indicator);
+                const ellipsis = document.createElement("span");
+                ellipsis.className = "local-store-page-ellipsis";
+                ellipsis.setAttribute("aria-hidden", "true");
+                const dots = document.createElement("span");
+                dots.className = "local-store-page-ellipsis-dots";
+                ellipsis.append(dots);
+                pagination.append(ellipsis);
+                for (let page = 1; page <= 5; page += 1) {
+                    const button = document.createElement("button");
+                    button.className = `local-store-page-button${page === 1 ? " is-active" : ""}`;
+                    button.textContent = String(page);
+                    pagination.append(button);
+                }
+                pagination.classList.add("is-animated");
+
+                const read = (element) => {
+                    const style = window.getComputedStyle(element);
+                    return {
+                        overflow: style.overflow,
+                        overflowX: style.overflowX,
+                        overflowY: style.overflowY,
+                        position: style.position,
+                        zIndex: style.zIndex,
+                    };
+                };
+                return {
+                    ancestors: [task, card, output, pagination].map(read),
+                    answer: read(answer),
+                    paginationWidth: pagination.getBoundingClientRect().width,
+                    indicatorVisible: window.getComputedStyle(indicator).opacity === "1",
+                };
+            }""",
+        )
+        assert contract is not None
+        assert contract["paginationWidth"] > 0
+        assert contract["indicatorVisible"]
+        assert all(item["overflow"] == "visible" for item in contract["ancestors"])
+        assert contract["ancestors"][-1]["position"] == "relative"
+        assert contract["ancestors"][-1]["zIndex"] == "2"
+        assert contract["answer"]["overflowX"] == "hidden"
+        assert contract["answer"]["overflowY"] == "auto"
+
+        ellipsis = page.locator("#agent_response_pagination .local-store-page-ellipsis")
+        expect(ellipsis).to_have_count(1)
+        ellipsis.hover()
+        hover_state = ellipsis.evaluate(
+            "element => ({background: getComputedStyle(element).background, boxShadow: getComputedStyle(element).boxShadow})"
+        )
+        assert hover_state["background"] != "rgba(0, 0, 0, 0)"
+        assert hover_state["boxShadow"] != "none"
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_model_and_sidebar_service_triggers_share_typography(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Verify the exact Agent model and sidebar service controls render matching label typography."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/agent",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        main_button = page.locator(
+            "xpath=/html/body/main/div/section/div[2]/article/form/label/span/span/span[1]/button"
+        )
+        sidebar_button = page.locator(
+            "xpath=/html/body/main/div/aside/form/div[2]/label/div/button"
+        )
+        expect(main_button).to_have_count(1)
+        expect(sidebar_button).to_have_count(1)
+
+        typography = page.evaluate(
+            """([main, sidebar]) => {
+                const readLabel = (button) => {
+                    const label = button?.querySelector("[data-agent-combobox-selected-label]");
+                    if (!label) return null;
+                    const style = window.getComputedStyle(label);
+                    return {
+                        fontFamily: style.fontFamily,
+                        fontSize: style.fontSize,
+                        fontWeight: style.fontWeight,
+                        lineHeight: style.lineHeight,
+                    };
+                };
+                return [readLabel(main), readLabel(sidebar)];
+            }""",
+            [main_button.element_handle(), sidebar_button.element_handle()],
+        )
+        assert typography[0] is not None
+        assert typography[0] == typography[1]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_browser_session_status_reuses_account_typography_for_terminal_and_cache(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Verify Agent and Cache status surfaces reuse the same non-bold status typography."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/agent",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        account = page.locator(
+            "xpath=/html/body/main/div/aside/form/div[1]/label[2]/div/div[2]/div/div/div/strong"
+        )
+        terminal_label = page.locator(
+            "xpath=/html/body/main/div/aside/form/div[1]/label[2]/div/div[2]/div/div/p/span[2]"
+        )
+        expect(account).to_have_count(1)
+        expect(terminal_label).to_have_count(1)
+
+        agent_typography = page.evaluate(
+            """([accountElement, terminalElement]) => {
+                const read = (element) => {
+                    const style = window.getComputedStyle(element);
+                    return {
+                        fontFamily: style.fontFamily,
+                        fontSize: style.fontSize,
+                        fontWeight: style.fontWeight,
+                        lineHeight: style.lineHeight,
+                        textAlign: style.textAlign,
+                    };
+                };
+                return [read(accountElement), read(terminalElement)];
+            }""",
+            [account.element_handle(), terminal_label.element_handle()],
+        )
+        assert agent_typography[0] == agent_typography[1]
+        assert agent_typography[0]["fontWeight"] == "400"
+        assert agent_typography[0]["textAlign"] == "left"
+
+        page.goto(f"{sidebar_server_url}/cache/chatgpt", wait_until="domcontentloaded")
+        cache_account = page.locator("aside .browser-session-status-account")
+        expect(cache_account).to_have_count(1)
+        cache_typography = cache_account.evaluate(
+            "element => { const style = getComputedStyle(element); return {fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight, lineHeight: style.lineHeight, textAlign: style.textAlign}; }"
+        )
+        assert cache_typography == agent_typography[0]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_cache_shared_settings_link_opens_the_downloads_category(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Verify the shared cache settings link leaves the Cache form and opens Downloads."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/x",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        settings_link = page.locator(".cache-settings-link")
+        expect(settings_link).to_have_count(1)
+        expect(settings_link).to_have_attribute("href", "/settings#settings-downloads")
+        expect(page.locator("#start_form section")).to_have_count(0)
+        assert settings_link.evaluate("element => !element.closest('form')")
+
+        settings_link.click()
+        page.wait_for_url(re.compile(r"/settings#settings-downloads$"))
+
+        expect(page.locator("[data-settings-category-shell]")).to_have_attribute(
+            "data-active-category",
+            "downloads",
+        )
+        expect(page.locator("#settings-downloads")).to_be_visible()
+        expect(page.locator('[data-settings-category="downloads"]')).to_have_class(
+            re.compile(r"\bis-active\b")
+        )
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
 def test_simplified_chinese_language_boundary_runs_in_real_browser(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -209,9 +476,15 @@ def test_simplified_chinese_language_boundary_runs_in_real_browser(
                 english.id = "language-rendering-english-only";
                 english.textContent = "English only";
                 document.body.append(english);
+
+                const sourceIdentity = document.createElement("button");
+                sourceIdentity.id = "language-rendering-source-identity";
+                sourceIdentity.textContent = "啓 啟 天后 吳 吴";
+                document.body.append(sourceIdentity);
             }""",
         )
 
+        assert page.locator("#language-rendering-dynamic-button").text_content() == "动态简体中文"
         expect(page.locator("#language-rendering-dynamic-button")).to_have_attribute(
             "lang",
             "zh-CN",
@@ -225,6 +498,10 @@ def test_simplified_chinese_language_boundary_runs_in_real_browser(
             "lang",
             "zh-Hant",
         )
+        assert page.locator("#language-rendering-traditional-boundary").text_content() == (
+            "后续繁體中文仍保留边界"
+        )
+        assert page.locator("#language-rendering-source-identity").text_content() == "啓 啟 天后 吳 吴"
         assert page.locator("#language-rendering-english-only").get_attribute("lang") is None
 
         page.locator("#language-rendering-english-only").evaluate(
@@ -234,6 +511,32 @@ def test_simplified_chinese_language_boundary_runs_in_real_browser(
             "lang",
             "zh-CN",
         )
+
+        page.goto(f"{sidebar_server_url}/agent", wait_until="domcontentloaded")
+        session_mode_trigger = page.locator(
+            "xpath=/html/body/main/div/aside/form/div[2]/label/div/button"
+        )
+        recent_session_trigger = page.locator(
+            "xpath=/html/body/main/div/aside/form/div[2]/div[1]/div/button"
+        )
+        expect(session_mode_trigger).to_have_count(1)
+        expect(recent_session_trigger).to_have_count(1)
+        page.evaluate(
+            """() => {
+                document.querySelector(
+                    ".agent-session-mode-combobox [data-agent-combobox-selected-label]"
+                ).textContent = "简体中文会话标题";
+                document.querySelector(
+                    '[data-agent-session-list="recent"] [data-agent-combobox-selected-label]'
+                ).textContent = "简体中文最近会话";
+            }""",
+        )
+        session_mode_label = session_mode_trigger.locator("[data-agent-combobox-selected-label]")
+        recent_session_label = recent_session_trigger.locator("[data-agent-combobox-selected-label]")
+        expect(session_mode_label).to_have_attribute("lang", "zh-CN")
+        expect(session_mode_trigger).to_contain_text("简体中文会话标题")
+        expect(recent_session_label).to_have_attribute("lang", "zh-CN")
+        expect(recent_session_trigger).to_contain_text("简体中文最近会话")
 
         page.evaluate(
             """() => {

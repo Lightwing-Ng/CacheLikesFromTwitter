@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.44.0-codex.3
+Code version: v1.47.1-codex.1
 """
 
 from pathlib import Path
@@ -694,6 +694,17 @@ def test_browser_pagination_matches_the_sibling_floating_control_states() -> Non
     assert "border: var(--frosted-glass-border);" in hover_rule
     assert "transform:" not in hover_rule
 
+    ellipsis_start = stylesheet.index(".browser-pagination .local-store-page-ellipsis {")
+    ellipsis_rule = stylesheet[ellipsis_start:stylesheet.index("\n}", ellipsis_start)]
+    ellipsis_hover_start = stylesheet.index(
+        ".browser-pagination .local-store-page-ellipsis:is(:hover, :focus-within) {"
+    )
+    ellipsis_hover_rule = stylesheet[ellipsis_hover_start:stylesheet.index("\n}", ellipsis_hover_start)]
+    assert "border-radius: var(--radius-pill);" in ellipsis_rule
+    assert "transition:" in ellipsis_rule
+    assert "background: var(--frosted-glass-background-hover);" in ellipsis_hover_rule
+    assert "box-shadow: var(--frosted-glass-shadow-active);" in ellipsis_hover_rule
+
 
 def test_motion_tokens_match_the_sibling_non_linear_motion_contract() -> None:
     """Keep shared transitions valid and aligned with the sibling motion foundation."""
@@ -709,6 +720,21 @@ def test_motion_tokens_match_the_sibling_non_linear_motion_contract() -> None:
         "--motion-inertial: cubic-bezier(0.16, 1, 0.3, 1);",
         "--motion-bouncy: cubic-bezier(0.34, 1.56, 0.64, 1);",
         "--motion-overshoot: cubic-bezier(0.34, 1.32, 0.64, 1);",
+    ):
+        assert token in stylesheet
+
+
+def test_agent_response_pagination_ellipsis_has_a_visible_hover_affordance() -> None:
+    """Keep the Agent response ellipsis visibly interactive on hover."""
+    stylesheet = _stylesheet()
+
+    for token in (
+        ".browser-pagination.agent-response-pagination .local-store-page-ellipsis:hover,",
+        "cursor: pointer;",
+        "background: var(--frosted-glass-background-hover);",
+        "color: var(--accent-text-hover);",
+        ".browser-pagination.agent-response-pagination .local-store-page-ellipsis-dots {",
+        "transform: scale(1.12);",
     ):
         assert token in stylesheet
 
@@ -738,7 +764,8 @@ def test_browser_pagination_range_menu_uses_glass_and_gel_motion_tokens() -> Non
         "background: var(--frosted-glass-opaque-background, var(--frosted-glass-background));",
         "background-clip: padding-box;",
         "backdrop-filter: var(--frosted-glass-blur);",
-        "overflow-y: hidden;",
+        "overflow-y: auto;",
+        "scrollbar-width: thin;",
         ".browser-pagination-range-menu.is-scrollable {",
         "overflow-y: auto;",
         "border-radius: var(--radius-soft);",
@@ -747,6 +774,20 @@ def test_browser_pagination_range_menu_uses_glass_and_gel_motion_tokens() -> Non
         "grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));",
     ):
         assert token in stylesheet
+
+
+def test_browser_pagination_range_menu_keeps_native_scrollbar_visuals() -> None:
+    """Keep scrollbar painting delegated to the existing browser surface."""
+    stylesheet = _stylesheet()
+    menu_start = stylesheet.index(".browser-pagination-range-menu {")
+    menu_end = stylesheet.index(".browser-pagination-range-menu.is-scrollable {", menu_start)
+    menu_rule = stylesheet[menu_start:menu_end]
+
+    assert "overflow-y: auto;" in menu_rule
+    assert "scrollbar-width: thin;" in menu_rule
+    assert "scrollbar-gutter:" not in menu_rule
+    assert "scrollbar-color:" not in menu_rule
+    assert ".browser-pagination-range-menu::-webkit-scrollbar" not in stylesheet
 
 
 def test_browser_content_mode_control_uses_the_sibling_blue_pill_pattern() -> None:
@@ -827,6 +868,9 @@ def test_browser_session_messages_wrap_rich_content_inside_fixed_cells() -> None
     detail_table_rule = stylesheet[detail_table_start:stylesheet.index("\n}", detail_table_start)]
     assert "width: 100%;" in detail_table_rule
     assert "min-width: 0;" in detail_table_rule
+    message_cell_start = stylesheet.index(".browser-session-detail-table tbody > tr > td:last-child {")
+    message_cell_rule = stylesheet[message_cell_start:stylesheet.index("\n}", message_cell_start)]
+    assert "padding-right: 18px;" in message_cell_rule
     for token in (
         "box-sizing: border-box;",
         "max-width: 100%;",
@@ -840,6 +884,27 @@ def test_browser_session_messages_wrap_rich_content_inside_fixed_cells() -> None
         assert token in code_rule
     for token in ("width: 100%;", "max-width: 100%;", "table-layout: fixed;"):
         assert token in nested_table_rule
+
+
+def test_browser_session_messages_default_to_compact_vertical_disclosure() -> None:
+    """Keep long session messages compact until their standard control is activated."""
+    stylesheet = _stylesheet()
+
+    for token in (
+        ".browser-session-table-message-shell {",
+        ".browser-session-table-message-shell:not(.is-expanded) .browser-session-table-message {",
+        "max-height: min(20rem, 42svh);",
+        "overflow-y: hidden;",
+        ".browser-session-table-message-shell.is-collapsible:not(.is-expanded) .browser-session-table-message::after {",
+        ".browser-session-message-toggle {",
+        "border-radius: 50%;",
+        ".browser-session-message-toggle[hidden] {",
+        ".browser-session-message-toggle-icon {",
+        'mask: url("/static/images/rectangle.expand.vertical.svg") center/contain no-repeat;',
+        ".browser-session-message-toggle[aria-expanded=\"true\"] .browser-session-message-toggle-icon {",
+        'mask-image: url("/static/images/rectangle.compress.vertical.svg");',
+    ):
+        assert token in stylesheet
 
 
 def test_browser_workspace_prefers_simplified_chinese_font_fallbacks() -> None:
@@ -890,7 +955,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.76.0-codex.4 */",
+        "/* Code version: v2.80.4-codex.5 */",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
         "width: 22px;",
@@ -901,14 +966,22 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         "gap: 14px;",
         ".agent-platform-combobox .browser-session-trigger-leading {",
         "flex: 1 1 auto;",
+        ".agent-response-question-header {",
+        ".agent-response-answer {",
+        ".agent-response-pagination {",
         ".agent-platform-combobox .trade-strategy-trigger-label.browser-session-trigger-label {",
         ".agent-platform-combobox .browser-picker-selected-icon-shell {",
         ".agent-os-combobox .browser-picker-selected-icon-shell {",
         ".agent-os-combobox .browser-picker-option-icon {",
         ".agent-os-combobox .agent-combobox-option {",
         ".agent-combobox-loading-spinner {",
+        ".agent-empty-response {",
+        ".agent-empty-response-spinner {",
         ".agent-combobox-dropdown .trade-strategy-dropdown-option,",
         "font-weight: var(--font-weight-regular);",
+        ".browser-session-status-item {",
+        ".browser-session-status-terminal-checkmark {",
+        ".browser-session-status-card-compact .agent-terminal-execution-status {",
         ".agent-combobox.is-agent-combobox-open .agent-combobox-dropdown:not([hidden]) {",
         ".agent-port-field {",
         "grid-column: auto;",
@@ -934,7 +1007,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".settings-agent-runtime-status {",
         ".agent-response-output {",
         "overflow-y: auto;",
-        '"PingFang SC", "PingFang TC", "PingFang HK"',
+            '"PingFang SC", "PingFang TC", "PingFang HK", "Microsoft YaHei", "Microsoft JhengHei"',
         ".agent-response-output h1,",
         "font-size: var(--font-card-title);",
         ".settings-agent-system-prompt {",
@@ -952,3 +1025,77 @@ def test_agent_composer_right_aligns_model_selector_with_action_gap() -> None:
 
     assert "justify-content: flex-end;" in footer_rule
     assert "gap: 12px;" in footer_rule
+
+
+def test_agent_combobox_trigger_labels_share_typography_contract() -> None:
+    """Keep Agent model and sidebar trigger labels on one font contract."""
+    stylesheet = _stylesheet()
+    selector = ".agent-combobox-trigger .trade-strategy-trigger-label {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    for token in (
+        "font-family: inherit;",
+        "font-size: var(--font-table-body);",
+        "font-weight: var(--font-weight-regular);",
+        "line-height: 1.45;",
+    ):
+        assert token in selector_rule
+
+
+def test_browser_session_status_labels_share_nonbold_left_typography() -> None:
+    """Keep account and terminal status labels aligned without using bold emphasis."""
+    stylesheet = _stylesheet()
+    selector = ".browser-session-status-account,\n.agent-terminal-execution-label {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    for token in (
+        "font-family: inherit;",
+        "font-size: var(--font-ui-lg);",
+        "font-weight: var(--font-weight-regular);",
+        "line-height: 1.3;",
+        "text-align: left;",
+    ):
+        assert token in selector_rule
+
+
+def test_agent_response_pagination_keeps_spatial_effects_unclipped() -> None:
+    """Keep the answer scrollable while allowing pagination motion to escape its shell."""
+    stylesheet = _stylesheet()
+
+    for selector in (".agent-task-card {", "\n.agent-response-card {", ".agent-response-output {"):
+        selector_start = stylesheet.index(selector) + (1 if selector.startswith("\n") else 0)
+        selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+        assert "overflow: visible;" in selector_rule
+
+    pagination_start = stylesheet.index(".agent-response-pagination {")
+    pagination_rule = stylesheet[pagination_start:stylesheet.index("\n}", pagination_start)]
+    assert "position: relative;" in pagination_rule
+    assert "z-index: var(--layer-control-affordance);" in pagination_rule
+    assert "overflow: visible;" in pagination_rule
+
+    answer_start = stylesheet.index(".agent-response-answer {")
+    answer_rule = stylesheet[answer_start:stylesheet.index("\n}", answer_start)]
+    assert "overflow-x: hidden;" in answer_rule
+    assert "overflow-y: auto;" in answer_rule
+
+
+def test_agent_response_header_and_answer_pin_the_composer() -> None:
+    """Keep both response regions independently scrollable without moving the composer."""
+    stylesheet = _stylesheet()
+
+    header_start = stylesheet.index(".agent-response-question-header {")
+    header_rule = stylesheet[header_start:stylesheet.index("\n}", header_start)]
+    answer_start = stylesheet.index(".agent-response-answer {")
+    answer_rule = stylesheet[answer_start:stylesheet.index("\n}", answer_start)]
+    composer_start = stylesheet.rfind(".agent-task-card > .agent-prompt-form {")
+    composer_rule = stylesheet[composer_start:stylesheet.index("\n}", composer_start)]
+
+    for rule in (header_rule, answer_rule):
+        assert "overflow-y: auto;" in rule
+        assert "scrollbar-gutter: stable;" in rule
+        assert "overscroll-behavior: contain;" in rule
+    assert "position: sticky;" in composer_rule
+    assert "bottom: 0;" in composer_rule
+    assert "flex: 0 0 auto;" in composer_rule

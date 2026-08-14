@@ -1,6 +1,6 @@
 # Cache handoff and operating runbook
 
-Documentation version: `v1.1.0-codex.1`
+Documentation version: `v1.2.0-codex.1`
 
 This is the authoritative handoff document for the second Dock item, `Cache`.
 Read it before changing Cache routes, source switching, Text/Media behavior, local
@@ -154,7 +154,42 @@ this Mac. The Gemini bot-check selector is one JavaScript expression: adjacent s
 literals must be joined explicitly with `+`, because JavaScript does not concatenate
 them like Python.
 
-## 7. Safe operator workflow
+## 7. Edge Gemini Text contract
+
+Edge is the preferred runtime for a long Gemini Text cache on this Mac. The worker
+clones the authenticated Edge `Default` profile into one headless, task-owned context;
+it must not open a visible Edge window, send foreground keyboard or mouse events, or
+reuse the user's normal profile for writes.
+
+The Angular Recents list is not a complete discovery source: it can render zero links
+even while Gemini has history available. Chromium discovery therefore captures the
+authenticated `MaZiqc` history RPC and follows its cursor:
+
+1. Request a large page size (`1,000`); Gemini may cap each response at `100` entries.
+2. Reuse the authenticated request fields and follow each returned cursor.
+3. Stop only when the service closes the cursor, the configured maximum is reached, or
+   the user requests a stop.
+4. Persist the complete result atomically to
+   `local_store/llm/gemini/discovery_checkpoint.json` before processing sessions.
+
+The checkpoint is valid for 24 hours. Resume runs reuse it and skip conversation IDs
+already present in `history.parquet`, so a transient navigation failure does not repeat
+the full discovery pass. A session with no non-empty text nodes is skipped as a
+non-text session, not counted as a failed text cache.
+
+On `14 Aug 2026`, the authenticated Edge history exposed `740` sessions through the
+cursor. The completed text cache contains `736` text-bearing sessions and `4,045`
+messages (`2,114` user and `1,931` assistant), with zero failed sessions, zero empty
+messages, and zero duplicate message keys. The four remaining discovered sessions
+exposed no cacheable text. These counts describe the current authenticated history,
+not a hardcoded product limit.
+
+The worker checks each page for Google human-verification markers. If a challenge is
+detected, it stops and reports it to the operator; it must not attempt to solve a
+captcha automatically. Transient tunnel and network failures are retried with a
+cooldown, and the exact failure remains visible in the task event log.
+
+## 8. Safe operator workflow
 
 Use the local Terminal as the runtime control surface. The required project interpreter
 is `/usr/local/bin/python3.13`.
@@ -208,7 +243,7 @@ http://localhost:8666/browser?view=text&source=grok&session_view=1&q=&sort=newes
 The page should show Grok as the selected source, session rows, message counts, and
 original Grok conversation links.
 
-## 8. Troubleshooting decision tree
+## 9. Troubleshooting decision tree
 
 ### Safari reports an unreadable JavaScript result
 
@@ -289,7 +324,7 @@ Run the focused checks first:
 
 The second command requires the Agent module set to be internally consistent.
 
-## 9. Change map for future agents
+## 10. Change map for future agents
 
 Read these files together before changing Cache behavior:
 

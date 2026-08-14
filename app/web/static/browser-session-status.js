@@ -1,4 +1,4 @@
-/* Code version: v1.1.0-codex.1 */
+/* Code version: v1.2.0-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v4:";
@@ -78,6 +78,11 @@
 
         if (!platform || !statusCard || !statusAccount || !statusCheckmark) return null;
 
+        function accountLabel(payload) {
+            const platformLabel = String(root.dataset.browserSessionAccountLabel || "").trim();
+            return platformLabel ? `${platformLabel} account` : (payload.account_name || "No signed-in account detected");
+        }
+
         function notify(payload, browserId, state) {
             onStateChange?.(payload, browserId, state);
         }
@@ -96,7 +101,7 @@
             statusCard.removeAttribute("aria-busy");
             root.classList.remove("is-browser-status-loading", "is-browser-status-refreshing");
             root.classList.toggle("is-browser-ready", Boolean(payload.can_download));
-            statusAccount.textContent = payload.account_name || "No signed-in account detected";
+            statusAccount.textContent = accountLabel(payload);
             if (statusMessage) {
                 statusMessage.textContent = payload.message || "";
                 statusMessage.hidden = !payload.message;

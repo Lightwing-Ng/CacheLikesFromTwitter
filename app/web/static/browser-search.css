@@ -1,4 +1,4 @@
-/* Code version: v1.1.0-codex.1 */
+/* Code version: v1.2.0-codex.1 */
 
 .browser-heading-copy {
     min-width: 0;
@@ -14,24 +14,44 @@
     min-width: 0;
 }
 
-.browser-search-field {
+.browser-local-resources-header-actions {
+    width: 100%;
+    margin-top: 10px;
+}
+
+.browser-local-resources-header-actions .browser-search-field {
     position: relative;
     z-index: var(--layer-global-popover);
+    flex: 0 1 360px;
     width: min(360px, 34vw);
     min-width: 220px;
-    margin: 0;
+    margin: 0 0 0 auto;
     gap: 6px;
-    order: 2;
 }
 
 .browser-search-control {
     position: relative;
 }
 
+.browser-search-icon {
+    position: absolute;
+    top: 50%;
+    left: 13px;
+    z-index: 1;
+    display: block;
+    width: 16px;
+    height: 16px;
+    background-color: var(--theme-muted);
+    mask: url("/static/images/magnifyingglass.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/magnifyingglass.svg") center/contain no-repeat;
+    pointer-events: none;
+    transform: translateY(-50%);
+}
+
 .browser-search-input {
     box-sizing: border-box;
     min-height: 42px;
-    padding-inline: 12px 14px;
+    padding-inline: 42px 14px;
 }
 
 .browser-search-suggestions {
@@ -154,10 +174,15 @@
         flex-wrap: wrap;
     }
 
-    .browser-search-field {
+    .browser-local-resources-header-actions {
+        align-items: stretch;
+        width: 100%;
+    }
+
+    .browser-local-resources-header-actions .browser-search-field {
+        flex-basis: 100%;
         width: 100%;
         min-width: 0;
-        order: 1;
     }
 
     .browser-heading-tools .browser-session-actions {

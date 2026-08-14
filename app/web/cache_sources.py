@@ -1,6 +1,6 @@
 """Presentation registry for cache source pages."""
 
-# Code version: v1.3.4-codex.1
+# Code version: v1.3.6-codex.1
 
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ class CacheSourceView:
     progress_aria_label: str
     banner_storage_key: str
     group_key: str = "media"
-    group_label: str = "Caches"
+    group_label: str = "Cache"
     include_in_llm_switcher: bool = False
     preserve_icon_color: bool = False
     show_common_config: bool = True
@@ -182,12 +182,10 @@ def cache_source_views_for_group(group_key: str) -> tuple[CacheSourceView, ...]:
 
 
 def cache_source_views_for_page(source_key: str) -> tuple[CacheSourceView, ...]:
-    """Return the source switcher options for one rendered cache page."""
-    normalized_source = str(source_key or "").strip().lower()
-    if normalized_source == "chatgpt":
-        return CACHE_SOURCE_VIEWS
-    source = get_cache_source_view(normalized_source)
-    return cache_source_views_for_group(source.group_key if source is not None else "media")
+    """Return the complete registry for every rendered cache-page switcher."""
+    if get_cache_source_view(source_key) is None:
+        return ()
+    return CACHE_SOURCE_VIEWS
 
 
 def get_cache_source_view(source_key: str) -> CacheSourceView | None:

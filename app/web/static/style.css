@@ -1,4 +1,4 @@
-/* Code version: v2.76.0-codex.4 */
+/* Code version: v2.80.4-codex.5 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -1170,11 +1170,31 @@ h2 {
     gap: 4px;
 }
 
-.browser-session-status-account {
+.browser-session-status-item {
+    min-width: 0;
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.browser-session-status-item .browser-session-status-checkmark {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+}
+
+.browser-session-status-checkmark[hidden] {
+    display: none;
+}
+
+.browser-session-status-account,
+.agent-terminal-execution-label {
+    font-family: inherit;
     font-size: var(--font-ui-lg);
-    font-weight: var(--font-weight-semibold);
+    font-weight: var(--font-weight-regular);
     color: var(--text);
     line-height: 1.3;
+    text-align: left;
     word-break: break-word;
 }
 
@@ -1187,9 +1207,29 @@ h2 {
     -webkit-mask: url("/static/images/checkmark.circle.fill.green.svg") center/contain no-repeat;
 }
 
+.browser-session-status-terminal-checkmark {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+}
+
 .browser-session-status-spinner {
     --loading-spinner-size: 22px;
     background-color: var(--accent-fill);
+}
+
+.browser-session-status-card-compact .browser-session-status-copy {
+    gap: 8px;
+}
+
+.browser-session-status-card-compact .agent-terminal-execution-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin: 0;
+    color: var(--muted);
+    font-size: var(--font-ui-sm);
+    line-height: 1.3;
 }
 
 .browser-session-panel.is-browser-ready .browser-session-status-card,
@@ -2937,10 +2977,17 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-empty-response {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     margin: 0;
     color: var(--muted);
     font-size: var(--font-table-body);
     line-height: 1.45;
+}
+
+.agent-empty-response-spinner {
+    --loading-spinner-size: 16px;
 }
 
 .agent-runtime-form a,
@@ -3156,7 +3203,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     gap: 14px;
     min-width: 0;
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .agent-task-card > .agent-response-card,
@@ -3172,6 +3219,9 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-task-card > .agent-prompt-form {
     flex: 0 0 auto;
+    position: sticky;
+    bottom: 0;
+    z-index: var(--layer-control-affordance);
 }
 
 .agent-prompt-input {
@@ -3236,8 +3286,13 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: var(--font-ui-sm);
+}
+
+.agent-combobox-trigger .trade-strategy-trigger-label {
+    font-family: inherit;
+    font-size: var(--font-table-body);
     font-weight: var(--font-weight-regular);
+    line-height: 1.45;
 }
 
 .agent-model-dropdown {
@@ -3312,7 +3367,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     display: flex;
     flex-direction: column;
     min-height: 0;
-    overflow: hidden;
+    overflow: visible;
 }
 
 .agent-conversation-link {
@@ -3322,17 +3377,94 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-response-output {
     flex: 1 1 auto;
+    display: flex;
+    flex-direction: column;
     min-width: 0;
     min-height: 0;
     margin: 12px 0 0;
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: visible;
     overflow-wrap: anywhere;
-    scrollbar-gutter: stable;
     color: var(--text);
     font-family: var(--font-family-brand), "Helvetica Neue", Helvetica, Arial, "PingFang SC", "PingFang TC", "PingFang HK", "Microsoft YaHei", "Microsoft JhengHei", sans-serif;
     font-size: var(--font-table-body);
     line-height: 1.55;
+}
+
+.agent-response-question-header {
+    display: flex;
+    position: relative;
+    flex: 0 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    max-height: min(8rem, 22svh);
+    padding: 0 44px 12px 2px;
+    border-bottom: var(--frosted-glass-border);
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+.agent-response-question-header.is-expanded {
+    max-height: min(14rem, 38svh);
+}
+
+.agent-response-question-header .agent-response-overflow-toggle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    margin: 0;
+}
+
+.agent-response-question {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--font-card-title);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1.35;
+    overflow-wrap: anywhere;
+}
+
+.agent-response-answer {
+    display: flex;
+    position: relative;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    max-height: min(42rem, 62svh, 100%);
+    padding-top: 12px;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+.agent-response-answer.is-expanded {
+    max-height: min(52rem, 76svh, 100%);
+}
+
+.agent-response-answer-content {
+    flex: 0 0 auto;
+    min-width: 0;
+}
+
+.agent-response-answer .agent-response-overflow-toggle {
+    position: sticky;
+    right: 0;
+    bottom: 8px;
+    align-self: flex-end;
+    margin: 8px 0 0;
+    z-index: var(--layer-control-affordance);
+}
+
+.agent-response-pagination {
+    position: relative;
+    z-index: var(--layer-control-affordance);
+    flex: 0 0 auto;
+    margin-top: 12px;
+    overflow: visible;
 }
 
 .agent-response-output h1,
@@ -4584,6 +4716,10 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     width: 64%;
 }
 
+.browser-session-detail-table tbody > tr > td:last-child {
+    padding-right: 18px;
+}
+
 .browser-session-table-number,
 .browser-session-detail-table time {
     color: var(--theme-muted);
@@ -4627,6 +4763,81 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     overflow-x: auto;
     overflow-wrap: anywhere;
     word-break: break-word;
+}
+
+.browser-session-table-message-shell {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.browser-session-table-message-shell:not(.is-expanded) .browser-session-table-message {
+    max-height: min(20rem, 42svh);
+    overflow-y: hidden;
+}
+
+.browser-session-table-message-shell.is-collapsible:not(.is-expanded) .browser-session-table-message {
+    position: relative;
+}
+
+.browser-session-table-message-shell.is-collapsible:not(.is-expanded) .browser-session-table-message::after {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    height: 2rem;
+    background: linear-gradient(to bottom, transparent, var(--theme-panel-strong));
+    content: "";
+    pointer-events: none;
+}
+
+.browser-session-message-toggle {
+    display: inline-flex;
+    align-self: flex-end;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    min-width: 30px;
+    height: 30px;
+    min-height: 30px;
+    margin: 8px 0 0;
+    padding: 0;
+    border: var(--settings-round-icon-button-border);
+    border-radius: 50%;
+    background: var(--settings-round-icon-button-background);
+    box-shadow: var(--settings-round-icon-button-shadow);
+    color: var(--settings-round-icon-button-color);
+    cursor: pointer;
+}
+
+.browser-session-message-toggle:hover,
+.browser-session-message-toggle:focus-visible {
+    outline: none;
+    background: var(--settings-round-icon-button-background-hover);
+    box-shadow: var(--settings-round-icon-button-shadow-hover);
+    color: var(--settings-round-icon-button-color-hover);
+}
+
+.browser-session-message-toggle:active {
+    box-shadow: var(--settings-round-icon-button-shadow-active);
+}
+
+.browser-session-message-toggle[hidden] {
+    display: none;
+}
+
+.browser-session-message-toggle-icon {
+    display: inline-block;
+    width: 17px;
+    height: 18px;
+    background-color: currentColor;
+    mask: url("/static/images/rectangle.expand.vertical.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/rectangle.expand.vertical.svg") center/contain no-repeat;
+}
+
+.browser-session-message-toggle[aria-expanded="true"] .browser-session-message-toggle-icon {
+    mask-image: url("/static/images/rectangle.compress.vertical.svg");
+    -webkit-mask-image: url("/static/images/rectangle.compress.vertical.svg");
 }
 
 .browser-session-table-message > * {
@@ -6193,8 +6404,38 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     min-width: var(--local-store-pagination-slot-size);
     max-width: var(--local-store-pagination-slot-size);
     height: var(--local-store-pagination-slot-size);
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
     color: var(--theme-text);
     pointer-events: auto;
+    transition: background var(--motion-duration-fast) var(--motion-standard), border-color var(--motion-duration-fast) var(--motion-standard), box-shadow var(--motion-duration-fast) var(--motion-standard);
+}
+
+.browser-pagination .local-store-page-ellipsis:is(:hover, :focus-within) {
+    border: var(--frosted-glass-border);
+    background: var(--frosted-glass-background-hover);
+    box-shadow: var(--frosted-glass-shadow-active);
+}
+
+.browser-pagination.agent-response-pagination .local-store-page-ellipsis {
+    cursor: pointer;
+}
+
+.browser-pagination.agent-response-pagination .local-store-page-ellipsis:hover,
+.browser-pagination.agent-response-pagination .local-store-page-ellipsis:focus-visible {
+    border: var(--frosted-glass-border);
+    background: var(--frosted-glass-background-hover);
+    box-shadow: var(--frosted-glass-shadow-active);
+    color: var(--accent-text-hover);
+}
+
+.browser-pagination.agent-response-pagination .local-store-page-ellipsis-dots {
+    transition: transform var(--motion-duration-fast) var(--motion-bouncy);
+}
+
+.browser-pagination.agent-response-pagination .local-store-page-ellipsis:hover .local-store-page-ellipsis-dots,
+.browser-pagination.agent-response-pagination .local-store-page-ellipsis:focus-visible .local-store-page-ellipsis-dots {
+    transform: scale(1.12);
 }
 
 .browser-pagination-range-trigger {
@@ -6249,7 +6490,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     max-height: min(360px, calc(100vh - 96px), var(--pagination-range-menu-max-height, 360px));
     padding: 10px;
     overflow-x: hidden;
-    overflow-y: hidden;
+    overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-width: thin;
     border: var(--frosted-glass-border);

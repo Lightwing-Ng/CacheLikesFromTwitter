@@ -1,16 +1,18 @@
 """Browser-backed Gemini session history caching."""
 
-# Code version: v1.3.2-codex.1
+# Code version: v1.9.0-codex.1
 
 from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .browser_sessions import (
     browser_descriptors,
@@ -32,11 +34,27 @@ from .state import TaskSnapshot, TaskState, utc_now
 
 GEMINI_HOME_URL = "https://gemini.google.com/app"
 GEMINI_HISTORY_RELATIVE_DIR = Path("llm") / "gemini"
+GEMINI_DISCOVERY_CHECKPOINT_FILENAME = "discovery_checkpoint.json"
 GEMINI_CONVERSATION_PATH_PATTERN = re.compile(r"^/app/([A-Za-z0-9_-]+)$")
 GEMINI_READY_TIMEOUT_SECONDS = 45.0
 GEMINI_RENDER_SETTLE_MILLISECONDS = 1_000
 GEMINI_BOT_CHECK_POLL_MILLISECONDS = 1_000
 GEMINI_CONVERSATION_RETRY_LIMIT = 3
+GEMINI_HISTORY_RPC_ID = "MaZiqc"
+GEMINI_HISTORY_RPC_PAGE_SIZE = 1_000
+GEMINI_HISTORY_RPC_PAUSE_MILLISECONDS = 100
+GEMINI_HISTORY_RPC_RETRY_LIMIT = 3
+GEMINI_HISTORY_RPC_ACCESSIBLE_LIMIT = 500
+GEMINI_HISTORY_RPC_READY_WAIT_MILLISECONDS = 60_000
+GEMINI_DISCOVERY_CHECKPOINT_MAX_AGE_SECONDS = 24 * 60 * 60
+GEMINI_TRANSIENT_NAVIGATION_RETRY_BASE_MILLISECONDS = 5_000
+GEMINI_TRANSIENT_NAVIGATION_COOLDOWN_MILLISECONDS = 30_000
+GEMINI_TRANSIENT_NAVIGATION_MARKERS = (
+    "ERR_TUNNEL_CONNECTION_FAILED",
+    "ERR_NETWORK_CHANGED",
+    "ERR_TIMED_OUT",
+    "ERR_CONNECTION_RESET",
+)
 GEMINI_BOT_CHECK_MARKERS = (
     "unusual traffic",
     "verify you are human",
@@ -76,6 +94,10 @@ class GeminiSyncResult:
     stopped: bool = False
 
 
+class GeminiNoCacheableMessagesError(RuntimeError):
+    """Indicate that a rendered session contains no text rows for the text cache."""
+
+
 def gemini_history_dir(local_store_root: Path | str = LOCAL_STORE_ROOT) -> Path:
     """Return the local directory dedicated to Gemini chat history."""
     return Path(local_store_root) / GEMINI_HISTORY_RELATIVE_DIR
@@ -84,6 +106,73 @@ def gemini_history_dir(local_store_root: Path | str = LOCAL_STORE_ROOT) -> Path:
 def gemini_history_path(local_store_root: Path | str = LOCAL_STORE_ROOT) -> Path:
     """Return the typed Parquet file used for Gemini chat history."""
     return gemini_history_dir(local_store_root) / GEMINI_HISTORY_FILENAME
+
+
+def gemini_discovery_checkpoint_path(
+    local_store_root: Path | str = LOCAL_STORE_ROOT,
+) -> Path:
+    """Return the local resume checkpoint for a completed history discovery."""
+    return gemini_history_dir(local_store_root) / GEMINI_DISCOVERY_CHECKPOINT_FILENAME
+
+
+def save_gemini_discovery_checkpoint(
+    links: list[GeminiConversationLink],
+    local_store_root: Path | str = LOCAL_STORE_ROOT,
+) -> Path:
+    """Atomically persist one complete discovery result for interruption-safe resume."""
+    checkpoint_path = gemini_discovery_checkpoint_path(local_store_root)
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "version": "v1.0.0",
+        "captured_at": utc_now(),
+        "sessions": [
+            {
+                "conversation_id": link.conversation_id,
+                "url": link.url,
+                "title": link.title,
+            }
+            for link in links
+        ],
+    }
+    temporary_path = checkpoint_path.with_suffix(".json.tmp")
+    temporary_path.write_text(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+    temporary_path.replace(checkpoint_path)
+    return checkpoint_path
+
+
+def load_gemini_discovery_checkpoint(
+    local_store_root: Path | str = LOCAL_STORE_ROOT,
+) -> list[GeminiConversationLink]:
+    """Load a recent, valid discovery checkpoint or return an empty list."""
+    checkpoint_path = gemini_discovery_checkpoint_path(local_store_root)
+    try:
+        if time.time() - checkpoint_path.stat().st_mtime > GEMINI_DISCOVERY_CHECKPOINT_MAX_AGE_SECONDS:
+            return []
+        payload = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    links: list[GeminiConversationLink] = []
+    seen: set[str] = set()
+    for item in payload.get("sessions", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        url = normalize_gemini_conversation_url(str(item.get("url") or ""))
+        conversation_id = gemini_conversation_id(url)
+        if not conversation_id or conversation_id in seen:
+            continue
+        seen.add(conversation_id)
+        links.append(
+            GeminiConversationLink(
+                conversation_id=conversation_id,
+                url=url,
+                title=str(item.get("title") or "").strip()
+                or f"Gemini session {conversation_id}",
+            )
+        )
+    return links
 
 
 def normalize_gemini_conversation_url(value: str) -> str:
@@ -190,6 +279,15 @@ class GeminiHistoryStore:
         """Return the number of cached message rows."""
         return len(self._rows_by_key)
 
+    @property
+    def cached_conversation_ids(self) -> set[str]:
+        """Return the stable identifiers already represented in the text cache."""
+        return {
+            str(row.get("conversation_id") or "").strip()
+            for row in self._rows_by_key.values()
+            if str(row.get("conversation_id") or "").strip()
+        }
+
     def replace_conversation(
         self,
         conversation: GeminiConversationLink,
@@ -245,7 +343,7 @@ class GeminiHistoryStore:
             }
 
         if not next_rows:
-            raise RuntimeError(f"Gemini session {conversation.conversation_id} exposed no cacheable messages.")
+            raise GeminiNoCacheableMessagesError("Gemini session exposed no cacheable text messages.")
 
         unchanged = (
             set(previous_rows) == set(next_rows)
@@ -423,8 +521,9 @@ def _open_gemini_sidebar(page) -> None:
             };
         }"""
         )
-        if isinstance(recents_state, dict) and int(recents_state.get("links") or 0) > 0:
-            return
+        if isinstance(recents_state, dict):
+            if int(recents_state.get("links") or 0) > 0 or recents_state.get("expanded"):
+                return
         page.wait_for_timeout(500)
 
 
@@ -473,6 +572,260 @@ def _read_gemini_conversation_links(page) -> list[GeminiConversationLink]:
             )
         )
     return links
+
+
+def _is_gemini_history_rpc_url(value: str) -> bool:
+    """Return whether a URL targets Gemini's conversation-list RPC."""
+    parsed = urlsplit(str(value or ""))
+    if parsed.netloc.lower() != "gemini.google.com" or not parsed.path.endswith("/batchexecute"):
+        return False
+    return any(
+        key == "rpcids" and rpc_id == GEMINI_HISTORY_RPC_ID
+        for key, rpc_id in parse_qsl(parsed.query, keep_blank_values=True)
+    )
+
+
+def _attach_gemini_history_rpc_capture(page) -> list[Any] | None:
+    """Capture Chromium history RPC responses without affecting Safari automation."""
+    responses: list[Any] = []
+    on_event = getattr(page, "on", None)
+    if not callable(on_event):
+        return None
+
+    def capture_response(response) -> None:
+        if _is_gemini_history_rpc_url(str(getattr(response, "url", ""))):
+            responses.append(response)
+
+    on_event("response", capture_response)
+    return responses
+
+
+def _decode_gemini_history_rpc_payloads(body_text: str) -> list[list[Any]]:
+    """Decode nested payloads from one Google batchexecute response."""
+    payloads: list[list[Any]] = []
+
+    def visit(value: Any) -> None:
+        if isinstance(value, list):
+            if (
+                len(value) >= 3
+                and value[1] == GEMINI_HISTORY_RPC_ID
+                and isinstance(value[2], str)
+            ):
+                try:
+                    payload = json.loads(value[2])
+                except json.JSONDecodeError:
+                    payload = None
+                if isinstance(payload, list):
+                    payloads.append(payload)
+            for child in value:
+                visit(child)
+        elif isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+
+    for line in str(body_text or "").splitlines():
+        if not line.startswith("["):
+            continue
+        try:
+            visit(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return payloads
+
+
+def _gemini_links_and_cursor_from_rpc_payload(
+    payload: list[Any],
+) -> tuple[list[GeminiConversationLink], str]:
+    """Extract stable session links and the next-page cursor from one RPC payload."""
+    cursor = payload[1] if len(payload) > 1 and isinstance(payload[1], str) else ""
+    entries = payload[2] if len(payload) > 2 and isinstance(payload[2], list) else []
+    links: list[GeminiConversationLink] = []
+    seen: set[str] = set()
+    for entry in entries:
+        if not isinstance(entry, list) or not entry or not isinstance(entry[0], str):
+            continue
+        raw_id = entry[0]
+        if not raw_id.startswith("c_"):
+            continue
+        conversation_id = raw_id[2:]
+        url = normalize_gemini_conversation_url(f"{GEMINI_HOME_URL}/{conversation_id}")
+        if not url or conversation_id in seen:
+            continue
+        seen.add(conversation_id)
+        title = str(entry[1] if len(entry) > 1 else "").strip()
+        links.append(
+            GeminiConversationLink(
+                conversation_id=conversation_id,
+                url=url,
+                title=title or f"Gemini session {conversation_id}",
+            )
+        )
+    return links, cursor
+
+
+def _build_gemini_history_rpc_page_request(
+    request,
+    cursor: str,
+    request_index: int = 1,
+) -> tuple[str, str]:
+    """Build the next authenticated history-page request from Gemini's own request."""
+    pairs = parse_qsl(str(getattr(request, "post_data", "") or ""), keep_blank_values=True)
+    request_fields = dict(pairs)
+    raw_batch = request_fields.get("f.req", "")
+    if not raw_batch or "at" not in request_fields:
+        raise RuntimeError("Gemini history RPC did not expose reusable request fields.")
+    try:
+        batch = json.loads(raw_batch)
+        batch[0][0][1] = json.dumps(
+            [GEMINI_HISTORY_RPC_PAGE_SIZE, cursor, [0, None, 1]],
+            separators=(",", ":"),
+        )
+    except (IndexError, TypeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Gemini history RPC request shape changed.") from exc
+    updated_batch = json.dumps(batch, separators=(",", ":"))
+    updated_pairs = [(key, updated_batch if key == "f.req" else value) for key, value in pairs]
+    del request_index
+    return str(getattr(request, "url", "")), urlencode(updated_pairs)
+
+
+def _fetch_gemini_history_rpc_page(
+    page,
+    request,
+    cursor: str,
+    request_index: int,
+) -> list[Any]:
+    """Fetch and decode one cursor page in the authenticated Chromium page."""
+    request_url, request_body = _build_gemini_history_rpc_page_request(
+        request,
+        cursor,
+        request_index,
+    )
+    response = page.evaluate(
+        """async ({ url, body }) => {
+            const result = await fetch(url, {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                body,
+            });
+            return { ok: result.ok, status: result.status, text: await result.text() };
+        }""",
+        {"url": request_url, "body": request_body},
+    )
+    if not isinstance(response, dict) or not response.get("ok"):
+        status = int(response.get("status") or 0) if isinstance(response, dict) else 0
+        raise RuntimeError(f"Gemini history RPC returned HTTP {status}.")
+    payloads = _decode_gemini_history_rpc_payloads(str(response.get("text") or ""))
+    if not payloads:
+        raise RuntimeError(
+            f"Gemini history RPC returned an unreadable {len(str(response.get('text') or '')):,}-character page."
+        )
+    return payloads
+
+
+def _collect_gemini_rpc_conversation_links(
+    page,
+    captured_responses: list[Any] | None,
+    config: CrawlConfig,
+    should_stop,
+    state: TaskState | None = None,
+) -> list[GeminiConversationLink]:
+    """Collect all Chromium sessions through Gemini's cursor-based history RPC."""
+    if captured_responses is None:
+        return []
+    max_conversations = max(1, int(config.gemini_max_conversations))
+    collected: dict[str, GeminiConversationLink] = {}
+    page_request = None
+    cursor = ""
+    wait_rounds = max(1, GEMINI_HISTORY_RPC_READY_WAIT_MILLISECONDS // 500)
+    for wait_index in range(wait_rounds + 1):
+        for response in list(captured_responses):
+            try:
+                payloads = _decode_gemini_history_rpc_payloads(response.text())
+            except Exception:
+                continue
+            for payload in payloads:
+                links, payload_cursor = _gemini_links_and_cursor_from_rpc_payload(payload)
+                for link in links:
+                    collected.setdefault(link.conversation_id, link)
+                if len(links) > 1 and payload_cursor:
+                    page_request = getattr(response, "request", None)
+                    cursor = payload_cursor
+        if page_request is not None:
+            break
+        if wait_index < wait_rounds:
+            page.wait_for_timeout(500)
+    if page_request is None:
+        raise RuntimeError(
+            "Edge did not expose the ordinary Gemini history RPC before the 60-second timeout."
+        )
+
+    pause_ms = GEMINI_HISTORY_RPC_PAUSE_MILLISECONDS
+    previous_cursors: set[str] = set()
+    request_index = 0
+    while (
+        page_request is not None
+        and cursor
+        and cursor not in previous_cursors
+        and len(collected) < max_conversations
+        and not should_stop()
+    ):
+        page.wait_for_timeout(pause_ms)
+        payloads: list[Any] | None = None
+        last_error: Exception | None = None
+        for attempt_index in range(GEMINI_HISTORY_RPC_RETRY_LIMIT):
+            request_index += 1
+            try:
+                payloads = _fetch_gemini_history_rpc_page(
+                    page,
+                    page_request,
+                    cursor,
+                    request_index,
+                )
+                break
+            except Exception as exc:
+                last_error = exc
+                if attempt_index + 1 < GEMINI_HISTORY_RPC_RETRY_LIMIT:
+                    retry_delay_ms = pause_ms * (2**attempt_index)
+                    if state is not None:
+                        state.append_event(
+                            f"Gemini history pagination retry {attempt_index + 1:,}/"
+                            f"{GEMINI_HISTORY_RPC_RETRY_LIMIT - 1:,} after "
+                            f"{retry_delay_ms / 1_000:g} seconds."
+                        )
+                    page.wait_for_timeout(retry_delay_ms)
+        if payloads is None:
+            if len(collected) >= GEMINI_HISTORY_RPC_ACCESSIBLE_LIMIT:
+                if state is not None:
+                    state.append_event(
+                        f"Google ended the Chromium history cursor after "
+                        f"{len(collected):,} accessible Gemini sessions."
+                    )
+                break
+            raise RuntimeError(
+                f"Gemini history pagination failed after discovering {len(collected):,} sessions: "
+                f"{last_error or 'unknown RPC error'}"
+            )
+        previous_cursors.add(cursor)
+        next_cursor = ""
+        page_links: list[GeminiConversationLink] = []
+        for payload in payloads:
+            links, payload_cursor = _gemini_links_and_cursor_from_rpc_payload(payload)
+            page_links.extend(links)
+            if payload_cursor:
+                next_cursor = payload_cursor
+        for link in page_links:
+            collected.setdefault(link.conversation_id, link)
+            if len(collected) >= max_conversations:
+                break
+        if not page_links:
+            break
+        cursor = next_cursor
+        if state is not None:
+            state.append_event(
+                f"Discovered {len(collected):,} Gemini sessions through Chromium history pagination."
+            )
+    return list(collected.values())[:max_conversations]
 
 
 def _scroll_gemini_conversation_navigation(page) -> dict[str, Any]:
@@ -531,6 +884,7 @@ def collect_gemini_conversation_links(
     state: TaskState | None = None,
 ) -> list[GeminiConversationLink]:
     """Collect recent and lazy-loaded Gemini history links from the sidebar."""
+    rpc_responses = _attach_gemini_history_rpc_capture(page)
     goto_with_retry(page, GEMINI_HOME_URL, attempts=2, timeout_ms=60_000)
     _prepare_gemini_page_for_rendering(page)
     if not wait_for_gemini_bot_check_clear(page, state, should_stop, "collecting"):
@@ -538,6 +892,16 @@ def collect_gemini_conversation_links(
     _wait_for_gemini_ready(page)
     _open_gemini_sidebar(page)
     page.wait_for_timeout(GEMINI_RENDER_SETTLE_MILLISECONDS)
+
+    rpc_links = _collect_gemini_rpc_conversation_links(
+        page,
+        rpc_responses,
+        config,
+        should_stop,
+        state,
+    )
+    if rpc_links:
+        return rpc_links
 
     max_conversations = max(1, int(config.gemini_max_conversations))
     max_rounds = max(1, int(config.max_scroll_rounds))
@@ -669,12 +1033,13 @@ def launch_gemini_browser_context(config: CrawlConfig):
             yield context, descriptor
         return
     with sync_playwright_or_error() as playwright:
+        headless = descriptor.browser_id == "edge"
         with launch_chromium_context(
             playwright,
             descriptor,
-            headless=False,
+            headless=headless,
             clone_profile_first=True,
-            background_window=True,
+            background_window=not headless,
         ) as context:
             yield context, descriptor
 
@@ -691,6 +1056,8 @@ def sync_gemini_history(
     config: CrawlConfig,
     should_stop,
     local_store_root: Path | str = LOCAL_STORE_ROOT,
+    *,
+    skip_cached_conversations: bool = False,
 ) -> GeminiSyncResult:
     """Cache rendered Gemini sessions into a local Parquet file."""
     history_path = gemini_history_path(local_store_root)
@@ -710,10 +1077,30 @@ def sync_gemini_history(
     unchanged_conversations = 0
     failed_conversations = 0
     processed_conversations = 0
-    conversation_links: list[GeminiConversationLink] = []
+    conversation_links = (
+        load_gemini_discovery_checkpoint(local_store_root)
+        if skip_cached_conversations
+        else []
+    )
     with launch_gemini_browser_context(config) as (context, descriptor):
         page = _gemini_context_page(context)
-        conversation_links = collect_gemini_conversation_links(page, config, should_stop, state)
+        if conversation_links:
+            state.append_event(
+                f"Resume mode loaded {len(conversation_links):,} Gemini sessions from the "
+                "recent discovery checkpoint."
+            )
+        else:
+            conversation_links = collect_gemini_conversation_links(
+                page,
+                config,
+                should_stop,
+                state,
+            )
+            if not conversation_links:
+                raise RuntimeError(
+                    "Gemini history discovery returned no sessions; the previous checkpoint was preserved."
+                )
+            save_gemini_discovery_checkpoint(conversation_links, local_store_root)
         state.update(
             phase="downloading",
             discovered_tweets=len(conversation_links),
@@ -723,7 +1110,20 @@ def sync_gemini_history(
         state.append_event(
             f"Discovered {len(conversation_links):,} Gemini sessions in {descriptor.label}."
         )
-        for index, conversation in enumerate(conversation_links, start=1):
+        processing_links = conversation_links
+        if skip_cached_conversations:
+            cached_ids = store.cached_conversation_ids
+            processing_links = [
+                conversation
+                for conversation in conversation_links
+                if conversation.conversation_id not in cached_ids
+            ]
+            state.append_event(
+                f"Resume mode skipped {len(conversation_links) - len(processing_links):,} "
+                f"already cached Gemini sessions; {len(processing_links):,} remain."
+            )
+            state.update(queued_tweets=len(processing_links))
+        for index, conversation in enumerate(processing_links, start=1):
             if should_stop():
                 break
             last_error: Exception | None = None
@@ -747,26 +1147,47 @@ def sync_gemini_history(
                     new_messages += added_count
                     unchanged_conversations += int(unchanged)
                     state.append_event(
-                        f"Cached Gemini session {index:,}/{len(conversation_links):,}: "
+                        f"Cached Gemini session {index:,}/{len(processing_links):,}: "
                         f"{conversation.title} ({len(messages):,} messages)."
+                    )
+                    last_error = None
+                    break
+                except GeminiNoCacheableMessagesError:
+                    state.append_event(
+                        f"Skipped Gemini session {index:,}/{len(processing_links):,}: "
+                        "no cacheable text messages."
                     )
                     last_error = None
                     break
                 except Exception as exc:
                     last_error = exc
                     if attempt_index + 1 < GEMINI_CONVERSATION_RETRY_LIMIT:
+                        error_text = str(exc)
+                        transient_navigation = any(
+                            marker in error_text for marker in GEMINI_TRANSIENT_NAVIGATION_MARKERS
+                        )
+                        retry_delay_ms = (
+                            GEMINI_TRANSIENT_NAVIGATION_RETRY_BASE_MILLISECONDS
+                            * (attempt_index + 1)
+                            if transient_navigation
+                            else GEMINI_RENDER_SETTLE_MILLISECONDS
+                        )
                         state.append_event(
-                            f"Retrying Gemini session {index:,}/{len(conversation_links):,} "
+                            f"Retrying Gemini session {index:,}/{len(processing_links):,} "
                             f"after attempt {attempt_index + 1:,}: "
                             f"{str(exc).splitlines()[0][:300]}"
                         )
-                        page.wait_for_timeout(GEMINI_RENDER_SETTLE_MILLISECONDS)
+                        page.wait_for_timeout(retry_delay_ms)
             if last_error is not None:
                 failed_conversations += 1
                 state.append_event(
-                    f"Failed Gemini session {index:,}/{len(conversation_links):,} "
-                    f"{conversation.title}: {str(last_error).splitlines()[0][:300]}"
+                    f"Failed Gemini session {index:,}/{len(processing_links):,}: "
+                    f"{str(last_error).splitlines()[0][:300]}"
                 )
+                if any(
+                    marker in str(last_error) for marker in GEMINI_TRANSIENT_NAVIGATION_MARKERS
+                ):
+                    page.wait_for_timeout(GEMINI_TRANSIENT_NAVIGATION_COOLDOWN_MILLISECONDS)
             processed_conversations = index
             state.update(
                 processed_tweets=processed_conversations,

@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.34.0-codex.3
+# Code version: v1.35.0-codex.1
 
 from __future__ import annotations
 
@@ -25,8 +25,10 @@ from app.core.chatgpt_downloader import (
     reset_chatgpt_state,
 )
 from app.core.chatgpt_agent_sources import (
+    fetch_chatgpt_conversation_history,
     list_chatgpt_agent_sources,
     list_chatgpt_project_sessions,
+    normalize_chatgpt_conversation_url,
 )
 from app.core.chatgpt_service import ChatGPTDownloadService
 from app.core.chat_history_browser import (
@@ -740,6 +742,16 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         snapshot["response_html"] = str(
             render_prompt_markdown(str(snapshot.get("response", "")))
         )
+        rendered_history: list[dict[str, Any]] = []
+        for raw_item in snapshot.get("history", []):
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            item["response_html"] = str(
+                render_prompt_markdown(str(item.get("response", "")))
+            )
+            rendered_history.append(item)
+        snapshot["history"] = rendered_history
         return snapshot
 
     @app.get("/agent")
@@ -843,6 +855,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 session_mode=str(payload.get("session_mode", "new")),
                 conversation_url=str(payload.get("conversation_url", "")),
                 project_url=str(payload.get("project_url", "")),
+                session_title=str(payload.get("session_title", "")),
                 read_only=bool(payload.get("read_only", False)),
             )
         except (RuntimeError, ValueError) as exc:
@@ -876,6 +889,40 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify(payload)
+
+    @app.get("/api/agent/chatgpt-session-history")
+    def agent_chatgpt_session_history():
+        """Load one selected ChatGPT conversation without persisting remote messages."""
+        require_local_agent_request()
+        browser_name = request.args.get("browser", "").strip().lower()
+        conversation_url = normalize_chatgpt_conversation_url(
+            request.args.get("conversation_url", "").strip()
+        )
+        if not conversation_url:
+            return jsonify({"error": "Choose a valid ChatGPT conversation before loading its history."}), 400
+        try:
+            payload = fetch_chatgpt_conversation_history(
+                browser_name,
+                conversation_url,
+                saved_config,
+            )
+        except (RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        rendered_history: list[dict[str, Any]] = []
+        for raw_item in payload.get("history", []):
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            item["response_html"] = str(render_prompt_markdown(str(item.get("response", ""))))
+            rendered_history.append(item)
+        return jsonify(
+            {
+                "conversation_url": conversation_url,
+                "title": str(payload.get("title") or "Untitled session"),
+                "history": rendered_history,
+                "limit": int(payload.get("limit") or len(rendered_history)),
+            }
+        )
 
     @app.post("/api/agent/stop")
     def stop_agent():

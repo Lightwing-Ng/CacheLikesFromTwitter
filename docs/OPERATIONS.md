@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.4.0-codex.3`
+Documentation version: `v1.5.0-codex.1`
 
 ## Launch
 
@@ -31,10 +31,10 @@ it through router port forwarding, and do not publish it through a public tunnel
   hide, minimize, move offscreen, reuse, or accumulate Safari windows.
 - Chrome, Edge, and Safari support differs by source and automation engine; use the session probe
   in the console before a long sync.
-- Edge and Chrome tasks clone the selected profile into an offscreen, minimized temporary context.
-  They do not bring a browser window to the front, send desktop mouse or keyboard events, or
-  write to the user's normal profile. First-run, crash, notification, and repost prompts are
-  disabled for the task-owned context.
+- Edge tasks clone the selected profile into one headless temporary context; Chrome tasks use
+  an isolated background context. Neither brings a browser window to the front, sends desktop
+  mouse or keyboard events, or writes to the user's normal profile. First-run, crash,
+  notification, and repost prompts are disabled for the task-owned context.
 - Normal task exit closes the isolated context and removes its temporary profile. Each subsequent
   Chromium launch also removes only abandoned `cachelikes-edge-*` or `cachelikes-chrome-*`
   directories older than 24 hours; unrelated temporary paths are not touched.
@@ -106,6 +106,11 @@ you intend to discard that cache. Do not use reset operations as a routine troub
   `Failed to open page`, stop that run, close its single task window, and restart after
   confirming the window count returned to baseline. Never accelerate the run by
   reducing the saved interval and never open parallel Safari task windows.
+- Gemini Text on Edge: use the headless Chromium history-RPC path. It follows the authenticated
+  `MaZiqc` cursor, stores a 24-hour discovery checkpoint, and resumes by skipping cached session
+  IDs. The current verified run exposed `740` sessions and cached `736` text-bearing sessions
+  with `4,045` messages. A no-text session is an expected skip; a Google human-verification
+  challenge must stop the task and be reported to the operator.
 - Cache inconsistency: use the local-media browser to inspect the affected source before choosing a
   source-specific reset. Avoid deleting catalog or manifest files by hand.
 

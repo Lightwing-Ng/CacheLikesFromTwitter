@@ -1,6 +1,6 @@
-"""Read recent ChatGPT Web sessions and projects for the local Agent sidebar.
+"""Read ChatGPT Web sessions, projects, and conversation history for the local Agent.
 
-Code version: v1.0.0-codex.2
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -17,14 +17,17 @@ from .browser_sessions import (
     sync_playwright_or_error,
 )
 from .chatgpt_downloader import (
+    _chatgpt_conversation_api_url,
     _chatgpt_api_request_headers,
     _chatgpt_project_id,
+    _extract_chatgpt_conversation_messages,
     _get_chatgpt_api_json,
     _load_chatgpt_session_request_headers,
     _project_conversation_prefix,
 )
 from .config import CrawlConfig
 from .safari_automation import SafariContext
+from .state import utc_now
 
 
 CHATGPT_HOME_URL = "https://chatgpt.com/"
@@ -32,6 +35,7 @@ CHATGPT_HOSTS = frozenset({"chatgpt.com", "www.chatgpt.com"})
 AGENT_SOURCE_LIMIT = 20
 CHATGPT_SOURCE_API_LIMIT = 100
 CHATGPT_PROJECT_API_LIMIT = 20
+CHATGPT_HISTORY_TURN_LIMIT = 100
 CHATGPT_PROJECT_API_ENDPOINTS = (
     "/backend-api/gizmos/snorlax/sidebar?owned_only=true&conversations_per_gizmo=5&limit=20",
     "/backend-api/gizmos/bootstrap?limit=20",
@@ -117,6 +121,117 @@ def list_chatgpt_project_sessions(
         "sessions": sessions[:AGENT_SOURCE_LIMIT],
         "limit": AGENT_SOURCE_LIMIT,
     }
+
+
+def fetch_chatgpt_conversation_history(
+    browser_name: str,
+    conversation_url: str,
+    config: CrawlConfig,
+) -> dict[str, Any]:
+    """Fetch one selected ChatGPT conversation as read-only Agent history."""
+    normalized_conversation_url = normalize_chatgpt_conversation_url(conversation_url)
+    if not normalized_conversation_url:
+        raise ValueError("Choose a valid ChatGPT conversation before loading its history.")
+
+    descriptor = browser_descriptors(config).get(str(browser_name or "").strip().lower())
+    if descriptor is None:
+        raise ValueError(f"Unsupported browser: {browser_name}")
+
+    if descriptor.engine == "safari":
+        with SafariContext(normalized_conversation_url) as context:
+            page = context.primary_page
+            page.goto(normalized_conversation_url, wait_until="domcontentloaded", timeout=90_000)
+            page.wait_for_timeout(500)
+            return _fetch_conversation_history(context, normalized_conversation_url)
+
+    if descriptor.engine != "chromium":
+        raise ValueError(f"ChatGPT Agent history does not support {descriptor.label}.")
+
+    with sync_playwright_or_error() as playwright:
+        with launch_chromium_context(
+            playwright,
+            descriptor,
+            headless=False,
+            clone_profile_first=True,
+            background_window=True,
+        ) as context:
+            page = context.pages[0] if context.pages else context.new_page()
+            goto_with_retry(page, normalized_conversation_url, attempts=2, timeout_ms=90_000)
+            page.wait_for_timeout(500)
+            return _fetch_conversation_history(context, normalized_conversation_url)
+
+
+def _fetch_conversation_history(context: Any, conversation_url: str) -> dict[str, Any]:
+    """Fetch and pair the selected conversation's user and assistant messages."""
+    request_headers = _load_chatgpt_session_request_headers(context, conversation_url)
+    api_headers = _chatgpt_api_request_headers(request_headers, conversation_url)
+    api_url = _chatgpt_conversation_api_url(conversation_url)
+    if not api_url:
+        raise ValueError("The selected ChatGPT conversation URL is not valid.")
+    payload = _get_chatgpt_api_json(context, api_url, api_headers)
+    messages = _extract_chatgpt_conversation_messages(payload, conversation_url, utc_now())
+    active_node_ids = _active_conversation_node_ids(payload)
+    if active_node_ids:
+        messages = [
+            message
+            for message in messages
+            if str(message.get("message_key") or "").rsplit(":", 1)[-1] in active_node_ids
+        ]
+    history = _conversation_history_items(messages)
+    return {
+        "conversation_url": conversation_url,
+        "title": str(payload.get("title") or "Untitled session").strip() or "Untitled session",
+        "history": history[-CHATGPT_HISTORY_TURN_LIMIT:],
+        "limit": CHATGPT_HISTORY_TURN_LIMIT,
+    }
+
+
+def _conversation_history_items(messages: Iterable[dict[str, Any]]) -> list[dict[str, str]]:
+    """Pair ordered user and assistant messages into one-page-per-turn records."""
+    history: list[dict[str, str]] = []
+    pending_prompt: dict[str, Any] | None = None
+    ordered_messages = sorted(
+        (message for message in messages if isinstance(message, dict)),
+        key=lambda message: int(message.get("message_index") or 0),
+    )
+    for message in ordered_messages:
+        role = str(message.get("role") or "").strip().lower()
+        content = str(message.get("content_text") or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            pending_prompt = message
+            continue
+        if role != "assistant" or pending_prompt is None:
+            continue
+        history.append(
+            {
+                "prompt": str(pending_prompt.get("content_text") or "").strip(),
+                "response": content,
+                "started_at": str(pending_prompt.get("last_seen_at") or pending_prompt.get("first_seen_at") or ""),
+                "finished_at": str(message.get("last_seen_at") or message.get("first_seen_at") or ""),
+            }
+        )
+        pending_prompt = None
+    return history
+
+
+def _active_conversation_node_ids(payload: dict[str, object]) -> set[str]:
+    """Return the current ChatGPT mapping branch when the API exposes one."""
+    mapping = payload.get("mapping")
+    current_node_id = str(payload.get("current_node") or "").strip()
+    if not isinstance(mapping, dict) or not current_node_id:
+        return set()
+    active_node_ids: set[str] = set()
+    visited: set[str] = set()
+    while current_node_id and current_node_id not in visited:
+        visited.add(current_node_id)
+        node = mapping.get(current_node_id)
+        if not isinstance(node, dict):
+            break
+        active_node_ids.add(current_node_id)
+        current_node_id = str(node.get("parent") or "").strip()
+    return active_node_ids
 
 
 def normalize_chatgpt_project_url(value: str) -> str:

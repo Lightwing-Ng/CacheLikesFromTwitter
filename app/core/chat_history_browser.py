@@ -1,6 +1,6 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.6.1-codex.1
+# Code version: v1.7.0-codex.1
 
 from __future__ import annotations
 
@@ -300,6 +300,24 @@ def _sort_chat_history_sessions(
     return tuple(sorted(sessions, key=lambda item: (direction * _timestamp_value(item.last_seen_at), item.stable_id)))
 
 
+def _message_matches_query(message: ChatHistoryMessage, query_terms: tuple[str, ...]) -> bool:
+    """Return whether every normalized search term appears in one message's searchable fields."""
+    if not query_terms:
+        return True
+    searchable_text = " ".join(
+        (
+            message.conversation_title,
+            message.author_label,
+            message.role,
+            message.model_label,
+            message.content_text,
+            message.content_html,
+            *message.source_links,
+        )
+    ).casefold()
+    return all(term in searchable_text for term in query_terms)
+
+
 def query_chat_history(
     local_store_root: Path | str,
     *,
@@ -366,6 +384,10 @@ def query_chat_history(
                 ),
             )
         )
+        if query_terms:
+            session_messages = tuple(
+                message for message in session_messages if _message_matches_query(message, query_terms)
+            )
         safe_page_size = max(1, int(page_size))
         try:
             requested_page = max(1, int(page))
@@ -391,23 +413,7 @@ def query_chat_history(
 
     messages = all_messages
     if query_terms:
-        messages = tuple(
-            item
-            for item in messages
-            if all(
-                term
-                in " ".join(
-                    (
-                        item.conversation_title,
-                        item.author_label,
-                        item.role,
-                        item.model_label,
-                        item.content_text,
-                    )
-                ).casefold()
-                for term in query_terms
-            )
-        )
+        messages = tuple(item for item in messages if _message_matches_query(item, query_terms))
 
     safe_page_size = max(1, int(page_size))
     try:

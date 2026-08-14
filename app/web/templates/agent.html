@@ -1,4 +1,4 @@
-<!-- Code version: v3.5.0-codex.2 -->
+<!-- Code version: v3.9.2-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.76.0-codex.4') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.80.4-codex.5') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
 </head>
@@ -149,7 +149,13 @@
                             </div>
                         </div>
                         {% from "_browser_session_status.html" import render_browser_session_status %}
-                        {{ render_browser_session_status("No signed-in Web AI account detected", "Ready to use Web Agent") }}
+                        {{ render_browser_session_status(
+                            "No signed-in Web AI account detected",
+                            "Ready to use Web Agent",
+                            terminal_execution=runtime_snapshot.terminal_execution,
+                            account_label=selected_platform.label,
+                            compact=true
+                        ) }}
                         </div>
                     </label>
                 </div>
@@ -169,16 +175,16 @@
                             >
                                 <span class="browser-session-trigger-leading">
                                     <span class="browser-picker-selected-icon-shell">
-                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/arrow.uturn.up.circle.svg') }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
+                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/plus.circle.svg') }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
                                     </span>
                                     <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>New session</span>
                                 </span>
                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
                             <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose ChatGPT session source" hidden>
-                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active" data-agent-combobox-option="new" data-agent-combobox-label="New session" data-agent-combobox-icon="{{ url_for('static', filename='images/arrow.uturn.up.circle.svg') }}" role="option" aria-selected="true" tabindex="-1">
+                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active" data-agent-combobox-option="new" data-agent-combobox-label="New session" data-agent-combobox-icon="{{ url_for('static', filename='images/plus.circle.svg') }}" role="option" aria-selected="true" tabindex="-1">
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/arrow.uturn.up.circle.svg') }}" alt="" aria-hidden="true">
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/plus.circle.svg') }}" alt="" aria-hidden="true">
                                     <span class="trade-strategy-dropdown-text">New session</span>
                                 </button>
                                 <button type="button" class="trade-strategy-dropdown-option agent-combobox-option" data-agent-combobox-option="recent" data-agent-combobox-label="Recent sessions" data-agent-combobox-icon="{{ url_for('static', filename='images/rectangle.grid.1x3.fill.svg') }}" role="option" aria-selected="false" tabindex="-1">
@@ -295,21 +301,56 @@
                                 {% endfor %}
                             </ol>
                         </details>
-                        <div class="agent-response-output browser-media-prompt-markdown" id="agent_response_output" lang="zh-CN"{% if not agent_snapshot.response %} hidden{% endif %}>{{ render_prompt_markdown(agent_snapshot.response) }}</div>
-                        <p class="agent-empty-response" id="agent_empty_response"{% if agent_snapshot.response %} hidden{% endif %}>{{ agent_snapshot.message }}</p>
+                        {% set initial_history_item = agent_snapshot.history[-1] if agent_snapshot.history else none %}
+                        <div class="agent-response-output" id="agent_response_output" lang="zh-CN"{% if not initial_history_item and not agent_snapshot.response %} hidden{% endif %}>
+                            <header class="agent-response-question-header browser-session-table-message-shell" id="agent_response_question_header">
+                                <h3 class="agent-response-question" id="agent_response_question" data-agent-response-question>{{ initial_history_item.prompt if initial_history_item else agent_snapshot.prompt }}</h3>
+                                <button
+                                    type="button"
+                                    class="browser-session-message-toggle agent-response-overflow-toggle"
+                                    data-browser-session-message-toggle
+                                    data-browser-session-message-number="question"
+                                    aria-controls="agent_response_question_header"
+                                    aria-expanded="false"
+                                    aria-label="Expand question"
+                                    title="Expand question"
+                                    hidden
+                                ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
+                            </header>
+                            <div class="agent-response-answer browser-media-prompt-markdown browser-session-table-message-shell" id="agent_response_answer" data-agent-response-answer>
+                                <div class="agent-response-answer-content" data-agent-response-answer-content>{{ (initial_history_item.response_html if initial_history_item else render_prompt_markdown(agent_snapshot.response)) | safe }}</div>
+                                <button
+                                    type="button"
+                                    class="browser-session-message-toggle agent-response-overflow-toggle"
+                                    data-browser-session-message-toggle
+                                    data-browser-session-message-number="answer"
+                                    aria-controls="agent_response_answer"
+                                    aria-expanded="false"
+                                    aria-label="Expand answer"
+                                    title="Expand answer"
+                                    hidden
+                                ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
+                            </div>
+                            <nav class="browser-pagination local-store-pagination local-store-pagination--floating agent-response-pagination" id="agent_response_pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
+                        </div>
+                        <p class="agent-empty-response" id="agent_empty_response"{% if initial_history_item or agent_snapshot.response %} hidden{% endif %}>
+                            <span class="suggestion-loading-spinner agent-empty-response-spinner" data-agent-session-history-spinner aria-hidden="true" hidden></span>
+                            <span data-agent-empty-response-copy>{{ agent_snapshot.message }}</span>
+                        </p>
                     </article>
 
                     <form id="agent_prompt_form" class="agent-prompt-form">
-                <input type="hidden" name="workspace_path" value="{{ settings.workspace_path }}" data-agent-workspace-input>
-                <input type="hidden" name="operating_system" value="{{ settings.operating_system }}" data-agent-prompt-os>
-                <input type="hidden" name="platform" value="{{ settings.platform }}" data-agent-prompt-platform>
-                <input type="hidden" name="browser" value="{{ settings.browser }}" data-agent-prompt-browser>
-                <input type="hidden" name="session_mode" value="new" data-agent-prompt-session-mode>
+                        <input type="hidden" name="workspace_path" value="{{ settings.workspace_path }}" data-agent-workspace-input>
+                        <input type="hidden" name="operating_system" value="{{ settings.operating_system }}" data-agent-prompt-os>
+                        <input type="hidden" name="platform" value="{{ settings.platform }}" data-agent-prompt-platform>
+                        <input type="hidden" name="browser" value="{{ settings.browser }}" data-agent-prompt-browser>
+                        <input type="hidden" name="session_mode" value="new" data-agent-prompt-session-mode>
                         <input type="hidden" name="conversation_url" value="" data-agent-prompt-conversation-url>
                         <input type="hidden" name="project_url" value="" data-agent-prompt-project-url>
+                        <input type="hidden" name="session_title" value="" data-agent-prompt-session-title>
                         <label class="field agent-composer-field">
                             <span class="agent-composer-shell">
-                                <textarea class="text-input-control agent-prompt-input" name="prompt" rows="4" placeholder="Ask {{ selected_platform.label }} Web to inspect, change, and verify this project…" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
+                                <textarea class="text-input-control agent-prompt-input" name="prompt" rows="4" placeholder="Do anything" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
                                 <span class="agent-composer-footer">
                                     <span class="trade-strategy-combobox agent-combobox agent-model-combobox" data-agent-combobox>
                                         <input type="hidden" name="model" value="{{ settings.model }}" data-agent-combobox-input data-agent-model-input>
@@ -365,7 +406,9 @@
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.16.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.0.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.1.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.5.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.2.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.9.2-codex.1') }}"></script>
 </body>
 </html>

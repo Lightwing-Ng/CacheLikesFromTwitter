@@ -1,4 +1,4 @@
-<!-- Code version: v1.46.0-codex.2 -->
+<!-- Code version: v1.47.2-codex.2 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,13 +8,14 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.75.0-codex.4') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.1.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.80.4-codex.5') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.2.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.27.0-codex.1') }}"></script>
-    <script type="module" src="{{ url_for('static', filename='browser-search.js', v='browser-search-v2.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.27.1-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='browser-search.js', v='browser-search-v2.0.1-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-source-filter.js', v='browser-source-filter-v1.2.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-actions.js', v='browser-session-actions-v1.1.0-codex.1') }}"></script>
 </head>
@@ -208,7 +209,11 @@
                             <p class="workspace-kicker">Session</p>
                             <h2 lang="zh-CN">{{ text_page.current_session.conversation_title }}</h2>
                             <p class="browser-session-detail-summary">{{ "{:,}".format(text_page.current_session.message_count) }} messages</p>
-                            <div class="browser-session-detail-actions">
+                            {% else %}
+                            <h2>{{ "Cached media browser" if filters.view == "media" else "Cached text browser" }}</h2>
+                            {% endif %}
+                            <div class="browser-session-detail-actions browser-local-resources-header-actions" data-browser-local-resources-header-actions>
+                                {% if filters.view == "text" and text_page.session_detail %}
                                 <a class="ghost-link browser-session-back-link" href="{{ url_for('browser', view='text', source=filters.source, q=filters.q, sort=filters.sort, session_view='1', page=filters.session_page) }}">Back to all sessions</a>
                                 <nav class="browser-session-neighbor-nav" aria-label="Session navigation">
                                     {% if text_page.previous_session %}
@@ -232,43 +237,41 @@
                                     <button type="button" class="browser-session-control-button browser-session-neighbor-button" disabled aria-label="No next session" title="No next session"><span class="icon browser-session-neighbor-next-icon" aria-hidden="true"></span></button>
                                     {% endif %}
                                 </nav>
+                                {% endif %}
+                                <label class="field browser-filter-field browser-search-field" data-browser-search for="browser_search_input">
+                                    <div class="browser-search-control">
+                                        <span class="icon browser-search-icon" aria-hidden="true"></span>
+                                        <input
+                                            id="browser_search_input"
+                                            type="search"
+                                            name="q"
+                                            form="browser_filter_form"
+                                            class="browser-search-input"
+                                            value="{{ filters.q }}"
+                                            maxlength="120"
+                                            autocomplete="off"
+                                            autocapitalize="none"
+                                            spellcheck="false"
+                                            role="combobox"
+                                            aria-autocomplete="list"
+                                            aria-controls="browser_search_suggestions"
+                                            aria-expanded="false"
+                                            aria-label="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
+                                            data-browser-search-input
+                                        >
+                                        <div
+                                            class="browser-search-suggestions"
+                                            id="browser_search_suggestions"
+                                            data-browser-search-menu
+                                            role="listbox"
+                                            aria-label="Recommended searches"
+                                            hidden
+                                        ></div>
+                                    </div>
+                                </label>
                             </div>
-                            {% else %}
-                            <h2>{{ "Cached media browser" if filters.view == "media" else "Cached text browser" }}</h2>
-                            {% endif %}
                         </div>
                         <div class="browser-heading-tools">
-                            <label class="field browser-filter-field browser-search-field" data-browser-search for="browser_search_input">
-                                <span>Search</span>
-                                <div class="browser-search-control">
-                                    <input
-                                        id="browser_search_input"
-                                        type="search"
-                                        name="q"
-                                        form="browser_filter_form"
-                                        class="browser-search-input"
-                                        value="{{ filters.q }}"
-                                        maxlength="120"
-                                        autocomplete="off"
-                                        autocapitalize="none"
-                                        spellcheck="false"
-                                        role="combobox"
-                                        aria-autocomplete="list"
-                                        aria-controls="browser_search_suggestions"
-                                        aria-expanded="false"
-                                        aria-label="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
-                                        data-browser-search-input
-                                    >
-                                    <div
-                                        class="browser-search-suggestions"
-                                        id="browser_search_suggestions"
-                                        data-browser-search-menu
-                                        role="listbox"
-                                        aria-label="Recommended searches"
-                                        hidden
-                                    ></div>
-                                </div>
-                            </label>
                             {% if filters.view == "text" and text_page.session_detail and text_page.current_session.conversation_url %}
                             <div
                             class="browser-session-actions browser-session-actions-drawer"
@@ -626,6 +629,7 @@
                         {% endfor %}
                     </div>
                     {% elif filters.view == "text" and text_page.session_detail %}
+                    {% if text_page.items %}
                     <div class="events-table-shell browser-session-table-shell browser-session-detail-shell">
                         <div class="events-table-scroll browser-session-table-scroll">
                             <table class="events-table browser-session-table browser-session-detail-table" aria-label="Cached {{ text_page.current_session.source|capitalize }} session messages">
@@ -656,7 +660,25 @@
                                             {% endif %}
                                         </td>
                                         <td>
-                                            <div class="browser-session-table-message" lang="zh-CN">{{ render_cached_message(message.content_text, message.content_html) }}</div>
+                                            <div class="browser-session-table-message-shell">
+                                                <div
+                                                    class="browser-session-table-message"
+                                                    id="browser_session_message_{{ message.stable_id }}"
+                                                    lang="zh-CN"
+                                                    data-browser-session-message-source
+                                                >{{ render_cached_message(message.content_text, message.content_html) }}</div>
+                                                <button
+                                                    type="button"
+                                                    class="browser-session-message-toggle"
+                                                    data-browser-session-message-toggle
+                                                    data-browser-session-message-number="{{ ((text_page.current_page - 1) * text_page.page_size) + loop.index }}"
+                                                    aria-controls="browser_session_message_{{ message.stable_id }}"
+                                                    aria-expanded="false"
+                                                    aria-label="Expand message {{ ((text_page.current_page - 1) * text_page.page_size) + loop.index }}"
+                                                    title="Expand message"
+                                                    hidden
+                                                ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
+                                            </div>
                                             {% if message.media_refs or message.source_links %}
                                             <div class="browser-session-table-links">
                                                 {% for media_ref in message.media_refs %}<a href="{{ media_ref.href }}">Related media: {{ media_ref.label }}</a>{% endfor %}
@@ -670,6 +692,13 @@
                             </table>
                         </div>
                     </div>
+                    {% else %}
+                    <div class="browser-empty-state" role="status">
+                        <span class="browser-empty-icon" aria-hidden="true"></span>
+                        <h3>No matching messages found.</h3>
+                        <p>Try a different search term for this session.</p>
+                    </div>
+                    {% endif %}
                     {% elif filters.view == "text" and filters.session_view and text_page.sessions %}
                     <div class="events-table-shell browser-session-table-shell browser-session-index-shell">
                         <div class="events-table-scroll browser-session-table-scroll">

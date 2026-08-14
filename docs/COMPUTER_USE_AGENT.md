@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.5.0-codex.1`
+Documentation version: `v3.9.2-codex.1`
 
 ## Purpose
 
@@ -27,6 +27,8 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
    permissions` in Settings → Agent. macOS opens Full Disk Access for the Terminal that starts
    the service; Windows requests PowerShell administrator authorization through UAC. Automatic
    detection never opens an authorization surface.
+   The browser status card also reports whether the host Terminal or PowerShell executable is
+   available and the selected project currently grants read, write, and directory-entry access.
 2. Keep `New session` or choose a recent root session/project and, for a project, either
    `New session in project` or one of its recent sessions.
 3. Enter a task. The service validates the selected provider's official URL and opens it in the
@@ -44,7 +46,15 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
    configured controller-action budget. This keeps a recoverable web-model formatting lapse from
    prematurely ending a valid task, while still bounding retries.
 8. The controller rejects a final answer until `bodycheck` succeeds after the latest edit.
-9. The local page renders the final Markdown and links to the selected Web conversation.
+9. The local page renders the final Markdown and links to the selected Web conversation. When a
+   ChatGPT recent session or project session is selected, the page fetches that conversation's
+   read-only mapping through the selected signed-in browser and loads its user/assistant history
+   into the same response article. The response card keeps one question-and-answer pair per page,
+   opens on the newest page, and uses the shared paginator to revisit earlier exchanges. The
+   question header and Markdown answer each have an independent vertical scroll region and reuse
+   the standard expand/collapse control. The composer remains a non-shrinking bottom flex item so
+   long responses cannot push it out of view. The sidebar session trigger follows the selected or
+   newly completed conversation title.
 
 ## Safety boundary
 
@@ -56,7 +66,14 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
   environment enumeration, and Git-history mutation.
 - Stop ends Web-provider generation and terminates the current local process group.
 - The Flask control routes accept host-loopback traffic and same-origin browser requests only.
-- Project context and requested source files are transmitted to the selected ChatGPT account.
+- Project context and requested source files are transmitted to the selected Web account only
+  when a task is sent. Selecting a ChatGPT session reads its existing conversation history for
+  display and does not write those remote messages to the local cache.
+
+The question-and-answer pages are bounded to the latest 100 completed Agent exchanges per Web
+conversation and live only for the current local service process. Selected ChatGPT history is
+also bounded to the latest 100 paired exchanges for the page view; remote history is never
+persisted by this feature.
 
 ## Settings
 

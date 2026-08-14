@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.5.0-codex.2`
+Documentation version: `v1.5.1-codex.1`
 
 ## Runtime flow
 
@@ -63,6 +63,16 @@ In overlay mode, safe-area-aware fixed geometry keeps the sidebar and toggle ins
 The backdrop sits below the sidebar, dock, and toggle. A global `[hidden]` rule makes hidden state
 authoritative over responsive display rules, while closed sidebar and backdrop states also disable
 pointer events explicitly.
+
+## Chinese language presentation boundary
+
+Every document shell loads `language-rendering.js`. The boundary annotator never rewrites text
+or Unicode code points; it only marks untagged Han-containing controls and dynamic content as
+`lang="zh-CN"` so macOS and browser font selection use the intended Simplified Chinese context.
+
+All source values remain byte-for-byte stable: form controls, URLs, `data-*` attributes, JSON,
+code-like content, and explicitly tagged `lang` boundaries are untouched. This is a display
+context fix for macOS glyph selection, not a Simplified-to-Traditional conversion layer.
 
 ## Source flows
 

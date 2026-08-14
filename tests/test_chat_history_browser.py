@@ -175,6 +175,17 @@ def test_query_chat_history_opens_one_session_and_paginates_messages(tmp_path: P
     assert [message.message_index for message in detail_page.items] == [0, 1]
     assert detail_page.pagination_unit == "message"
 
+    filtered_detail_page = query_chat_history(
+        tmp_path,
+        source="gemini",
+        query="Message 1",
+        session_view=True,
+        session=session_id,
+    )
+    assert filtered_detail_page.session_detail
+    assert filtered_detail_page.total_count == 1
+    assert [message.message_index for message in filtered_detail_page.items] == [1]
+
 
 def test_build_chat_history_markdown_exports_the_complete_session(tmp_path: Path) -> None:
     history_path = tmp_path / "llm" / "gemini" / "history.parquet"
