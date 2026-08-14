@@ -1,4 +1,4 @@
-<!-- Code version: v3.5.0-codex.1 -->
+<!-- Code version: v3.5.0-codex.2 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.76.0-codex.2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.76.0-codex.4') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
 </head>
@@ -78,7 +78,12 @@
                                 aria-expanded="false"
                                 aria-label="Web service: {{ selected_platform.label }}"
                             >
-                                <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>{{ selected_platform.label }}</span>
+                                <span class="browser-session-trigger-leading">
+                                    <span class="browser-picker-selected-icon-shell">
+                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename=selected_platform.icon_filename) }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
+                                    </span>
+                                    <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>{{ selected_platform.label }}</span>
+                                </span>
                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
                             <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose Web service" hidden>
@@ -88,12 +93,14 @@
                                     class="trade-strategy-dropdown-option agent-combobox-option{% if settings.platform == platform.key %} is-selected is-active{% endif %}"
                                     data-agent-combobox-option="{{ platform.key }}"
                                     data-agent-combobox-label="{{ platform.label }}"
+                                    data-agent-combobox-icon="{{ url_for('static', filename=platform.icon_filename) }}"
                                     data-agent-platform-home-url="{{ platform.home_url }}"
                                     role="option"
                                     aria-selected="{{ 'true' if settings.platform == platform.key else 'false' }}"
                                     tabindex="-1"
                                 >
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename=platform.icon_filename) }}" alt="" aria-hidden="true">
                                     <span class="trade-strategy-dropdown-text">{{ platform.label }}</span>
                                 </button>
                                 {% endfor %}
@@ -234,27 +241,6 @@
                     </div>
                 </div>
 
-                <label class="field">
-                    <span class="field-label">Context package</span>
-                    <span class="shadow-backup-destination-control agent-runtime-log-control">
-                        <input
-                            class="text-input-control agent-monospace-input"
-                            type="text"
-                            id="agent_context_policy"
-                            value="Markdown · up to {{ settings.context_limit_mib }} MiB"
-                            readonly
-                            aria-readonly="true"
-                        >
-                        <a
-                            class="secondary-button settings-directory-choose-button agent-runtime-log-open"
-                            href="{{ url_for('browser', view='text', source='all', kind='all', q='', sort='newest', session_view='1') }}"
-                            aria-label="Open Local resources"
-                            title="Open Local resources"
-                        >
-                            <span class="icon agent-runtime-log-open-icon" aria-hidden="true"></span>
-                        </a>
-                    </span>
-                </label>
             </form>
         </aside>
 

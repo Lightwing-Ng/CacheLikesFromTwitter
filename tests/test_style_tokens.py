@@ -890,7 +890,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.76.0-codex.2 */",
+        "/* Code version: v2.76.0-codex.4 */",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
         "width: 22px;",
@@ -899,6 +899,10 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-connect-fields {",
         "grid-template-columns: minmax(0, 1fr);",
         "gap: 14px;",
+        ".agent-platform-combobox .browser-session-trigger-leading {",
+        "flex: 1 1 auto;",
+        ".agent-platform-combobox .trade-strategy-trigger-label.browser-session-trigger-label {",
+        ".agent-platform-combobox .browser-picker-selected-icon-shell {",
         ".agent-os-combobox .browser-picker-selected-icon-shell {",
         ".agent-os-combobox .browser-picker-option-icon {",
         ".agent-os-combobox .agent-combobox-option {",
@@ -906,8 +910,6 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-combobox-dropdown .trade-strategy-dropdown-option,",
         "font-weight: var(--font-weight-regular);",
         ".agent-combobox.is-agent-combobox-open .agent-combobox-dropdown:not([hidden]) {",
-        ".agent-runtime-log-open-icon {",
-        'mask: url("/static/images/finder.svg") center/contain no-repeat;',
         ".agent-port-field {",
         "grid-column: auto;",
         ".settings-category-nav-item-agent {",

@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.5.0-codex.1
+Code version: v3.5.0-codex.2
 """
 
 from __future__ import annotations
@@ -116,18 +116,21 @@ AGENT_PLATFORM_OPTIONS = (
     {
         "key": "chatgpt",
         "label": "ChatGPT",
+        "icon_filename": "images/ChatGPT-Logo.svg",
         "home_url": CHATGPT_HOME_URL,
         "hosts": CHATGPT_HOSTS,
     },
     {
         "key": "gemini",
         "label": "Gemini",
+        "icon_filename": "images/Google_Gemini_logo_2025_symbol.svg",
         "home_url": GEMINI_HOME_URL,
         "hosts": GEMINI_HOSTS,
     },
     {
         "key": "grok",
         "label": "Grok",
+        "icon_filename": "images/grok.svg",
         "home_url": GROK_HOME_URL,
         "hosts": GROK_HOSTS,
     },

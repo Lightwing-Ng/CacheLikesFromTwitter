@@ -402,7 +402,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.16.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.76.0-codex.2" if body is agent_body else "style-v2.75.0-codex.4"
+                    "style-v2.76.0-codex.4" if body is agent_body else "style-v2.75.0-codex.4"
                 )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
@@ -599,12 +599,11 @@ class WebAppTests(unittest.TestCase):
         )
         self.assertLess(project_name_position, project_picker_position)
         self.assertNotIn('stop MCP before switching projects.', local_body)
-        self.assertIn('id="agent_context_policy"', local_body)
-        self.assertIn('class="secondary-button settings-directory-choose-button agent-runtime-log-open"', local_body)
-        self.assertIn('class="shadow-backup-destination-control agent-runtime-log-control"', local_body)
-        self.assertIn('class="icon agent-runtime-log-open-icon"', local_body)
-        self.assertIn('aria-label="Open Local resources"', local_body)
-        self.assertIn('/browser?view=text&amp;source=all&amp;kind=all&amp;q=&amp;sort=newest&amp;session_view=1', local_body)
+        self.assertNotIn('id="agent_context_policy"', local_body)
+        self.assertNotIn('class="secondary-button settings-directory-choose-button agent-runtime-log-open"', local_body)
+        self.assertNotIn('class="shadow-backup-destination-control agent-runtime-log-control"', local_body)
+        self.assertNotIn('class="icon agent-runtime-log-open-icon"', local_body)
+        self.assertNotIn('<span class="field-label">Context package</span>', local_body)
         self.assertIn('class="agent-composer-shell"', local_body)
         self.assertIn('id="agent_response_output" lang="zh-CN"', local_body)
         self.assertNotIn('class="agent-composer-preview"', local_body)
@@ -875,6 +874,10 @@ class WebAppTests(unittest.TestCase):
             body = client.get("/agent").get_data(as_text=True)
 
         self.assertIn('<span class="field-label">Web service</span>', body)
+        self.assertIn('class="browser-picker-option-icon" src="/static/images/ChatGPT-Logo.svg"', body)
+        self.assertIn('data-agent-combobox-icon="/static/images/Google_Gemini_logo_2025_symbol.svg"', body)
+        self.assertIn('data-agent-combobox-icon="/static/images/grok.svg"', body)
+        self.assertIn('class="browser-session-trigger-leading"', body)
         self.assertIn('data-browser-session-platform="chatgpt"', body)
         self.assertIn('data-agent-combobox-option="gpt-5.6-sol"', body)
         self.assertIn('data-agent-combobox-option="gemini-3.1-pro"', body)
