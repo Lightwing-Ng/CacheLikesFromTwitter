@@ -1,4 +1,4 @@
-<!-- Code version: v1.47.3-codex.1 -->
+<!-- Code version: v1.48.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,8 +8,8 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.81.0-codex.1') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.2.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.81.2-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.3.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='notice-banner.js', v='notice-banner-v0.1.0-codex.1') }}"></script>
@@ -259,6 +259,7 @@
                                             aria-controls="browser_search_suggestions"
                                             aria-expanded="false"
                                             aria-label="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
+                                            placeholder="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
                                             data-browser-search-input
                                         >
                                         <div

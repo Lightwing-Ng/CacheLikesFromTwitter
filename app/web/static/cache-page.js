@@ -1,4 +1,4 @@
-/* Code version: v1.7.5-codex.1 */
+/* Code version: v1.7.6-codex.1 */
 
 (() => {
     "use strict";
@@ -380,7 +380,7 @@
             if (!targetPath) return;
 
             const targetUrl = new URL(targetPath, window.location.origin);
-            if (targetUrl.origin !== window.location.origin || targetUrl.pathname === window.location.pathname) {
+            if (targetUrl.origin !== window.location.origin || targetUrl.href === window.location.href) {
                 setMenuOpen(false);
                 trigger.focus({ preventScroll: true });
                 return;

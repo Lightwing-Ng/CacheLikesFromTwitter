@@ -1,4 +1,4 @@
-/* Code version: v2.81.0-codex.1 */
+/* Code version: v2.81.2-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -569,7 +569,7 @@ html.sidebar-memory-collapsed .page {
     left: var(--sidebar-toggle-left);
     z-index: var(--layer-fixed-dock);
     transform: translate3d(var(--sidebar-toggle-x), 0, 0);
-    transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), color 160ms var(--motion-standard), transform var(--sidebar-motion-duration) var(--motion-bouncy);
+    transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), color 160ms var(--motion-standard), transform var(--sidebar-motion-duration) var(--motion-emphasized);
 }
 
 .sidebar-toggle:hover,
@@ -2723,6 +2723,17 @@ a.ghost-link[href$="/settings"] {
     max-width: none;
     margin: 16px 0 0;
     z-index: var(--layer-inline-ornament);
+    grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: var(--workspace-modal-column-gap);
+}
+
+.notice-inline-banner > .notice-floating-copy {
+    grid-column: 1;
+}
+
+.notice-inline-banner > .status-chip {
+    grid-column: 2;
+    justify-self: end;
 }
 
 .grok-warning-banner .status-chip {
@@ -3062,6 +3073,20 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
     .progress-metric-grid {
         grid-template-columns: 1fr;
+    }
+
+    .notice-inline-banner {
+        grid-template-columns: minmax(0, 1fr);
+        row-gap: 12px;
+    }
+
+    .notice-inline-banner > .notice-floating-copy,
+    .notice-inline-banner > .status-chip {
+        grid-column: 1;
+    }
+
+    .notice-inline-banner > .status-chip {
+        justify-self: start;
     }
 
     .notice-floating-banner-global {

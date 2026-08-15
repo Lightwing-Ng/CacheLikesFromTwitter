@@ -1,6 +1,6 @@
 """Focused tests for Gemini session history Parquet persistence."""
 
-# Code version: v1.9.0-codex.1
+# Code version: v1.10.0-codex.1
 
 from __future__ import annotations
 
@@ -19,6 +19,7 @@ from app.core.gemini_downloader import (
     GeminiNoCacheableMessagesError,
     _build_gemini_history_rpc_page_request,
     _decode_gemini_history_rpc_payloads,
+    _gemini_message_timestamps_from_rpc_payloads,
     _gemini_links_and_cursor_from_rpc_payload,
     _open_gemini_sidebar,
     _prepare_gemini_page_for_rendering,
@@ -116,6 +117,37 @@ def test_gemini_history_rpc_response_exposes_links_and_cursor() -> None:
         GeminiConversationLink("abc123", "https://gemini.google.com/app/abc123", "First session"),
         GeminiConversationLink("def456", "https://gemini.google.com/app/def456", "Second session"),
     ]
+
+
+def test_gemini_conversation_rpc_response_exposes_source_turn_timestamps() -> None:
+    payload = [
+        [
+            [
+                ["c_conversation", "r_user"],
+                ["c_conversation", "r_assistant"],
+                [["Question", None, None, None, [[]]]],
+                [["r_assistant", ["Answer"]]],
+                [1_780_555_237, 509_580_00],
+            ],
+            [
+                ["c_conversation", "r_user_2"],
+                ["c_conversation", "r_assistant_2"],
+                [["Question 2", None, None, None, [[]]]],
+                [["r_assistant_2", ["Answer 2"]]],
+                [1_780_554_365, 682_736_000],
+            ],
+        ],
+        None,
+        None,
+        "continuation",
+    ]
+
+    timestamps = _gemini_message_timestamps_from_rpc_payloads([payload], "conversation")
+
+    assert timestamps == {
+        0: "2026-06-04T06:40:37.050958Z",
+        1: "2026-06-04T06:26:05.682736Z",
+    }
 
 
 def test_gemini_history_rpc_next_page_preserves_auth_fields() -> None:
@@ -225,6 +257,22 @@ def test_gemini_history_store_atomically_merges_and_replaces_conversations(tmp_p
     assert not unchanged
     assert final_store.cached_conversations == 2
     assert final_store.cached_messages == 3
+
+
+def test_gemini_history_store_prefers_source_timestamp_over_capture_time(tmp_path: Path) -> None:
+    store = GeminiHistoryStore(gemini_history_path(tmp_path))
+    conversation = GeminiConversationLink(
+        "conversation-source-time",
+        "https://gemini.google.com/app/conversation-source-time",
+        "Source time",
+    )
+    messages = _messages()
+    messages[0]["message_timestamp"] = "2026-06-04T06:40:37.050958Z"
+    messages[1]["message_timestamp"] = "2026-06-04T06:40:37.050958Z"
+
+    store.replace_conversation(conversation, messages, "2026-08-15T17:38:42Z")
+
+    assert {row["last_seen_at"] for row in store.rows} == {"2026-06-04T06:40:37.050958Z"}
 
 
 def test_gemini_history_store_rejects_sessions_without_text_rows(tmp_path: Path) -> None:

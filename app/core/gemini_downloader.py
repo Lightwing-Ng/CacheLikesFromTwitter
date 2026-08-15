@@ -1,6 +1,6 @@
 """Browser-backed Gemini session history caching."""
 
-# Code version: v1.9.0-codex.1
+# Code version: v1.10.0-codex.1
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
@@ -28,7 +29,7 @@ from .resource_persistence import (
     read_parquet_rows,
     write_parquet_rows_atomic,
 )
-from .safari_automation import SafariContext
+from .safari_automation import SafariContext, SafariPage
 from .state import TaskSnapshot, TaskState, utc_now
 
 
@@ -41,6 +42,7 @@ GEMINI_RENDER_SETTLE_MILLISECONDS = 1_000
 GEMINI_BOT_CHECK_POLL_MILLISECONDS = 1_000
 GEMINI_CONVERSATION_RETRY_LIMIT = 3
 GEMINI_HISTORY_RPC_ID = "MaZiqc"
+GEMINI_CONVERSATION_RPC_ID = "hNvQHb"
 GEMINI_HISTORY_RPC_PAGE_SIZE = 1_000
 GEMINI_HISTORY_RPC_PAUSE_MILLISECONDS = 100
 GEMINI_HISTORY_RPC_RETRY_LIMIT = 3
@@ -68,6 +70,7 @@ GEMINI_BOT_CHECK_MARKERS = (
     "captcha",
     "recaptcha",
 )
+GEMINI_RPC_RESPONSE_SLICE_CHARS = 96 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,6 +320,8 @@ class GeminiHistoryStore:
                 first_seen_at = str(previous.get("first_seen_at") or captured_at)
             else:
                 new_message_count += 1
+            source_timestamp = str(message.get("message_timestamp") or "").strip()
+            last_seen_at = source_timestamp or captured_at
             source_links = [
                 str(link).strip()
                 for link in message.get("source_links") or []
@@ -339,7 +344,7 @@ class GeminiHistoryStore:
                 "source_links": list(dict.fromkeys(source_links)),
                 "model_label": str(message.get("model_label") or "").strip(),
                 "first_seen_at": first_seen_at,
-                "last_seen_at": captured_at,
+                "last_seen_at": last_seen_at,
             }
 
         if not next_rows:
@@ -600,6 +605,32 @@ def _attach_gemini_history_rpc_capture(page) -> list[Any] | None:
     return responses
 
 
+def _is_gemini_conversation_rpc_url(value: str) -> bool:
+    """Return whether a URL targets one rendered Gemini session."""
+    parsed = urlsplit(str(value or ""))
+    if parsed.netloc.lower() != "gemini.google.com" or not parsed.path.endswith("/batchexecute"):
+        return False
+    return any(
+        key == "rpcids" and rpc_id == GEMINI_CONVERSATION_RPC_ID
+        for key, rpc_id in parse_qsl(parsed.query, keep_blank_values=True)
+    )
+
+
+def _attach_gemini_conversation_rpc_capture(page) -> list[Any] | None:
+    """Capture rendered-session RPC responses on Chromium pages."""
+    responses: list[Any] = []
+    on_event = getattr(page, "on", None)
+    if not callable(on_event):
+        return None
+
+    def capture_response(response) -> None:
+        if _is_gemini_conversation_rpc_url(str(getattr(response, "url", ""))):
+            responses.append(response)
+
+    on_event("response", capture_response)
+    return responses
+
+
 def _decode_gemini_history_rpc_payloads(body_text: str) -> list[list[Any]]:
     """Decode nested payloads from one Google batchexecute response."""
     payloads: list[list[Any]] = []
@@ -631,6 +662,184 @@ def _decode_gemini_history_rpc_payloads(body_text: str) -> list[list[Any]]:
         except json.JSONDecodeError:
             continue
     return payloads
+
+
+def _normalize_gemini_rpc_timestamp(value: Any) -> str:
+    """Normalize Gemini's ``[seconds, nanoseconds]`` timestamp to UTC ISO text."""
+    seconds: float | None = None
+    nanos = 0.0
+    if isinstance(value, (list, tuple)) and value:
+        try:
+            seconds = float(value[0])
+            if len(value) > 1 and value[1] is not None:
+                nanos = float(value[1])
+        except (TypeError, ValueError):
+            return ""
+    elif isinstance(value, (int, float)):
+        seconds = float(value)
+    elif isinstance(value, str) and value.strip():
+        try:
+            seconds = float(value.strip())
+        except ValueError:
+            return ""
+    if seconds is None:
+        return ""
+    if abs(seconds) >= 1_000_000_000_000:
+        seconds /= 1_000
+    try:
+        timestamp = datetime.fromtimestamp(seconds + nanos / 1_000_000_000, tz=UTC)
+    except (OverflowError, OSError, ValueError):
+        return ""
+    return timestamp.replace(microsecond=timestamp.microsecond).isoformat().replace("+00:00", "Z")
+
+
+def _contains_gemini_conversation_id(value: Any, conversation_id: str) -> bool:
+    """Return whether one decoded RPC fragment references the requested session."""
+    expected = f"c_{conversation_id}"
+    if isinstance(value, str):
+        return value == expected
+    if isinstance(value, list):
+        return any(_contains_gemini_conversation_id(item, conversation_id) for item in value)
+    if isinstance(value, dict):
+        return any(_contains_gemini_conversation_id(item, conversation_id) for item in value.values())
+    return False
+
+
+def _gemini_message_timestamps_from_rpc_payloads(
+    payloads: list[list[Any]],
+    conversation_id: str,
+) -> dict[int, str]:
+    """Extract one source timestamp per Gemini turn from the conversation RPC."""
+    timestamps: dict[int, str] = {}
+    for payload in payloads:
+        if not isinstance(payload, list) or not payload or not isinstance(payload[0], list):
+            continue
+        turn_index = 0
+        for entry in payload[0]:
+            if not isinstance(entry, list) or len(entry) < 5:
+                continue
+            if not _contains_gemini_conversation_id(entry[:2], conversation_id):
+                continue
+            timestamp = _normalize_gemini_rpc_timestamp(entry[4])
+            if timestamp:
+                timestamps.setdefault(turn_index, timestamp)
+            turn_index += 1
+    return timestamps
+
+
+def _gemini_message_timestamps_from_captured_responses(
+    responses: list[Any] | None,
+    conversation_id: str,
+) -> dict[int, str]:
+    """Read the newest matching conversation RPC response from Chromium."""
+    if not responses:
+        return {}
+    for response in reversed(responses):
+        try:
+            if not _is_gemini_conversation_rpc_url(str(getattr(response, "url", ""))):
+                continue
+            payloads = _decode_gemini_history_rpc_payloads(response.text())
+        except Exception:
+            continue
+        timestamps = _gemini_message_timestamps_from_rpc_payloads(payloads, conversation_id)
+        if timestamps:
+            return timestamps
+    return {}
+
+
+def _fetch_gemini_conversation_rpc_payloads(
+    page,
+    conversation: GeminiConversationLink,
+    timeout_ms: int = 15_000,
+) -> list[list[Any]]:
+    """Fetch the conversation RPC inside Safari without exporting browser credentials."""
+    if not isinstance(page, SafariPage):
+        return []
+    state_key = "__cachelikesGeminiConversationRpc"
+    started = page.evaluate(
+        r"""({ conversationId, stateKey }) => {
+            const tokenMatch = (document.documentElement?.innerHTML || '')
+                .match(/(ADR[A-Za-z0-9:_-]{10,})/);
+            const at = tokenMatch ? tokenMatch[1] : '';
+            const state = { state: 'pending', ok: false, status: 0, text: '', error: '' };
+            window[stateKey] = state;
+            if (!at || typeof fetch !== 'function') {
+                state.state = 'failed';
+                state.error = !at ? 'Gemini request token was not found.' : 'fetch is unavailable.';
+                return { started: false, error: state.error };
+            }
+            const batch = [[[
+                'hNvQHb',
+                JSON.stringify(['c_' + conversationId, 10, null, 1, [0], [4], null, 1]),
+                null,
+                'generic',
+            ]]];
+            const body = new URLSearchParams({ 'f.req': JSON.stringify(batch), at }).toString();
+            const endpoint = new URL('/_/BardChatUi/data/batchexecute', location.origin);
+            endpoint.searchParams.set('rpcids', 'hNvQHb');
+            endpoint.searchParams.set('source-path', location.pathname);
+            endpoint.searchParams.set('hl', document.documentElement?.lang || 'en');
+            endpoint.searchParams.set('rt', 'c');
+            fetch(endpoint.toString(), {
+                method: 'POST',
+                credentials: 'include',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+                    'X-Same-Domain': '1',
+                },
+                body,
+            }).then(async (response) => {
+                state.ok = response.ok;
+                state.status = response.status;
+                state.text = await response.text();
+                state.state = 'done';
+            }).catch((error) => {
+                state.state = 'failed';
+                state.error = String(error && error.message ? error.message : error);
+            });
+            return { started: true };
+        }""",
+        {"conversationId": conversation.conversation_id, "stateKey": state_key},
+    )
+    if not isinstance(started, dict) or not started.get("started"):
+        return []
+    deadline = time.monotonic() + max(1, int(timeout_ms)) / 1_000
+    state: dict[str, Any] = {}
+    while time.monotonic() < deadline:
+        state = page.evaluate(
+            """(stateKey) => {
+                const state = window[stateKey];
+                return state ? {
+                    state: state.state || '',
+                    ok: Boolean(state.ok),
+                    status: Number(state.status || 0),
+                    length: String(state.text || '').length,
+                    error: String(state.error || ''),
+                } : { state: 'missing' };
+            }""",
+            state_key,
+        )
+        if isinstance(state, dict) and state.get("state") in {"done", "failed"}:
+            break
+        page.wait_for_timeout(200)
+    if not isinstance(state, dict) or state.get("state") != "done" or not state.get("ok"):
+        return []
+    response_length = max(0, int(state.get("length") or 0))
+    chunks: list[str] = []
+    for start in range(0, response_length, GEMINI_RPC_RESPONSE_SLICE_CHARS):
+        chunk = page.evaluate(
+            """({ stateKey, start, length }) => {
+                const text = String(window[stateKey]?.text || '');
+                return text.slice(start, start + length);
+            }""",
+            {
+                "stateKey": state_key,
+                "start": start,
+                "length": GEMINI_RPC_RESPONSE_SLICE_CHARS,
+            },
+        )
+        chunks.append(str(chunk or ""))
+    return _decode_gemini_history_rpc_payloads("".join(chunks))
 
 
 def _gemini_links_and_cursor_from_rpc_payload(
@@ -944,10 +1153,11 @@ def collect_gemini_conversation_links(
 def extract_gemini_conversation_messages(
     page,
     conversation: GeminiConversationLink,
+    turn_timestamps: dict[int, str] | None = None,
 ) -> list[dict[str, Any]]:
     """Extract ordered user and assistant messages from one rendered session."""
     payload = page.evaluate(
-        r"""({ fallbackTitle }) => {
+        r"""({ fallbackTitle, turnTimestamps }) => {
             const normalizeText = (value) => String(value || '')
                 .replace(/\u200b/g, '')
                 .replace(/\r\n?/g, '\n')
@@ -1013,11 +1223,12 @@ def extract_gemini_conversation_messages(
                     content_html: String(contentRoot.innerHTML || '').trim(),
                     source_links: [...new Set(sourceLinks)],
                     model_label: role === 'assistant' ? modelLabel : '',
+                    message_timestamp: (turnTimestamps && turnTimestamps[turnIndex]) || '',
                 });
             });
             return messages;
         }""",
-        {"fallbackTitle": conversation.title},
+        {"fallbackTitle": conversation.title, "turnTimestamps": turn_timestamps or {}},
     )
     return [dict(item) for item in payload if isinstance(item, dict)] if isinstance(payload, list) else []
 
@@ -1084,6 +1295,7 @@ def sync_gemini_history(
     )
     with launch_gemini_browser_context(config) as (context, descriptor):
         page = _gemini_context_page(context)
+        conversation_rpc_responses = _attach_gemini_conversation_rpc_capture(page)
         if conversation_links:
             state.append_event(
                 f"Resume mode loaded {len(conversation_links):,} Gemini sessions from the "
@@ -1135,7 +1347,21 @@ def sync_gemini_history(
                         break
                     _wait_for_gemini_ready(page)
                     page.wait_for_timeout(max(250, int(config.gemini_scroll_pause_seconds * 1_000)))
-                    messages = extract_gemini_conversation_messages(page, conversation)
+                    turn_timestamps = _gemini_message_timestamps_from_captured_responses(
+                        conversation_rpc_responses,
+                        conversation.conversation_id,
+                    )
+                    if not turn_timestamps:
+                        safari_payloads = _fetch_gemini_conversation_rpc_payloads(page, conversation)
+                        turn_timestamps = _gemini_message_timestamps_from_rpc_payloads(
+                            safari_payloads,
+                            conversation.conversation_id,
+                        )
+                    messages = extract_gemini_conversation_messages(
+                        page,
+                        conversation,
+                        turn_timestamps,
+                    )
                     captured_at = utc_now()
                     added_count, unchanged = store.replace_conversation(
                         conversation,

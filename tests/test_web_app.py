@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.77.5-codex.1
+# Code version: v1.79.0-codex.1
 
 from __future__ import annotations
 
@@ -107,6 +107,8 @@ class WebAppTests(unittest.TestCase):
             expected_path = (
                 "/cache/chatgpt"
                 if source == "chatgpt"
+                else "/cache/gemini"
+                if source == "gemini"
                 else f"/browser?view=text&amp;session_view=1&amp;q=&amp;source={source}&amp;sort=newest"
             )
             self.assertIn(
@@ -300,7 +302,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="status_progress_value"', chatgpt_body)
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
-        self.assertIn('cache-page.js?v=cache-page-v1.7.4-codex.1', chatgpt_body)
+        self.assertIn('cache-page.js?v=cache-page-v1.7.6-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
         self.assertIn('data-cache-content-mode', grok_body)
@@ -373,8 +375,16 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn(f'id="{source}_cache_common_config_help"', body)
                 self.assertIn('href="/settings#settings-downloads"', body)
 
-        for body in (grok_body, chatgpt_body, gemini_body, index_body, settings_body, browser_body, agent_body):
-            with self.subTest(page=body[:40]):
+        for page_source, body in (
+            ("grok", grok_body),
+            ("chatgpt", chatgpt_body),
+            ("gemini", gemini_body),
+            ("x", index_body),
+            ("settings", settings_body),
+            ("local-resources", browser_body),
+            ("agent", agent_body),
+        ):
+            with self.subTest(page=page_source):
                 dock_start = body.index('<nav class="sidebar-dock"')
                 dock_end = body.index("</nav>", dock_start) + len("</nav>")
                 dock_markup = body[dock_start:dock_end]
@@ -400,7 +410,8 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('data-dock-section="local-resources"', dock_markup)
                 self.assertIn('data-dock-section="settings"', dock_markup)
                 self.assertEqual(dock_markup.count('aria-current="page"'), 1)
-                self.assertIn('href="/cache/chatgpt"', dock_markup)
+                expected_cache_source = page_source if page_source in {"x", "grok", "chatgpt", "gemini"} else "chatgpt"
+                self.assertIn(f'href="/cache/{expected_cache_source}"', dock_markup)
                 self.assertIn('href="/browser?view=text', dock_markup)
                 self.assertIn('aria-label="Cache"', dock_markup)
                 self.assertIn('data-tooltip="Cache"', dock_markup)
@@ -417,7 +428,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.16.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.81.0-codex.1"
+                    "style-v2.81.2-codex.1"
                 )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
@@ -488,15 +499,21 @@ class WebAppTests(unittest.TestCase):
                     heading_markup.count('data-cache-source-switcher-option='),
                     expected_source_options,
                 )
-                if 'data-cache-source-switcher-path="/browser?view=text' in heading_markup:
-                    expected_paths = (
+                current_source = next(
+                    source
+                    for source in ("x", "grok", "chatgpt", "gemini")
+                    if f'data-cache-source="{source}"' in body
+                )
+                expected_paths = (
+                    (
                         "/cache/chatgpt",
-                        "/browser?view=text&amp;session_view=1&amp;q=&amp;source=gemini&amp;sort=newest",
+                        "/cache/gemini",
                         "/browser?view=text&amp;session_view=1&amp;q=&amp;source=grok&amp;sort=newest",
                         "/cache/x",
                     )
-                else:
-                    expected_paths = ("/cache/chatgpt", "/cache/gemini", "/cache/grok", "/cache/x")
+                    if current_source == "gemini"
+                    else ("/cache/chatgpt", "/cache/gemini", "/cache/grok", "/cache/x")
+                )
                 for expected_path in expected_paths:
                     self.assertIn(f'data-cache-source-switcher-path="{expected_path}"', heading_markup)
                 self.assertNotIn('<p class="section-kicker">Download</p>', heading_markup)
@@ -584,7 +601,7 @@ class WebAppTests(unittest.TestCase):
             "chatgpt": ("/cache/chatgpt", "/cache/gemini", "/cache/grok", "/cache/x"),
             "gemini": (
                 "/cache/chatgpt",
-                "/browser?view=text&amp;session_view=1&amp;q=&amp;source=gemini&amp;sort=newest",
+                "/cache/gemini",
                 "/browser?view=text&amp;session_view=1&amp;q=&amp;source=grok&amp;sort=newest",
                 "/cache/x",
             ),
@@ -1523,6 +1540,7 @@ class WebAppTests(unittest.TestCase):
             'option.dataset.cacheSourceSwitcherPath',
             "new URL(targetPath, window.location.origin)",
             "targetUrl.origin !== window.location.origin",
+            "targetUrl.href === window.location.href",
             "window.location.assign(targetUrl.href)",
         )
 
@@ -1687,12 +1705,13 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="browser_filter_form"', body)
         self.assertIn('form="browser_filter_form"', body)
         self.assertGreater(body.index("data-browser-search"), body.index("</aside>"))
-        self.assertIn("browser-search.css?v=browser-search-v1.2.0-codex.1", body)
+        self.assertIn("browser-search.css?v=browser-search-v1.3.0-codex.1", body)
         self.assertIn('type="module"', body)
         self.assertIn("browser-search.js?v=browser-search-v2.0.1-codex.1", body)
         self.assertIn("browser-session-messages.js?v=browser-session-messages-v1.0.1-codex.1", body)
         self.assertIn("data-browser-local-resources-header-actions", body)
         self.assertIn('class="icon browser-search-icon"', body)
+        self.assertIn('placeholder="Search cached text"', body)
         self.assertNotIn("<span>Search</span>", body)
 
         search_script = BROWSER_SEARCH_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -1717,6 +1736,16 @@ class WebAppTests(unittest.TestCase):
 
         search_style = BROWSER_SEARCH_STYLE_PATH.read_text(encoding="utf-8")
         self.assertIn(".browser-heading-tools {", search_style)
+        for fragment in (
+            "display: flex;",
+            "border: 1px solid var(--theme-glass-border);",
+            "background: var(--liquid-glass-background);",
+            ".browser-search-control:focus-within {",
+            "box-shadow: var(--glass-chip-shadow-hover);",
+            ".browser-search-input::placeholder {",
+        ):
+            with self.subTest(search_style_fragment=fragment):
+                self.assertIn(fragment, search_style)
         self.assertIn(".browser-local-resources-header-actions {", search_style)
         self.assertIn('mask: url("/static/images/magnifyingglass.svg") center/contain no-repeat;', search_style)
         self.assertIn("justify-content: flex-end;", search_style)
@@ -1775,7 +1804,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.81.0-codex.1", body)
+            self.assertIn("style-v2.81.2-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.27.1-codex.1', body)

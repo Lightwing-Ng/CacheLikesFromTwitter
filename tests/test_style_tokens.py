@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.4-codex.1
+Code version: v1.47.5-codex.1
 """
 
 from pathlib import Path
@@ -483,6 +483,25 @@ def test_browser_session_refresh_uses_the_modal_dialog_banner_message() -> None:
         ".browser-session-refresh-banner-copy {",
     ):
         assert token in stylesheet
+
+
+def test_inline_notice_banner_keeps_copy_wide_and_status_chip_compact() -> None:
+    """Keep icon-free inline notices readable beside their status chip."""
+    stylesheet = _stylesheet()
+    inline_start = stylesheet.index(".notice-inline-banner {")
+    inline_rule = stylesheet[inline_start:stylesheet.index("\n}", inline_start)]
+
+    for token in (
+        "grid-template-columns: minmax(0, 1fr) auto;",
+        "column-gap: var(--workspace-modal-column-gap);",
+    ):
+        assert token in inline_rule
+
+    assert ".notice-inline-banner > .notice-floating-copy {" in stylesheet
+    assert ".notice-inline-banner > .status-chip {" in stylesheet
+    assert "grid-column: 1;" in stylesheet[stylesheet.index(".notice-inline-banner > .notice-floating-copy {"):]
+    assert "justify-self: end;" in stylesheet[stylesheet.index(".notice-inline-banner > .status-chip {"):]
+    assert "grid-template-columns: minmax(0, 1fr);" in stylesheet[stylesheet.index("@media (max-width: 560px)"):]
 
 
 def test_browser_session_controls_use_standard_round_buttons_and_frosted_tooltips() -> None:
@@ -971,7 +990,8 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.81.0-codex.1 */",
+        "/* Code version: v2.81.2-codex.1 */",
+        "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
         "width: 22px;",

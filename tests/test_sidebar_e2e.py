@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.8.5-codex.1
+Code version: v1.8.6-codex.1
 """
 
 from __future__ import annotations
@@ -170,7 +170,7 @@ def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
             expected_paths = (
                 [
                     "/cache/chatgpt",
-                    "/browser?view=text&session_view=1&q=&source=gemini&sort=newest",
+                    "/cache/gemini",
                     "/browser?view=text&session_view=1&q=&source=grok&sort=newest",
                     "/cache/x",
                 ]
@@ -180,6 +180,83 @@ def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
             assert options.evaluate_all(
                 "elements => elements.map(element => element.dataset.cacheSourceSwitcherPath)"
             ) == expected_paths
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("page_source", ("chatgpt", "gemini", "grok", "x"))
+def test_cache_source_switcher_click_matrix_stays_within_expected_destinations(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    page_source: str,
+) -> None:
+    """Verify every source option lands on its intentional local destination."""
+    expected_paths = {
+        "chatgpt": {
+            "chatgpt": "/cache/chatgpt",
+            "gemini": "/cache/gemini",
+            "grok": "/cache/grok",
+            "x": "/cache/x",
+        },
+        "gemini": {
+            "chatgpt": "/cache/chatgpt",
+            "gemini": "/cache/gemini",
+            "grok": "/browser?view=text&session_view=1&q=&source=grok&sort=newest",
+            "x": "/cache/x",
+        },
+        "grok": {
+            "chatgpt": "/cache/chatgpt",
+            "gemini": "/cache/gemini",
+            "grok": "/cache/grok",
+            "x": "/cache/x",
+        },
+        "x": {
+            "chatgpt": "/cache/chatgpt",
+            "gemini": "/cache/gemini",
+            "grok": "/cache/grok",
+            "x": "/cache/x",
+        },
+    }[page_source]
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/{page_source}",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        for target_source, expected_path in expected_paths.items():
+            page.goto(f"{sidebar_server_url}/cache/{page_source}", wait_until="domcontentloaded")
+            page.locator("[data-cache-source-switcher-trigger]").click()
+            page.locator(
+                f'[data-cache-source-switcher-option="{target_source}"]'
+            ).click()
+            expect(page).to_have_url(re.compile(rf"{re.escape(expected_path)}$"))
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("page_source", ("chatgpt", "gemini", "grok", "x"))
+def test_cache_dock_click_preserves_the_current_cache_source(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    page_source: str,
+) -> None:
+    """Verify the second Dock item never falls back to another Cache source."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/{page_source}",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        page.get_by_role("link", name="Cache", exact=True).click()
+        expect(page).to_have_url(re.compile(rf"/cache/{page_source}$"))
     finally:
         context.close()
 

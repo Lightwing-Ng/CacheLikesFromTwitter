@@ -1,4 +1,4 @@
-{# Code version: v1.14.8-codex.1 #}
+{# Code version: v1.14.9-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.81.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.81.2-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='notice-banner.js', v='notice-banner-v0.1.0-codex.1') }}"></script>
@@ -16,7 +16,7 @@
     <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.8.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.7.4-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.7.6-codex.1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -142,7 +142,7 @@
                                 id="cache_source_switcher_option_{{ source.key }}"
                                 class="trade-strategy-dropdown-option browser-source-filter-option{% if source.key == cache_source.key %} is-selected is-active{% endif %}"
                                 data-cache-source-switcher-option="{{ source.key }}"
-                                data-cache-source-switcher-path="{{ url_for('cache_source', source_key='chatgpt') if source.key == 'chatgpt' else (url_for('browser', view='text', session_view='1', q='', source=source.key, sort='newest') if cache_source.group_key == 'llm' and (source.group_key == 'llm' or source.include_in_llm_switcher) else url_for('cache_source', source_key=source.key)) }}"
+                                data-cache-source-switcher-path="{{ url_for('cache_source', source_key=cache_source.key) if source.key == cache_source.key else (url_for('cache_source', source_key='chatgpt') if source.key == 'chatgpt' else (url_for('browser', view='text', session_view='1', q='', source=source.key, sort='newest') if cache_source.group_key == 'llm' and (source.group_key == 'llm' or source.include_in_llm_switcher) else url_for('cache_source', source_key=source.key))) }}"
                                 role="option"
                                 aria-selected="{{ 'true' if source.key == cache_source.key else 'false' }}"
                                 tabindex="-1"
