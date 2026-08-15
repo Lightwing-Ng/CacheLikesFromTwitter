@@ -1,4 +1,4 @@
-/* Code version: v1.27.0-codex.1 */
+/* Code version: v1.27.1-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -102,7 +102,6 @@
     const sessionRefreshBanner = document.querySelector("[data-chatgpt-session-refresh-banner]");
     const sessionRefreshBannerTitle = sessionRefreshBanner?.querySelector("[data-session-refresh-title]");
     const sessionRefreshBannerCopy = sessionRefreshBanner?.querySelector("[data-session-refresh-copy]");
-    const sessionRefreshBannerDismiss = sessionRefreshBanner?.querySelector("[data-session-refresh-dismiss]");
     const sourceCopyButtons = Array.from(document.querySelectorAll("[data-media-copy-source-url]"));
     const revealButtons = Array.from(document.querySelectorAll("[data-media-reveal]"));
     const promptToggleButtons = Array.from(document.querySelectorAll("[data-media-prompt-toggle]"));
@@ -141,9 +140,6 @@
         window.history.replaceState({}, "", currentUrl.toString());
     }
 
-    sessionRefreshBannerDismiss?.addEventListener("click", () => {
-        sessionRefreshBanner.hidden = true;
-    });
     showSessionRefreshResult();
 
     async function refreshCurrentChatGPTSession(button) {

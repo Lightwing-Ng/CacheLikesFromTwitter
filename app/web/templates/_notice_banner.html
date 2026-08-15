@@ -1,0 +1,44 @@
+{# Code version: v0.1.0-codex.1 #}
+
+{% macro render_notice_banner(
+    title='',
+    title_id='',
+    title_attrs='',
+    icon_class='icon-modal-dialog-banner-default',
+    variant='notice',
+    banner_class='',
+    banner_attrs='',
+    close_label='Close notice',
+    close_attrs='',
+    element_id='',
+    icon_id='',
+    message_id='',
+    message_attrs='',
+    role='',
+    storage_key='',
+    is_hidden=false,
+    message_container=false,
+    numbered=true
+) -%}
+{% set color_class = 'error' if variant == 'error' else 'notice' %}
+<div{% if element_id %} id="{{ element_id }}"{% endif %}
+     class="{{ color_class }} notice-floating notice-floating-banner{% if banner_class %} {{ banner_class }}{% endif %}"
+     data-dismissible-notice{% if banner_attrs %} {{ banner_attrs|safe }}{% endif %}{% if storage_key %} data-notice-storage-key="{{ storage_key }}"{% endif %}{% if role %} role="{{ role }}"{% endif %}{% if role == 'status' %} aria-live="polite" aria-atomic="true"{% endif %}{% if is_hidden %} hidden{% endif %}>
+    <button type="button" class="dismiss-button notice-close" aria-label="{{ close_label }}"{% if close_attrs %} {{ close_attrs|safe }}{% endif %}>
+        <span class="icon icon-dismiss-control" aria-hidden="true"></span>
+    </button>
+    <span{% if icon_id %} id="{{ icon_id }}"{% endif %}
+          class="icon workspace-modal-icon notice-floating-banner-icon {{ icon_class }}"
+          aria-hidden="true"></span>
+    {% if message_container %}
+    <div{% if message_id %} id="{{ message_id }}"{% endif %} class="notice-floating-banner-content"{% if message_attrs %} {{ message_attrs|safe }}{% endif %}></div>
+    {% else %}
+    <div class="notice-floating-banner-content">
+        {% if title or title_id or title_attrs %}<p{% if title_id %} id="{{ title_id }}"{% endif %} class="notice-floating-banner-heading"{% if title_attrs %} {{ title_attrs|safe }}{% endif %}>{{ title }}</p>{% endif %}
+        {% if caller is defined %}
+            {% if numbered %}<div{% if message_id %} id="{{ message_id }}"{% endif %} class="notice-floating-banner-list"{% if message_attrs %} {{ message_attrs|safe }}{% endif %}>{{ caller() }}</div>{% else %}<p{% if message_id %} id="{{ message_id }}"{% endif %} class="notice-floating-banner-copy"{% if message_attrs %} {{ message_attrs|safe }}{% endif %}>{{ caller() }}</p>{% endif %}
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{%- endmacro %}

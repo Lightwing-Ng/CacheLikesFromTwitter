@@ -971,7 +971,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.80.9-codex.1 */",
+        "/* Code version: v2.81.0-codex.1 */",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
         "width: 22px;",

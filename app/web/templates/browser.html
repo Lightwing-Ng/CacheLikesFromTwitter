@@ -1,4 +1,4 @@
-<!-- Code version: v1.47.2-codex.2 -->
+<!-- Code version: v1.47.3-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,10 +8,11 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.80.9-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.81.0-codex.1') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.2.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='notice-banner.js', v='notice-banner-v0.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.27.1-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
@@ -22,6 +23,7 @@
 <body>
 {% include "_sidebar_bootstrap.html" %}
 {% from "_pagination.html" import render_browser_pagination %}
+{% from "_notice_banner.html" import render_notice_banner %}
 <main class="page">
     <div class="ambient ambient-left" aria-hidden="true"></div>
     <div class="ambient ambient-right" aria-hidden="true"></div>
@@ -835,28 +837,18 @@
     <script id="browser_search_suggestion_data" type="application/json">{{ browser_search_suggestions | tojson }}</script>
 </main>
 
-<div
-    class="notice-floating notice-floating-banner notice-floating-banner-global browser-session-refresh-banner"
-    data-chatgpt-session-refresh-banner
-    role="status"
-    aria-live="polite"
-    aria-atomic="true"
-    hidden
->
-    <button
-        type="button"
-        class="workspace-modal-close browser-session-refresh-banner-close"
-        data-session-refresh-dismiss
-        aria-label="Close refresh result"
-    >
-        <span class="cache-wait-modal-close-icon" aria-hidden="true"></span>
-    </button>
-    <span class="icon workspace-modal-icon browser-session-refresh-banner-icon" aria-hidden="true"></span>
-    <div class="browser-session-refresh-banner-content">
-        <p class="browser-session-refresh-banner-heading" data-session-refresh-title></p>
-        <p class="browser-session-refresh-banner-copy" data-session-refresh-copy></p>
-    </div>
-</div>
+{% call render_notice_banner(
+    icon_class="browser-session-refresh-banner-icon",
+    banner_class="notice-floating-banner-global browser-session-refresh-banner",
+    banner_attrs="data-chatgpt-session-refresh-banner",
+    close_label="Close refresh result",
+    close_attrs="data-session-refresh-dismiss",
+    title_attrs="data-session-refresh-title",
+    message_attrs="data-session-refresh-copy",
+    role="status",
+    is_hidden=true,
+    numbered=false
+) %}{% endcall %}
 
 <dialog class="browser-dialog" id="browser_detail_dialog" aria-labelledby="browser_dialog_title">
     <button type="button" class="browser-dialog-close dismiss-button" data-dialog-close aria-label="Close media details">×</button>

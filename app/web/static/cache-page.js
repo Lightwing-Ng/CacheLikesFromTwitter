@@ -1,4 +1,4 @@
-/* Code version: v1.7.4-codex.1 */
+/* Code version: v1.7.5-codex.1 */
 
 (() => {
     "use strict";
@@ -10,7 +10,6 @@
     const sourceLabel = page.dataset.cacheSourceLabel || "Cache";
     const statusUrl = page.dataset.cacheStatusUrl || "";
     const progressStrategyName = page.dataset.cacheProgressStrategy || "queue";
-    const statusBannerStorageKey = page.dataset.cacheBannerStorageKey || `cachelikes:${sourceKey}:status-banner-dismissed`;
     const recentEventsPageSize = 12;
     const statusPollIntervalMs = 3_000;
     const terminalPhases = new Set(["finished", "completed", "success", "stopped"]);
@@ -19,8 +18,6 @@
     const phaseChip = document.getElementById("phase_chip");
     const bannerPhase = document.getElementById("banner_phase");
     const bannerMessage = document.getElementById("banner_message");
-    const statusBanner = document.getElementById("status_banner");
-    const statusBannerDismiss = document.getElementById("status_banner_dismiss");
     const phaseValue = document.getElementById("phase_value");
     const startButton = document.getElementById("start_button");
     const stopButton = document.getElementById("stop_button");
@@ -120,27 +117,6 @@
     function formatMetricNumber(value) {
         const parsed = Number(value);
         return Number.isFinite(parsed) ? numberFormatter.format(parsed) : "0";
-    }
-
-    function setStatusBannerVisible(isVisible, options = {}) {
-        if (!statusBanner) return;
-        const { persist = true } = options;
-        statusBanner.hidden = !isVisible;
-        statusBanner.setAttribute("aria-hidden", String(!isVisible));
-        if (!persist) return;
-        try {
-            window.sessionStorage.setItem(statusBannerStorageKey, String(!isVisible));
-        } catch (_error) {
-        }
-    }
-
-    function restoreStatusBannerState() {
-        try {
-            if (window.sessionStorage.getItem(statusBannerStorageKey) === "true") {
-                setStatusBannerVisible(false, { persist: false });
-            }
-        } catch (_error) {
-        }
     }
 
     function setPhaseState(phase) {
@@ -716,7 +692,6 @@
         }
     }
 
-    statusBannerDismiss?.addEventListener("click", () => setStatusBannerVisible(false));
     window.addEventListener(
         "resize",
         () => positionRecentEventsPaginationIndicator({ immediate: true }),
@@ -725,7 +700,6 @@
     document.addEventListener("visibilitychange", handleVisibilityChange);
     window.addEventListener("pagehide", () => window.clearTimeout(statusPollTimer), { once: true });
 
-    restoreStatusBannerState();
     initializeCacheSourceSwitcher();
     initializeSectionTracking();
     setRecentEvents(readInitialEvents());
