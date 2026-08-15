@@ -33,7 +33,8 @@ registers the local-media browser, and serves the Flask routes.
   `app/core/chatgpt_downloader.py`: source-specific cache acquisition, recovery state, and
   content validation.
 - `app/core/chatgpt_agent_sources.py`: authenticated browser-mediated catalogs of the 20 most
-  recent root ChatGPT sessions, projects, and project sessions for the Agent sidebar.
+  recent root ChatGPT sessions, projects, and project sessions for the Agent sidebar. Its Agent
+  bootstrap combines ChatGPT readiness and root-catalog collection in one browser context.
 - `app/core/agent_session_sources.py`: the provider-neutral Agent session and Project adapter;
   it maps ChatGPT Projects, Gemini Notebooks, and Grok Projects into one URL and source contract.
 - `app/core/agent_source_cache.py`: the shared typed Parquet catalog for Agent recent sessions,
@@ -191,6 +192,10 @@ path: process memory, the shared Parquet catalog, and the authenticated browser 
 key, and use stale-while-revalidate after expiry. They accept `refresh=1` for an explicit synchronous
 browser re-check. A failed refresh falls back to the last known entry and marks the response as
 stale; no remote conversation messages are written by this catalog.
+The ChatGPT `/agent` status route performs the account probe and root source collection together
+for one browser launch, returns the catalog to the page, and seeds the same cache through its
+explicit `store` path. This keeps the status request and Recent sessions selection on one browser
+opening; Project-session loading remains isolated by its canonical Project URL key.
 Chromium tasks clone the selected Edge or Chrome profile into an offscreen, minimized temporary
 context, suppress browser prompts, and clean the task-owned profile on exit. Stale cleanup is
 restricted to abandoned application-prefixed temporary directories older than 24 hours; the

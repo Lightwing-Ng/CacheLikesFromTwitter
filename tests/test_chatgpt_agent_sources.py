@@ -1,9 +1,13 @@
 """Focused tests for the Agent's ChatGPT Web source catalog.
 
-Code version: v1.0.0-codex.2
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
+
+from contextlib import nullcontext
+import json
+from unittest.mock import patch
 
 from app.core.chatgpt_agent_sources import (
     _collect_projects,
@@ -14,7 +18,9 @@ from app.core.chatgpt_agent_sources import (
     _fetch_conversation_history,
     normalize_chatgpt_conversation_url,
     normalize_chatgpt_project_url,
+    probe_and_collect_chatgpt_sources,
 )
+from app.core.config import CrawlConfig
 
 
 class _Response:
@@ -50,6 +56,30 @@ class _Page:
         return []
 
 
+class _BootstrapPage:
+    def __init__(self) -> None:
+        self.waits: list[int] = []
+
+    def goto(self, *_args, **_kwargs) -> None:
+        return None
+
+    def evaluate(self, _script: str) -> dict[str, object]:
+        return {
+            "ok": True,
+            "status": 200,
+            "bodyText": json.dumps({"accessToken": "fixture-token"}),
+            "error": "",
+        }
+
+    def wait_for_timeout(self, milliseconds: int) -> None:
+        self.waits.append(milliseconds)
+
+
+class _BootstrapContext:
+    def __init__(self, page: _BootstrapPage) -> None:
+        self.pages = [page]
+
+
 def test_chatgpt_source_urls_are_canonical_and_scoped() -> None:
     assert normalize_chatgpt_project_url(
         "https://www.chatgpt.com/g/g-p-demo/project/?utm_source=agent"
@@ -59,6 +89,34 @@ def test_chatgpt_source_urls_are_canonical_and_scoped() -> None:
     ) == "https://chatgpt.com/g/g-p-demo/c/session-1"
     assert normalize_chatgpt_project_url("https://chatgpt.com/c/not-a-project") == ""
     assert normalize_chatgpt_conversation_url("https://example.com/c/session-1") == ""
+
+
+def test_chatgpt_status_and_sources_share_one_chromium_context() -> None:
+    page = _BootstrapPage()
+    context = _BootstrapContext(page)
+    source_payload = {
+        "browser_label": "Edge",
+        "recent_sessions": [{"id": "recent-1"}],
+        "projects": [],
+        "limit": 20,
+    }
+    with patch(
+        "app.core.chatgpt_agent_sources.sync_playwright_or_error",
+        return_value=nullcontext(object()),
+    ) as playwright_factory, patch(
+        "app.core.chatgpt_agent_sources.launch_chromium_context",
+        return_value=nullcontext(context),
+    ) as launch_context, patch(
+        "app.core.chatgpt_agent_sources._collect_sources",
+        return_value=source_payload,
+    ) as collect_sources:
+        status, sources = probe_and_collect_chatgpt_sources("edge", CrawlConfig())
+
+    assert status["can_download"] is True
+    assert sources == {**source_payload, "platform": "chatgpt"}
+    playwright_factory.assert_called_once()
+    launch_context.assert_called_once()
+    collect_sources.assert_called_once_with(context, page, "Edge")
 
 
 def test_root_sessions_filter_project_sessions_and_limit_to_twenty() -> None:

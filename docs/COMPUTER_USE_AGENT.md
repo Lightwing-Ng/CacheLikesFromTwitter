@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.10.0-codex.4`
+Documentation version: `v3.11.0-codex.1`
 
 ## Purpose
 
@@ -25,6 +25,12 @@ serve the last catalog while one background refresh runs per key. Add `refresh=1
 `/api/agent/sources` or `/api/agent/project-sessions` request when a synchronous browser re-check
 is required. If that refresh fails and an older entry exists, the API returns the older catalog
 with `cache.status: "stale"` so the selector remains usable and the condition stays observable.
+
+On `/agent`, ChatGPT uses an agent-scoped bootstrap request: the selected Edge/Chrome/Safari
+context verifies the account and collects Recent sessions and Projects in one launch. The status
+payload carries that catalog directly to the selector, and the same payload seeds the shared L1 and
+Parquet L2 cache. The page therefore does not open a second browser for the Recent sessions step.
+Loading sessions inside a selected Project remains a later, separately keyed operation.
 
 This route uses no API, command-line coding-agent runtime, MCP connection, or third-party agent bridge.
 ChatGPT plan limits, file-upload limits, data controls, storage, and retention still apply.

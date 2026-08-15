@@ -1,4 +1,4 @@
-<!-- Code version: v3.11.0-codex.1 -->
+<!-- Code version: v3.12.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -109,7 +109,7 @@
                     </label>
                     <label class="field">
                         <span class="field-label">Browser</span>
-                        <div class="agent-browser-session-field" data-agent-browser-session data-browser-session-platform="{{ settings.platform }}">
+                        <div class="agent-browser-session-field" data-agent-browser-session data-browser-session-platform="{{ settings.platform }}" data-browser-session-scope="agent">
                         <div class="trade-strategy-combobox agent-combobox agent-browser-combobox" data-agent-combobox>
                             <input type="hidden" name="browser" value="{{ settings.browser }}" data-agent-combobox-input>
                             {% set selected_browser = browser_options | selectattr('key', 'equalto', settings.browser) | list | first %}
@@ -406,9 +406,9 @@
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.16.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.0.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.2.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.3.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.11.0-codex.2') }}"></script>
+<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.12.0-codex.1') }}"></script>
 </body>
 </html>

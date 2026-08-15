@@ -71,6 +71,10 @@ to override it. A successful unlock is stored in the signed Flask session for th
   `/api/agent/project-sessions` for an intentional synchronous Edge/Chrome/Safari re-check. The
   response's `cache.status` is `hit`, `miss`, `refreshed`, or `stale`; a stale response means the
   browser check failed or is still refreshing while the previous catalog was retained.
+- ChatGPT on `/agent` uses one agent-scoped browser bootstrap through Recent sessions: the same
+  browser context verifies readiness, collects the root session/project catalog, returns it to the
+  selector, and seeds the memory/Parquet cache. A second browser launch is reserved for a later
+  Project-session selection or an explicit refresh.
 
 ## Local data
 

@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.38.0-codex.1
+# Code version: v1.39.0-codex.1
 
 from __future__ import annotations
 
@@ -42,6 +42,7 @@ from app.core.chatgpt_agent_sources import (
     list_chatgpt_agent_sources,
     list_chatgpt_project_sessions,
     normalize_chatgpt_conversation_url,
+    probe_and_collect_chatgpt_sources,
 )
 from app.core.chatgpt_service import ChatGPTDownloadService
 from app.core.chat_history_browser import (
@@ -1591,6 +1592,28 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def api_browser_session():
         platform_name = request.args.get("platform", "").strip().lower()
         browser_name = request.args.get("browser", "").strip().lower()
+        scope = request.args.get("scope", "").strip().lower()
+        if scope == "agent" and platform_name == "chatgpt":
+            try:
+                payload, source_payload = probe_and_collect_chatgpt_sources(
+                    browser_name,
+                    saved_config,
+                )
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            if source_payload is not None:
+                agent_source_cache.store(
+                    platform="chatgpt",
+                    browser=browser_name,
+                    source_kind="sources",
+                    payload=source_payload,
+                )
+                payload["agent_sources"] = source_payload
+            elif payload.get("can_download"):
+                payload["agent_sources_error"] = (
+                    "ChatGPT is signed in, but Recent sessions could not be loaded from this browser."
+                )
+            return jsonify(payload)
         try:
             payload = probe_browser_session(platform_name, browser_name, saved_config)
         except ValueError as exc:

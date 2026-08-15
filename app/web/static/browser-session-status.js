@@ -1,4 +1,4 @@
-/* Code version: v1.2.0-codex.1 */
+/* Code version: v1.3.0-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v4:";
@@ -40,11 +40,14 @@
         }
     }
 
-    function requestBrowserStatus(platform, browserId) {
-        const requestKey = `${platform}:${browserId}`;
+    function requestBrowserStatus(platform, browserId, scope) {
+        const requestScope = scope || "default";
+        const requestKey = `${requestScope}:${platform}:${browserId}`;
         if (statusRequests.has(requestKey)) return statusRequests.get(requestKey);
+        const query = new URLSearchParams({platform, browser: browserId});
+        if (scope) query.set("scope", scope);
         const request = fetch(
-            `/api/browser-session?platform=${encodeURIComponent(platform)}&browser=${encodeURIComponent(browserId)}`,
+            `/api/browser-session?${query.toString()}`,
             {cache: "no-store"},
         )
             .then(async (response) => {
@@ -73,6 +76,7 @@
         const startButton = startButtonSelector ? document.querySelector(startButtonSelector) : null;
         const startButtonInitiallyDisabled = startButton ? startButton.disabled : false;
         const onStateChange = typeof options.onStateChange === "function" ? options.onStateChange : null;
+        const scope = String(options.scope || root.dataset.browserSessionScope || "").trim().toLowerCase();
         let activeBrowser = "";
         let lastPayload = null;
 
@@ -159,7 +163,7 @@
             }
 
             const requestPlatform = platform;
-            const cacheKey = `${SESSION_CACHE_PREFIX}${requestPlatform}:${activeBrowser}`;
+            const cacheKey = `${SESSION_CACHE_PREFIX}${scope || "default"}:${requestPlatform}:${activeBrowser}`;
             const cachedStatus = readCachedStatus(cacheKey);
             if (cachedStatus && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
                 setStatus(cachedStatus.payload, activeBrowser);
@@ -170,7 +174,7 @@
             }
 
             try {
-                const payload = await requestBrowserStatus(requestPlatform, activeBrowser);
+                const payload = await requestBrowserStatus(requestPlatform, activeBrowser, scope);
                 writeSessionValue(cacheKey, JSON.stringify({cached_at: Date.now(), payload}));
                 if (activeBrowser !== browserId || platform !== requestPlatform) return;
                 setStatus(payload, browserId);

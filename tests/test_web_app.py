@@ -325,7 +325,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.2.0-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.3.0-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -729,11 +729,12 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.2.0-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.3.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.11.0-codex.2', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.12.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
+        self.assertIn('data-browser-session-scope="agent"', local_body)
         self.assertIn('data-role="browser-session-account"', local_body)
         self.assertIn('data-browser-session-account-label="ChatGPT"', local_body)
         self.assertIn('data-agent-terminal-execution-status', local_body)
@@ -1017,7 +1018,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.11.0-codex.2',
+            'computer-use-agent-v3.12.0-codex.1',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'suggestion-loading-spinner agent-empty-response-spinner',
@@ -1160,6 +1161,45 @@ class WebAppTests(unittest.TestCase):
         sources.assert_called_once()
         self.assertEqual(sources.call_args.args[:2], ("gemini", "edge"))
 
+    def test_agent_chatgpt_status_bootstraps_sources_into_the_shared_cache(self) -> None:
+        status_payload = {
+            "platform": "chatgpt",
+            "browser": "edge",
+            "browser_label": "Edge",
+            "logged_in": True,
+            "can_download": True,
+            "account_name": "ChatGPT account",
+            "message": "Ready",
+        }
+        source_payload = {
+            "platform": "chatgpt",
+            "browser_label": "Edge",
+            "recent_sessions": [{"id": "recent-1"}],
+            "projects": [],
+            "limit": 20,
+        }
+        with TemporaryDirectory() as raw_root:
+            app = create_app(Path(raw_root) / "local_store")
+            with patch(
+                "app.web.app.probe_and_collect_chatgpt_sources",
+                return_value=(status_payload, source_payload),
+            ) as bootstrap, patch("app.web.app.list_agent_sources") as sources:
+                with app.test_client() as client:
+                    status_response = client.get(
+                        "/api/browser-session?platform=chatgpt&browser=edge&scope=agent"
+                    )
+                    catalog_response = client.get(
+                        "/api/agent/sources?platform=chatgpt&browser=edge"
+                    )
+
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(status_response.get_json()["agent_sources"], source_payload)
+        self.assertEqual(catalog_response.status_code, 200)
+        self.assertEqual(catalog_response.get_json()["recent_sessions"], [{"id": "recent-1"}])
+        self.assertEqual(catalog_response.get_json()["cache"]["status"], "hit")
+        bootstrap.assert_called_once()
+        sources.assert_not_called()
+
     def test_agent_provider_source_route_reuses_parquet_until_explicit_refresh(self) -> None:
         first_payload = {
             "platform": "gemini",
@@ -1261,6 +1301,9 @@ class WebAppTests(unittest.TestCase):
             'data-pagination-range-menu',
             "paginationMotion?.capturePaginationAnimation(",
             "bindCompletedAgentSession(agent)",
+            "function applyAgentSources(payload)",
+            "lastBrowserStatus?.agent_sources",
+            "lastBrowserStatus?.agent_sources_error",
             "loadSelectedSessionHistory(input.value)",
             "/api/agent/chatgpt-session-history?",
             "Loading the selected ChatGPT session history…",

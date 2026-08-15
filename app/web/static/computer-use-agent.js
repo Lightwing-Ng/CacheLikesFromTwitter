@@ -1,4 +1,4 @@
-/* Code version: v3.11.0-codex.1 */
+/* Code version: v3.12.0-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -827,6 +827,41 @@
         }
     }
 
+    function applyAgentSources(payload) {
+        const sourcePayload = payload && typeof payload === "object"
+            ? payload
+            : {recent_sessions: [], projects: []};
+        agentSources = sourcePayload;
+        populateListCombobox(
+            elements.recentSessionCombobox,
+            sourcePayload.recent_sessions,
+            "No recent sessions found",
+        );
+        populateListCombobox(
+            elements.projectCombobox,
+            sourcePayload.projects,
+            "No recent projects found",
+        );
+        sourcesLoaded = true;
+    }
+
+    function applyAgentSourcesError(message) {
+        agentSources = {recent_sessions: [], projects: []};
+        setComboboxValue(
+            elements.recentSessionCombobox,
+            "",
+            message || "Could not load Recent sessions",
+        );
+        setComboboxValue(
+            elements.projectCombobox,
+            "",
+            "Recent projects are unavailable",
+        );
+        setComboboxLoading(elements.recentSessionCombobox, false);
+        setComboboxLoading(elements.projectCombobox, false);
+        sourcesLoaded = true;
+    }
+
     async function loadAgentSources() {
         if (!lastBrowserStatus?.can_download || !selectedBrowser()) return;
         if (
@@ -842,9 +877,19 @@
         const browserName = selectedBrowser();
         const platform = selectedPlatform();
         const platformLabel = selectedPlatformLabel();
-        const requestId = ++sourceRequestId;
+        const bootstrappedSources = lastBrowserStatus?.agent_sources;
+        const bootstrappedError = lastBrowserStatus?.agent_sources_error;
         sourceBrowser = browserName;
         sourcePlatform = platform;
+        if (bootstrappedSources && platform === "chatgpt") {
+            applyAgentSources(bootstrappedSources);
+            return;
+        }
+        if (bootstrappedError && platform === "chatgpt") {
+            applyAgentSourcesError(String(bootstrappedError));
+            return;
+        }
+        const requestId = ++sourceRequestId;
         sourcesLoading = true;
         if (elements.recentSessionCombobox) {
             const trigger = elements.recentSessionCombobox.querySelector("[data-agent-combobox-trigger]");
@@ -872,25 +917,10 @@
                 || browserName !== selectedBrowser()
                 || platform !== selectedPlatform()
             ) return;
-            agentSources = payload;
-            populateListCombobox(
-                elements.recentSessionCombobox,
-                payload.recent_sessions,
-                "No recent sessions found",
-            );
-            populateListCombobox(
-                elements.projectCombobox,
-                payload.projects,
-                "No recent projects found",
-            );
-            sourcesLoaded = true;
+            applyAgentSources(payload);
         } catch (_error) {
             if (requestId !== sourceRequestId) return;
-            agentSources = {recent_sessions: [], projects: []};
-            setComboboxValue(elements.recentSessionCombobox, "", `Could not load ${platformLabel} sessions`);
-            setComboboxValue(elements.projectCombobox, "", `Could not load ${platformLabel} projects`);
-            setComboboxLoading(elements.recentSessionCombobox, false);
-            setComboboxLoading(elements.projectCombobox, false);
+            applyAgentSourcesError(`Could not load ${platformLabel} sessions`);
         } finally {
             if (requestId === sourceRequestId) sourcesLoading = false;
         }

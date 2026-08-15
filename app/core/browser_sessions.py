@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.13.0-codex.2
+# Code version: v1.14.0-codex.1
 
 from __future__ import annotations
 
@@ -295,6 +295,70 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
             raise RuntimeError(f"Could not detect the signed-in Grok account from {descriptor.label}.")
 
 
+def _read_chatgpt_auth_payload(page: Any, browser_label: str) -> dict[str, Any]:
+    """Read the authenticated ChatGPT session from the active page context."""
+    auth_result = page.evaluate(
+        """async () => {
+            try {
+                const response = await fetch('/api/auth/session', {
+                    credentials: 'include',
+                    cache: 'no-store',
+                    headers: { Accept: 'application/json' },
+                });
+                return {
+                    ok: response.ok,
+                    status: response.status,
+                    bodyText: await response.text(),
+                    error: '',
+                };
+            } catch (error) {
+                return {
+                    ok: false,
+                    status: 0,
+                    bodyText: '',
+                    error: String(error && error.message ? error.message : error),
+                };
+            }
+        }"""
+    )
+    if not isinstance(auth_result, dict) or not auth_result.get("ok"):
+        error_text = str(auth_result.get("error") or "") if isinstance(auth_result, dict) else ""
+        status = int(auth_result.get("status") or 0) if isinstance(auth_result, dict) else 0
+        raise RuntimeError(
+            f"{browser_label} could not verify the ChatGPT session in-page "
+            f"(HTTP {status or 'unavailable'}{f': {error_text}' if error_text else ''})."
+        )
+    return _parse_chatgpt_auth_response(True, str(auth_result.get("bodyText") or ""))
+
+
+def _parse_chatgpt_auth_response(response_ok: bool, body_text: str) -> dict[str, Any]:
+    """Decode the small ChatGPT auth response used by the status probe."""
+    try:
+        payload = json.loads(body_text) if response_ok else {}
+    except (json.JSONDecodeError, TypeError, ValueError):
+        payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _chatgpt_status_payload(browser_label: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Convert ChatGPT auth JSON into the shared browser-readiness contract."""
+    if not str(payload.get("accessToken") or "").strip():
+        return {
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "ChatGPT account",
+            "message": (
+                f"{browser_label} opened ChatGPT but did not expose an authorized account."
+            ),
+        }
+    return {
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": f"The ChatGPT account is ready in the selected {browser_label} browser.",
+    }
+
+
 def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -> dict[str, Any]:
     """Validate ChatGPT authorization in the selected browser."""
     del config
@@ -310,10 +374,7 @@ def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -
                 timeout=60_000,
                 headers={"Accept": "application/json", "Referer": project_url},
             )
-            try:
-                payload = json.loads(response.text()) if response.ok else {}
-            except (json.JSONDecodeError, TypeError, ValueError):
-                payload = {}
+            payload = _parse_chatgpt_auth_response(response.ok, response.text())
     elif descriptor.engine == "chromium":
         with sync_playwright_or_error() as playwright:
             with launch_chromium_context(
@@ -325,41 +386,7 @@ def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -
             ) as context:
                 page = context.pages[0] if context.pages else context.new_page()
                 goto_with_retry(page, project_url, attempts=2, timeout_ms=30_000)
-                auth_result = page.evaluate(
-                    """async () => {
-                        try {
-                            const response = await fetch('/api/auth/session', {
-                                credentials: 'include',
-                                cache: 'no-store',
-                                headers: { Accept: 'application/json' },
-                            });
-                            return {
-                                ok: response.ok,
-                                status: response.status,
-                                bodyText: await response.text(),
-                                error: '',
-                            };
-                        } catch (error) {
-                            return {
-                                ok: false,
-                                status: 0,
-                                bodyText: '',
-                                error: String(error && error.message ? error.message : error),
-                            };
-                        }
-                    }"""
-                )
-                if not isinstance(auth_result, dict) or not auth_result.get("ok"):
-                    error_text = str(auth_result.get("error") or "") if isinstance(auth_result, dict) else ""
-                    status = int(auth_result.get("status") or 0) if isinstance(auth_result, dict) else 0
-                    raise RuntimeError(
-                        f"{descriptor.label} could not verify the ChatGPT session in-page "
-                        f"(HTTP {status or 'unavailable'}{f': {error_text}' if error_text else ''})."
-                    )
-                try:
-                    payload = json.loads(str(auth_result.get("bodyText") or ""))
-                except (json.JSONDecodeError, TypeError, ValueError):
-                    payload = {}
+                payload = _read_chatgpt_auth_payload(page, descriptor.label)
     else:
         return {
             "logged_in": False,
@@ -368,22 +395,7 @@ def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -
             "message": f"ChatGPT sync does not support {descriptor.label}.",
         }
 
-    if not isinstance(payload, dict) or not str(payload.get("accessToken") or "").strip():
-        return {
-            "logged_in": False,
-            "can_download": False,
-            "account_name": "ChatGPT account",
-            "message": (
-                f"{descriptor.label} opened ChatGPT but did not expose an authorized account."
-            ),
-        }
-
-    return {
-        "logged_in": True,
-        "can_download": True,
-        "account_name": "ChatGPT account",
-        "message": f"The ChatGPT account is ready in the selected {descriptor.label} browser.",
-    }
+    return _chatgpt_status_payload(descriptor.label, payload)
 
 
 def _probe_safari_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:

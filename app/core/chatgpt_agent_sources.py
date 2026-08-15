@@ -1,6 +1,6 @@
 """Read ChatGPT Web sessions, projects, and conversation history for the local Agent.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -11,6 +11,10 @@ from typing import Any
 from urllib.parse import urlencode, urlsplit
 
 from .browser_sessions import (
+    CHATGPT_AUTH_SESSION_URL,
+    _chatgpt_status_payload,
+    _parse_chatgpt_auth_response,
+    _read_chatgpt_auth_payload,
     browser_descriptors,
     goto_with_retry,
     launch_chromium_context,
@@ -48,6 +52,72 @@ CHATGPT_CONVERSATION_PATH_PATTERN = re.compile(
     r"^/(?:g/[^/]+/)?c/[^/]+/?$",
     re.IGNORECASE,
 )
+
+
+def probe_and_collect_chatgpt_sources(
+    browser_name: str,
+    config: CrawlConfig,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Verify ChatGPT and collect Agent sources through one browser launch.
+
+    The Agent page needs both browser readiness and recent-session discovery.
+    Keeping those operations inside one context prevents the status request and
+    the following source request from launching separate Chromium processes.
+    """
+    descriptor = browser_descriptors(config).get(str(browser_name or "").strip().lower())
+    if descriptor is None:
+        raise ValueError(f"Unsupported browser: {browser_name}")
+
+    status = {
+        "platform": "chatgpt",
+        "browser": descriptor.browser_id,
+        "browser_label": descriptor.label,
+        "icon_filename": descriptor.icon_filename,
+        "logged_in": False,
+        "can_download": False,
+        "account_name": "ChatGPT account",
+        "message": "",
+    }
+    try:
+        if descriptor.engine == "safari":
+            with SafariContext(CHATGPT_HOME_URL) as context:
+                page = context.primary_page
+                page.goto(CHATGPT_HOME_URL, wait_until="domcontentloaded", timeout=90_000)
+                page.wait_for_load_state("domcontentloaded", 90_000)
+                response = context.request.get(
+                    CHATGPT_AUTH_SESSION_URL,
+                    timeout=60_000,
+                    headers={"Accept": "application/json", "Referer": CHATGPT_HOME_URL},
+                )
+                payload = _parse_chatgpt_auth_response(response.ok, response.text())
+                status.update(_chatgpt_status_payload(descriptor.label, payload))
+                if not status["can_download"]:
+                    return status, None
+                page.wait_for_timeout(1_000)
+                return status, {**_collect_sources(context, page, descriptor.label), "platform": "chatgpt"}
+
+        if descriptor.engine != "chromium":
+            raise ValueError(f"ChatGPT Agent sources do not support {descriptor.label}.")
+
+        with sync_playwright_or_error() as playwright:
+            with launch_chromium_context(
+                playwright,
+                descriptor,
+                headless=False,
+                clone_profile_first=True,
+                background_window=True,
+            ) as context:
+                page = context.pages[0] if context.pages else context.new_page()
+                goto_with_retry(page, CHATGPT_HOME_URL, attempts=2, timeout_ms=90_000)
+                payload = _read_chatgpt_auth_payload(page, descriptor.label)
+                status.update(_chatgpt_status_payload(descriptor.label, payload))
+                if not status["can_download"]:
+                    return status, None
+                page.wait_for_timeout(1_000)
+                return status, {**_collect_sources(context, page, descriptor.label), "platform": "chatgpt"}
+    except Exception as exc:  # pragma: no cover - depends on local browser state
+        status["message"] = str(exc)
+        return status, None
 
 
 def list_chatgpt_agent_sources(browser_name: str, config: CrawlConfig) -> dict[str, Any]:

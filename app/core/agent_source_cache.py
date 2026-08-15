@@ -1,6 +1,6 @@
 """Read-through Parquet cache for Web Agent source discovery.
 
-Code version: v2.0.0-codex.2
+Code version: v2.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -111,6 +111,32 @@ class AgentSourceCache:
         self._refreshing: set[AgentSourceCacheKey] = set()
         self._refresh_failed_at: dict[AgentSourceCacheKey, datetime] = {}
         self._catalog_loaded = False
+
+    def store(
+        self,
+        *,
+        platform: str,
+        browser: str,
+        source_kind: str,
+        payload: dict[str, Any],
+        project_url: str = "",
+        now: datetime | None = None,
+    ) -> None:
+        """Publish an already collected catalog into L1 and the Parquet L2 cache."""
+        key = AgentSourceCacheKey.from_values(platform, browser, source_kind, project_url)
+        cached_at = _as_utc(now) if now is not None else _utc_now()
+        with self._condition:
+            self._load_catalog_locked()
+            self._entries[key] = AgentSourceCacheEntry(
+                payload=dict(payload),
+                cached_at=cached_at,
+            )
+            self._disk_loaded_keys.discard(key)
+            self._refresh_failed_at.pop(key, None)
+            try:
+                self._persist_catalog_locked()
+            except (OSError, RuntimeError, pa.ArrowException) as exc:
+                LOGGER.warning("Could not persist Agent source cache: %s", exc)
 
     def get_or_collect(
         self,

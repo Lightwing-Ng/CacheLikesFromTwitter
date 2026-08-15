@@ -1,6 +1,6 @@
 """Focused tests for the persistent Agent source cache."""
 
-# Code version: v2.0.0-codex.2
+# Code version: v2.1.0-codex.1
 
 from __future__ import annotations
 
@@ -57,6 +57,30 @@ class AgentSourceCacheTests(unittest.TestCase):
         self.assertEqual(second["cache"]["status"], "hit")
         self.assertEqual(second["recent_sessions"], [{"id": "session-1"}])
         collector.assert_called_once()
+
+    def test_store_seeds_memory_and_parquet_without_a_second_collection(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            cache = AgentSourceCache(raw_root)
+            cache.store(
+                platform="chatgpt",
+                browser="edge",
+                source_kind="sources",
+                payload={"platform": "chatgpt", "recent_sessions": [{"id": "seeded"}]},
+                now=datetime(2026, 8, 15, 2, 0, tzinfo=timezone.utc),
+            )
+            collector = Mock(return_value={"recent_sessions": [{"id": "unexpected"}]})
+            response = AgentSourceCache(raw_root).get_or_collect(
+                platform="chatgpt",
+                browser="edge",
+                source_kind="sources",
+                collector=collector,
+                now=datetime(2026, 8, 15, 2, 1, tzinfo=timezone.utc),
+            )
+
+        self.assertEqual(response["recent_sessions"], [{"id": "seeded"}])
+        self.assertEqual(response["cache"]["status"], "hit")
+        self.assertEqual(response["cache"]["layer"], "parquet")
+        collector.assert_not_called()
 
     def test_refresh_replaces_entry_and_failed_refresh_returns_stale_payload(self) -> None:
         with TemporaryDirectory() as raw_root:
