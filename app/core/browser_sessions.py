@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.14.0-codex.1
+# Code version: v1.15.0-codex.1
 
 from __future__ import annotations
 
@@ -132,7 +132,13 @@ def browser_descriptors(config: CrawlConfig) -> dict[str, BrowserDescriptor]:
     }
 
 
-def probe_browser_session(platform_name: str, browser_name: str, config: CrawlConfig) -> dict[str, Any]:
+def probe_browser_session(
+    platform_name: str,
+    browser_name: str,
+    config: CrawlConfig,
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
     """Probe whether one browser is signed in for the requested platform."""
     descriptors = browser_descriptors(config)
     descriptor = descriptors.get(browser_name)
@@ -156,9 +162,9 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
 
     try:
         if platform_key == "chatgpt":
-            result.update(_probe_chatgpt_session(descriptor, config))
+            result.update(_probe_chatgpt_session(descriptor, config, silent=silent))
         elif platform_key == "gemini":
-            result.update(_probe_gemini_session(descriptor, config))
+            result.update(_probe_gemini_session(descriptor, config, silent=silent))
         elif descriptor.engine == "safari":
             if platform_key == "x":
                 result.update(_probe_safari_x_session(descriptor))
@@ -167,7 +173,7 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
         elif platform_key == "x":
             result.update(_probe_chromium_x_session(descriptor))
         else:
-            result.update(_probe_chromium_grok_session(descriptor))
+            result.update(_probe_chromium_grok_session(descriptor, silent=silent))
     except Exception as exc:  # pragma: no cover - depends on local browser state
         result["message"] = str(exc)
         return result
@@ -180,7 +186,12 @@ def probe_browser_session(platform_name: str, browser_name: str, config: CrawlCo
     return result
 
 
-def _probe_gemini_session(descriptor: BrowserDescriptor, config: CrawlConfig) -> dict[str, Any]:
+def _probe_gemini_session(
+    descriptor: BrowserDescriptor,
+    config: CrawlConfig,
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
     """Verify that the selected browser exposes an authenticated Gemini page."""
     from .gemini_downloader import _wait_for_gemini_ready
 
@@ -197,6 +208,7 @@ def _probe_gemini_session(descriptor: BrowserDescriptor, config: CrawlConfig) ->
                 headless=False,
                 clone_profile_first=True,
                 background_window=True,
+                silent=silent,
             ) as context:
                 page = context.pages[0] if context.pages else context.new_page()
                 goto_with_retry(page, GEMINI_HOME_URL, attempts=2, timeout_ms=60_000)
@@ -251,7 +263,11 @@ def _probe_chromium_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
             }
 
 
-def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
+def _probe_chromium_grok_session(
+    descriptor: BrowserDescriptor,
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
     """Probe a Grok session from a Chromium-family browser profile."""
     with sync_playwright_or_error() as playwright:
         with launch_chromium_context(
@@ -260,6 +276,7 @@ def _probe_chromium_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any
             headless=True,
             clone_profile_first=True,
             background_window=True,
+            silent=silent,
         ) as context:
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, GROK_FILES_URL)
@@ -359,7 +376,12 @@ def _chatgpt_status_payload(browser_label: str, payload: dict[str, Any]) -> dict
     }
 
 
-def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -> dict[str, Any]:
+def _probe_chatgpt_session(
+    descriptor: BrowserDescriptor,
+    config: CrawlConfig,
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
     """Validate ChatGPT authorization in the selected browser."""
     del config
     project_url = CHATGPT_HOME_URL
@@ -383,6 +405,7 @@ def _probe_chatgpt_session(descriptor: BrowserDescriptor, config: CrawlConfig) -
                 headless=False,
                 clone_profile_first=True,
                 background_window=True,
+                silent=silent,
             ) as context:
                 page = context.pages[0] if context.pages else context.new_page()
                 goto_with_retry(page, project_url, attempts=2, timeout_ms=30_000)
@@ -570,6 +593,7 @@ def launch_chromium_context(
     headless: bool,
     clone_profile_first: bool = True,
     background_window: bool = True,
+    silent: bool = False,
 ):
     """Launch an isolated Chromium-family browser without surfacing its window."""
     user_data_dir = descriptor.user_data_dir
@@ -581,11 +605,16 @@ def launch_chromium_context(
     temp_profile_dir: tempfile.TemporaryDirectory[str] | None = None
 
     def do_launch(target_user_data_dir: Path):
+        effective_headless = headless
+        effective_background_window = background_window or (silent and descriptor.browser_id == "edge")
         return playwright.chromium.launch_persistent_context(
             user_data_dir=str(target_user_data_dir),
             channel=descriptor.channel,
-            headless=headless,
-            args=build_chromium_launch_args(descriptor, background_window=background_window),
+            headless=effective_headless,
+            args=build_chromium_launch_args(
+                descriptor,
+                background_window=effective_background_window,
+            ),
             ignore_default_args=["--use-mock-keychain", "--password-store=basic"],
             viewport={"width": 1440, "height": 1200},
         )

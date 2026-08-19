@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.11.0-codex.1`
+Documentation version: `v3.14.0-codex.1`
 
 ## Purpose
 
@@ -14,7 +14,9 @@ The default is a new root-level session. Every provider can also join one of the
 sessions, start a session in one of the 20 most recent Projects, or join one of that Project's 20
 most recent sessions. The adapter maps ChatGPT Projects, Gemini Notebooks, and Grok Projects to
 the same Project contract, so the Agent UI and execution loop do not expose provider-specific
-container names. The selected Web provider supplies reasoning; a bounded local macOS controller
+container names. A run-scoped `session_title` is preserved as the local session label and included
+in the first provider message; the provider may still choose its own remote conversation title. The
+selected Web provider supplies reasoning; a bounded local macOS controller
 performs project actions and returns compact observations to the same conversation.
 
 The recent-session, Project, and Project-session catalogs use one shared read-through Parquet cache
@@ -35,9 +37,17 @@ Loading sessions inside a selected Project remains a later, separately keyed ope
 This route uses no API, command-line coding-agent runtime, MCP connection, or third-party agent bridge.
 ChatGPT plan limits, file-upload limits, data controls, storage, and retention still apply.
 
+## Canonical navigation
+
+The Agent entrypoint is scoped by the selected browser and Web provider. The canonical form is
+`/agent/<browser>/<platform>`, such as `/agent/edge/chatgpt`; the legacy `/agent` path redirects to
+the persisted selection. Changing either selector updates the canonical path without reloading the
+page, so a copied URL preserves the intended Edge/ChatGPT selection.
+
 ## Execution loop
 
-1. Select one local project, a Web provider/model, and an authenticated browser on `/agent`.
+1. Select one local project, a Web provider/model, and an authenticated browser on the canonical
+   Agent route.
    Configure the operating system in Settings → Agent; the setting detects the host and selects
    macOS or Windows automatically. If local permissions are needed, explicitly use `Open terminal
    permissions` in Settings → Agent. macOS opens Full Disk Access for the Terminal that starts
@@ -48,14 +58,18 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
 2. Keep `New session` or choose a recent session/Project and, for a Project, either
    `New session in project` or one of its recent sessions.
 3. Enter a task. The service validates the selected provider's official URL and opens it in the
-   selected browser profile.
+   selected browser profile. When a request switches away from the persisted provider, the service
+   resets a stale previous-provider target URL to the new provider's official home before
+   validation.
 4. The service builds one owner-readable Markdown context package containing the request,
    repository instruction files, a bounded file index, dirty-worktree status, and project entry
    files.
 5. Chromium browsers attach the package directly when the selected provider exposes a file input,
    wait for the attachment to enable Send, click the semantic send control, and confirm that the
-   provider accepted the prompt. If direct attachment is unavailable, the controller requests
-   only the bounded files needed for the next action.
+   provider accepted the prompt. Grok uses its live `textarea` and `chat-submit`/`Submit` contract;
+   if that control is briefly absent after a follow-up observation, the controller falls back to
+   pressing Enter and still verifies prompt acceptance. If direct attachment is unavailable, the
+   controller requests only the bounded files needed for the next action.
 6. The selected Web provider returns exactly one JSON action at a time. The controller supports `list`, `read`,
    `search`, `replace`, `write`, `run`, `bodycheck`, and `final`.
 7. A malformed non-JSON reply receives up to three strict-format corrections without spending the
@@ -116,12 +130,13 @@ blocked on a macOS host until a PowerShell-backed controller and Windows browser
 are implemented and verified.
 
 Edge and Chrome run through an isolated clone of the selected signed-in profile and operate the
-selected provider's DOM directly. Their task windows are offscreen, minimized, and configured not
-to surface first-run, crash, notification, or repost prompts, so they do not steal focus or
-interrupt normal macOS use. The user's original profile is never opened for writing. A normal task
-exit closes the isolated context and removes its temporary profile; the next Chromium launch removes
-only abandoned `cachelikes-edge-*` or `cachelikes-chrome-*` directories older than 24 hours. Safari
-uses Apple Events and remains available only for ChatGPT's existing session flows.
+selected provider's DOM directly. Agent Edge and Chrome tasks use offscreen, minimized temporary
+contexts, with first-run, crash, notification, and repost prompts disabled, so they do not create a
+visible Stage Manager window, take focus, or interrupt normal macOS use. The user's original profile
+is never opened for writing. A normal task exit closes the isolated context and removes its
+temporary profile; the next Chromium launch removes only abandoned `cachelikes-edge-*` or
+`cachelikes-chrome-*` directories older than 24 hours. Safari uses Apple Events and remains available
+only for ChatGPT's existing session flows.
 
 The model selector is provider-specific: ChatGPT exposes `5.6 Sol`, Gemini exposes `3.1 Pro`, and
 Grok exposes `Auto`. The controller selects the requested model only when the provider exposes a
@@ -140,3 +155,9 @@ read-only capability probes verified signed-in sessions, composers, send control
 behavior for ChatGPT, Gemini, and Grok in both Edge and Chrome on 14 Aug 2026. The probes did not
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
+
+On 19 Aug 2026, the named `08.19 Agentic` Edge tasks completed a 38-turn ChatGPT audit and a
+9-turn Gemini audit with `bodycheck`. Grok completed its first read action and the live Submit/Enter
+fallback was verified, but Grok Auto remained in a long second-turn thinking state during two
+bounded audits; this provider-specific runtime limitation remains observable and is not reported
+as a completed full audit.

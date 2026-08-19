@@ -1,6 +1,19 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.1.1-codex.2`
+Documentation version: `v1.1.2-codex.1`
+
+## Agentic provider audit and Grok Auto follow-up limitation on 19 Aug 2026
+
+- The canonical Agent URL now preserves the selected browser and Web provider, such as
+  `/agent/edge/chatgpt`; Edge tasks use an isolated offscreen, minimized clone and restore the
+  persisted default to Edge + ChatGPT after provider-specific audits.
+- Switching the Agent provider now resets a stale previous-provider target URL before official-host
+  validation. Grok's live textarea and Submit control also have a bounded Enter fallback for a
+  briefly absent follow-up button.
+- Real named `08.19 Agentic` Edge tasks completed ChatGPT and Gemini read-only audits with
+  `bodycheck`. Grok opened the signed-in conversation and completed its first read action, but
+  Grok Auto stayed in a long second-turn thinking state in two bounded audits; the task was
+  stopped safely and must not be presented as a complete Grok audit.
 
 ## Touch-safe iPad sidebar contract established on 12 Aug 2026
 

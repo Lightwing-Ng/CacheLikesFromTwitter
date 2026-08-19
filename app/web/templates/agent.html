@@ -1,4 +1,4 @@
-<!-- Code version: v3.12.0-codex.1 -->
+<!-- Code version: v3.14.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.81.2-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
 </head>
@@ -17,7 +17,7 @@
 {% set selected_platform = platform_options | selectattr('key', 'equalto', settings.platform) | list | first %}
 {% set selected_model_options = model_options_by_platform.get(settings.platform, ()) %}
 {% set selected_model = selected_model_options | selectattr('key', 'equalto', settings.model) | list | first %}
-<main class="page agent-page">
+<main class="page agent-page" data-agent-route-prefix="/agent">
     <button type="button" class="sidebar-toggle" id="sidebar_toggle" aria-label="Toggle sidebar" aria-expanded="true">
         <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
     </button>
@@ -175,21 +175,21 @@
                             >
                                 <span class="browser-session-trigger-leading">
                                     <span class="browser-picker-selected-icon-shell">
-                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/plus.circle.svg') }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
+                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/clock.svg') }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
                                     </span>
                                     <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>New session</span>
                                 </span>
                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
                             <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose a session source" hidden>
-                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active" data-agent-combobox-option="new" data-agent-combobox-label="New session" data-agent-combobox-icon="{{ url_for('static', filename='images/plus.circle.svg') }}" role="option" aria-selected="true" tabindex="-1">
+                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active" data-agent-combobox-option="new" data-agent-combobox-label="New session" data-agent-combobox-icon="{{ url_for('static', filename='images/clock.svg') }}" role="option" aria-selected="true" tabindex="-1">
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/plus.circle.svg') }}" alt="" aria-hidden="true">
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/clock.svg') }}" alt="" aria-hidden="true">
                                     <span class="trade-strategy-dropdown-text">New session</span>
                                 </button>
-                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option" data-agent-combobox-option="recent" data-agent-combobox-label="Recent sessions" data-agent-combobox-icon="{{ url_for('static', filename='images/rectangle.grid.1x3.fill.svg') }}" role="option" aria-selected="false" tabindex="-1">
+                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option" data-agent-combobox-option="recent" data-agent-combobox-label="Recent sessions" data-agent-combobox-icon="{{ url_for('static', filename='images/clock.fill.svg') }}" role="option" aria-selected="false" tabindex="-1">
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/rectangle.grid.1x3.fill.svg') }}" alt="" aria-hidden="true">
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/clock.fill.svg') }}" alt="" aria-hidden="true">
                                     <span class="trade-strategy-dropdown-text">Recent sessions</span>
                                 </button>
                                 <button type="button" class="trade-strategy-dropdown-option agent-combobox-option" data-agent-combobox-option="project" data-agent-combobox-label="Recent projects" data-agent-combobox-icon="{{ url_for('static', filename='images/rectangle.grid.3x2.fill.svg') }}" role="option" aria-selected="false" tabindex="-1">
@@ -404,11 +404,11 @@
     {% include "_sidebar_dock.html" %}
 </main>
 {% include "_waiting_modal.html" %}
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.16.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.17.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.0.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.3.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.4.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.12.0-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.14.0-codex.1') }}"></script>
 </body>
 </html>

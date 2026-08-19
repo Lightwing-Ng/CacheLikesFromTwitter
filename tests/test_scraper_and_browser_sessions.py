@@ -221,6 +221,50 @@ def test_chromium_context_defaults_to_an_isolated_background_profile(tmp_path: P
     assert not temporary_profile_root.exists()
 
 
+def test_silent_edge_chromium_context_is_backgrounded_without_stealing_focus(
+    tmp_path: Path,
+) -> None:
+    source_user_data_dir = tmp_path / "Edge"
+    source_profile_dir = source_user_data_dir / "Default"
+    source_profile_dir.mkdir(parents=True)
+    (source_profile_dir / "Preferences").write_text("{}", encoding="utf-8")
+    descriptor = BrowserDescriptor(
+        browser_id="edge",
+        label="Edge",
+        icon_filename="images/browser.edge.png",
+        engine="chromium",
+        user_data_dir=source_user_data_dir,
+        profile_directory="Default",
+        channel="msedge",
+    )
+    context = SimpleNamespace(close=lambda: None)
+
+    class Chromium:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def launch_persistent_context(self, **kwargs):
+            self.calls.append(kwargs)
+            return context
+
+    chromium = Chromium()
+    playwright = SimpleNamespace(chromium=chromium)
+
+    with launch_chromium_context(
+        playwright,
+        descriptor,
+        headless=False,
+        silent=True,
+    ) as launched_context:
+        assert launched_context is context
+
+    launch_kwargs = chromium.calls[0]
+    assert launch_kwargs["headless"] is False
+    assert "--profile-directory=Default" in launch_kwargs["args"]
+    assert "--window-position=-32000,-32000" in launch_kwargs["args"]
+    assert "--start-minimized" in launch_kwargs["args"]
+
+
 def test_stale_chromium_profiles_are_removed_without_touching_other_temp_paths(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

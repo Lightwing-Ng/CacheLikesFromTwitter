@@ -1,4 +1,4 @@
-/* Code version: v3.12.0-codex.1 */
+/* Code version: v3.14.0-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -6,6 +6,7 @@
     if (!runtimeForm || !promptForm) return;
 
     const elements = {
+        agentPage: document.querySelector("[data-agent-route-prefix]"),
         phaseChip: document.getElementById("agent_phase_chip"),
         statusMessage: document.getElementById("agent_empty_response"),
         statusMessageCopy: document.querySelector("[data-agent-empty-response-copy]"),
@@ -121,12 +122,31 @@
         return selectedValue(".agent-platform-combobox", "chatgpt");
     }
 
+    function normalizeAgentSelection() {
+        if (selectedPlatform() === "chatgpt" || selectedBrowser() !== "safari") return;
+        const browserCombobox = document.querySelector(".agent-browser-combobox");
+        const edgeOption = browserCombobox?.querySelector('[data-agent-combobox-option="edge"]');
+        const browserInput = browserCombobox?.querySelector("[data-agent-combobox-input]");
+        if (!(browserInput instanceof HTMLInputElement) || !edgeOption) return;
+        browserInput.value = "edge";
+        syncComboboxTriggerFromOption(browserCombobox, edgeOption);
+    }
+
     function selectedModel() {
         return selectedValue(".agent-model-combobox", "gpt-5.6-sol");
     }
 
     function selectedPlatformLabel() {
         return document.querySelector(".agent-platform-combobox [data-agent-combobox-selected-label]")?.textContent?.trim() || "Web AI";
+    }
+
+    function syncAgentRoute() {
+        const routePrefix = String(elements.agentPage?.dataset.agentRoutePrefix || "/agent").replace(/\/$/, "");
+        const nextPath = `${routePrefix}/${encodeURIComponent(selectedBrowser())}/${encodeURIComponent(selectedPlatform())}`;
+        const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        if (currentPath === nextPath) return;
+        window.history.replaceState({}, "", nextPath);
+        window.dispatchEvent(new Event("popstate"));
     }
 
     function selectedPlatformHomeUrl() {
@@ -654,7 +674,10 @@
                 input.value = option.dataset.agentComboboxOption || "";
                 syncComboboxTriggerFromOption(combobox, option);
                 closeCombobox(combobox);
+                normalizeAgentSelection();
                 syncExecutionChoices();
+                const isRouteSelection = combobox.classList.contains("agent-platform-combobox")
+                    || combobox.classList.contains("agent-browser-combobox");
                 schedulePreferenceSave();
                 if (combobox.classList.contains("agent-platform-combobox")) {
                     sessionTitleOverride = "";
@@ -691,6 +714,7 @@
                     setComboboxLoading(elements.projectCombobox, true);
                     browserStatusController?.setBrowser(selectedBrowser());
                 }
+                if (isRouteSelection) syncAgentRoute();
                 if (combobox.classList.contains("agent-session-mode-combobox")) {
                     sessionTitleOverride = "";
                     resetRemoteSessionHistory();
@@ -1593,6 +1617,7 @@
     updateSessionChoiceInputs();
     syncProjectPath(elements.projectPath?.value || elements.workspacePath?.value || "");
     syncExecutionChoices();
+    syncAgentRoute();
     resizePrompt();
 
     async function pollStatus() {

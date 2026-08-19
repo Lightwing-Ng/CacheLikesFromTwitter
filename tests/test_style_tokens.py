@@ -30,6 +30,8 @@ def test_typography_matches_the_sibling_font_contract() -> None:
         "--font-size-7: 32px;",
         "--font-size-8: 36px;",
         '--font-family-brand: "Univers Next for HSBC";',
+        '--font-family-cjk: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;',
+        '--font-family-mono-cjk: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", monospace;',
         "--font-ui-md: var(--font-size-4);",
         "--font-ui-lg: var(--font-size-5);",
         "--font-title-md: var(--font-size-6);",
@@ -947,11 +949,13 @@ def test_browser_workspace_prefers_simplified_chinese_font_fallbacks() -> None:
     stylesheet = _stylesheet()
     workspace_start = stylesheet.index(".browser-workspace {")
     workspace_rule = stylesheet[workspace_start:stylesheet.index("\n}", workspace_start)]
-    font_family = 'font-family: var(--font-family-brand), "Helvetica Neue", Helvetica, Arial, "PingFang SC", "PingFang TC", "PingFang HK", "Microsoft YaHei", "Microsoft JhengHei", sans-serif;'
+    font_family = 'font-family: var(--font-family-brand), var(--font-family-cjk), "Helvetica Neue", Helvetica, Arial, "PingFang HK", "PingFang TC", "Microsoft JhengHei", sans-serif;'
 
     assert font_family in workspace_rule
-    assert workspace_rule.index('"PingFang SC"') < workspace_rule.index('"PingFang HK"')
-    assert workspace_rule.index('"Microsoft YaHei"') < workspace_rule.index('"Microsoft JhengHei"')
+    cjk_token_start = stylesheet.index('--font-family-cjk:')
+    cjk_token = stylesheet[cjk_token_start:stylesheet.index("\n", cjk_token_start)]
+    assert cjk_token.index('"PingFang SC"') < cjk_token.index('"Microsoft YaHei"')
+    assert cjk_token.index('"Microsoft YaHei"') < cjk_token.index('"Noto Sans CJK SC"')
 
 
 def test_browser_summary_card_aligns_pagination_with_the_sidebar_dock() -> None:
@@ -990,7 +994,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.81.2-codex.1 */",
+        "/* Code version: v2.82.0-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',

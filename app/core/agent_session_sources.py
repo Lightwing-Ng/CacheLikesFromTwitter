@@ -1,6 +1,6 @@
 """Provider-neutral Web Agent Project and session discovery.
 
-Code version: v1.1.0-codex.4
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -130,6 +130,8 @@ def list_agent_sources(
     platform: str,
     browser_name: str,
     config: CrawlConfig,
+    *,
+    silent: bool = False,
 ) -> dict[str, Any]:
     """Return a shared recent-session payload for one provider and browser."""
     platform_key = str(platform or "").strip().lower()
@@ -137,12 +139,12 @@ def list_agent_sources(
         raise ValueError("Choose ChatGPT, Gemini, or Grok for the Web Agent.")
 
     if platform_key == "chatgpt":
-        payload = dict(list_chatgpt_agent_sources(browser_name, config))
+        payload = dict(list_chatgpt_agent_sources(browser_name, config, silent=silent))
         payload["platform"] = platform_key
         return payload
     if platform_key == "gemini":
-        return _list_gemini_agent_sources(browser_name, config)
-    return _list_grok_agent_sources(browser_name, config)
+        return _list_gemini_agent_sources(browser_name, config, silent=silent)
+    return _list_grok_agent_sources(browser_name, config, silent=silent)
 
 
 def list_agent_project_sessions(
@@ -150,6 +152,8 @@ def list_agent_project_sessions(
     browser_name: str,
     project_url: str,
     config: CrawlConfig,
+    *,
+    silent: bool = False,
 ) -> dict[str, Any]:
     """Return sessions inside one provider Project through one shared contract."""
     platform_key = str(platform or "").strip().lower()
@@ -160,15 +164,37 @@ def list_agent_project_sessions(
         platform_label = AGENT_SOURCE_PLATFORM_LABELS[platform_key]
         raise ValueError(f"Choose a valid {platform_label} Project before loading its sessions.")
     if platform_key == "chatgpt":
-        payload = dict(list_chatgpt_project_sessions(browser_name, normalized_project_url, config))
+        payload = dict(
+            list_chatgpt_project_sessions(
+                browser_name,
+                normalized_project_url,
+                config,
+                silent=silent,
+            )
+        )
         payload["platform"] = platform_key
         return payload
     if platform_key == "gemini":
-        return _list_gemini_project_sessions(browser_name, normalized_project_url, config)
-    return _list_grok_project_sessions(browser_name, normalized_project_url, config)
+        return _list_gemini_project_sessions(
+            browser_name,
+            normalized_project_url,
+            config,
+            silent=silent,
+        )
+    return _list_grok_project_sessions(
+        browser_name,
+        normalized_project_url,
+        config,
+        silent=silent,
+    )
 
 
-def _list_gemini_agent_sources(browser_name: str, config: CrawlConfig) -> dict[str, Any]:
+def _list_gemini_agent_sources(
+    browser_name: str,
+    config: CrawlConfig,
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
     """Collect Gemini's rendered recent-session links through the shared crawler."""
     capped_config = replace(
         config,
@@ -182,6 +208,7 @@ def _list_gemini_agent_sources(browser_name: str, config: CrawlConfig) -> dict[s
         capped_config,
         GEMINI_HOME_URL,
         lambda page: _collect_gemini_sources(page, capped_config),
+        silent=silent,
     )
     sessions = _normalize_session_rows("gemini", _snapshot_rows(snapshot, "recent_sessions"))
     projects = _snapshot_rows(snapshot, "projects")
@@ -194,13 +221,19 @@ def _list_gemini_agent_sources(browser_name: str, config: CrawlConfig) -> dict[s
     }
 
 
-def _list_grok_agent_sources(browser_name: str, config: CrawlConfig) -> dict[str, Any]:
+def _list_grok_agent_sources(
+    browser_name: str,
+    config: CrawlConfig,
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
     """Collect Grok's recent root-level conversations from its authenticated API."""
     snapshot = _run_chromium_source_collection(
         browser_name,
         config,
         GROK_HOME_URL,
         _collect_grok_sources,
+        silent=silent,
     )
     sessions = _normalize_session_rows("grok", _snapshot_rows(snapshot, "recent_sessions"))
     projects = _snapshot_rows(snapshot, "projects")
@@ -217,12 +250,15 @@ def _list_gemini_project_sessions(
     browser_name: str,
     project_url: str,
     config: CrawlConfig,
+    *,
+    silent: bool = False,
 ) -> dict[str, Any]:
     sessions = _run_chromium_source_collection(
         browser_name,
         config,
         project_url,
         lambda page: _read_gemini_project_session_links(page, project_url),
+        silent=silent,
     )
     return {
         "platform": "gemini",
@@ -236,12 +272,15 @@ def _list_grok_project_sessions(
     browser_name: str,
     project_url: str,
     config: CrawlConfig,
+    *,
+    silent: bool = False,
 ) -> dict[str, Any]:
     sessions = _run_chromium_source_collection(
         browser_name,
         config,
         project_url,
         lambda page: _read_grok_project_session_links(page, project_url),
+        silent=silent,
     )
     return {
         "platform": "grok",
@@ -539,6 +578,8 @@ def _run_chromium_source_collection(
     config: CrawlConfig,
     home_url: str,
     collector: Callable[[Any], Any],
+    *,
+    silent: bool = False,
 ) -> Any:
     """Run one authenticated source collector in the selected Chromium profile."""
     descriptor = browser_descriptors(config).get(str(browser_name or "").strip().lower())
@@ -554,6 +595,7 @@ def _run_chromium_source_collection(
             headless=False,
             clone_profile_first=True,
             background_window=True,
+            silent=silent,
         ) as context:
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, home_url, attempts=2, timeout_ms=90_000)

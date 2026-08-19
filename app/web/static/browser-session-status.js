@@ -1,7 +1,7 @@
-/* Code version: v1.3.0-codex.1 */
+/* Code version: v1.4.0-codex.1 */
 
 (() => {
-    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v4:";
+    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v5:";
     const SESSION_CACHE_TTL_MS = 300_000;
     const SESSION_STALE_MAX_AGE_MS = 1_800_000;
     const statusRequests = new Map();

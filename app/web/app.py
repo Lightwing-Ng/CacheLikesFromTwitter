@@ -110,6 +110,7 @@ from app.web.cache_sources import (
     get_cache_source_label,
     get_cache_source_view,
 )
+from app.web.navigation import build_agent_path, is_supported_agent_selection
 
 
 CACHE_RECONCILE_PHASES = {"idle", "finished", "completed", "success", "stopped"}
@@ -422,6 +423,41 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     app.extensions["computer_use_settings"] = computer_use_settings
     app.extensions["computer_use_agent_service"] = computer_use_agent_service
     atexit.register(computer_use_agent_service.stop_at_exit)
+
+    def agent_settings_for_route(browser: str, platform: str):
+        """Render one canonical Agent route without mutating persisted preferences."""
+        current = computer_use_settings.settings
+        selected_platform = next(
+            option for option in AGENT_PLATFORM_OPTIONS if option["key"] == platform
+        )
+        selected_models = AGENT_MODEL_OPTIONS_BY_PLATFORM[platform]
+        selected_model = next(
+            (option["key"] for option in selected_models if option["key"] == current.model),
+            selected_models[0]["key"],
+        )
+        target_url = (
+            current.target_url
+            if current.platform == platform
+            else str(selected_platform["home_url"])
+        )
+        return replace(
+            current,
+            browser=browser,
+            platform=platform,
+            model=selected_model,
+            target_url=target_url,
+        )
+
+    @app.template_global("agent_entry_url")
+    def agent_entry_url() -> str:
+        """Return the canonical Agent URL for the current route or saved selection."""
+        route_args = request.view_args or {}
+        browser = str(route_args.get("browser") or computer_use_settings.settings.browser).strip().lower()
+        platform = str(route_args.get("platform") or computer_use_settings.settings.platform).strip().lower()
+        if not is_supported_agent_selection(browser, platform):
+            browser = computer_use_settings.settings.browser
+            platform = computer_use_settings.settings.platform
+        return url_for("agent_selected", browser=browser, platform=platform)
     cache_runtimes = {
         "x": CacheRuntimeAdapter(
             state=state,
@@ -818,12 +854,9 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         snapshot["history"] = rendered_history
         return snapshot
 
-    @app.get("/agent")
-    def agent():
-        require_local_agent_request(allow_locked=True)
-        if not is_agent_access_unlocked():
-            return render_agent_access_unlock()
-        agent_settings = computer_use_settings.settings
+    def render_agent_page(browser: str, platform: str):
+        """Render one Agent page using the browser/provider encoded by its URL."""
+        agent_settings = agent_settings_for_route(browser, platform)
         runtime_snapshot = computer_use_settings.snapshot()
         return render_template(
             "agent.html",
@@ -841,6 +874,25 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             render_prompt_markdown=render_prompt_markdown,
         )
 
+    @app.get("/agent")
+    def agent():
+        """Redirect the legacy Agent entrypoint to the canonical selection URL."""
+        require_local_agent_request(allow_locked=True)
+        if not is_agent_access_unlocked():
+            return render_agent_access_unlock()
+        settings = computer_use_settings.settings
+        return redirect(build_agent_path(settings.browser, settings.platform))
+
+    @app.get("/agent/<browser>/<platform>")
+    def agent_selected(browser: str, platform: str):
+        """Render the Agent page for one explicit browser/provider selection."""
+        require_local_agent_request(allow_locked=True)
+        if not is_supported_agent_selection(browser, platform):
+            abort(404)
+        if not is_agent_access_unlocked():
+            return render_agent_access_unlock()
+        return render_agent_page(browser.strip().lower(), platform.strip().lower())
+
     @app.post("/agent/unlock")
     def unlock_agent():
         """Unlock the Agent control plane for the current private-network session."""
@@ -848,7 +900,15 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         if not validate_agent_access_password(request.form.get("password")):
             return render_agent_access_unlock("The password is incorrect.", status_code=401)
         session[AGENT_ACCESS_SESSION_KEY] = True
-        return redirect(url_for("agent"), code=303)
+        settings = computer_use_settings.settings
+        return redirect(
+            url_for(
+                "agent_selected",
+                browser=settings.browser,
+                platform=settings.platform,
+            ),
+            code=303,
+        )
 
     @app.get("/api/agent/status")
     def agent_status():
@@ -953,7 +1013,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 browser=browser_name,
                 source_kind="sources",
                 collector=lambda: {
-                    **list_chatgpt_agent_sources(browser_name, saved_config),
+                    **list_chatgpt_agent_sources(browser_name, saved_config, silent=True),
                     "platform": "chatgpt",
                 },
             )
@@ -972,7 +1032,12 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 platform=platform,
                 browser=browser_name,
                 source_kind="sources",
-                collector=lambda: list_agent_sources(platform, browser_name, saved_config),
+                collector=lambda: list_agent_sources(
+                    platform,
+                    browser_name,
+                    saved_config,
+                    silent=True,
+                ),
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
@@ -992,7 +1057,12 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 source_kind="project-sessions",
                 project_url=normalized_project_url or project_url,
                 collector=lambda: {
-                    **list_chatgpt_project_sessions(browser_name, project_url, saved_config),
+                    **list_chatgpt_project_sessions(
+                        browser_name,
+                        project_url,
+                        saved_config,
+                        silent=True,
+                    ),
                     "platform": "chatgpt",
                 },
             )
@@ -1014,7 +1084,13 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 browser=browser_name,
                 source_kind="project-sessions",
                 project_url=normalized_project_url or project_url,
-                collector=lambda: list_agent_project_sessions(platform, browser_name, project_url, saved_config),
+                collector=lambda: list_agent_project_sessions(
+                    platform,
+                    browser_name,
+                    project_url,
+                    saved_config,
+                    silent=True,
+                ),
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
@@ -1035,6 +1111,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 browser_name,
                 conversation_url,
                 saved_config,
+                silent=True,
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
@@ -1598,6 +1675,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 payload, source_payload = probe_and_collect_chatgpt_sources(
                     browser_name,
                     saved_config,
+                    silent=True,
                 )
             except ValueError as exc:
                 return jsonify({"error": str(exc)}), 400
@@ -1615,7 +1693,12 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 )
             return jsonify(payload)
         try:
-            payload = probe_browser_session(platform_name, browser_name, saved_config)
+            payload = probe_browser_session(
+                platform_name,
+                browser_name,
+                saved_config,
+                silent=scope == "agent",
+            )
         except ValueError as exc:
             return jsonify({"error": str(exc)}), 400
         return jsonify(payload)

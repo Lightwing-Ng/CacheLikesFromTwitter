@@ -1,6 +1,6 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.7.0-codex.1
+# Code version: v1.8.0-codex.1
 
 from __future__ import annotations
 
@@ -155,7 +155,7 @@ def normalize_chat_history_sort(value: str | None) -> str:
 
 
 def format_chat_message_timestamp_label(value: str | None) -> str:
-    """Format a cached message timestamp as ``DD Mmm yyyy HH:MM`` in UTC."""
+    """Format a cached UTC timestamp as ``DD Mmm yyyy HH:MM`` in local time."""
     from datetime import UTC, datetime
 
     try:
@@ -164,7 +164,7 @@ def format_chat_message_timestamp_label(value: str | None) -> str:
         return "Unknown time"
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
-    parsed = parsed.astimezone(UTC)
+    parsed = parsed.astimezone()
     return f"{parsed.day:02d} {_ENGLISH_MONTHS[parsed.month - 1]} {parsed.year} {parsed.hour:02d}:{parsed.minute:02d}"
 
 

@@ -159,7 +159,7 @@ class WebAppTests(unittest.TestCase):
                 client.get("/cache/x"),
                 client.get("/browser"),
                 client.get("/settings"),
-                client.get("/agent"),
+                client.get("/agent", follow_redirects=True),
             )
 
         favicon_markup = FAVICON_ASSET_PATH.read_text(encoding="utf-8")
@@ -181,7 +181,7 @@ class WebAppTests(unittest.TestCase):
                 client.get("/cache/x"),
                 client.get("/browser"),
                 client.get("/settings"),
-                client.get("/agent"),
+                client.get("/agent", follow_redirects=True),
             )
 
         for response in responses:
@@ -203,6 +203,31 @@ class WebAppTests(unittest.TestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)
+
+    def test_agent_uses_canonical_browser_provider_paths(self) -> None:
+        with patch(
+            "app.core.computer_use_agent.load_computer_use_settings",
+            return_value=ComputerUseSettings(browser="edge", platform="chatgpt"),
+        ):
+            app = create_app()
+
+        with app.test_client() as client:
+            legacy = client.get("/agent")
+            selected = client.get("/agent/edge/gemini")
+            invalid = client.get("/agent/safari/gemini")
+
+        self.assertEqual(legacy.status_code, 302)
+        self.assertEqual(legacy.headers["Location"], "/agent/edge/chatgpt")
+        self.assertEqual(selected.status_code, 200)
+        body = selected.get_data(as_text=True)
+        self.assertIn(
+            'name="platform" value="gemini" data-agent-combobox-input data-agent-platform-input',
+            body,
+        )
+        self.assertIn('name="browser" value="edge"', body)
+        self.assertIn('data-browser-session-platform="gemini"', body)
+        self.assertIn('href="/agent/edge/gemini"', body)
+        self.assertEqual(invalid.status_code, 404)
 
     def test_chatgpt_notice_names_the_selected_background_browser(self) -> None:
         with patch(
@@ -229,7 +254,7 @@ class WebAppTests(unittest.TestCase):
                 index_response = client.get("/cache/x")
                 settings_response = client.get("/settings")
                 browser_response = client.get("/browser?view=media")
-                agent_response = client.get("/agent")
+                agent_response = client.get("/agent", follow_redirects=True)
 
         grok_body = grok_response.get_data(as_text=True)
         chatgpt_body = chatgpt_response.get_data(as_text=True)
@@ -327,7 +352,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.3.0-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -425,10 +450,10 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('aria-haspopup', dock_markup)
                 self.assertNotIn('aria-expanded', dock_markup)
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
-                self.assertIn('src="/static/sidebar.js?v=sidebar-v1.16.0-codex.1"', body)
+                self.assertIn('src="/static/sidebar.js?v=sidebar-v1.17.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.81.2-codex.1"
+                    "style-v2.82.0-codex.1"
                 )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
@@ -447,7 +472,7 @@ class WebAppTests(unittest.TestCase):
             "const shouldShowBackdrop = sidebarOverlayMedia.matches && isSidebarOpen;",
             'const dockLocationMemoryPrefix = "cachelikes:dock-location:v1:";',
             'const dockSections = new Set(["agent", "cache", "local-resources", "settings"]);',
-            'if (section === "agent") return "/agent";',
+            'const agentRoutePattern = /^\\/agent\\/(?:safari\\/chatgpt|(?:edge|chrome)\\/(?:chatgpt|gemini|grok))$/;',
             'const localResourceFilterNames = ["view", "source", "kind", "q", "sort", "session_view"];',
             'const cacheSectionPaths = new Set(["/cache/x", "/cache/grok", "/cache/chatgpt", "/cache/gemini"]);',
             'if (targetUrl.pathname === "/browser") return "/cache/chatgpt";',
@@ -627,13 +652,17 @@ class WebAppTests(unittest.TestCase):
                     )
 
     def test_agent_control_plane_allows_private_lan_with_password(self) -> None:
-        app = create_app()
+        with patch(
+            "app.core.computer_use_agent.load_computer_use_settings",
+            return_value=ComputerUseSettings(browser="edge", platform="chatgpt"),
+        ):
+            app = create_app()
 
         lan_environ = {"REMOTE_ADDR": "192.168.124.20"}
         lan_headers = {"Host": "192.168.124.10:8666"}
         with patch.dict("os.environ", {"CACHELIKES_AGENT_PASSWORD": "195135"}):
             with app.test_client() as client:
-                local_page = client.get("/agent")
+                local_page = client.get("/agent", follow_redirects=True)
                 local_status = client.get("/api/agent/status")
                 removed_reveal = client.post("/api/agent/owner-token/reveal")
                 lan_page = client.get(
@@ -660,6 +689,7 @@ class WebAppTests(unittest.TestCase):
                 )
                 unlocked_lan_page = client.get(
                     "/agent",
+                    follow_redirects=True,
                     headers=lan_headers,
                     environ_overrides=lan_environ,
                 )
@@ -688,7 +718,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(lan_status.status_code, 401)
         self.assertEqual(wrong_unlock.status_code, 401)
         self.assertEqual(correct_unlock.status_code, 303)
-        self.assertEqual(correct_unlock.headers["Location"], "/agent")
+        self.assertEqual(correct_unlock.headers["Location"], "/agent/edge/chatgpt")
         self.assertIn("HttpOnly", correct_unlock.headers["Set-Cookie"])
         self.assertIn("SameSite=Lax", correct_unlock.headers["Set-Cookie"])
         self.assertEqual(unlocked_lan_page.status_code, 200)
@@ -746,9 +776,9 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.3.0-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.12.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.14.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -821,7 +851,7 @@ class WebAppTests(unittest.TestCase):
         app = create_app()
 
         with app.test_client() as client:
-            response = client.get("/agent")
+            response = client.get("/agent", follow_redirects=True)
 
         self.assertEqual(response.status_code, 200)
         body = response.get_data(as_text=True)
@@ -1023,7 +1053,7 @@ class WebAppTests(unittest.TestCase):
         script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
 
         with app.test_client() as client:
-            body = client.get("/agent").get_data(as_text=True)
+            body = client.get("/agent", follow_redirects=True).get_data(as_text=True)
 
         for fragment in (
             'data-agent-session-mode',
@@ -1035,9 +1065,11 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.12.0-codex.1',
-            'data-agent-combobox-icon="/static/images/plus.circle.svg"',
-            'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
+            'computer-use-agent-v3.14.0-codex.1',
+            'data-agent-combobox-icon="/static/images/clock.svg"',
+            'src="/static/images/clock.svg" alt="" data-agent-combobox-selected-icon',
+            'data-agent-combobox-icon="/static/images/clock.fill.svg"',
+            'src="/static/images/clock.fill.svg" alt="" aria-hidden="true">\n                                    <span class="trade-strategy-dropdown-text">Recent sessions</span>',
             'suggestion-loading-spinner agent-empty-response-spinner',
             'data-agent-session-history-spinner',
             'data-agent-empty-response-copy',
@@ -1054,7 +1086,7 @@ class WebAppTests(unittest.TestCase):
         script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
 
         with app.test_client() as client:
-            body = client.get("/agent").get_data(as_text=True)
+            body = client.get("/agent", follow_redirects=True).get_data(as_text=True)
 
         self.assertIn('<span class="field-label">Web service</span>', body)
         self.assertIn('class="browser-picker-option-icon" src="/static/images/ChatGPT-Logo.svg"', body)
@@ -1356,7 +1388,7 @@ class WebAppTests(unittest.TestCase):
 
         with app.test_client() as client:
             response = client.get("/cache/chatgpt?agent_platform=gemini")
-            agent_response = client.get("/agent")
+            agent_response = client.get("/agent", follow_redirects=True)
 
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("Set-Cookie", response.headers)
@@ -1804,7 +1836,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.81.2-codex.1", body)
+            self.assertIn("style-v2.82.0-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.27.1-codex.1', body)
@@ -1929,6 +1961,10 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("browser-local-resources-header-actions", browser_template)
         self.assertIn("data-browser-session-message-toggle", browser_template)
         self.assertIn("browser-session-table-message-shell", browser_template)
+        self.assertIn(
+            'format_chat_message_timestamp_label(message.last_seen_at)',
+            browser_template,
+        )
         self.assertIn("No matching messages found.", browser_template)
         self.assertEqual(detail_response.status_code, 200)
         self.assertIn("<strong>Rich</strong> cached text message", detail_body)

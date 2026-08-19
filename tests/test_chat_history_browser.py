@@ -2,6 +2,7 @@
 
 # Code version: v1.3.1-codex.1
 
+from datetime import datetime
 from pathlib import Path
 
 from app.core.chat_history_browser import (
@@ -215,8 +216,8 @@ def test_build_chat_history_markdown_exports_the_complete_session(tmp_path: Path
     markdown = build_chat_history_markdown(detail_page)
     assert markdown.startswith("# Demo conversation\n")
     assert "- Messages: 2" in markdown
-    assert "### 1. You · 12 Aug 2026 05:00" in markdown
-    assert "### 2. Gemini · 12 Aug 2026 05:01" in markdown
+    assert "### 1. You · 12 Aug 2026 13:00" in markdown
+    assert "### 2. Gemini · 12 Aug 2026 13:01" in markdown
     assert "Source link 1: https://example.com/source" in markdown
     assert markdown.endswith("\n")
 
@@ -268,8 +269,9 @@ def test_query_chat_history_session_home_uses_100_sessions_per_page(tmp_path: Pa
     assert len(second_page.sessions) == 1
 
 
-def test_format_chat_message_timestamp_label_uses_zero_padded_day_and_utc() -> None:
-    assert format_chat_message_timestamp_label("2026-08-01T01:02:03Z") == "01 Aug 2026 01:02"
+def test_format_chat_message_timestamp_label_uses_zero_padded_day_in_local_time() -> None:
+    expected = datetime.fromisoformat("2026-08-01T01:02:03+00:00").astimezone()
+    assert format_chat_message_timestamp_label("2026-08-01T01:02:03Z") == expected.strftime("%d Aug %Y %H:%M")
 
 
 def test_chat_history_points_to_existing_media_without_copying_payload(tmp_path: Path) -> None:

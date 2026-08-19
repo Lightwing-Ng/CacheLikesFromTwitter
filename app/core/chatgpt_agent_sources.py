@@ -1,6 +1,6 @@
 """Read ChatGPT Web sessions, projects, and conversation history for the local Agent.
 
-Code version: v1.2.0-codex.1
+Code version: v1.3.0-codex.1
 """
 
 from __future__ import annotations
@@ -57,6 +57,8 @@ CHATGPT_CONVERSATION_PATH_PATTERN = re.compile(
 def probe_and_collect_chatgpt_sources(
     browser_name: str,
     config: CrawlConfig,
+    *,
+    silent: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any] | None]:
     """Verify ChatGPT and collect Agent sources through one browser launch.
 
@@ -106,6 +108,7 @@ def probe_and_collect_chatgpt_sources(
                 headless=False,
                 clone_profile_first=True,
                 background_window=True,
+                silent=silent,
             ) as context:
                 page = context.pages[0] if context.pages else context.new_page()
                 goto_with_retry(page, CHATGPT_HOME_URL, attempts=2, timeout_ms=90_000)
@@ -120,7 +123,12 @@ def probe_and_collect_chatgpt_sources(
         return status, None
 
 
-def list_chatgpt_agent_sources(browser_name: str, config: CrawlConfig) -> dict[str, Any]:
+def list_chatgpt_agent_sources(
+    browser_name: str,
+    config: CrawlConfig,
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
     """Return the recent root sessions and projects from one signed-in browser."""
     descriptor = browser_descriptors(config).get(str(browser_name or "").strip().lower())
     if descriptor is None:
@@ -143,6 +151,7 @@ def list_chatgpt_agent_sources(browser_name: str, config: CrawlConfig) -> dict[s
             headless=False,
             clone_profile_first=True,
             background_window=True,
+            silent=silent,
         ) as context:
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, CHATGPT_HOME_URL, attempts=2, timeout_ms=90_000)
@@ -154,6 +163,8 @@ def list_chatgpt_project_sessions(
     browser_name: str,
     project_url: str,
     config: CrawlConfig,
+    *,
+    silent: bool = False,
 ) -> dict[str, Any]:
     """Return recent sessions for one ChatGPT project in the selected browser."""
     normalized_project_url = normalize_chatgpt_project_url(project_url)
@@ -178,6 +189,7 @@ def list_chatgpt_project_sessions(
                 headless=False,
                 clone_profile_first=True,
                 background_window=True,
+                silent=silent,
             ) as context:
                 page = context.pages[0] if context.pages else context.new_page()
                 goto_with_retry(page, CHATGPT_HOME_URL, attempts=2, timeout_ms=90_000)
@@ -197,6 +209,8 @@ def fetch_chatgpt_conversation_history(
     browser_name: str,
     conversation_url: str,
     config: CrawlConfig,
+    *,
+    silent: bool = False,
 ) -> dict[str, Any]:
     """Fetch one selected ChatGPT conversation as read-only Agent history."""
     normalized_conversation_url = normalize_chatgpt_conversation_url(conversation_url)
@@ -224,6 +238,7 @@ def fetch_chatgpt_conversation_history(
             headless=False,
             clone_profile_first=True,
             background_window=True,
+            silent=silent,
         ) as context:
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, normalized_conversation_url, attempts=2, timeout_ms=90_000)

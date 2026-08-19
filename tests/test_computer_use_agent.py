@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.8.0-codex.1
+Code version: v3.10.0-codex.1
 """
 
 from __future__ import annotations
@@ -22,10 +22,12 @@ from app.core.computer_use_agent import (
     ComputerUseSettingsStore,
     WorkspaceController,
     _chatgpt_target_is_open,
+    _initial_web_agent_message,
     _run_web_action_loop,
     _select_chatgpt_model,
     _select_web_model,
     _submit_chromium_prompt,
+    _submit_chromium_web_prompt,
     _wait_for_chromium_composer,
     _web_last_text,
     _web_is_generating,
@@ -709,6 +711,7 @@ def test_agent_service_reports_browser_result_without_api_credentials(
             assert kwargs["settings"].browser == "edge"
             assert kwargs["settings"].model == DEFAULT_CHATGPT_MODEL
             assert kwargs["session_mode"] == "new"
+            assert kwargs["session_title"] == "Inspect the workspace"
             assert kwargs["target_url"] == "https://chatgpt.com/"
             assert not kwargs["read_only"]
             assert kwargs["context_path"].is_file()
@@ -740,6 +743,69 @@ def test_agent_service_reports_browser_result_without_api_credentials(
         ]
         assert "token" not in snapshot
         assert released_assertions == [sleep_assertion]
+
+
+@pytest.mark.parametrize(
+    ("platform", "model", "home_url"),
+    (
+        ("gemini", "gemini-3.1-pro", "https://gemini.google.com/app"),
+        ("grok", "grok-auto", "https://grok.com/"),
+    ),
+)
+def test_service_switching_provider_resets_the_previous_target_url(
+    platform: str,
+    model: str,
+    home_url: str,
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    captured: dict[str, object] = {}
+
+    def runner(**kwargs):
+        captured.update(kwargs)
+        return "Verified result", str(kwargs["target_url"]), 1, True
+
+    service = ComputerUseAgentService(store, runner=runner, runtime_root=tmp_path / "runtime")
+    service.start(
+        f"Inspect {platform}",
+        str(workspace),
+        CrawlConfig(),
+        platform=platform,
+        browser="edge",
+        model=model,
+        session_title="08.19 Agentic",
+        read_only=True,
+    )
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    assert service.snapshot()["phase"] == "finished"
+    assert captured["target_url"] == home_url
+    assert captured["settings"].platform == platform
+    assert captured["settings"].target_url == home_url
+
+
+def test_initial_web_agent_message_carries_the_local_session_name() -> None:
+    with TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        workspace = root / "project"
+        workspace.mkdir()
+        context_path = root / "context.md"
+        message = _initial_web_agent_message(
+            "Inspect the text cache",
+            workspace,
+            ComputerUseSettings(workspace_path=str(workspace), platform="grok", model="grok-auto"),
+            context_path,
+            "new",
+            platform="grok",
+            session_title="08.19 Agentic",
+        )
+
+    assert "Session name: 08.19 Agentic" in message
+    assert "Project root: " in message
 
 
 def test_agent_service_keeps_one_question_answer_page_per_conversation() -> None:
@@ -1085,6 +1151,53 @@ def test_chromium_submission_reports_when_attachment_never_enables_send() -> Non
 
         with pytest.raises(RuntimeError, match="context attachment"):
             _submit_chromium_prompt(_Page(), "Inspect the project", lambda: False)
+
+
+def test_grok_submission_can_fall_back_to_enter_when_submit_is_not_exposed() -> None:
+    class _Composer:
+        def __init__(self) -> None:
+            self.value = ""
+            self.pressed: list[str] = []
+
+        def fill(self, value: str) -> None:
+            self.value = value
+
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def press(self, key: str) -> None:
+            self.pressed.append(key)
+
+    class _Page:
+        def __init__(self) -> None:
+            self.composer = _Composer()
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "textarea"
+            return self.composer
+
+        def evaluate(self, expression: str, _argument: object = None) -> object:
+            if "const composer = document.querySelector" in expression:
+                return {"clicked": False, "sendButtons": []}
+            return True
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("app.core.computer_use_agent.time.monotonic", lambda: 2)
+        monkeypatch.setattr(
+            "app.core.computer_use_agent.GROK_KEYBOARD_SUBMIT_FALLBACK_SECONDS",
+            0,
+        )
+        monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
+
+        _submit_chromium_web_prompt(page, "grok", "Continue with the observation", lambda: False)
+
+    assert page.composer.value == "Continue with the observation"
+    assert page.composer.pressed == ["Enter"]
 
 
 def test_chromium_last_response_is_empty_before_a_new_session_has_messages() -> None:

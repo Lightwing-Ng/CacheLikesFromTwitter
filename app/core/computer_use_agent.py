@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.9.0-codex.4
+Code version: v3.13.0-codex.1
 """
 
 from __future__ import annotations
@@ -68,6 +68,7 @@ MAX_AGENT_SESSION_HISTORY = 100
 WEB_RESPONSE_MINIMUM_SECONDS = 1.5
 WEB_RESPONSE_STABLE_SECONDS = 1.0
 WEB_TURN_TIMEOUT_SECONDS = 1_800
+GROK_KEYBOARD_SUBMIT_FALLBACK_SECONDS = 2.0
 CHATGPT_COMPOSER_TIMEOUT_SECONDS = 60
 CHATGPT_COMPOSER_RELOAD_ATTEMPTS = 2
 SAFARI_SEND_BUTTON_TIMEOUT_SECONDS = 15
@@ -1382,6 +1383,8 @@ class ComputerUseAgentService:
                 "model": model or base.model,
             }
         )
+        if candidate["platform"] != base.platform:
+            candidate["target_url"] = _platform_home_url(candidate["platform"])
         settings = validate_computer_use_settings(candidate)
         if settings.operating_system != "macos":
             raise RuntimeError(
@@ -1441,6 +1444,7 @@ class ComputerUseAgentService:
                     settings,
                     target_url,
                     normalized_session_mode,
+                    resolved_session_title,
                     bool(read_only),
                 ),
                 daemon=True,
@@ -1487,6 +1491,7 @@ class ComputerUseAgentService:
         settings: ComputerUseSettings,
         target_url: str,
         session_mode: str,
+        session_title: str,
         read_only: bool,
     ) -> None:
         sleep_assertion = _start_macos_idle_sleep_assertion()
@@ -1513,6 +1518,7 @@ class ComputerUseAgentService:
                 settings=settings,
                 target_url=target_url,
                 session_mode=session_mode,
+                session_title=session_title,
                 read_only=read_only,
                 should_stop=self._stop_requested.is_set,
                 update=self._update,
@@ -1586,6 +1592,7 @@ def run_web_computer_use(
     process_changed: Callable[[subprocess.Popen[str] | None], None],
     target_url: str | None = None,
     session_mode: str = "new",
+    session_title: str = "",
     read_only: bool = False,
 ) -> tuple[str, str, int, bool]:
     """Run one selected Web AI session as a local controller action loop."""
@@ -1608,7 +1615,8 @@ def run_web_computer_use(
         settings,
         context_path,
         session_mode,
-        settings.platform,
+        platform=settings.platform,
+        session_title=session_title,
     )
 
     if descriptor.engine == "safari":
@@ -1636,6 +1644,7 @@ def run_web_computer_use(
             headless=False,
             clone_profile_first=True,
             background_window=True,
+            silent=settings.browser == "edge",
         ) as context:
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, selected_target_url, attempts=2, timeout_ms=90_000)
@@ -1661,6 +1670,7 @@ def _initial_web_agent_message(
     context_path: Path,
     session_mode: str,
     platform: str = DEFAULT_AGENT_PLATFORM,
+    session_title: str = "",
 ) -> str:
     platform_label = AGENT_PLATFORM_BY_KEY.get(platform, AGENT_PLATFORM_BY_KEY[DEFAULT_AGENT_PLATFORM])["label"]
     session_instruction = {
@@ -1669,6 +1679,13 @@ def _initial_web_agent_message(
         "project_new": "Start a new conversation inside the selected Project for this task.",
         "project_session": "Continue the selected existing conversation inside the selected Project for this task.",
     }.get(session_mode, f"Start a new root-level {platform_label} Web conversation for this task.")
+    clean_session_title = _clean_agent_session_title(session_title, "")
+    title_instruction = (
+        f"Session name: {clean_session_title}\n"
+        "Keep this exact name as the local Agent session label. The provider may generate its own remote conversation title."
+        if clean_session_title
+        else "Session name: Use the local Agent session label associated with this task."
+    )
     return (
         settings.system_prompt
         + "\n\nA local context Markdown file is attached when the browser supports direct attachment. "
@@ -1678,6 +1695,7 @@ def _initial_web_agent_message(
         f"Project: {workspace.name}\n"
         f"Project root: {workspace}\n"
         f"Session source: {session_instruction}\n"
+        f"{title_instruction}\n"
         f"User request: {prompt}\n\n"
         "Begin with the smallest useful read, search, or list JSON action."
     )
@@ -1689,6 +1707,7 @@ def _initial_chatgpt_message(
     settings: ComputerUseSettings,
     context_path: Path,
     session_mode: str,
+    session_title: str = "",
 ) -> str:
     """Keep the previous ChatGPT-specific helper as a compatibility wrapper."""
     return _initial_web_agent_message(
@@ -1698,6 +1717,7 @@ def _initial_chatgpt_message(
         context_path,
         session_mode,
         "chatgpt",
+        session_title=session_title,
     )
 
 
@@ -1941,7 +1961,7 @@ def _web_composer_selector(platform: str) -> str:
     return {
         "chatgpt": "#prompt-textarea",
         "gemini": 'textarea, [contenteditable="true"]',
-        "grok": 'textarea, [contenteditable="true"]',
+        "grok": "textarea",
     }.get(platform, 'textarea, [contenteditable="true"]')
 
 
@@ -2352,9 +2372,15 @@ def _submit_chromium_web_prompt(
     """Fill a non-ChatGPT Chromium composer and click its enabled semantic send control."""
     user_selector = _web_user_selector(platform)
     baseline_user_count = _web_count(page, "chromium", user_selector, platform)
-    page.locator(_web_composer_selector(platform)).first.fill(message)
+    composer = page.locator(_web_composer_selector(platform)).first
+    composer.fill(message)
 
     deadline = time.monotonic() + CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS
+    keyboard_fallback_at = (
+        time.monotonic() + GROK_KEYBOARD_SUBMIT_FALLBACK_SECONDS
+        if platform == "grok"
+        else None
+    )
     last_state: dict[str, Any] = {}
     while time.monotonic() < deadline:
         if should_stop():
@@ -2406,6 +2432,15 @@ def _submit_chromium_web_prompt(
         if isinstance(result, dict):
             last_state = result
             if result.get("clicked"):
+                break
+        if (
+            platform == "grok"
+            and keyboard_fallback_at is not None
+            and time.monotonic() >= keyboard_fallback_at
+        ):
+            press = getattr(composer, "press", None)
+            if callable(press):
+                press("Enter")
                 break
         page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
     else:

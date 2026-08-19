@@ -196,10 +196,10 @@ The ChatGPT `/agent` status route performs the account probe and root source col
 for one browser launch, returns the catalog to the page, and seeds the same cache through its
 explicit `store` path. This keeps the status request and Recent sessions selection on one browser
 opening; Project-session loading remains isolated by its canonical Project URL key.
-Chromium tasks clone the selected Edge or Chrome profile into an offscreen, minimized temporary
-context, suppress browser prompts, and clean the task-owned profile on exit. Stale cleanup is
-restricted to abandoned application-prefixed temporary directories older than 24 hours; the
-user's normal browser profile and unrelated temporary paths are not modified.
+Agent Chromium tasks clone the selected Edge or Chrome profile into a task-owned offscreen,
+minimized context. Both suppress browser prompts and clean the task-owned profile on exit. Stale
+cleanup is restricted to abandoned application-prefixed temporary directories older than 24 hours;
+the user's normal browser profile and unrelated temporary paths are not modified.
 
 ## Data ownership
 

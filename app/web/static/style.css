@@ -1,4 +1,4 @@
-/* Code version: v2.81.2-codex.1 */
+/* Code version: v2.82.0-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -302,7 +302,9 @@
     --font-weight-semibold: 600;
     --font-weight-bold: 700;
     --font-family-brand: "Univers Next for HSBC";
-    --font-family-base: var(--font-family-brand), "Helvetica Neue", Helvetica, Arial, "PingFang HK", "PingFang TC", "PingFang SC", "Microsoft JhengHei", "Microsoft YaHei", sans-serif;
+    --font-family-cjk: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+    --font-family-base: var(--font-family-brand), var(--font-family-cjk), "Helvetica Neue", Helvetica, Arial, "PingFang HK", "PingFang TC", "Microsoft JhengHei", sans-serif;
+    --font-family-mono-cjk: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", monospace;
     --font-family-mono: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     --font-mono: var(--font-family-mono);
     --font-ui-xs: var(--font-size-1);
@@ -409,7 +411,7 @@ body::before {
 
 code,
 pre {
-    font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+    font-family: var(--font-family-mono-cjk);
 }
 
 button,
@@ -3828,7 +3830,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
  */
 :root {
     --font-family-brand: "Univers Next for HSBC";
-    --font-family-base: var(--font-family-brand), "Helvetica Neue", Helvetica, Arial, "PingFang HK", "PingFang TC", "PingFang SC", "Microsoft JhengHei", "Microsoft YaHei", sans-serif;
+    --font-family-base: var(--font-family-brand), var(--font-family-cjk), "Helvetica Neue", Helvetica, Arial, "PingFang HK", "PingFang TC", "Microsoft JhengHei", sans-serif;
     --radius-soft: 10px;
     --motion-duration-instant: 100ms;
     --motion-duration-fast: 160ms;
@@ -4562,7 +4564,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 .browser-workspace {
     min-width: 0;
     overflow: hidden;
-    font-family: var(--font-family-brand), "Helvetica Neue", Helvetica, Arial, "PingFang SC", "PingFang TC", "PingFang HK", "Microsoft YaHei", "Microsoft JhengHei", sans-serif;
+    font-family: var(--font-family-brand), var(--font-family-cjk), "Helvetica Neue", Helvetica, Arial, "PingFang HK", "PingFang TC", "Microsoft JhengHei", sans-serif;
 }
 
 .chart-panel.workspace.browser-workspace {
@@ -5612,7 +5614,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     padding: 2px 4px;
     border-radius: 10px;
     background: var(--accent-surface-muted);
-    font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+    font-family: var(--font-family-mono-cjk);
     font-size: 0.92em;
 }
 
