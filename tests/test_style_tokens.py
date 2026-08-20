@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.7-codex.1
+Code version: v1.47.8-codex.1
 """
 
 from pathlib import Path
@@ -805,7 +805,7 @@ def test_browser_pagination_range_menu_uses_glass_and_gel_motion_tokens() -> Non
         "scrollbar-width: thin;",
         ".browser-pagination-range-menu.is-scrollable {",
         "overflow-y: auto;",
-        "border-radius: var(--radius-soft);",
+        "border-radius: 10px;",
         "animation: browser-pagination-range-gel-in 300ms var(--motion-bouncy) both;",
         "@keyframes browser-pagination-range-gel-in {",
         "grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));",
@@ -813,8 +813,8 @@ def test_browser_pagination_range_menu_uses_glass_and_gel_motion_tokens() -> Non
         assert token in stylesheet
 
 
-def test_browser_pagination_range_menu_keeps_native_scrollbar_visuals() -> None:
-    """Keep scrollbar painting delegated to the existing browser surface."""
+def test_browser_pagination_range_menu_hides_the_scrollbar_track() -> None:
+    """Keep the range menu rectangular with a transparent scrollbar track."""
     stylesheet = _stylesheet()
     menu_start = stylesheet.index(".browser-pagination-range-menu {")
     menu_end = stylesheet.index(".browser-pagination-range-menu.is-scrollable {", menu_start)
@@ -822,9 +822,12 @@ def test_browser_pagination_range_menu_keeps_native_scrollbar_visuals() -> None:
 
     assert "overflow-y: auto;" in menu_rule
     assert "scrollbar-width: thin;" in menu_rule
+    assert "border-radius: 10px;" in menu_rule
+    assert "scrollbar-color: var(--theme-muted-translucent) transparent;" in menu_rule
     assert "scrollbar-gutter:" not in menu_rule
-    assert "scrollbar-color:" not in menu_rule
-    assert ".browser-pagination-range-menu::-webkit-scrollbar" not in stylesheet
+    track_start = stylesheet.index(".browser-pagination-range-menu::-webkit-scrollbar-track {")
+    track_rule = stylesheet[track_start:stylesheet.index("\n}", track_start)]
+    assert "background: transparent;" in track_rule
 
 
 def test_browser_content_mode_control_uses_the_sibling_blue_pill_pattern() -> None:
@@ -994,7 +997,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.82.4-codex.1 */",
+        "/* Code version: v2.82.5-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',

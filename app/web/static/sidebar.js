@@ -1,4 +1,4 @@
-/* Code version: v1.17.0-codex.1 */
+/* Code version: v1.18.0-codex.1 */
 
 (function initializeSidebar() {
     "use strict";
@@ -28,7 +28,7 @@
         ? Array.from(sidebarDock.querySelectorAll("[data-dock-section], [data-section-link]"))
         : [];
     const sidebarMotionDurationMs = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 500;
-    let isSidebarOpen = true;
+    let isSidebarOpen = sidebarToggle.getAttribute("aria-expanded") === "true";
     let sidebarMotionResetTimer = 0;
     let dockPositionFrame = 0;
 

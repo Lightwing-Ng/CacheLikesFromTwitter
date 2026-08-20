@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.11.0-codex.1
+# Code version: v1.12.0-codex.1
 
 from __future__ import annotations
 
@@ -113,6 +113,8 @@ def default_settings_path() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "CacheLikesFromTwitter/settings.json"
 
 
+# Backward-compatible import-time snapshot. Runtime read/write helpers resolve the
+# current environment again so tests and isolated processes can redirect settings safely.
 SETTINGS_PATH = default_settings_path()
 
 
@@ -157,10 +159,11 @@ class CrawlConfig:
         return safe_name.strip("._") or "unknown_account"
 
 
-def load_saved_config(settings_path: Path = SETTINGS_PATH) -> CrawlConfig:
+def load_saved_config(settings_path: Path | None = None) -> CrawlConfig:
     """Load persisted crawler settings, or defaults when none exist."""
-    candidate_paths = [settings_path]
-    if settings_path == SETTINGS_PATH and LEGACY_SETTINGS_PATH not in candidate_paths:
+    resolved_settings_path = settings_path if settings_path is not None else default_settings_path()
+    candidate_paths = [resolved_settings_path]
+    if resolved_settings_path == default_settings_path() and LEGACY_SETTINGS_PATH not in candidate_paths:
         candidate_paths.append(LEGACY_SETTINGS_PATH)
 
     payload: dict[str, object] | None = None
@@ -265,8 +268,9 @@ def _clamp_int_setting(value: object, fallback: int, minimum: int, maximum: int)
     return min(max(parsed, minimum), maximum)
 
 
-def save_config(config: CrawlConfig, settings_path: Path = SETTINGS_PATH) -> None:
+def save_config(config: CrawlConfig, settings_path: Path | None = None) -> None:
     """Persist crawler settings for future app restarts."""
+    resolved_settings_path = settings_path if settings_path is not None else default_settings_path()
     payload = asdict(config)
     payload["x_browser"] = config.x_browser
     payload["grok_browser"] = config.grok_browser
@@ -276,5 +280,5 @@ def save_config(config: CrawlConfig, settings_path: Path = SETTINGS_PATH) -> Non
     payload["chatgpt_project_name"] = config.chatgpt_project_name
     payload["chrome_user_data_dir"] = str(config.chrome_user_data_dir)
     payload["shadow_backup_destination"] = str(config.shadow_backup_destination)
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+    resolved_settings_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved_settings_path.write_text(json.dumps(payload, indent=2, sort_keys=True))

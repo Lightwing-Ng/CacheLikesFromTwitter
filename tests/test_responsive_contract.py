@@ -1,6 +1,6 @@
 """Responsive sidebar contract tests.
 
-Code version: v1.0.1-codex.1
+Code version: v1.0.2-codex.1
 """
 
 from __future__ import annotations
@@ -119,6 +119,20 @@ def test_sidebar_pages_load_the_responsive_contract_before_bootstrap() -> None:
     assert 'window.sessionStorage.getItem("cachelikes:sidebar-open")' in bootstrap_source
     assert 'window.CACHELIKES_RESPONSIVE?.media?.("sidebarOverlayMax")' in bootstrap_source
     assert 'document.documentElement.classList.add("sidebar-memory-collapsed")' in bootstrap_source
+
+
+def test_sidebar_pages_render_a_closed_accessibility_state_before_bootstrap() -> None:
+    for template_name in ("_cache_page.html", "agent.html", "browser.html", "settings.html"):
+        source = _read(TEMPLATE_ROOT / template_name)
+        toggle_start = source.index('id="sidebar_toggle"')
+        toggle_end = source.index(">", toggle_start)
+        toggle_markup = source[toggle_start:toggle_end]
+        assert 'aria-expanded="false"' in toggle_markup, template_name
+
+        backdrop_start = source.index('id="sidebar_backdrop"')
+        backdrop_end = source.index(">", backdrop_start)
+        backdrop_markup = source[backdrop_start:backdrop_end]
+        assert "hidden" in backdrop_markup, template_name
 
 
 def test_sidebar_toggle_is_outside_the_shell_stacking_context() -> None:

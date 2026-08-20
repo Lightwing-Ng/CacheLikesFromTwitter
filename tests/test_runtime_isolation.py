@@ -1,6 +1,6 @@
 """Regression tests for the process-wide pytest runtime boundary.
 
-Code version: v1.0.1-codex.1
+Code version: v1.0.2-codex.1
 """
 
 from __future__ import annotations
@@ -55,3 +55,19 @@ def test_runtime_helpers_preserve_production_defaults_when_unconfigured(monkeypa
         expected_path = home_dir / ".config/CacheLikesFromTwitter/settings.json"
 
     assert config.default_settings_path() == expected_path
+
+
+def test_config_read_write_helpers_resolve_settings_path_at_call_time(monkeypatch, tmp_path) -> None:
+    """Resolve redirected settings paths when the helper is called, not imported."""
+    first_path = tmp_path / "first" / "settings.json"
+    second_path = tmp_path / "second" / "settings.json"
+
+    monkeypatch.setenv(config.SETTINGS_PATH_ENV, str(first_path))
+    config.save_config(config.CrawlConfig(account_name_override="first"))
+
+    monkeypatch.setenv(config.SETTINGS_PATH_ENV, str(second_path))
+    config.save_config(config.CrawlConfig(account_name_override="second"))
+
+    assert first_path.is_file()
+    assert second_path.is_file()
+    assert config.load_saved_config().account_name_override == "second"

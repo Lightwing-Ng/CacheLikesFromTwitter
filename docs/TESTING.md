@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.3.0-codex.1`
+Documentation version: `v1.3.1-codex.1`
 
 ## Supported commands
 
@@ -84,6 +84,9 @@ Tests must follow these rules:
 
 - Do not hard-code local-time output such as `13:00`. Use UTC fixtures, the production formatter,
   or an explicit timezone in the assertion.
+- Settings read/write helpers must resolve `CACHELIKES_SETTINGS_PATH` at call time. Do not use a
+  module-import snapshot as a function default, because pytest and clean-room CI inject the
+  process boundary before application startup.
 - Do not hard-code `Finder`, `open -R`, or macOS permission messages in a host-neutral test. Test
   each platform through explicit platform arguments or monkeypatch the host predicate when the
   test is specifically for macOS or Windows.
