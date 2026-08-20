@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.16.0-codex.1
+# Code version: v1.17.0-codex.1
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .browser.x_session import X_READY_SELECTORS, detect_account_handle
 from .config import CrawlConfig, default_edge_user_data_dir, is_macos_host, is_windows_host
 from .safari_automation import (
     SAFARI_BACKGROUND_WINDOW_APPLESCRIPT,
@@ -242,8 +243,6 @@ def _probe_gemini_session(
 
 def _probe_chromium_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
     """Probe an X session from a Chromium-family browser profile."""
-    from .scraper import detect_account_handle
-
     with sync_playwright_or_error() as playwright:
         with launch_chromium_context(
             playwright,
@@ -507,8 +506,6 @@ def sync_playwright_or_error():
 
 def wait_for_x_page_ready(page, browser_label: str) -> None:
     """Wait until the X page is usable or fail with a clear auth message."""
-    from .scraper import X_READY_SELECTORS
-
     deadline = time.time() + 30
     while time.time() < deadline:
         if any(page.locator(selector).count() for selector in X_READY_SELECTORS):

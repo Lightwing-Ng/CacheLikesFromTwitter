@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.6.2-codex.1`
+Documentation version: `v1.7.0-codex.1`
 
 ## Runtime flow
 
@@ -17,6 +17,35 @@ main.py
 3.13 or 3.14 and the module itself remains runtime-agnostic before Flask is imported.
 `create_app()` builds independent state containers for the X, Grok, and ChatGPT workflows,
 registers the local-media browser, and serves the Flask routes.
+
+## Core package boundary
+
+The application layer imports `app.core` through five domain façades instead of reaching into
+every implementation module:
+
+- `app/core/foundation/`: runtime configuration, logging, version, and task state.
+- `app/core/browser/`: browser descriptors, session probes, and provider-neutral X page identity.
+- `app/core/storage/`: local media, chat history, and shadow-backup operations.
+- `app/core/providers/`: X, Gemini, Grok, and ChatGPT workflows.
+- `app/core/agent/`: Agent access control, source discovery, and Computer Use orchestration.
+
+The original flat modules remain import-compatible during this migration. New application-layer
+code should depend on the domain façades; provider and storage implementations may continue to
+use their existing compatibility imports until each slice is moved. `browser.x_session` is a leaf
+module: it owns X identity/readiness helpers so `browser_sessions` no longer needs an implicit
+runtime import back into `scraper`.
+
+The intended dependency direction is:
+
+```text
+app.web
+  -> core domain façades
+     -> core implementations
+        -> foundation, browser leaves, and storage primitives
+```
+
+Core modules must not import `app.web`, templates, or frontend JavaScript. A domain façade should
+export only the symbols needed by its caller and should not become a second implementation file.
 
 ## Application layers
 

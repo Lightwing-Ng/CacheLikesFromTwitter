@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.41.0-codex.1
+# Code version: v1.42.0-codex.1
 
 from __future__ import annotations
 
@@ -19,88 +19,82 @@ from flask import Flask, Response, abort, jsonify, make_response, redirect, rend
 from markdown_it import MarkdownIt
 from markupsafe import Markup
 
-from app.core.browser_sessions import browser_descriptors, build_browser_options, probe_browser_session
-from app.core.agent_access_security import (
+from app.core.agent import (
     AGENT_ACCESS_SESSION_KEY,
+    AGENT_MODEL_OPTIONS_BY_PLATFORM,
+    AGENT_PLATFORM_OPTIONS,
+    OPERATING_SYSTEM_OPTIONS as AGENT_OPERATING_SYSTEM_OPTIONS,
+    AgentSourceCache,
+    ComputerUseAgentService,
+    ComputerUseSettingsStore,
+    browser_options_for_host,
     is_allowed_agent_network_request,
-    validate_agent_access_password,
-)
-from app.core.agent_session_sources import (
+    is_loopback_address,
+    launch_terminal_authorization,
     list_agent_project_sessions,
     list_agent_sources,
     normalize_agent_project_url,
+    open_agent_in_browser,
+    validate_computer_use_settings,
+    validate_agent_access_password,
 )
-from app.core.agent_source_cache import AgentSourceCache
-from app.core.chatgpt_downloader import (
+from app.core.browser import browser_descriptors, build_browser_options, probe_browser_session
+from app.core.foundation import (
+    APP_VERSION,
+    DEFAULT_HOST,
+    DEFAULT_PORT,
+    LOCAL_STORE_ROOT,
+    MAX_CHATGPT_SCAN_WAIT_SECONDS,
+    MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    MAX_MAX_MEDIA_FILE_SIZE_MIB,
+    MIN_CHATGPT_SCAN_WAIT_SECONDS,
+    MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    MIN_MAX_MEDIA_FILE_SIZE_MIB,
+    CrawlConfig,
+    TaskState,
+    build_initial_snapshot,
+    configure_logging,
+    get_log_file_path,
+    load_saved_config,
+    save_config,
+    utc_now,
+)
+from app.core.providers import (
+    CacheLikesService,
+    ChatGPTDownloadService,
+    GeminiHistoryService,
+    GrokDownloadService,
+    GrokHistoryService,
     build_chatgpt_initial_snapshot,
+    build_gemini_initial_snapshot,
+    build_grok_history_snapshot,
+    build_grok_initial_snapshot,
     chatgpt_conversation_id,
-    is_chatgpt_conversation_url,
-    reset_chatgpt_state,
-)
-from app.core.chatgpt_agent_sources import (
     fetch_chatgpt_conversation_history,
+    is_chatgpt_conversation_url,
     list_chatgpt_agent_sources,
     list_chatgpt_project_sessions,
     normalize_chatgpt_conversation_url,
     probe_and_collect_chatgpt_sources,
+    reset_chatgpt_state,
+    reset_grok_state,
 )
-from app.core.chatgpt_service import ChatGPTDownloadService
-from app.core.chat_history_browser import (
+from app.core.storage import (
+    LocalMediaCatalog,
+    ShadowBackupError,
+    ShadowBackupService,
     attach_media_references,
     build_chat_history_markdown,
-    format_chat_message_timestamp_label,
-    query_chat_history,
-)
-from app.core.config import (
-    DEFAULT_HOST,
-    DEFAULT_PORT,
-    MAX_MAX_MEDIA_FILE_SIZE_MIB,
-    MIN_MAX_MEDIA_FILE_SIZE_MIB,
-    CrawlConfig,
-    LOCAL_STORE_ROOT,
-    MAX_CHATGPT_SCAN_WAIT_SECONDS,
-    MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
-    MIN_CHATGPT_SCAN_WAIT_SECONDS,
-    MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
-    load_saved_config,
-    save_config,
-)
-from app.core.computer_use_agent import (
-    AGENT_MODEL_OPTIONS_BY_PLATFORM,
-    AGENT_PLATFORM_OPTIONS,
-    OPERATING_SYSTEM_OPTIONS as AGENT_OPERATING_SYSTEM_OPTIONS,
-    ComputerUseAgentService,
-    ComputerUseSettingsStore,
-    browser_options_for_host,
-    is_loopback_address,
-    launch_terminal_authorization,
-    open_agent_in_browser,
-    validate_computer_use_settings,
-)
-from app.core.gemini_downloader import build_gemini_initial_snapshot
-from app.core.gemini_service import GeminiHistoryService
-from app.core.grok_downloader import build_grok_initial_snapshot, reset_grok_state
-from app.core.grok_history import build_grok_history_snapshot
-from app.core.grok_history_service import GrokHistoryService
-from app.core.grok_service import GrokDownloadService
-from app.core.logging_setup import configure_logging, get_log_file_path
-from app.core.local_media_browser import (
-    LocalMediaCatalog,
+    choose_settings_directory,
+    choose_shadow_backup_destination,
     format_captured_at_timestamp_label,
+    format_chat_message_timestamp_label,
     local_file_manager_label,
     normalize_browser_filters,
+    query_chat_history,
     reveal_media_path,
     resolve_local_media_path,
 )
-from app.core.service import CacheLikesService
-from app.core.shadow_backup import (
-    ShadowBackupError,
-    ShadowBackupService,
-    choose_settings_directory,
-    choose_shadow_backup_destination,
-)
-from app.core.state import TaskState, build_initial_snapshot, utc_now
-from app.core.version import APP_VERSION
 from app.web.cache_sources import (
     LLM_CACHE_SOURCE_VIEWS,
     LLM_SWITCHER_SOURCE_VIEWS,
