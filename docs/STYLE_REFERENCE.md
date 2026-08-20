@@ -1,12 +1,17 @@
 # Visual Style Reference
 
-Documentation version: `v1.0.1-codex.1`
+Documentation version: `v1.0.2-codex.1`
 
 ## Authority
 
 `../../antigravity/app` is the sibling project and the visual source
 of truth for CacheLikesFromTwitter. When a UI decision is not explicitly constrained by
 this project, follow the current implementation in that sibling project.
+
+Before changing a shared UI component, also read
+`docs/SHARED_UI_WORKFLOW.md` and the central ledger at
+`/Users/lightwing/Desktop/SHARED_UI_SYNC.md`. The workflow defines the required
+two-project verification and the Cache-first promotion path.
 
 The reference applies to shared visual behavior, including the application shell,
 typography, design tokens, frosted-glass surfaces, controls, overlays, responsive

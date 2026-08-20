@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Code policy version: v1.2.0-agent-contract.2
+Code policy version: v1.2.0-agent-contract.3
 
 This file defines mandatory collaboration rules for all coding agents in this repository (Claude, Codex, Antigravity, Trae, and future agents).
 
@@ -26,13 +26,14 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Reuse existing project patterns for naming, layout, and error handling.
 - Prefer clear, maintainable code over clever one-liners.
 - Avoid introducing new dependencies unless strictly necessary.
-- For UI work, treat `../antigravity/app` as this project's sibling
-  and visual source of truth. Read `docs/STYLE_REFERENCE.md` before changing markup, CSS,
-  assets, or UI behavior.
+- For UI work, read [`docs/SHARED_UI_WORKFLOW.md`](docs/SHARED_UI_WORKFLOW.md) first.
+  Treat `../antigravity/app` as this project's sibling and visual source of truth;
+  read `docs/STYLE_REFERENCE.md` before changing markup, CSS, assets, or UI behavior.
 - Before changing a UI pattern shared with the sibling project, read the single local
-  synchronization ledger at `../SHARED_UI_SYNC.md` and follow its
-  mandatory workflow. The ledger is component-specific: whichever sibling has the newest
-  verified implementation leads that component until the other sibling is synchronized.
+  synchronization ledger at `../SHARED_UI_SYNC.md` and follow its mandatory workflow.
+  `antigravity` is the canonical complete baseline and final convergence target.
+  A Cache-first improvement is only a `Candidate review` until it is promoted into
+  `antigravity` and both projects have current evidence.
 - A task scoped only to this repository does not authorize editing the sibling. When a
   shared component changes here, update the ledger, mark the sibling `Pending`, and report
   the required sibling-sync reminder at handoff. When the user authorizes both projects,
