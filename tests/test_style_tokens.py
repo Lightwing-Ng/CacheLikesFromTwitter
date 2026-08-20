@@ -994,7 +994,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.82.3-codex.1 */",
+        "/* Code version: v2.82.4-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1111,7 +1111,7 @@ def test_agent_response_pagination_keeps_spatial_effects_unclipped() -> None:
     """Keep the answer scrollable while allowing pagination motion to escape its shell."""
     stylesheet = _stylesheet()
 
-    for selector in (".agent-task-card {", "\n.agent-response-card {", ".agent-response-output {"):
+    for selector in (".agent-workspace-grid {", ".agent-task-card {", "\n.agent-response-card {", ".agent-response-output {"):
         selector_start = stylesheet.index(selector) + (1 if selector.startswith("\n") else 0)
         selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
         assert "overflow: visible;" in selector_rule
