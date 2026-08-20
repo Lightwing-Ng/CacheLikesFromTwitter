@@ -16,7 +16,7 @@ adapted from the sibling project's quality model.
   cache locations, deletion, reset, or LAN behavior.
 - Read [CACHE_HANDOFF.md](CACHE_HANDOFF.md) before changing Cache routes, source switching,
   Text/Media behavior, LLM history persistence, or Grok synchronization.
-- Read [STYLE_REFERENCE.md](../STYLE_REFERENCE.md) before any markup, CSS, asset, or UI behavior
+- Read [STYLE_REFERENCE.md](STYLE_REFERENCE.md) before any markup, CSS, asset, or UI behavior
   change.
 
 ## Runtime safety boundary

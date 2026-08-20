@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.80.0-codex.1
+# Code version: v1.80.2-codex.1
 
 from __future__ import annotations
 
@@ -453,7 +453,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.17.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.82.2-codex.1"
+                    "style-v2.82.3-codex.1"
                 )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
@@ -1081,8 +1081,8 @@ class WebAppTests(unittest.TestCase):
             'name="project_url" value=""',
             'name="session_title" value=""',
             'computer-use-agent-v3.15.0-codex.1',
-            'data-agent-combobox-icon="/static/images/clock.svg"',
-            'src="/static/images/clock.svg" alt="" data-agent-combobox-selected-icon',
+            'data-agent-combobox-icon="/static/images/plus.circle.svg"',
+            'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
             'src="/static/images/clock.fill.svg" alt="" aria-hidden="true">\n                                    <span class="trade-strategy-dropdown-text">Recent sessions</span>',
             'suggestion-loading-spinner agent-empty-response-spinner',
@@ -1851,7 +1851,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.82.2-codex.1", body)
+            self.assertIn("style-v2.82.3-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.27.1-codex.1', body)

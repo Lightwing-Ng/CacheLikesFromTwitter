@@ -1,4 +1,4 @@
-<!-- Code version: v3.15.0-codex.1 -->
+<!-- Code version: v3.15.1-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.2-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.3-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
 </head>
@@ -175,16 +175,16 @@
                             >
                                 <span class="browser-session-trigger-leading">
                                     <span class="browser-picker-selected-icon-shell">
-                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/clock.svg') }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
+                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/plus.circle.svg') }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
                                     </span>
                                     <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>New session</span>
                                 </span>
                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
                             </button>
                             <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose a session source" hidden>
-                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active" data-agent-combobox-option="new" data-agent-combobox-label="New session" data-agent-combobox-icon="{{ url_for('static', filename='images/clock.svg') }}" role="option" aria-selected="true" tabindex="-1">
+                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active" data-agent-combobox-option="new" data-agent-combobox-label="New session" data-agent-combobox-icon="{{ url_for('static', filename='images/plus.circle.svg') }}" role="option" aria-selected="true" tabindex="-1">
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/clock.svg') }}" alt="" aria-hidden="true">
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/plus.circle.svg') }}" alt="" aria-hidden="true">
                                     <span class="trade-strategy-dropdown-text">New session</span>
                                 </button>
                                 <button type="button" class="trade-strategy-dropdown-option agent-combobox-option" data-agent-combobox-option="recent" data-agent-combobox-label="Recent sessions" data-agent-combobox-icon="{{ url_for('static', filename='images/clock.fill.svg') }}" role="option" aria-selected="false" tabindex="-1">

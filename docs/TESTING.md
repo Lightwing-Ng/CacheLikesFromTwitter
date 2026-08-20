@@ -84,7 +84,7 @@ or lower the threshold to mask a gap.
   dynamic DOM mutations. The language test checks source-text preservation, `:lang(zh-CN)`
   matching, and the macOS-oriented glyph fixture without converting Unicode text.
 
-The current detailed module-to-behavior map is maintained in [tests/README.md](../tests/README.md).
+The current detailed module-to-behavior map is maintained in [TEST_COVERAGE.md](TEST_COVERAGE.md).
 
 ## Isolation contract
 

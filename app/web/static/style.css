@@ -1,4 +1,4 @@
-/* Code version: v2.82.2-codex.1 */
+/* Code version: v2.82.3-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -3605,7 +3605,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-response-question {
     margin: 0;
     color: var(--text);
-    font-size: var(--font-card-title);
+    font-size: 17px;
     font-weight: var(--font-weight-semibold);
     line-height: 1.35;
     overflow-wrap: anywhere;
@@ -3624,6 +3624,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     overflow-y: auto;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
+    font-size: var(--font-size-5);
 }
 
 .agent-response-answer.is-expanded {
@@ -3633,7 +3634,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-response-answer-content {
     flex: 0 0 auto;
     min-width: 0;
-    font-size: var(--font-size-5);
 }
 
 .agent-response-answer .agent-response-overflow-toggle {
@@ -3658,7 +3658,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     font-size: var(--font-card-title);
 }
 
-.agent-response-output h3,
 .agent-response-output h4,
 .agent-response-output h5,
 .agent-response-output h6 {
@@ -3855,7 +3854,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 /*
  * Sibling-project style synchronization (v1.2.0).
  *
- * The visual source of truth is documented in STYLE_REFERENCE.md. Keep this
+ * The visual source of truth is documented in docs/STYLE_REFERENCE.md. Keep this
  * compatibility layer limited to the shared shell and controls used here;
  * CacheLikesFromTwitter intentionally does not import product-specific views.
  */

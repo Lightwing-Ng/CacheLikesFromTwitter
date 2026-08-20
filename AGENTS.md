@@ -27,7 +27,7 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Prefer clear, maintainable code over clever one-liners.
 - Avoid introducing new dependencies unless strictly necessary.
 - For UI work, treat `../antigravity/app` as this project's sibling
-  and visual source of truth. Read `STYLE_REFERENCE.md` before changing markup, CSS,
+  and visual source of truth. Read `docs/STYLE_REFERENCE.md` before changing markup, CSS,
   assets, or UI behavior.
 - Before changing a UI pattern shared with the sibling project, read the single local
   synchronization ledger at `../SHARED_UI_SYNC.md` and follow its

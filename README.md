@@ -20,7 +20,7 @@ command-line coding-agent runtime, MCP connection, or third-party agent bridge.
 
 This is a sibling project of `../antigravity/app`. Its visual
 language is the source of truth for shared application-shell, typography, surface,
-control, and motion decisions. Read [STYLE_REFERENCE.md](STYLE_REFERENCE.md) before
+control, and motion decisions. Read [STYLE_REFERENCE.md](docs/STYLE_REFERENCE.md) before
 making any UI change.
 
 This project starts a web console on `http://localhost:8666` and listens on all network
@@ -87,7 +87,7 @@ an authenticated profile, downloads media, or writes to user-owned caches, logs,
 - [ChatGPT Web Computer Use Agent](docs/COMPUTER_USE_AGENT.md)
 - [Third-party notices](docs/THIRD_PARTY_NOTICES.md)
 - [Engineering and test contract](docs/AGENTS.md)
-- [Test coverage map](tests/README.md)
+- [Test coverage map](docs/TEST_COVERAGE.md)
 
 ## Project Layout
 

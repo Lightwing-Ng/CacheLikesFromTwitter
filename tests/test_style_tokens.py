@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.6-codex.1
+Code version: v1.47.7-codex.1
 """
 
 from pathlib import Path
@@ -994,7 +994,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.82.2-codex.1 */",
+        "/* Code version: v2.82.3-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1007,9 +1007,11 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-platform-combobox .browser-session-trigger-leading {",
         "flex: 1 1 auto;",
         ".agent-response-question-header {",
+        ".agent-response-question {",
+        "font-size: 17px;",
         ".agent-response-answer {",
-        ".agent-response-answer-content {",
         "font-size: var(--font-size-5);",
+        ".agent-response-answer-content {",
         ".agent-response-pagination {",
         ".agent-platform-combobox .trade-strategy-trigger-label.browser-session-trigger-label {",
         ".agent-platform-combobox .browser-picker-selected-icon-shell {",
@@ -1124,6 +1126,26 @@ def test_agent_response_pagination_keeps_spatial_effects_unclipped() -> None:
     answer_rule = stylesheet[answer_start:stylesheet.index("\n}", answer_start)]
     assert "overflow-x: hidden;" in answer_rule
     assert "overflow-y: auto;" in answer_rule
+
+
+def test_agent_response_question_and_answer_use_requested_type_sizes() -> None:
+    """Keep the Agent question heading at 17px and the answer container at 15px."""
+    stylesheet = _stylesheet()
+
+    question_start = stylesheet.index(".agent-response-question {")
+    question_rule = stylesheet[question_start:stylesheet.index("\n}", question_start)]
+    answer_start = stylesheet.index(".agent-response-answer {")
+    answer_rule = stylesheet[answer_start:stylesheet.index("\n}", answer_start)]
+    heading_start = stylesheet.index(".agent-response-output h1,")
+    heading_rule = stylesheet[heading_start:stylesheet.index("\n}", heading_start) + 2]
+    subheading_start = stylesheet.index(".agent-response-output h4,")
+    subheading_rule = stylesheet[subheading_start:stylesheet.index("\n}", subheading_start)]
+
+    assert "font-size: 17px;" in question_rule
+    assert "font-size: var(--font-card-title);" not in question_rule
+    assert "font-size: var(--font-size-5);" in answer_rule
+    assert ".agent-response-output h3" not in heading_rule
+    assert ".agent-response-output h3" not in subheading_rule
 
 
 def test_agent_response_header_and_answer_pin_the_composer() -> None:

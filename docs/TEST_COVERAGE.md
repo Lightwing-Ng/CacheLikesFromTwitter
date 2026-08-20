@@ -3,7 +3,7 @@
 Test-suite version: `v1.2.2-codex.1`
 
 The authoritative test workflow, coverage baseline, isolation contract, and CI behavior are
-documented in [docs/TESTING.md](../docs/TESTING.md). Use `./scripts/test.sh` for the normal
+documented in [TESTING.md](TESTING.md). Use `./scripts/test.sh` for the normal
 offline suite and `./scripts/check.sh` for the full quality gate.
 
 ## Coverage Map
