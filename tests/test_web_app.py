@@ -343,7 +343,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
         self.assertIn('cache-page.js?v=cache-page-v1.7.7-codex.1', chatgpt_body)
-        self.assertIn('segmented-control.js?v=segmented-control-v1.0.0-codex.1', chatgpt_body)
+        self.assertIn('segmented-control.js?v=segmented-control-v1.0.2-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
         self.assertIn('data-cache-content-mode', grok_body)
@@ -2433,14 +2433,18 @@ class WebAppTests(unittest.TestCase):
 
         for fragment in (
             'const selector = ".segmented-control[data-option-count]";',
-            'shell.dataset.optionCount = String(optionCount);',
-            'shell.dataset.segmentedActiveIndex = String(activeIndex);',
-            'shell.style.setProperty("--segmented-option-count", String(optionCount));',
-            'shell.style.setProperty("--segmented-active-index", String(activeIndex));',
+            'setAttributeIfChanged(shell, "data-option-count", String(optionCount));',
+            'setAttributeIfChanged(shell, "data-segmented-active-index", String(activeIndex));',
+            'setStylePropertyIfChanged(shell, "--segmented-option-count", String(optionCount));',
+            'setStylePropertyIfChanged(shell, "--segmented-active-index", String(activeIndex));',
+            'setAttributeIfChanged(option, "aria-checked", String(isActive));',
+            'attributeFilter: ["aria-checked", "class", "hidden"],',
             'window.CACHELIKES_SEGMENTED_CONTROLS = Object.freeze({sync, syncAll});',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)
+
+        self.assertNotIn("data-segmented-active-index", script.split("attributeFilter:", 1)[1])
 
     def test_text_browser_exposes_chatgpt_media_cache_entrypoint(self) -> None:
         app = create_app()

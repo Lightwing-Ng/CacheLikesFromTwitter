@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.3.2-codex.1`
+Documentation version: `v1.3.3-codex.1`
 
 ## Supported commands
 
@@ -61,9 +61,9 @@ regression pass.
 Baseline measured on 20 Aug 2026 with Python 3.13, pytest 9.0.3,
 pytest-cov 7.1.0, and Ruff 0.15.21:
 
-- 534 tests passed, with 293 unittest subtests passed.
-- Combined coverage for `app/` was 63.84% using branch coverage.
-- All 24 first-party JavaScript files passed syntax checks.
+- 538 tests passed, with 301 unittest subtests passed.
+- Combined coverage for `app/` was 64.37% using branch coverage.
+- All 26 first-party JavaScript files passed syntax checks.
 
 Raise the coverage floor only after adding behavior-level tests. Do not exclude production modules
 or lower the threshold to mask a gap.
@@ -99,6 +99,9 @@ Tests must follow these rules:
 - When `prefers-reduced-motion: reduce` is active, the sidebar shell, overlay, and toggle must
   disable their transitions entirely. The JavaScript state timer may remain short for bookkeeping,
   but the geometry used by touch hit testing must already be final when the state attribute changes.
+- DOM observers must not continuously observe attributes that their callbacks write on every pass.
+  Observer-backed controls must make attribute, class, and style updates idempotent, and a static
+  contract test must pin the observed attribute set.
 - Keep filesystem, browser-profile, and subprocess tests inside `tmp_path` or an explicit fake
   platform boundary. Never inspect the runner's real browser profile or file manager.
 - Browser E2E tests must use a clean context and local Flask server only. Disable or stub unrelated

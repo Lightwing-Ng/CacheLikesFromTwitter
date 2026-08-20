@@ -1,4 +1,4 @@
-/* Code version: v1.0.0-codex.1 */
+/* Code version: v1.0.2-codex.1 */
 
 (() => {
     "use strict";
@@ -28,6 +28,16 @@
         return 0;
     };
 
+    const setAttributeIfChanged = (element, name, value) => {
+        if (element.getAttribute(name) !== value) element.setAttribute(name, value);
+    };
+
+    const setStylePropertyIfChanged = (element, property, value) => {
+        if (element.style.getPropertyValue(property) !== value) {
+            element.style.setProperty(property, value);
+        }
+    };
+
     const sync = (shell) => {
         if (!(shell instanceof HTMLElement)) return;
         const options = getOptions(shell);
@@ -37,16 +47,16 @@
             optionCount - 1,
         );
 
-        shell.dataset.optionCount = String(optionCount);
-        shell.dataset.segmentedActiveIndex = String(activeIndex);
-        shell.style.setProperty("--segmented-option-count", String(optionCount));
-        shell.style.setProperty("--segmented-active-index", String(activeIndex));
+        setAttributeIfChanged(shell, "data-option-count", String(optionCount));
+        setAttributeIfChanged(shell, "data-segmented-active-index", String(activeIndex));
+        setStylePropertyIfChanged(shell, "--segmented-option-count", String(optionCount));
+        setStylePropertyIfChanged(shell, "--segmented-active-index", String(activeIndex));
 
         options.forEach((option, index) => {
             if (option.querySelector("input")) return;
             const isActive = index === activeIndex;
             option.classList.toggle("is-active", isActive);
-            option.setAttribute("aria-checked", String(isActive));
+            setAttributeIfChanged(option, "aria-checked", String(isActive));
         });
     };
 
@@ -78,7 +88,7 @@
         observer.observe(document.body, {
             subtree: true,
             attributes: true,
-            attributeFilter: ["aria-checked", "class", "data-segmented-active-index", "hidden"],
+            attributeFilter: ["aria-checked", "class", "hidden"],
         });
     }
 })();
