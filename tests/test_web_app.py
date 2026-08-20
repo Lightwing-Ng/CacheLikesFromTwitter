@@ -42,6 +42,7 @@ AGENT_SETTINGS_SCRIPT_PATH = (
 )
 CACHE_PAGE_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/cache-page.js"
 CHATGPT_PAGE_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/chatgpt-page.js"
+SEGMENTED_CONTROL_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/segmented-control.js"
 PAGINATION_MOTION_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/pagination-motion.js"
 BROWSER_SESSION_PICKER_SCRIPT_PATH = (
     Path(__file__).resolve().parents[1] / "app/web/static/browser-session-picker.js"
@@ -317,7 +318,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("Sessions discovered", chatgpt_body)
         self.assertGreaterEqual(chatgpt_body.count('href="/cache/chatgpt"'), 2)
         self.assertIn(
-            'chatgpt-page.js?v=chatgpt-page-v1.2.0-codex.1',
+            'chatgpt-page.js?v=chatgpt-page-v1.2.1-codex.1',
             chatgpt_body,
         )
         self.assertIn("The ChatGPT account in the selected browser is ready.", chatgpt_body)
@@ -341,7 +342,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="status_progress_value"', chatgpt_body)
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
-        self.assertIn('cache-page.js?v=cache-page-v1.7.6-codex.1', chatgpt_body)
+        self.assertIn('cache-page.js?v=cache-page-v1.7.7-codex.1', chatgpt_body)
+        self.assertIn('segmented-control.js?v=segmented-control-v1.0.0-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
         self.assertIn('data-cache-content-mode', grok_body)
@@ -467,7 +469,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.18.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.82.8-codex.1"
+                    "style-v2.82.11-codex.1"
                 )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
@@ -1868,7 +1870,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.82.8-codex.1", body)
+            self.assertIn("style-v2.82.11-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.28.0-codex.1', body)
@@ -2422,7 +2424,23 @@ class WebAppTests(unittest.TestCase):
                 "/browser?view=text&source=all&q=&sort=newest&session_view=1"
             ).get_data(as_text=True)
         self.assertLess(body.index('id="browser_view_text"'), body.index('id="browser_view_media"'))
+        self.assertLess(body.index('id="browser_view_media"'), body.index('id="browser_view_prompts"'))
+        self.assertIn('data-option-count="3"', body)
         self.assertIn('data-segmented-active-index="0"', body)
+
+    def test_segmented_control_script_exposes_the_shared_layout_contract(self) -> None:
+        script = SEGMENTED_CONTROL_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        for fragment in (
+            'const selector = ".segmented-control[data-option-count]";',
+            'shell.dataset.optionCount = String(optionCount);',
+            'shell.dataset.segmentedActiveIndex = String(activeIndex);',
+            'shell.style.setProperty("--segmented-option-count", String(optionCount));',
+            'shell.style.setProperty("--segmented-active-index", String(activeIndex));',
+            'window.CACHELIKES_SEGMENTED_CONTROLS = Object.freeze({sync, syncAll});',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, script)
 
     def test_text_browser_exposes_chatgpt_media_cache_entrypoint(self) -> None:
         app = create_app()

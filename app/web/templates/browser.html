@@ -8,7 +8,8 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.8-codex.1') }}">
+    <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.0-codex.1') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.11-codex.1') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.3.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -64,16 +65,16 @@
                     data-wait-title="Updating cache browser"
                     data-wait-copy="Applying the selected filters to the local cache."
                 >
-                    <div class="browser-content-mode-control" role="radiogroup" aria-label="Cache content type" data-option-count="3" data-segmented-active-index="{{ {'text': 0, 'media': 1, 'prompts': 2}[filters.view] }}">
-                        <label class="browser-content-mode-option" for="browser_view_text">
+                    <div class="segmented-control browser-content-mode-control" role="radiogroup" aria-label="Cache content type" data-option-count="3" data-segmented-active-index="{{ {'text': 0, 'media': 1, 'prompts': 2}[filters.view] }}" style="--segmented-option-count: 3; --segmented-active-index: {{ {'text': 0, 'media': 1, 'prompts': 2}[filters.view] }};">
+                        <label class="segmented-control-option browser-content-mode-option" for="browser_view_text">
                             <input id="browser_view_text" name="view" type="radio" value="text" {% if filters.view == "text" %}checked{% endif %}>
                             <span>Text</span>
                         </label>
-                        <label class="browser-content-mode-option" for="browser_view_media">
+                        <label class="segmented-control-option browser-content-mode-option" for="browser_view_media">
                             <input id="browser_view_media" name="view" type="radio" value="media" {% if filters.view == "media" %}checked{% endif %}>
                             <span>Media</span>
                         </label>
-                        <label class="browser-content-mode-option" for="browser_view_prompts">
+                        <label class="segmented-control-option browser-content-mode-option" for="browser_view_prompts">
                             <input id="browser_view_prompts" name="view" type="radio" value="prompts" {% if filters.view == "prompts" %}checked{% endif %}>
                             <span>Prompts</span>
                         </label>

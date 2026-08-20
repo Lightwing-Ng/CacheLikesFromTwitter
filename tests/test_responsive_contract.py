@@ -1,6 +1,6 @@
 """Responsive sidebar contract tests.
 
-Code version: v1.0.2-codex.1
+Code version: v1.0.3-codex.1
 """
 
 from __future__ import annotations
@@ -103,6 +103,23 @@ def test_hidden_and_pointer_event_contracts_are_authoritative() -> None:
     assert ".sidebar-backdrop {\n    display: none;\n    visibility: hidden;\n    pointer-events: none;\n}" in stylesheet
     assert "html.sidebar-memory-collapsed .app-shell .sidebar {" in stylesheet
     assert "html.sidebar-memory-collapsed .sidebar-backdrop {" in stylesheet
+
+
+def test_reduced_motion_makes_sidebar_geometry_synchronous() -> None:
+    """Keep touch geometry deterministic when the browser requests reduced motion."""
+    stylesheet = _read(STYLE_PATH)
+    reduced_motion_marker = "@media (prefers-reduced-motion: reduce) {\n    :root"
+    reduced_motion_start = stylesheet.index(reduced_motion_marker)
+    reduced_motion_block = _extract_block(
+        stylesheet[reduced_motion_start:],
+        reduced_motion_marker,
+    )
+
+    assert "--sidebar-motion-duration: 0ms;" in reduced_motion_block
+    assert ".app-shell," in reduced_motion_block
+    assert ".sidebar," in reduced_motion_block
+    assert ".sidebar-toggle {" in reduced_motion_block
+    assert "transition: none !important;" in reduced_motion_block
 
 
 def test_sidebar_pages_load_the_responsive_contract_before_bootstrap() -> None:

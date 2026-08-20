@@ -58,7 +58,6 @@ def test_routine_labels_use_restrained_font_weights() -> None:
         ".cache-number-label {": "font-weight: var(--font-weight-regular);",
         ".summary-row dt {": "font-weight: var(--font-weight-regular);",
         ".events-table thead th {": "font-weight: var(--font-weight-semibold);",
-        ".browser-content-mode-option span {": "font-weight: var(--font-weight-regular);",
     }
 
     for selector, declaration in expected_rules.items():
@@ -852,18 +851,21 @@ def test_browser_pagination_range_menu_respects_clipping_ancestors() -> None:
         assert token in script
 
 
-def test_browser_content_mode_control_uses_the_sibling_blue_pill_pattern() -> None:
-    """Keep the media/text switcher aligned with the sibling segmented control."""
+def test_segmented_control_uses_the_sibling_generic_pill_contract() -> None:
+    """Keep Cache content modes on the sibling project's generic control contract."""
     stylesheet = _stylesheet()
 
     for token in (
-        ".browser-content-mode-control {",
-        "grid-template-columns: repeat(var(--browser-mode-option-count), minmax(0, 1fr));",
-        "border-radius: var(--radius-pill);",
-        "background: var(--accent-fill);",
-        ".browser-content-mode-control:has(> .browser-content-mode-option:last-child input:checked)::before {",
-        "transform: translateX(calc(100% + 4px));",
-        ".browser-content-mode-option input:checked + span {",
+        ".segmented-control {",
+        "--segmented-option-count: 2;",
+        "grid-template-columns: repeat(var(--segmented-option-count), minmax(var(--segmented-option-min-width), 1fr));",
+        "--mode-switch-radius: var(--radius-pill);",
+        "--mode-switch-gap: 4px;",
+        ".segmented-control[data-option-count]::before {",
+        "transform: translateX(calc((100% + var(--mode-switch-gap)) * var(--segmented-active-index, 0)));",
+        ".segmented-control-option {",
+        ".segmented-control-option input:checked + span,",
+        "font-weight: var(--font-weight-bold);",
         "color: var(--accent-contrast);",
         ".browser-chat-list {",
         ".browser-chat-message {",
@@ -1019,7 +1021,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.82.8-codex.1 */",
+        "/* Code version: v2.82.11-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',

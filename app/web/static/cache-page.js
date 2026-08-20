@@ -1,4 +1,4 @@
-/* Code version: v1.7.6-codex.1 */
+/* Code version: v1.7.7-codex.1 */
 
 (() => {
     "use strict";
@@ -73,6 +73,7 @@
             option.classList.toggle("is-active", isActive);
             option.setAttribute("aria-checked", String(isActive));
         });
+        window.CACHELIKES_SEGMENTED_CONTROLS?.sync(cacheContentModeControl);
     }
 
     function rememberCacheContentMode(mode) {

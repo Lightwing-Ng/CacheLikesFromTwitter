@@ -96,6 +96,9 @@ Tests must follow these rules:
 - Overlay sidebars must use an explicit viewport-bounded height with internal scrolling. Do not
   rely on intrinsic fixed-position height on touch viewports, because Chromium implementations
   can report a transient bottom edge outside `window.innerHeight`.
+- When `prefers-reduced-motion: reduce` is active, the sidebar shell, overlay, and toggle must
+  disable their transitions entirely. The JavaScript state timer may remain short for bookkeeping,
+  but the geometry used by touch hit testing must already be final when the state attribute changes.
 - Keep filesystem, browser-profile, and subprocess tests inside `tmp_path` or an explicit fake
   platform boundary. Never inspect the runner's real browser profile or file manager.
 - Browser E2E tests must use a clean context and local Flask server only. Disable or stub unrelated

@@ -1,4 +1,4 @@
-/* Code version: v2.82.8-codex.1 */
+/* Code version: v2.82.11-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -153,6 +153,20 @@
     --radius-control: 999px;
     --radius-soft: 10px;
     --radius-pill: 999px;
+    --mode-switch-radius: var(--radius-pill);
+    --mode-switch-pad: 4px;
+    --mode-switch-gap: 4px;
+    --mode-switch-min-height: 36px;
+    --mode-switch-thumb-inset: 4px;
+    --mode-switch-thumb-offset: 6px;
+    --mode-switch-label-pad-inline: 12px;
+    --mode-switch-label-min-height: 28px;
+    --mode-switch-thumb-background: var(--accent-fill);
+    --mode-switch-thumb-shadow: inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 42%, transparent), 0 12px 24px var(--accent-shadow-soft);
+    --mode-switch-thumb-shadow-start-edge: inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 42%, transparent), 12px 12px 24px -12px var(--accent-shadow-soft);
+    --mode-switch-thumb-shadow-end-edge: inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 42%, transparent), -12px 12px 24px -12px var(--accent-shadow-soft);
+    --control-glass-background: transparent;
+    --control-glass-background-hover: color-mix(in srgb, var(--theme-muted) 8%, transparent);
     --page-edge-pad: 10px;
     /*
      * Responsive breakpoint registry. CSS repeats these values in media
@@ -4061,6 +4075,16 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    :root {
+        --sidebar-motion-duration: 0ms;
+    }
+
+    .app-shell,
+    .sidebar,
+    .sidebar-toggle {
+        transition: none !important;
+    }
+
     .suggestion-loading-spinner {
         animation: none;
     }
@@ -4397,88 +4421,117 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     min-width: 0;
 }
 
-.browser-content-mode-control {
-    --browser-mode-option-count: 2;
+.segmented-control {
+    --segmented-option-count: 2;
+    --segmented-option-min-width: 0px;
+    --segmented-thumb-duration: 325ms;
+    --segmented-thumb-easing: var(--motion-bouncy);
     position: relative;
-    display: grid;
-    grid-template-columns: repeat(var(--browser-mode-option-count), minmax(0, 1fr));
-    gap: 4px;
-    min-height: 36px;
-    padding: 4px;
+    min-height: var(--mode-switch-min-height);
+    padding: var(--mode-switch-pad);
     border: var(--frosted-glass-border);
-    border-radius: var(--radius-pill);
+    border-radius: var(--mode-switch-radius);
     background: var(--control-glass-background);
+    display: grid;
+    grid-template-columns: repeat(var(--segmented-option-count), minmax(var(--segmented-option-min-width), 1fr));
+    gap: var(--mode-switch-gap);
+    align-items: stretch;
     box-shadow: inset 0 1px 0 var(--theme-glass-highlight), inset 0 -1px 0 var(--theme-glass-border), var(--frosted-glass-shadow);
-    backdrop-filter: saturate(180%) blur(20px);
-    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    backdrop-filter: saturate(200%) blur(26px);
+    -webkit-backdrop-filter: saturate(200%) blur(26px);
     isolation: isolate;
+    overflow: visible;
+    scrollbar-width: none;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+    transition: background 220ms var(--motion-standard), box-shadow 220ms var(--motion-standard);
 }
 
-.browser-content-mode-control::before {
+.segmented-control::-webkit-scrollbar {
+    display: none;
+}
+
+.segmented-control:hover {
+    background: var(--control-glass-background-hover);
+}
+
+.segmented-control::before {
     position: absolute;
-    inset: 4px auto 4px 4px;
-    width: calc((100% - 8px - 4px) / 2);
-    border-radius: var(--radius-pill);
-    background: var(--accent-fill);
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 42%, transparent), 0 10px 24px var(--accent-shadow-soft);
+    top: var(--mode-switch-thumb-inset);
+    bottom: var(--mode-switch-thumb-inset);
+    left: var(--mode-switch-thumb-inset);
+    width: calc(50% - var(--mode-switch-thumb-offset));
+    border-radius: var(--mode-switch-radius);
+    background: var(--mode-switch-thumb-background);
+    box-shadow: var(--mode-switch-thumb-shadow);
     content: "";
     pointer-events: none;
-    transform: translateX(0);
-    transition: transform 400ms var(--motion-bouncy);
+    transform: translate3d(0, 0, 0);
+    transition: transform var(--segmented-thumb-duration) var(--segmented-thumb-easing);
+    will-change: transform;
+    backface-visibility: hidden;
     z-index: 0;
 }
 
-.browser-content-mode-control:has(> .browser-content-mode-option:last-child input:checked)::before {
-    transform: translateX(calc(100% + 4px));
+.segmented-control[data-option-count]::before {
+    width: calc((100% - (var(--mode-switch-thumb-inset) * 2) - (var(--mode-switch-gap) * (var(--segmented-option-count, 2) - 1))) / var(--segmented-option-count, 2));
+    transform: translateX(calc((100% + var(--mode-switch-gap)) * var(--segmented-active-index, 0)));
 }
 
-.browser-content-mode-control[data-segmented-active-index="1"]::before {
-    transform: translateX(calc(100% + 4px));
-}
-
-.browser-content-mode-option {
+.segmented-control-option {
     position: relative;
     z-index: 1;
     display: flex;
     min-width: 0;
-    margin: 0;
-    cursor: pointer;
+    align-items: stretch;
+    margin-bottom: 0;
 }
 
-.browser-content-mode-option input {
+.segmented-control-option input {
     position: absolute;
     inset: 0;
     opacity: 0;
     pointer-events: none;
 }
 
-.browser-content-mode-option span {
+.segmented-control-option span {
+    position: relative;
+    z-index: 1;
+    box-sizing: border-box;
+    flex: 1 1 auto;
     display: flex;
     align-items: center;
     justify-content: center;
     width: 100%;
-    min-height: 28px;
-    padding: 0 12px;
-    border-radius: var(--radius-pill);
+    min-width: 0;
+    min-height: var(--mode-switch-label-min-height);
+    height: 100%;
+    padding: 0 var(--mode-switch-label-pad-inline);
+    border-radius: var(--mode-switch-radius);
     color: var(--theme-muted);
     font-size: var(--font-form-label);
-    font-weight: var(--font-weight-regular);
+    font-weight: var(--font-weight-bold);
     line-height: 1.15;
     text-align: center;
     transition: color 220ms var(--motion-standard);
+    overflow-wrap: anywhere;
+    text-wrap: balance;
 }
 
-.browser-content-mode-option input:checked + span {
+.segmented-control-option input:checked + span,
+.segmented-control-option[aria-checked="true"] span,
+.segmented-control-option.is-active span {
     color: var(--accent-contrast);
 }
 
-.browser-content-mode-option.is-active span {
-    color: var(--accent-contrast);
-}
-
-.browser-content-mode-option:has(input:focus-visible) span {
+.segmented-control-option:has(input:focus-visible) span {
     outline: 2px solid var(--accent-focus-ring);
     outline-offset: 2px;
+}
+
+.browser-content-mode-control {
+    width: 100%;
+    cursor: pointer;
 }
 
 .browser-filter-form {

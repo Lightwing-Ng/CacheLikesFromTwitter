@@ -247,6 +247,13 @@ class AgentSourceCacheTests(unittest.TestCase):
             self.assertTrue(refresh_started.wait(timeout=5))
             release.set()
             self.assertTrue(refresh_finished.wait(timeout=5))
+            with cache._condition:
+                self.assertTrue(
+                    cache._condition.wait_for(
+                        lambda: not cache._refreshing,
+                        timeout=5,
+                    )
+                )
 
         self.assertEqual(stale["cache"]["status"], "stale")
         self.assertTrue(stale["cache"]["refresh_in_progress"])
