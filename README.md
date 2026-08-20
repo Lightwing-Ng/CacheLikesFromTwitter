@@ -1,6 +1,6 @@
 # CacheLikesFromTwitter
 
-Documentation version: `v1.11.0-codex.2`
+Documentation version: `v1.12.0-codex.1`
 
 CacheLikesFromTwitter is a local Flask web console that caches media from the
 currently signed-in X account's Likes timeline, Grok's Files library, and a
@@ -12,7 +12,7 @@ The sidebar exposes one provider-neutral Project concept: ChatGPT Projects, Gemi
 Grok Projects are adapted behind the same Project selector and execution contract. It defaults to
 a new root-level session, while the sidebar can join one of the 20 most recent sessions, start a
 session in one of the 20 most recent Projects, or join one of a Project's 20 most recent sessions.
-The selected Web provider supplies reasoning while a bounded local macOS Computer Use controller
+The selected Web provider supplies reasoning while a bounded local Computer Use controller
 reads, changes, runs, and verifies only the selected project. This fallback uses no API,
 command-line coding-agent runtime, MCP connection, or third-party agent bridge.
 
@@ -31,9 +31,10 @@ public reverse proxy.
 
 ## Requirements
 
-- macOS with a supported Python 3.13 or 3.14 interpreter; the resolver prefers the host
-  `python3` when it is supported
-- A signed-in Chrome, Edge, or Safari session for the source you want to cache
+- macOS or Windows with a supported Python 3.13 or 3.14 interpreter; the resolver prefers the
+  host `python3` or the Windows `py -3.13` launcher when it is supported
+- A signed-in Chrome or Edge session on Windows, or Chrome, Edge, or Safari on macOS, for the
+  source you want to cache
 - Playwright Chromium for Chromium-backed X, Grok, and ChatGPT automation
 - `yt-dlp` for X media downloads
 - An authenticated ChatGPT Web account for the optional Computer Use Agent workspace
@@ -52,6 +53,13 @@ Python 3.13 or 3.14 interpreter, or launch it from a shell:
 
 ```bash
 ./scripts/run_app.sh
+```
+
+On Windows, run the PowerShell entrypoint instead:
+
+```powershell
+.\scripts\setup_python.ps1
+.\scripts\run_app.ps1
 ```
 
 Set `CACHELIKES_SKIP_PLAYWRIGHT_INSTALL=1` only for an offline test-only dependency setup.
@@ -102,5 +110,7 @@ an authenticated profile, downloads media, or writes to user-owned caches, logs,
 ## Notes
 
 - The first run works best when normal Chrome windows are closed.
-- The default Chrome profile path is macOS `~/Library/Application Support/Google/Chrome`.
+- The default Chrome profile path follows the host platform: macOS uses
+  `~/Library/Application Support/Google/Chrome`, while Windows uses
+  `%LOCALAPPDATA%\Google\Chrome\User Data`.
 - Media download relies on `yt-dlp --cookies-from-browser chrome`.

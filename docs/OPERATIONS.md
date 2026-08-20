@@ -56,8 +56,8 @@ to override it. A successful unlock is stored in the signed Flask session for th
   20 most recent sessions.
 - Settings → Agent controls the operating system, terminal permissions, context limit, turn limit,
   command timeout, and per-operating-system prompts. The operating-system setting detects the host and
-  selects macOS or Windows automatically. macOS execution is available; Windows is represented for
-  future configuration and is blocked on the current host.
+  selects macOS or Windows automatically. The selected value must match the host; Windows uses
+  Edge or Chrome and does not expose Safari.
 - Chromium can attach the generated Markdown context directly. Safari falls back to compact
   on-demand reads because web content cannot programmatically assign a local file to a protected
   file input.
@@ -91,7 +91,7 @@ to override it. A successful unlock is stored in the signed Flask session for th
 | `local_store/.browser-trash/` | Recoverable previews moved by the local-media browser |
 | `local_store/.browser_deleted.json` | Browser deletion tombstones and exclusion identities |
 | `logs/cachelikes.log.jsonl` | Structured local application log |
-| `~/Library/Application Support/CacheLikesFromTwitter/settings.json` | Device-local saved settings |
+| Platform-native CacheLikesFromTwitter settings path (`~/Library/Application Support/...` on macOS; `%APPDATA%\CacheLikesFromTwitter\...` on Windows) | Device-local saved settings |
 
 All cache and log paths are ignored by Git. Back up local media before using any destructive reset
 operation.

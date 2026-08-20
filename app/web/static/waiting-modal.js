@@ -1,4 +1,4 @@
-/* Code version: v1.0.0-codex.1 */
+/* Code version: v1.1.0-codex.1 */
 
 (function initializeWaitingModal() {
     "use strict";
@@ -24,7 +24,7 @@
         if (!titleText && !copyText) return null;
         return {
             title: normalizedText(titleText, "Working locally"),
-            copy: normalizedText(copyText, "Please wait while the app completes your request on this Mac."),
+            copy: normalizedText(copyText, "Please wait while the app completes your request on this computer."),
         };
     }
 
@@ -45,7 +45,7 @@
         const delay = Math.max(0, Number(options.delay) || 0);
         const waitOptions = {
             title: normalizedText(options.title, "Working locally"),
-            copy: normalizedText(options.copy, "Please wait while the app completes your request on this Mac."),
+            copy: normalizedText(options.copy, "Please wait while the app completes your request on this computer."),
         };
         let timeoutId = 0;
         let finished = false;

@@ -1,4 +1,4 @@
-/* Code version: v1.0.0-codex.1 */
+/* Code version: v1.1.0-codex.1 */
 
 (function initializeSettingsDirectoryPickers() {
     "use strict";
@@ -28,7 +28,7 @@
             renderStatus();
             const wait = window.CacheWaitModal?.begin?.({
                 title: "Opening folder picker",
-                copy: `Waiting for macOS to let you choose the ${directoryLabel}.`,
+                copy: `Waiting for the system to let you choose the ${directoryLabel}.`,
                 delay: 120,
             });
 
@@ -47,7 +47,7 @@
                 });
                 const payload = await response.json();
                 if (!response.ok) {
-                    throw new Error(payload.error || "Could not open the macOS folder picker.");
+                    throw new Error(payload.error || "Could not open the folder picker.");
                 }
                 if (payload.directory) {
                     input.value = payload.directory;
@@ -56,7 +56,7 @@
                 }
             } catch (error) {
                 input.setAttribute("aria-invalid", "true");
-                renderStatus(error.message || "Could not open the macOS folder picker.");
+                renderStatus(error.message || "Could not open the folder picker.");
             } finally {
                 wait?.finish?.();
                 input.removeAttribute("aria-busy");

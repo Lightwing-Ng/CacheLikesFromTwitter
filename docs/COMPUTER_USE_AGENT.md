@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.16.0-codex.1`
+Documentation version: `v3.17.0-codex.1`
 
 ## Purpose
 
@@ -16,7 +16,7 @@ most recent sessions. The adapter maps ChatGPT Projects, Gemini Notebooks, and G
 the same Project contract, so the Agent UI and execution loop do not expose provider-specific
 container names. A run-scoped `session_title` is preserved as the local session label and included
 in the first provider message; the provider may still choose its own remote conversation title. The
-selected Web provider supplies reasoning; a bounded local macOS controller
+selected Web provider supplies reasoning; a bounded local controller
 performs project actions and returns compact observations to the same conversation.
 
 The recent-session, Project, and Project-session catalogs use one shared read-through Parquet cache
@@ -137,9 +137,9 @@ applicable boundary and keeps the local byte ceiling configurable. Gemini and Gr
 different limits or attachment behavior, so the controller treats a missing attachment control
 as a signal to fall back to bounded controller observations.
 
-Windows appears in the selector and has an independent prompt, but execution is intentionally
-blocked on a macOS host until a PowerShell-backed controller and Windows browser-session adapter
-are implemented and verified.
+Windows uses the same project-confined controller with native Windows paths, PowerShell process
+groups, and Edge or Chrome Chromium sessions. Safari remains macOS-only. The selected operating
+system must match the host running the local service.
 
 Edge and Chrome run through an isolated clone of the selected signed-in profile and operate the
 selected provider's DOM directly. Agent Edge and Chrome tasks use offscreen, minimized temporary
@@ -163,9 +163,10 @@ matching visible menu option. If the remote UI is localized or exposes a differe
 leaves the current remote model unchanged and reports that limitation rather than claiming success.
 
 While an Agent task is running on macOS, the service holds an idle-sleep assertion and releases it
-as soon as the task finishes or fails. The display can turn off and the session can remain locked;
-the assertion does not wake the display. Closing a MacBook lid, choosing Sleep, restarting, losing
-network access, or ending the local service can still suspend or interrupt a task.
+as soon as the task finishes or fails. On Windows, the controller isolates the active process in a
+new process group and uses a cooperative stop before terminating it. Closing a MacBook lid,
+choosing Sleep, restarting, losing network access, or ending the local service can still suspend or
+interrupt a task.
 
 ## Verification
 

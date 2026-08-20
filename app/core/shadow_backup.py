@@ -1,6 +1,6 @@
 """One-way shadow cloud backup for the local cache.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import subprocess
 import tempfile
 from threading import RLock, Thread
 
-from .config import CrawlConfig
+from .config import CrawlConfig, is_windows_host
 from .job_lock import CacheTaskLock, SHARED_CACHE_TASK_LOCK
 from .state import utc_now
 
@@ -122,12 +122,32 @@ def sync_shadow_backup(
 
 
 def choose_settings_directory(initial_path: Path, prompt: str) -> Path | None:
-    """Open the macOS native folder picker and return the selected directory.
+    """Open the host-native folder picker and return the selected directory.
 
     ``None`` represents a user-cancelled dialog. The app only invokes this from its
-    local Settings page, where the browser and filesystem belong to the same Mac.
+    local Settings page, where the browser and filesystem belong to the same host.
     """
     default_location = _nearest_existing_directory(initial_path)
+    if is_windows_host():
+        try:
+            from tkinter import Tk
+            from tkinter.filedialog import askdirectory
+        except ImportError as exc:
+            raise ShadowBackupError("Windows could not load its folder picker.") from exc
+
+        root = Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        try:
+            selected_folder = askdirectory(
+                parent=root,
+                initialdir=str(default_location),
+                title=prompt,
+            )
+        finally:
+            root.destroy()
+        return Path(selected_folder).expanduser().resolve(strict=False) if selected_folder else None
+
     applescript = (
         f"set selectedFolder to choose folder with prompt {json.dumps(prompt)} "
         f"default location POSIX file {json.dumps(default_location.as_posix())}\n"

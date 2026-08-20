@@ -218,7 +218,7 @@ ChatGPT page local filesystem authority.
 | --- | --- | --- |
 | `local_store/` | User media, source catalogs, queues, manifests, and deletion previews | Ignored except `.gitkeep` |
 | `logs/` | Local structured JSON-line logs | Ignored except `.gitkeep` |
-| `~/Library/Application Support/CacheLikesFromTwitter/settings.json` | Device-local configuration | Outside the repository |
+| Platform-native CacheLikesFromTwitter settings path (`~/Library/Application Support/...` on macOS; `%APPDATA%\CacheLikesFromTwitter\...` on Windows) | Device-local configuration | Outside the repository |
 | `app/`, `tests/`, `docs/`, `scripts/` | Versioned source, contracts, and checks | Committed |
 
 `CACHELIKES_RUNTIME_ROOT` and `CACHELIKES_SETTINGS_PATH` are internal runtime-injection inputs.

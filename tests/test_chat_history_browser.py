@@ -1,6 +1,6 @@
 """Focused tests for the local text-history browser."""
 
-# Code version: v1.3.1-codex.1
+# Code version: v1.3.2-codex.1
 
 from datetime import datetime
 from pathlib import Path
@@ -216,8 +216,8 @@ def test_build_chat_history_markdown_exports_the_complete_session(tmp_path: Path
     markdown = build_chat_history_markdown(detail_page)
     assert markdown.startswith("# Demo conversation\n")
     assert "- Messages: 2" in markdown
-    assert "### 1. You · 12 Aug 2026 13:00" in markdown
-    assert "### 2. Gemini · 12 Aug 2026 13:01" in markdown
+    assert f"### 1. You · {format_chat_message_timestamp_label('2026-08-12T05:00:00Z')}" in markdown
+    assert f"### 2. Gemini · {format_chat_message_timestamp_label('2026-08-12T05:01:00Z')}" in markdown
     assert "Source link 1: https://example.com/source" in markdown
     assert markdown.endswith("\n")
 

@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.15.1-codex.1
+# Code version: v1.16.0-codex.1
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
 
 from .browser_sessions import browser_descriptors, launch_chromium_context
-from .config import LOCAL_STORE_ROOT, CrawlConfig
+from .config import LOCAL_STORE_ROOT, CrawlConfig, default_edge_user_data_dir, is_windows_host
 from .local_media_browser import BrowserDeletionCatalog
 from .resource_persistence import (
     GROK_CATALOG_FILENAME,
@@ -59,7 +59,13 @@ except ImportError:  # pragma: no cover - exercised in environments without Play
 
 logger = logging.getLogger(__name__)
 
-EDGE_USER_DATA_DIR = Path.home() / "Library/Application Support/Microsoft Edge"
+DEFAULT_GROK_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    if is_windows_host()
+    else "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+) + "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
+
+EDGE_USER_DATA_DIR = default_edge_user_data_dir()
 EDGE_PROFILE_DIR = "Default"
 GROK_TARGET_DIR = LOCAL_STORE_ROOT / "grok"
 GROK_FILES_URL = "https://grok.com/files?sort=&fileType=&createdBy="
@@ -192,10 +198,7 @@ class GrokDownloadAuth:
     """Carry browser-derived request headers into worker downloads."""
 
     cookie_header: str = ""
-    user_agent: str = (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0.0.0 Safari/537.36"
-    )
+    user_agent: str = DEFAULT_GROK_USER_AGENT
 
 
 @dataclass(slots=True)

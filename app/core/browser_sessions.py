@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.15.0-codex.1
+# Code version: v1.16.0-codex.1
 
 from __future__ import annotations
 
@@ -10,14 +10,13 @@ import logging
 import re
 import shutil
 import subprocess
-import sys
 import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .config import CrawlConfig
+from .config import CrawlConfig, default_edge_user_data_dir, is_macos_host, is_windows_host
 from .safari_automation import (
     SAFARI_BACKGROUND_WINDOW_APPLESCRIPT,
     SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT,
@@ -41,7 +40,7 @@ GROK_FILES_URL = "https://grok.com/files"
 CHATGPT_HOME_URL = "https://chatgpt.com/"
 CHATGPT_AUTH_SESSION_URL = "https://chatgpt.com/api/auth/session"
 GEMINI_HOME_URL = "https://gemini.google.com/app"
-EDGE_USER_DATA_DIR = Path.home() / "Library/Application Support/Microsoft Edge"
+EDGE_USER_DATA_DIR = default_edge_user_data_dir()
 EDGE_PROFILE_DIRECTORY = "Default"
 SAFARI_APPLESCRIPT_SOURCE_LIMIT = 500_000
 X_AUTH_MARKERS = ("Sign in", "Log in", "登录", "注册")
@@ -104,13 +103,13 @@ def build_browser_options(config: CrawlConfig) -> list[dict[str, str]]:
 
 def browser_descriptors(config: CrawlConfig) -> dict[str, BrowserDescriptor]:
     """Return runtime-aware browser descriptors."""
-    return {
+    descriptors = {
         "edge": BrowserDescriptor(
             browser_id="edge",
             label="Edge",
             icon_filename="images/browser.edge.png",
             engine="chromium",
-            user_data_dir=EDGE_USER_DATA_DIR,
+            user_data_dir=default_edge_user_data_dir(),
             profile_directory=EDGE_PROFILE_DIRECTORY,
             channel="msedge",
         ),
@@ -123,13 +122,15 @@ def browser_descriptors(config: CrawlConfig) -> dict[str, BrowserDescriptor]:
             profile_directory=config.chrome_profile_directory,
             channel="chrome",
         ),
-        "safari": BrowserDescriptor(
+    }
+    if is_macos_host():
+        descriptors["safari"] = BrowserDescriptor(
             browser_id="safari",
             label="Safari",
             icon_filename="images/browser.safari.png",
             engine="safari",
-        ),
-    }
+        )
+    return descriptors
 
 
 def probe_browser_session(
@@ -496,9 +497,10 @@ def _probe_safari_grok_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
 def sync_playwright_or_error():
     """Return sync_playwright when the dependency is available."""
     if sync_playwright is None:
+        setup_command = ".\\scripts\\setup_python.ps1" if is_windows_host() else "./scripts/setup_python.sh"
         raise RuntimeError(
             "Playwright is not installed for the current interpreter. "
-            "Run `./scripts/setup_python.sh` with a supported Python 3.13 or 3.14 interpreter."
+            f"Run `{setup_command}` with a supported Python 3.13 or 3.14 interpreter."
         )
     return sync_playwright()
 
@@ -712,7 +714,8 @@ def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile
                 local_state_target.write_bytes(local_state.read_bytes())
             except PermissionError:
                 LOGGER.warning(
-                    "macOS denied access to %s; continuing with the readable %s profile directory.",
+                    "%s denied access to %s; continuing with the readable %s profile directory.",
+                    "macOS" if is_macos_host() else "The host",
                     local_state,
                     source_profile_dir,
                 )
@@ -720,7 +723,7 @@ def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile
     except PermissionError as exc:
         denied_path = getattr(exc, "filename", None) or source_profile_dir
         _cleanup_cloned_browser_profile(temp_dir)
-        if sys.platform == "darwin":
+        if is_macos_host():
             raise RuntimeError(
                 f"macOS denied access to the {descriptor.label} profile at {denied_path}. "
                 "Open System Settings > Privacy & Security > Full Disk Access and enable "

@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.18.1-codex.1
+# Code version: v1.19.0-codex.1
 
 from __future__ import annotations
 
@@ -232,12 +232,24 @@ def file_manager_reveal_command(
 
 def reveal_media_path(media_path: Path | str) -> None:
     """Open a trusted media path in the host operating system's file manager."""
+    process_options: dict[str, object] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    if config.is_windows_host():
+        creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(
+            subprocess,
+            "DETACHED_PROCESS",
+            0,
+        )
+        if creation_flags:
+            process_options["creationflags"] = creation_flags
+    else:
+        process_options["start_new_session"] = True
     subprocess.Popen(
         file_manager_reveal_command(media_path),
-        stdin=subprocess.DEVNULL,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
+        **process_options,
     )
 
 

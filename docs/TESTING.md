@@ -40,7 +40,8 @@ Run the responsive contract and sidebar browser layers independently with:
 ```
 
 `CACHELIKES_PYTHON` may override the interpreter only when it resolves to Python 3.13 or 3.14.
-The resolver prefers the supported host `python3`, then falls back to known macOS Python
+The resolver prefers a supported host `python3`, `python`, or Windows `py -3.13` launcher, then
+falls back to known platform-specific Python
 installations.
 
 ## Quality gate

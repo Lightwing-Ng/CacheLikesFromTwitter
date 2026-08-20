@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import os
 from pathlib import Path
@@ -12,6 +11,7 @@ from threading import Lock
 from typing import TextIO
 
 from .config import LOCAL_STORE_ROOT
+from .platform_lock import lock_file, unlock_file
 from .state import utc_now
 
 
@@ -32,7 +32,7 @@ class CacheTaskLock:
             self._lock_path.parent.mkdir(parents=True, exist_ok=True)
             handle = self._lock_path.open("a+", encoding="utf-8")
             try:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_file(handle, blocking=False)
             except BlockingIOError:
                 handle.close()
                 return False
@@ -53,7 +53,7 @@ class CacheTaskLock:
                 handle.flush()
                 os.fsync(handle.fileno())
             except OSError:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                unlock_file(handle)
                 handle.close()
                 raise
 
@@ -66,7 +66,7 @@ class CacheTaskLock:
             if self._handle is None:
                 return
             try:
-                fcntl.flock(self._handle.fileno(), fcntl.LOCK_UN)
+                unlock_file(self._handle)
             finally:
                 self._handle.close()
                 self._handle = None

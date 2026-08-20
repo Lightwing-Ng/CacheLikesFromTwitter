@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.8.6-codex.1
+Code version: v1.8.8-codex.1
 """
 
 from __future__ import annotations
@@ -117,14 +117,22 @@ def _assert_hidden_backdrop(page: Page) -> None:
 
 
 def _assert_toggle_hit_target(page: Page) -> None:
-    assert page.locator("#sidebar_toggle").evaluate(
-        """toggle => {
+    page.wait_for_function(
+        """() => {
+            const toggle = document.querySelector("#sidebar_toggle");
+            if (!(toggle instanceof HTMLElement)) return false;
             const rect = toggle.getBoundingClientRect();
+            if (rect.width < 44 || rect.height < 44) return false;
             const hit = document.elementFromPoint(
                 rect.left + (rect.width / 2),
                 rect.top + (rect.height / 2),
             );
-            return Boolean(hit?.closest("#sidebar_toggle"));
+            const rectKey = [rect.left, rect.top, rect.width, rect.height]
+                .map(value => value.toFixed(3))
+                .join(",");
+            const previousRectKey = window.__cachelikesStableToggleRect || "";
+            window.__cachelikesStableToggleRect = rectKey;
+            return previousRectKey === rectKey && Boolean(hit?.closest("#sidebar_toggle"));
         }"""
     )
 
@@ -309,6 +317,18 @@ def test_agent_response_pagination_keeps_spatial_effects_visible(
         1_280,
         900,
         touch=False,
+        init_script="""
+            (() => {
+                const originalFetch = window.fetch.bind(window);
+                window.fetch = (input, init) => {
+                    const requestUrl = typeof input === "string" ? input : input?.url;
+                    if (requestUrl && new URL(requestUrl, window.location.href).pathname === "/api/agent/status") {
+                        return Promise.reject(new Error("Agent status polling is disabled for this layout test."));
+                    }
+                    return originalFetch(input, init);
+                };
+            })();
+        """,
     )
     try:
         contract = page.evaluate(

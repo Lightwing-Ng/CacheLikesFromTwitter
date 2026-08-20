@@ -19,6 +19,24 @@ def test_crawl_config_sanitizes_account_names() -> None:
     assert CrawlConfig().sanitized_account_name(".hidden.") == "hidden"
 
 
+def test_windows_defaults_use_native_application_data_roots(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import app.core.config as config
+
+    local_app_data = tmp_path / "LocalAppData"
+    roaming_app_data = tmp_path / "RoamingAppData"
+    monkeypatch.setattr(config, "is_windows_host", lambda: True)
+    monkeypatch.setenv("LOCALAPPDATA", str(local_app_data))
+    monkeypatch.setenv("APPDATA", str(roaming_app_data))
+    monkeypatch.delenv(config.SETTINGS_PATH_ENV, raising=False)
+
+    assert config.default_chrome_user_data_dir() == local_app_data / "Google/Chrome/User Data"
+    assert config.default_edge_user_data_dir() == local_app_data / "Microsoft/Edge/User Data"
+    assert config.default_settings_path() == roaming_app_data / "CacheLikesFromTwitter/settings.json"
+
+
 def test_settings_round_trip_and_invalid_payload_fall_back_to_defaults(tmp_path: Path) -> None:
     settings_path = tmp_path / "settings.json"
     expected = CrawlConfig(

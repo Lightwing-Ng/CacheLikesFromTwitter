@@ -1,6 +1,6 @@
 """Read-only local media browser tests.
 
-Code version: v1.10.3-codex.1
+Code version: v1.10.4-codex.1
 """
 
 from __future__ import annotations
@@ -233,8 +233,11 @@ def test_file_manager_reveal_uses_platform_native_commands(tmp_path: Path, monke
     )
     reveal_media_path(media_path)
 
-    assert popen_calls[0][0] == ["open", "-R", str(media_path.resolve())]
-    assert popen_calls[0][1]["start_new_session"] is True
+    assert popen_calls[0][0] == file_manager_reveal_command(media_path)
+    if os.name == "nt":
+        assert popen_calls[0][1]["creationflags"]
+    else:
+        assert popen_calls[0][1]["start_new_session"] is True
 
 
 def test_browser_deletion_catalog_normalizes_source_keys(tmp_path: Path) -> None:

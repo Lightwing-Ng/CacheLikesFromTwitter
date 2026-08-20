@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.40.0-codex.1
+# Code version: v1.41.0-codex.1
 
 from __future__ import annotations
 
@@ -66,12 +66,12 @@ from app.core.config import (
     save_config,
 )
 from app.core.computer_use_agent import (
-    BROWSER_OPTIONS as AGENT_BROWSER_OPTIONS,
     AGENT_MODEL_OPTIONS_BY_PLATFORM,
     AGENT_PLATFORM_OPTIONS,
     OPERATING_SYSTEM_OPTIONS as AGENT_OPERATING_SYSTEM_OPTIONS,
     ComputerUseAgentService,
     ComputerUseSettingsStore,
+    browser_options_for_host,
     is_loopback_address,
     launch_terminal_authorization,
     open_agent_in_browser,
@@ -423,6 +423,10 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     app.extensions["computer_use_agent_service"] = computer_use_agent_service
     atexit.register(computer_use_agent_service.stop_at_exit)
 
+    def available_agent_browser_keys() -> set[str]:
+        """Return Agent browsers supported by the current host."""
+        return {str(option["key"]) for option in browser_options_for_host()}
+
     def agent_settings_for_route(browser: str, platform: str):
         """Render one canonical Agent route without mutating persisted preferences."""
         current = computer_use_settings.settings
@@ -453,8 +457,10 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         route_args = request.view_args or {}
         browser = str(route_args.get("browser") or computer_use_settings.settings.browser).strip().lower()
         platform = str(route_args.get("platform") or computer_use_settings.settings.platform).strip().lower()
-        if not is_supported_agent_selection(browser, platform):
+        if not is_supported_agent_selection(browser, platform) or browser not in available_agent_browser_keys():
             browser = computer_use_settings.settings.browser
+            if browser not in available_agent_browser_keys():
+                browser = "edge"
             platform = computer_use_settings.settings.platform
         return url_for("agent_selected", browser=browser, platform=platform)
     cache_runtimes = {
@@ -867,7 +873,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 Path(agent_settings.workspace_path).name or agent_settings.workspace_path
             ),
             operating_system_options=AGENT_OPERATING_SYSTEM_OPTIONS,
-            browser_options=AGENT_BROWSER_OPTIONS,
+            browser_options=browser_options_for_host(),
             platform_options=AGENT_PLATFORM_OPTIONS,
             model_options_by_platform=AGENT_MODEL_OPTIONS_BY_PLATFORM,
             render_prompt_markdown=render_prompt_markdown,
@@ -880,13 +886,17 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         if not is_agent_access_unlocked():
             return render_agent_access_unlock()
         settings = computer_use_settings.settings
-        return redirect(build_agent_path(settings.browser, settings.platform))
+        browser = settings.browser if settings.browser in available_agent_browser_keys() else "edge"
+        return redirect(build_agent_path(browser, settings.platform))
 
     @app.get("/agent/<browser>/<platform>")
     def agent_selected(browser: str, platform: str):
         """Render the Agent page for one explicit browser/provider selection."""
         require_local_agent_request(allow_locked=True)
-        if not is_supported_agent_selection(browser, platform):
+        if (
+            not is_supported_agent_selection(browser, platform)
+            or browser.strip().lower() not in available_agent_browser_keys()
+        ):
             abort(404)
         if not is_agent_access_unlocked():
             return render_agent_access_unlock()
@@ -900,10 +910,11 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             return render_agent_access_unlock("The password is incorrect.", status_code=401)
         session[AGENT_ACCESS_SESSION_KEY] = True
         settings = computer_use_settings.settings
+        browser = settings.browser if settings.browser in available_agent_browser_keys() else "edge"
         return redirect(
             url_for(
                 "agent_selected",
-                browser=settings.browser,
+                browser=browser,
                 platform=settings.platform,
             ),
             code=303,
@@ -1310,7 +1321,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.post("/api/browser/media/<stable_id>/reveal")
     def reveal_browser_media(stable_id: str):
-        if request.remote_addr not in {"127.0.0.1", "::1"}:
+        if not is_loopback_address(request.remote_addr):
             return jsonify({"error": "Local files can only be revealed from this computer."}), 403
 
         resolved_path = media_catalog.resolved_media_path(stable_id)
@@ -1576,8 +1587,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.post("/api/settings/shadow-backup/destination")
     def choose_shadow_backup_destination_route():
-        if request.remote_addr not in {"127.0.0.1", "::1"}:
-            return jsonify({"error": "The folder picker is only available from this Mac."}), 403
+        if not is_loopback_address(request.remote_addr):
+            return jsonify({"error": "The folder picker is only available on the local host."}), 403
 
         payload = request.get_json(silent=True) or {}
         requested_initial_path = payload.get("initial_path")
@@ -1599,8 +1610,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.post("/api/settings/directory")
     def choose_settings_directory_route():
-        if request.remote_addr not in {"127.0.0.1", "::1"}:
-            return jsonify({"error": "The folder picker is only available from this Mac."}), 403
+        if not is_loopback_address(request.remote_addr):
+            return jsonify({"error": "The folder picker is only available on the local host."}), 403
 
         directory_options = {
             "chrome_user_data_dir": (

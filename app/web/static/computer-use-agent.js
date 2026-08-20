@@ -1,4 +1,4 @@
-/* Code version: v3.15.0-codex.1 */
+/* Code version: v3.16.0-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -1003,15 +1003,15 @@
     function readinessState(payload) {
         const platformLabel = selectedPlatformLabel();
         const runtime = payload.runtime || {};
-        if (selectedOs() !== "macos") {
-            const hostOperatingSystem = runtime.host_operating_system || "this host";
-            const hostLabel = hostOperatingSystem === "macos" ? "this macOS host" : "this host";
-            return {ready: false, message: `Windows execution is planned but is not available on ${hostLabel}.`};
+        const hostOperatingSystem = runtime.host_operating_system || "";
+        if (hostOperatingSystem && selectedOs() !== hostOperatingSystem) {
+            const hostLabel = hostOperatingSystem === "macos" ? "this macOS host" : "this Windows host";
+            return {ready: false, message: `The selected operating system is not available on ${hostLabel}.`};
         }
         if (!runtime.ready) {
             return {
                 ready: false,
-                message: runtime.message || "Computer Use is not ready on this Mac.",
+                message: runtime.message || "Computer Use is not ready on this host.",
             };
         }
         if (!lastBrowserStatus) {

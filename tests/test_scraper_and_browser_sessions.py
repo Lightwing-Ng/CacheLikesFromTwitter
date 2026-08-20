@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.1-codex.2
+Code version: v1.6.2-codex.1
 """
 
 from __future__ import annotations
@@ -328,7 +328,10 @@ def test_clone_browser_profile_continues_when_macos_blocks_local_state(tmp_path:
         temp_dir.cleanup()
 
 
-def test_clone_browser_profile_reports_macos_profile_permission_error(tmp_path: Path) -> None:
+def test_clone_browser_profile_reports_macos_profile_permission_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     source_user_data_dir = tmp_path / "Edge"
     source_profile_dir = source_user_data_dir / "Default"
     source_profile_dir.mkdir(parents=True)
@@ -342,6 +345,7 @@ def test_clone_browser_profile_reports_macos_profile_permission_error(tmp_path: 
         channel="msedge",
     )
 
+    monkeypatch.setattr("app.core.browser_sessions.is_macos_host", lambda: True)
     with patch("shutil.copytree", side_effect=PermissionError(1, "Operation not permitted", source_profile_dir)):
         with pytest.raises(RuntimeError, match="Full Disk Access"):
             clone_browser_profile(descriptor)

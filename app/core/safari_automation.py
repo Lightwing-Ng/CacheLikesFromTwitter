@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import base64
 import contextlib
-import fcntl
 import json
 import logging
 import re
@@ -18,6 +17,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any
 from urllib.parse import urlsplit
+
+from .platform_lock import lock_file, unlock_file
 
 
 SAFARI_DOWNLOAD_RANGE_BYTES = 512 * 1024
@@ -160,11 +161,11 @@ def safari_window_creation_guard():
     """Serialize front-window capture across threads and local app processes."""
     with SAFARI_WINDOW_CREATION_LOCK:
         with SAFARI_WINDOW_CREATION_LOCK_PATH.open("a+") as lock_handle:
-            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            lock_file(lock_handle)
             try:
                 yield
             finally:
-                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+                unlock_file(lock_handle)
 
 
 @dataclass(slots=True)
@@ -980,7 +981,7 @@ class SafariContext:
         if self._context_lock_handle is not None:
             return
         handle = SAFARI_CONTEXT_LOCK_PATH.open("a+")
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        lock_file(handle)
         self._context_lock_handle = handle
 
     def _release_context_lock(self) -> None:
@@ -990,7 +991,7 @@ class SafariContext:
             return
         self._context_lock_handle = None
         try:
-            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            unlock_file(handle)
         finally:
             handle.close()
 

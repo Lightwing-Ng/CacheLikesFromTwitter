@@ -89,6 +89,44 @@ def test_settings_validate_workspace_environment_browser_and_limits() -> None:
             validate_computer_use_settings({**asdict(settings), "target_url": "https://example.com"})
 
 
+def test_windows_agent_rejects_safari_and_accepts_chromium(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="Windows Agent sessions require Edge or Chrome"):
+        validate_computer_use_settings(
+            {
+                "workspace_path": str(tmp_path),
+                "operating_system": "windows",
+                "browser": "safari",
+            }
+        )
+
+    settings = validate_computer_use_settings(
+        {
+            "workspace_path": str(tmp_path),
+            "operating_system": "windows",
+            "browser": "edge",
+        }
+    )
+    assert settings.operating_system == "windows"
+    assert settings.browser == "edge"
+
+
+def test_windows_inspection_commands_use_powershell_for_safe_scripts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: True)
+    monkeypatch.setattr(computer_use_agent.shutil, "which", lambda _name: "pwsh.exe")
+
+    assert inspection_command_parts(r".\scripts\check.ps1") == [
+        "pwsh.exe",
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        r".\scripts\check.ps1",
+    ]
+
+
 def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None:
     assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok"]
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol"

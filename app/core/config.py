@@ -1,11 +1,12 @@
 """Configuration helpers."""
 
-# Code version: v1.10.1-codex.1
+# Code version: v1.11.0-codex.1
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -13,6 +14,50 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 RUNTIME_ROOT_ENV = "CACHELIKES_RUNTIME_ROOT"
 SETTINGS_PATH_ENV = "CACHELIKES_SETTINGS_PATH"
+
+
+def is_windows_host() -> bool:
+    """Return whether the current Python process runs on Windows."""
+    return os.name == "nt" or sys.platform.startswith("win")
+
+
+def is_macos_host() -> bool:
+    """Return whether the current Python process runs on macOS."""
+    return sys.platform == "darwin"
+
+
+def _windows_app_data_root(variable_name: str, fallback_name: str) -> Path:
+    """Resolve one Windows application-data root without requiring a shell."""
+    configured = os.environ.get(variable_name, "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return Path.home() / "AppData" / fallback_name
+
+
+def default_chrome_user_data_dir() -> Path:
+    """Return the platform-native Chrome user-data directory."""
+    if is_windows_host():
+        return _windows_app_data_root("LOCALAPPDATA", "Local") / "Google/Chrome/User Data"
+    if is_macos_host():
+        return Path.home() / "Library/Application Support/Google/Chrome"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "google-chrome"
+
+
+def default_edge_user_data_dir() -> Path:
+    """Return the platform-native Microsoft Edge user-data directory."""
+    if is_windows_host():
+        return _windows_app_data_root("LOCALAPPDATA", "Local") / "Microsoft/Edge/User Data"
+    if is_macos_host():
+        return Path.home() / "Library/Application Support/Microsoft Edge"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "microsoft-edge"
+
+
+def normalize_host_browser(value: object, fallback: str) -> str:
+    """Keep persisted browser selections valid on the current host."""
+    selected = str(value or fallback).strip().lower() or fallback
+    if is_windows_host() and selected == "safari":
+        return fallback
+    return selected
 
 
 def resolve_runtime_root() -> Path:
@@ -30,7 +75,8 @@ LOGS_ROOT = RUNTIME_ROOT / "logs"
 LEGACY_SETTINGS_PATH = RUNTIME_ROOT / ".cachelikes-settings.json"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8666
-DEFAULT_CHROME_USER_DATA_DIR = Path.home() / "Library/Application Support/Google/Chrome"
+DEFAULT_CHROME_USER_DATA_DIR = default_chrome_user_data_dir()
+DEFAULT_GEMINI_BROWSER = "edge" if is_windows_host() else "safari"
 DEFAULT_CHROME_PROFILE_DIRECTORY = "Default"
 DEFAULT_SHADOW_BACKUP_DESTINATION = (
     Path.home() / "AICaches"
@@ -57,7 +103,14 @@ def default_settings_path() -> Path:
     configured_path = os.environ.get(SETTINGS_PATH_ENV, "").strip()
     if configured_path:
         return Path(configured_path).expanduser().resolve(strict=False)
-    return Path.home() / "Library/Application Support/CacheLikesFromTwitter/settings.json"
+    if is_windows_host():
+        return (
+            _windows_app_data_root("APPDATA", "Roaming")
+            / "CacheLikesFromTwitter/settings.json"
+        )
+    if is_macos_host():
+        return Path.home() / "Library/Application Support/CacheLikesFromTwitter/settings.json"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "CacheLikesFromTwitter/settings.json"
 
 
 SETTINGS_PATH = default_settings_path()
@@ -76,7 +129,7 @@ class CrawlConfig:
     x_browser: str = "chrome"
     grok_browser: str = "edge"
     chatgpt_browser: str = "edge"
-    gemini_browser: str = "safari"
+    gemini_browser: str = DEFAULT_GEMINI_BROWSER
     gemini_max_conversations: int = DEFAULT_GEMINI_MAX_CONVERSATIONS
     gemini_scroll_pause_seconds: float = DEFAULT_GEMINI_SCROLL_PAUSE_SECONDS
     gemini_stale_round_limit: int = DEFAULT_GEMINI_STALE_ROUND_LIMIT
@@ -138,12 +191,16 @@ def load_saved_config(settings_path: Path = SETTINGS_PATH) -> CrawlConfig:
         max_scroll_rounds=int(payload.get("max_scroll_rounds", defaults.max_scroll_rounds)),
         scroll_pause_seconds=float(payload.get("scroll_pause_seconds", defaults.scroll_pause_seconds)),
         stale_round_limit=int(payload.get("stale_round_limit", defaults.stale_round_limit)),
-        x_browser=str(payload.get("x_browser", defaults.x_browser)).strip().lower() or defaults.x_browser,
-        grok_browser=str(payload.get("grok_browser", defaults.grok_browser)).strip().lower() or defaults.grok_browser,
-        chatgpt_browser=str(payload.get("chatgpt_browser", defaults.chatgpt_browser)).strip().lower()
-        or defaults.chatgpt_browser,
-        gemini_browser=str(payload.get("gemini_browser", defaults.gemini_browser)).strip().lower()
-        or defaults.gemini_browser,
+        x_browser=normalize_host_browser(payload.get("x_browser", defaults.x_browser), defaults.x_browser),
+        grok_browser=normalize_host_browser(payload.get("grok_browser", defaults.grok_browser), defaults.grok_browser),
+        chatgpt_browser=normalize_host_browser(
+            payload.get("chatgpt_browser", defaults.chatgpt_browser),
+            defaults.chatgpt_browser,
+        ),
+        gemini_browser=normalize_host_browser(
+            payload.get("gemini_browser", defaults.gemini_browser),
+            defaults.gemini_browser,
+        ),
         gemini_max_conversations=max(
             1,
             int(payload.get("gemini_max_conversations", defaults.gemini_max_conversations)),

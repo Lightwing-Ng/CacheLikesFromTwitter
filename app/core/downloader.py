@@ -1,6 +1,6 @@
 """Download media from tweet URLs with yt-dlp."""
 
-# Code version: v1.7.0-codex.1
+# Code version: v1.8.0-codex.1
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .browser_sessions import browser_descriptors
 from .cache_catalog import LocalTweetCacheIndex
-from .config import CrawlConfig
+from .config import CrawlConfig, is_windows_host
 from .local_media_browser import BrowserDeletionCatalog
 from .state import TaskState
 
@@ -242,6 +242,10 @@ def resolve_yt_dlp_command() -> list[str]:
     if binary:
         return [binary]
 
+    if is_windows_host():
+        raise RuntimeError(
+            "yt-dlp is not installed. Run `py -3.13 -m pip install -r requirements.txt`."
+        )
     raise RuntimeError(
         "yt-dlp is not installed. Run `python3 -m pip install -r requirements.txt` "
         "or `brew install yt-dlp`."
@@ -253,6 +257,10 @@ def ensure_yt_dlp_available() -> list[str]:
     try:
         return resolve_yt_dlp_command()
     except RuntimeError as exc:
+        if is_windows_host():
+            raise RuntimeError(
+                "yt-dlp is not installed. Run `py -3.13 -m pip install -r requirements.txt`."
+            ) from exc
         raise RuntimeError(
             "yt-dlp is not installed. Run `python3 -m pip install -r requirements.txt` "
             "or `brew install yt-dlp`."

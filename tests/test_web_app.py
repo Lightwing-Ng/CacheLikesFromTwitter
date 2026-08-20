@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.80.2-codex.1
+# Code version: v1.80.3-codex.1
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from app.core.state import TaskSnapshot
 from app.core.config import CrawlConfig
 from app.core.chat_history_browser import query_chat_history
 from app.core.computer_use_agent import ComputerUseSettings
-from app.core.local_media_browser import LocalMediaCatalog, LocalMediaPage, stable_media_id
+from app.core.local_media_browser import LocalMediaCatalog, LocalMediaPage, local_file_manager_label, stable_media_id
 from app.core.resource_persistence import GEMINI_HISTORY_SCHEMA, write_parquet_rows_atomic
 from app.web.app import (
     create_app,
@@ -461,7 +461,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('class="global-quick-action-button global-theme-toggle"', body)
                 self.assertIn('class="sidebar-dock-label"', dock_markup)
                 self.assertNotIn("cachelikes:browser-sidebar-open", body)
-                self.assertIn('waiting-modal.js?v=waiting-modal-v1.0.0-codex.1', body)
+                self.assertIn('waiting-modal.js?v=waiting-modal-v1.1.0-codex.1', body)
                 self.assertIn('id="cache_wait_modal"', body)
                 self.assertIn('class="workspace-modal-overlay cache-wait-modal"', body)
                 self.assertIn('suggestion-loading-spinner workspace-modal-icon', body)
@@ -609,7 +609,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-terminal-authorization-status aria-live="polite" hidden></span>', settings_body)
         self.assertIn('class="settings-inline-button settings-inline-button-primary shadow-backup-sync-button"', settings_body)
         self.assertIn('shadow-backup-settings.js?v=shadow-backup-settings-v1.3.0-codex.1', settings_body)
-        self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', settings_body)
+        self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.1.0-codex.1', settings_body)
         self.assertIn("Danger zone", settings_body)
 
     def test_cache_source_switcher_uses_one_complete_registry_on_every_cache_page(self) -> None:
@@ -775,10 +775,10 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<span class="field-label">Workspace</span>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
-        self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', local_body)
+        self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.1.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.15.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.16.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -1080,7 +1080,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.15.0-codex.1',
+            'computer-use-agent-v3.16.0-codex.1',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
@@ -1343,7 +1343,8 @@ class WebAppTests(unittest.TestCase):
         script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
 
         for fragment in (
-            'if (selectedOs() !== "macos")',
+            'const hostOperatingSystem = runtime.host_operating_system || ""',
+            'if (hostOperatingSystem && selectedOs() !== hostOperatingSystem)',
             'if (!runtime.ready)',
             'lastBrowserStatus.can_download',
             'requestJson("/api/agent/preferences"',
@@ -2529,7 +2530,7 @@ class WebAppTests(unittest.TestCase):
                     missing_response = client.post("/api/browser/media/missing/reveal")
 
         self.assertEqual(local_response.status_code, 200)
-        self.assertEqual(local_response.get_json()["file_manager"], "Finder")
+        self.assertEqual(local_response.get_json()["file_manager"], local_file_manager_label())
         reveal.assert_called_once_with(image_path.resolve())
         self.assertEqual(remote_response.status_code, 403)
         self.assertEqual(missing_response.status_code, 404)

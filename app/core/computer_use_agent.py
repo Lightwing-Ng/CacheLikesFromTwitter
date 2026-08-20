@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.16.0-codex.1
+Code version: v3.17.0-codex.1
 """
 
 from __future__ import annotations
@@ -29,7 +29,13 @@ from .browser_sessions import (
     launch_chromium_context,
     sync_playwright_or_error,
 )
-from .config import CrawlConfig, PROJECT_ROOT, resolve_runtime_root
+from .config import (
+    CrawlConfig,
+    PROJECT_ROOT,
+    default_settings_path,
+    is_windows_host,
+    resolve_runtime_root,
+)
 from .safari_automation import SafariContext
 from .state import utc_now
 
@@ -41,15 +47,11 @@ GEMINI_HOME_URL = "https://gemini.google.com/app"
 GEMINI_HOSTS = {"gemini.google.com"}
 GROK_HOME_URL = "https://grok.com/"
 GROK_HOSTS = {"grok.com", "www.grok.com"}
-DEFAULT_AGENT_SETTINGS_PATH = (
-    Path.home()
-    / "Library/Application Support/CacheLikesFromTwitter/computer-use-agent.json"
-)
+DEFAULT_AGENT_SETTINGS_PATH = default_settings_path().with_name("computer-use-agent.json")
 DEFAULT_AGENT_RUNTIME_ROOT = (
     resolve_runtime_root() / ".computer-use-agent"
     if os.environ.get("CACHELIKES_RUNTIME_ROOT", "").strip()
-    else Path.home()
-    / "Library/Application Support/CacheLikesFromTwitter/computer-use-agent"
+    else default_settings_path().parent / "computer-use-agent"
 )
 DEFAULT_CONTEXT_LIMIT_MIB = 8
 MIN_CONTEXT_LIMIT_MIB = 1
@@ -148,7 +150,7 @@ OPERATING_SYSTEM_OPTIONS = (
         "key": "windows",
         "label": "Windows",
         "icon_filename": "images/MSFT.svg",
-        "available": False,
+        "available": True,
     },
 )
 BROWSER_OPTIONS = (
@@ -184,7 +186,7 @@ Use one of these actions:
 Use read/search/list before editing. Use replace for existing files and write mainly for new files. Do not use shell commands to write, delete, move, install, download, change Git history, publish, or access secrets. Ask the controller to run bodycheck after all edits and checks. A final action is invalid until bodycheck succeeds after the latest edit. The final summary must be concise and must not restate the full transcript."""
 
 DEFAULT_WINDOWS_SYSTEM_PROMPT = """You are the reasoning component of a local Computer Use coding agent targeting Windows.
-The future controller will use PowerShell 7, Windows paths, and the selected project as its only writable root. Follow repository instruction files, preserve unrelated work, make focused changes, and verify them. Keep context economical.
+The controller runs on Windows, uses PowerShell-compatible Windows paths, and owns the selected project as its only writable root. Follow repository instruction files, preserve unrelated work, make focused changes, and verify them. Keep context economical.
 
 """ + JSON_ACTION_RESPONSE_INSTRUCTION + """
 
@@ -238,7 +240,7 @@ _SAFE_PACKAGE_SCRIPTS = re.compile(
     re.IGNORECASE,
 )
 _SAFE_SCRIPT_NAME = re.compile(
-    r"^(?:check|lint|test|verify)(?:[._-][\w.-]+)?\.(?:sh|zsh|bash|py)$",
+    r"^(?:check|lint|test|verify)(?:[._-][\w.-]+)?\.(?:sh|zsh|bash|py|ps1)$",
     re.IGNORECASE,
 )
 _UNSAFE_WRAPPER_EXECUTABLES = frozenset(
@@ -246,12 +248,15 @@ _UNSAFE_WRAPPER_EXECUTABLES = frozenset(
 )
 
 
+DEFAULT_OPERATING_SYSTEM = "windows" if is_windows_host() else "macos"
+
+
 @dataclass(frozen=True, slots=True)
 class ComputerUseSettings:
     """Persist local Computer Use preferences and prompt policy."""
 
     workspace_path: str = str(PROJECT_ROOT)
-    operating_system: str = "macos"
+    operating_system: str = DEFAULT_OPERATING_SYSTEM
     platform: str = DEFAULT_AGENT_PLATFORM
     browser: str = "edge"
     model: str = DEFAULT_CHATGPT_MODEL
@@ -332,6 +337,57 @@ def detect_host_operating_system() -> str:
     if sys.platform.startswith("win") or os.name == "nt":
         return "windows"
     return "macos"
+
+
+def browser_options_for_host() -> tuple[dict[str, str], ...]:
+    """Return browser options that are available on the current host."""
+    if detect_host_operating_system() == "windows":
+        return tuple(option for option in BROWSER_OPTIONS if option["key"] != "safari")
+    return BROWSER_OPTIONS
+
+
+def _process_group_options() -> dict[str, Any]:
+    """Return subprocess options that isolate a task on the current host."""
+    if is_windows_host():
+        creation_flags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        creation_flags |= getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        return {"creationflags": creation_flags} if creation_flags else {}
+    return {"start_new_session": True}
+
+
+def _stop_process(process: subprocess.Popen[Any], *, timeout: float = 3) -> None:
+    """Stop one task process without relying on POSIX process groups."""
+    if process.poll() is not None:
+        return
+    if is_windows_host():
+        try:
+            process.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
+        except (OSError, ValueError):
+            pass
+        try:
+            process.wait(timeout=timeout)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        except OSError:
+            return
+        try:
+            process.kill()
+            process.wait(timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired):
+            return
+        return
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=timeout)
+        except (OSError, subprocess.TimeoutExpired):
+            return
+    except OSError:
+        return
 
 
 def terminal_execution_permission_snapshot(
@@ -625,7 +681,7 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
     if not workspace.is_dir():
         raise ValueError(f"Agent workspace directory was not found: {workspace}")
 
-    operating_system = str(payload.get("operating_system", "macos")).strip().lower()
+    operating_system = str(payload.get("operating_system", DEFAULT_OPERATING_SYSTEM)).strip().lower()
     if operating_system not in SUPPORTED_OPERATING_SYSTEMS:
         raise ValueError("The Agent operating system must be macOS or Windows.")
 
@@ -636,6 +692,8 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
     browser = str(payload.get("browser", "edge")).strip().lower()
     if browser not in SUPPORTED_BROWSERS:
         raise ValueError("The Agent browser must be Safari, Edge, or Chrome.")
+    if operating_system == "windows" and browser == "safari":
+        raise ValueError("Windows Agent sessions require Edge or Chrome; Safari is macOS-only.")
     if platform != "chatgpt" and browser == "safari":
         raise ValueError("Gemini and Grok Agent sessions require Edge or Chrome.")
 
@@ -781,23 +839,20 @@ class ComputerUseSettingsStore:
     def snapshot(self) -> dict[str, Any]:
         settings = self.settings
         host_operating_system = detect_host_operating_system()
-        host_ready = settings.operating_system == "macos" and host_operating_system == "macos"
+        host_ready = settings.operating_system == host_operating_system
         terminal_execution = terminal_execution_permission_snapshot(
             settings.operating_system,
             settings.workspace_path,
         )
+        host_label = "Windows" if host_operating_system == "windows" else "macOS"
         return {
             "ready": host_ready,
             "host_operating_system": host_operating_system,
             "selected_operating_system": settings.operating_system,
             "message": (
-                "Computer Use is ready on this Mac."
+                f"Computer Use is ready on this {host_label} host."
                 if host_ready
-                else (
-                    "Windows execution is planned but is not available on this macOS host."
-                    if host_operating_system == "macos"
-                    else "Windows execution is planned but is not available on this host yet."
-                )
+                else f"{settings.operating_system.title()} execution is unavailable on this {host_label} host."
             ),
             "terminal_execution": terminal_execution,
             "settings": asdict(settings),
@@ -878,7 +933,7 @@ def build_context_markdown(
         "# Local Computer Use task\n",
         "## Request\n\n" + user_request.strip() + "\n",
         "## Execution environment\n\n"
-        f"- Host controller: macOS\n"
+        f"- Host controller: {('Windows' if detect_host_operating_system() == 'windows' else 'macOS')}\n"
         f"- Requested environment: {settings.operating_system}\n"
         f"- Project name: {workspace.name}\n"
         f"- Project root: `{workspace}`\n"
@@ -1228,18 +1283,14 @@ class WorkspaceController:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            start_new_session=True,
+            **_process_group_options(),
         )
         self.process_changed(process)
         try:
             output, _ = process.communicate(timeout=self.settings.command_timeout_seconds)
         except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGTERM)
-            try:
-                output, _ = process.communicate(timeout=5)
-            except subprocess.TimeoutExpired:
-                os.killpg(process.pid, signal.SIGKILL)
-                output, _ = process.communicate(timeout=3)
+            _stop_process(process, timeout=5)
+            output, _ = process.communicate(timeout=3)
             raise RuntimeError(
                 f"Command timed out after {self.settings.command_timeout_seconds:,} seconds.\n"
                 + _truncate_text(output or "", MAX_ACTION_OUTPUT_CHARS)
@@ -1309,13 +1360,14 @@ def inspection_command_parts(command: str) -> list[str]:
     """Parse one direct command and enforce the controller executable allowlist."""
     validate_inspection_command(command)
     try:
-        parts = shlex.split(command, posix=True)
+        parts = shlex.split(command, posix=not is_windows_host())
     except ValueError as exc:
         raise ValueError("Run contains invalid shell quoting.") from exc
     if not parts:
         raise ValueError("Run requires a command.")
 
-    executable = Path(parts[0]).name.casefold()
+    executable_name = Path(parts[0]).name
+    executable = Path(executable_name).stem.casefold() if executable_name.casefold().endswith(".exe") else executable_name.casefold()
     arguments = parts[1:]
     if executable in _UNSAFE_WRAPPER_EXECUTABLES:
         raise ValueError("Run cannot invoke a nested shell or command interpreter.")
@@ -1327,7 +1379,7 @@ def inspection_command_parts(command: str) -> list[str]:
         return parts
     if executable in {"pytest", "ruff", "mypy", "pyright", "eslint", "tsc"}:
         return parts
-    if re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable):
+    if re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable) or executable == "py":
         if len(arguments) < 2 or arguments[0] != "-m" or arguments[1] not in _SAFE_PYTHON_MODULES:
             raise ValueError("Python run actions must use an approved verification module.")
         return parts
@@ -1352,7 +1404,23 @@ def inspection_command_parts(command: str) -> list[str]:
         _SAFE_PACKAGE_SCRIPTS.fullmatch(argument) for argument in arguments if not argument.startswith("-")
     ):
         return parts
-    if parts[0].startswith("./scripts/") and _SAFE_SCRIPT_NAME.fullmatch(Path(parts[0]).name):
+    normalized_script_path = parts[0].replace("\\", "/")
+    if (
+        normalized_script_path.startswith(("./scripts/", "scripts/"))
+        and _SAFE_SCRIPT_NAME.fullmatch(Path(normalized_script_path).name)
+    ):
+        if is_windows_host() and normalized_script_path.casefold().endswith(".ps1"):
+            powershell = shutil.which("pwsh") or shutil.which("powershell")
+            if not powershell:
+                raise ValueError("Windows PowerShell is required to run a .ps1 verification script.")
+            return [
+                powershell,
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                parts[0],
+                *parts[1:],
+            ]
         return parts
     raise ValueError("Run executable is outside the inspection and verification allowlist.")
 
@@ -1493,9 +1561,12 @@ class ComputerUseAgentService:
         if candidate["platform"] != base.platform:
             candidate["target_url"] = _platform_home_url(candidate["platform"])
         settings = validate_computer_use_settings(candidate)
-        if settings.operating_system != "macos":
+        host_operating_system = detect_host_operating_system()
+        if settings.operating_system != host_operating_system:
+            host_label = "Windows" if host_operating_system == "windows" else "macOS"
             raise RuntimeError(
-                "Windows execution is not available on this macOS host yet. Choose macOS to run the task."
+                f"{settings.operating_system.title()} execution is not available on this host. "
+                f"Choose {host_label} to run the task."
             )
         workspace = resolve_workspace_path(settings.workspace_path)
         normalized_session_mode = str(session_mode or "new").strip().lower()
@@ -1569,10 +1640,7 @@ class ComputerUseAgentService:
             process = self._active_process
             sleep_assertion = self._sleep_assertion
         if process is not None and process.poll() is None:
-            try:
-                os.killpg(process.pid, signal.SIGTERM)
-            except OSError:
-                pass
+            _stop_process(process)
         _stop_macos_idle_sleep_assertion(sleep_assertion)
         return True
 
