@@ -1,4 +1,4 @@
-/* Code version: v2.82.5-codex.1 */
+/* Code version: v2.82.6-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -6693,8 +6693,8 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    scrollbar-width: thin;
-    scrollbar-color: var(--theme-muted-translucent) transparent;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
     border: var(--frosted-glass-border);
     border-radius: 10px;
     background: var(--frosted-glass-opaque-background, var(--frosted-glass-background));
@@ -6715,7 +6715,9 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 }
 
 .browser-pagination-range-menu::-webkit-scrollbar {
-    width: 6px;
+    width: 0;
+    height: 0;
+    background: transparent;
 }
 
 .browser-pagination-range-menu::-webkit-scrollbar-track {
@@ -6723,8 +6725,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 }
 
 .browser-pagination-range-menu::-webkit-scrollbar-thumb {
-    background: var(--theme-muted-translucent);
-    border-radius: var(--radius-pill);
+    background: transparent;
 }
 
 .browser-pagination-range-menu::after {

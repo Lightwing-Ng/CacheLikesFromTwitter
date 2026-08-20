@@ -1,4 +1,4 @@
-/* Code version: v1.27.1-codex.1 */
+/* Code version: v1.27.2-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -532,6 +532,25 @@
         return grid.scrollHeight + paddingTop + paddingBottom;
     }
 
+    function paginationRangeMenuClipBounds(picker) {
+        let ancestor = picker?.parentElement || null;
+        while (ancestor) {
+            const style = window.getComputedStyle(ancestor);
+            if (style.overflowX !== "visible" || style.overflowY !== "visible") {
+                const rect = ancestor.getBoundingClientRect();
+                return {
+                    top: rect.top,
+                    bottom: rect.bottom,
+                };
+            }
+            ancestor = ancestor.parentElement;
+        }
+        return {
+            top: 0,
+            bottom: window.innerHeight,
+        };
+    }
+
     function positionPaginationRangeMenu(picker) {
         const { menu } = paginationRangeElements(picker);
         if (!menu || !picker.classList.contains("is-open")) return;
@@ -541,14 +560,17 @@
         const pickerRect = picker.getBoundingClientRect();
         const viewportInset = 12;
         const menuGap = 8;
-        const spaceAbove = Math.max(96, pickerRect.top - viewportInset - menuGap);
-        const spaceBelow = Math.max(96, window.innerHeight - pickerRect.bottom - viewportInset - menuGap);
+        const clipBounds = paginationRangeMenuClipBounds(picker);
+        const clipTop = Math.max(viewportInset, clipBounds.top);
+        const clipBottom = Math.min(window.innerHeight - viewportInset, clipBounds.bottom);
+        const spaceAbove = Math.max(0, pickerRect.top - clipTop - menuGap);
+        const spaceBelow = Math.max(0, clipBottom - pickerRect.bottom - menuGap);
         const naturalMenuHeight = paginationRangeMenuContentHeight(menu);
         if (naturalMenuHeight > spaceAbove && spaceBelow > spaceAbove) {
             menu.classList.add("is-below");
         }
         const availableHeight = menu.classList.contains("is-below") ? spaceBelow : spaceAbove;
-        menu.style.setProperty("--pagination-range-menu-max-height", `${availableHeight}px`);
+        menu.style.setProperty("--pagination-range-menu-max-height", `${Math.max(1, availableHeight)}px`);
         menu.classList.toggle("is-scrollable", naturalMenuHeight > menu.clientHeight + 1);
         const menuWidth = menu.offsetWidth;
         const idealMenuLeft = pickerRect.left + (pickerRect.width / 2) - (menuWidth / 2);
