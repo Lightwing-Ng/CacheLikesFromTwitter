@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.6.0-codex.2`
+Documentation version: `v1.6.2-codex.1`
 
 ## Runtime flow
 
@@ -179,11 +179,17 @@ selected local project
   -> compact observation returned to the same conversation
   -> current bodycheck
   -> final Markdown result
+  -> on an Edge and ChatGPT failure with an exact conversation URL:
+       failed state retained
+       same conversation opened in traditional Edge with background activation
+       local file actions and bodycheck remain unfinished
 ```
 
 The web model never receives direct process or filesystem authority. The local controller resolves
 every path below the selected project, separates explicit file actions from a restricted command
 layer, bounds turns and output, and rejects final completion after an edit until bodycheck passes.
+Controller actions travel in fenced `json` code blocks, and the browser reader prefers the literal
+code-block text so Markdown rendering cannot consume source-code punctuation before parsing.
 The provider adapter validates each official root session, Project, or Project session before the
 task; the selection is run-scoped and the default remains a new root session.
 Source discovery is persisted separately from message history through a three-level read-through
@@ -200,6 +206,11 @@ Agent Chromium tasks clone the selected Edge or Chrome profile into a task-owned
 minimized context. Both suppress browser prompts and clean the task-owned profile on exit. Stale
 cleanup is restricted to abandoned application-prefixed temporary directories older than 24 hours;
 the user's normal browser profile and unrelated temporary paths are not modified.
+Traditional failure handoff does not reuse that writable clone. It sends only the normalized official
+conversation URL to the browser selected by the completed or failed run. On macOS, automatic Edge
+handoff creates a traditional Edge window through the application's AppleScript model without an
+`activate` command; user-triggered opening uses normal activation. Neither path grants the remote
+ChatGPT page local filesystem authority.
 
 ## Data ownership
 

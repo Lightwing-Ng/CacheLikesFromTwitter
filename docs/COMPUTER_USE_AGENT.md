@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.14.0-codex.1`
+Documentation version: `v3.16.0-codex.1`
 
 ## Purpose
 
@@ -70,13 +70,25 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
    if that control is briefly absent after a follow-up observation, the controller falls back to
    pressing Enter and still verifies prompt acceptance. If direct attachment is unavailable, the
    controller requests only the bounded files needed for the next action.
-6. The selected Web provider returns exactly one JSON action at a time. The controller supports `list`, `read`,
-   `search`, `replace`, `write`, `run`, `bodycheck`, and `final`.
-7. A malformed non-JSON reply receives up to three strict-format corrections without spending the
+6. The selected Web provider returns exactly one JSON action at a time inside a fenced `json` code block so
+   rendered Markdown cannot consume action quotes, backslashes, asterisks, or source-code delimiters. The
+   controller prefers that code block's literal text and supports `list`, `read`, `search`, `replace`, `write`,
+   `run`, `bodycheck`, and `final`. If a provider emits multiple complete
+   candidates with the same action name in one response, the controller uses the final candidate in textual
+   response order; mixed action types remain rejected as ambiguous.
+7. A malformed non-JSON reply receives up to three strict-format corrections that repeat the fenced JSON and
+   escaping contract without spending the
    configured controller-action budget. This keeps a recoverable web-model formatting lapse from
    prematurely ending a valid task, while still bounding retries.
-8. The controller rejects a final answer until `bodycheck` succeeds after the latest edit.
-9. The local page renders the final Markdown and links to the selected Web conversation. When a
+8. The controller rejects a final answer until `bodycheck` succeeds after the latest edit. If an
+   Edge and ChatGPT run still fails after an exact conversation URL exists, the service preserves the
+   failed state and opens that same conversation in the user's traditional Edge browser with macOS
+   background activation. The local page exposes a `Continue in Edge` handoff instead of claiming
+   completion. A traditional ChatGPT window can continue the conversation, but it cannot perform or
+   verify local file actions through this controller; local edits and bodycheck therefore remain
+   unfinished.
+9. The local page renders the final Markdown and links to the selected Web conversation in the
+   browser encoded by the task, rather than the system default browser. When a
    ChatGPT recent session or project session is selected, the page fetches that conversation's
    read-only mapping through the selected signed-in browser and loads its user/assistant history
    into the same response article. The response card keeps one question-and-answer pair per page,
@@ -137,6 +149,13 @@ is never opened for writing. A normal task exit closes the isolated context and 
 temporary profile; the next Chromium launch removes only abandoned `cachelikes-edge-*` or
 `cachelikes-chrome-*` directories older than 24 hours. Safari uses Apple Events and remains available
 only for ChatGPT's existing session flows.
+
+The traditional Edge handoff is intentionally separate from the isolated Agent context. On a failed
+Edge and ChatGPT run with a verified conversation URL, macOS asks the normal `Microsoft Edge`
+application to create a new window and set its active tab URL through Edge's AppleScript window model.
+The handoff never calls `activate`, so the current foreground application remains unchanged while
+Stage Manager places the Edge window in the background. Clicking the handoff pill later opens the same
+URL in Edge normally.
 
 The model selector is provider-specific: ChatGPT exposes `5.6 Sol`, Gemini exposes `3.1 Pro`, and
 Grok exposes `Auto`. The controller selects the requested model only when the provider exposes a

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.79.0-codex.1
+# Code version: v1.80.0-codex.1
 
 from __future__ import annotations
 
@@ -453,7 +453,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.17.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.82.0-codex.1"
+                    "style-v2.82.2-codex.1"
                 )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
@@ -778,7 +778,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.0.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.14.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.15.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -823,7 +823,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('class="browser-media-round-action browser-media-source-link agent-conversation-link"', local_body)
         self.assertIn('href="https://chatgpt.com/"', local_body)
         self.assertIn('data-agent-open-conversation', local_body)
-        self.assertIn('aria-label="Open ChatGPT"', local_body)
+        self.assertIn('data-agent-browser="edge"', local_body)
+        self.assertIn('aria-label="Open ChatGPT in Edge"', local_body)
+        self.assertIn('data-agent-conversation-link-label', local_body)
         self.assertIn('class="icon browser-media-source-link-icon"', local_body)
         self.assertNotIn("Local control plane for a signed-in ChatGPT web session", local_body)
         self.assertNotIn("third-party agent bridge", local_body)
@@ -974,20 +976,25 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(remote_response.status_code, 403)
         launch.assert_called_once_with("macos")
 
-    def test_agent_conversation_route_opens_the_current_target_in_the_default_browser(self) -> None:
+    def test_agent_conversation_route_opens_the_current_target_in_the_selected_browser(self) -> None:
         app = create_app()
         agent_service = app.extensions["computer_use_agent_service"]
         snapshot = agent_service.snapshot()
         snapshot["conversation_url"] = "https://chatgpt.com/c/current-session"
+        snapshot["browser"] = "edge"
         opened = {
             "opened": True,
+            "platform": "chatgpt",
+            "browser": "edge",
+            "application": "Microsoft Edge",
             "url": "https://chatgpt.com/c/current-session",
             "targeted_conversation": True,
+            "background": False,
         }
 
         with patch.object(agent_service, "snapshot", return_value=snapshot):
             with patch(
-                "app.web.app.open_chatgpt_in_default_browser",
+                "app.web.app.open_agent_in_browser",
                 return_value=opened,
             ) as open_browser:
                 with app.test_client() as client:
@@ -1000,7 +1007,12 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json(), opened)
         self.assertEqual(remote_response.status_code, 403)
-        open_browser.assert_called_once_with("https://chatgpt.com/c/current-session")
+        open_browser.assert_called_once_with(
+            "chatgpt",
+            "edge",
+            "https://chatgpt.com/c/current-session",
+            background=False,
+        )
 
     def test_agent_sidebar_log_and_chat_composer_keep_runtime_targets_in_sync(self) -> None:
         script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -1017,6 +1029,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('elements.ask.classList.toggle("is-stop", running)', script)
         self.assertIn('mutate("/api/agent/stop")', script)
         self.assertIn('requestJson("/api/agent/open-conversation"', script)
+        self.assertIn('elements.conversationLink.classList.toggle("is-traditional-handoff"', script)
+        self.assertIn("agent?.traditional_handoff_available", script)
+        self.assertIn('agent.phase !== "failed"', script)
         self.assertNotIn('document.getElementById("agent_stop_button")', script)
 
     def test_agent_session_source_contract_is_explicit_and_not_persisted(self) -> None:
@@ -1065,7 +1080,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.14.0-codex.1',
+            'computer-use-agent-v3.15.0-codex.1',
             'data-agent-combobox-icon="/static/images/clock.svg"',
             'src="/static/images/clock.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
@@ -1836,7 +1851,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
-            self.assertIn("style-v2.82.0-codex.1", body)
+            self.assertIn("style-v2.82.2-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.27.1-codex.1', body)

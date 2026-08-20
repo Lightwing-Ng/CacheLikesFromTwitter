@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.36.1-codex.1
+# Code version: v1.36.2-codex.1
 
 from __future__ import annotations
 
@@ -927,6 +927,38 @@ def test_chatgpt_loads_and_reuses_safari_session_authorization() -> None:
     assert first == second == {"authorization": "Bearer test-token"}
     assert len(context.request.calls) == 1
     assert context.request.calls[0][0] == "https://chatgpt.com/api/auth/session"
+
+
+def test_chatgpt_session_authorization_retries_transient_tls_disconnect() -> None:
+    class _SessionResponse:
+        ok = True
+        status = 200
+
+        @staticmethod
+        def text() -> str:
+            return '{"accessToken":"test-token"}'
+
+    class _SessionRequest:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def get(self, _url: str, **_kwargs: object) -> _SessionResponse:
+            self.calls += 1
+            if self.calls == 1:
+                raise PlaywrightError(
+                    "Client network socket disconnected before secure TLS connection was established"
+                )
+            return _SessionResponse()
+
+    context = SafariContext("https://chatgpt.com/")
+    context.request = _SessionRequest()
+
+    with patch("app.core.chatgpt_downloader.time.sleep") as sleep:
+        headers = _load_chatgpt_session_request_headers(context, "https://chatgpt.com/c/example")
+
+    assert headers == {"authorization": "Bearer test-token"}
+    assert context.request.calls == 2
+    sleep.assert_called_once_with(1.0)
 
 
 @pytest.mark.parametrize(

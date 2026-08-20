@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.41.0-codex.1
+# Code version: v1.41.1-codex.1
 
 from __future__ import annotations
 
@@ -1253,17 +1253,11 @@ def _load_chatgpt_session_request_headers(context, referer: str) -> dict[str, st
     cached_headers = getattr(context, "_chatgpt_request_headers", None)
     if isinstance(cached_headers, dict) and cached_headers.get("authorization"):
         return dict(cached_headers)
-    response = context.request.get(
+    payload = _get_chatgpt_api_json(
+        context,
         CHATGPT_AUTH_SESSION_URL,
-        timeout=CHATGPT_IMAGE_TIMEOUT_MS,
-        headers={"Accept": "application/json", "Referer": referer},
+        {"Accept": "application/json", "Referer": referer},
     )
-    if not response.ok:
-        raise RuntimeError(f"ChatGPT browser session returned HTTP {response.status}.")
-    try:
-        payload = json.loads(response.text())
-    except (AttributeError, TypeError, json.JSONDecodeError) as exc:
-        raise RuntimeError("ChatGPT browser session returned invalid JSON.") from exc
     access_token = str(payload.get("accessToken") or "").strip() if isinstance(payload, dict) else ""
     if not access_token:
         raise RuntimeError("ChatGPT browser session is not signed in or did not expose an access token.")

@@ -1,4 +1,4 @@
-<!-- Code version: v3.14.0-codex.1 -->
+<!-- Code version: v3.15.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.2-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.0.0-codex.1') }}"></script>
 </head>
@@ -277,10 +277,12 @@
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 data-agent-open-conversation
-                                aria-label="Open {{ selected_platform.label }}"
-                                title="Open {{ selected_platform.label }}"
+                                data-agent-browser="{{ settings.browser }}"
+                                aria-label="Open {{ selected_platform.label }} in {{ settings.browser | title }}"
+                                title="Open {{ selected_platform.label }} in {{ settings.browser | title }}"
                             >
                                 <span class="icon browser-media-source-link-icon" aria-hidden="true"></span>
+                                <span class="agent-conversation-link-label" data-agent-conversation-link-label hidden>Continue in Edge</span>
                             </a>
                         </div>
                         <details class="agent-activity-panel" id="agent_activity_panel"{% if agent_snapshot.running %} open{% endif %}{% if not agent_snapshot.activity %} hidden{% endif %}>
@@ -409,6 +411,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.4.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.14.0-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.15.0-codex.1') }}"></script>
 </body>
 </html>

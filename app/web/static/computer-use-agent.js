@@ -1,4 +1,4 @@
-/* Code version: v3.14.0-codex.1 */
+/* Code version: v3.15.0-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -17,6 +17,7 @@
         responseAnswerContent: document.querySelector("[data-agent-response-answer-content]"),
         responsePagination: document.querySelector("[data-agent-response-pagination]"),
         conversationLink: document.getElementById("agent_conversation_link"),
+        conversationLinkLabel: document.querySelector("[data-agent-conversation-link-label]"),
         ask: document.getElementById("agent_ask_button"),
         projectPath: document.querySelector("[data-agent-project-path]"),
         projectChoose: document.getElementById("agent_project_path_choose"),
@@ -295,6 +296,7 @@
         if (!elements.conversationLink) return;
         const recordedUrl = String(agent?.conversation_url || "").trim();
         const agentPlatform = String(agent?.platform || selectedPlatform()).trim().toLowerCase();
+        const agentBrowser = String(agent?.browser || selectedBrowser()).trim().toLowerCase();
         const currentPlatform = selectedPlatform();
         const samePlatform = agentPlatform === currentPlatform;
         const targetUrl = samePlatform && (recordedUrl.startsWith("https://chatgpt.com/")
@@ -302,16 +304,35 @@
             || recordedUrl.startsWith("https://grok.com/")
             ) ? recordedUrl
             : selectedPlatformHomeUrl();
-        const hasRecordedTarget = samePlatform && Boolean(recordedUrl);
+        const hasRecordedTarget = samePlatform && isAgentConversationUrl(agentPlatform, recordedUrl);
         const platformLabel = selectedPlatformLabel();
+        const browserLabel = agentBrowser === selectedBrowser()
+            ? selectedBrowserLabel()
+            : ({safari: "Safari", edge: "Edge", chrome: "Chrome"}[agentBrowser] || "selected browser");
+        const traditionalHandoff = Boolean(
+            samePlatform
+            && agent?.phase === "failed"
+            && agent?.traditional_handoff_available,
+        );
+        const handoffLabel = agent?.traditional_handoff_opened
+            ? `Continue in ${browserLabel}`
+            : `Open in ${browserLabel}`;
         elements.conversationLink.href = targetUrl;
+        elements.conversationLink.dataset.agentBrowser = agentBrowser;
+        elements.conversationLink.classList.toggle("is-traditional-handoff", traditionalHandoff);
+        if (elements.conversationLinkLabel) {
+            elements.conversationLinkLabel.hidden = !traditionalHandoff;
+            elements.conversationLinkLabel.textContent = handoffLabel;
+        }
         elements.conversationLink.setAttribute(
             "aria-label",
-            hasRecordedTarget ? `Open ${platformLabel} conversation` : `Open ${platformLabel}`,
+            traditionalHandoff
+                ? `${handoffLabel}: failed ${platformLabel} Agent task`
+                : (hasRecordedTarget
+                    ? `Open ${platformLabel} conversation in ${browserLabel}`
+                    : `Open ${platformLabel} in ${browserLabel}`),
         );
-        elements.conversationLink.title = hasRecordedTarget
-            ? `Open ${platformLabel} conversation`
-            : `Open ${platformLabel}`;
+        elements.conversationLink.title = elements.conversationLink.getAttribute("aria-label") || "";
     }
 
     function sessionChoiceReady() {
@@ -1519,7 +1540,7 @@
             if (elements.statusMessageCopy) elements.statusMessageCopy.textContent = statusCopy;
             else elements.statusMessage.textContent = statusCopy;
             if (elements.statusSpinner) elements.statusSpinner.hidden = !remoteSessionHistoryLoading;
-            elements.statusMessage.hidden = hasAgentResponse;
+            elements.statusMessage.hidden = hasAgentResponse && agent.phase !== "failed";
         }
         if (elements.readiness) elements.readiness.dataset.ready = String(readiness.ready);
         if (elements.readinessMessage) elements.readinessMessage.textContent = readiness.message;

@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.13.0-codex.1
+Code version: v3.16.0-codex.1
 """
 
 from __future__ import annotations
@@ -157,12 +157,21 @@ BROWSER_OPTIONS = (
     {"key": "chrome", "label": "Chrome", "icon_filename": "images/browser.chrome.png"},
 )
 
+JSON_ACTION_RESPONSE_INSTRUCTION = (
+    "Return exactly one strict JSON controller action inside one Markdown fenced code block labelled json, "
+    "with no prose outside the fence. The fence preserves quotes, backslashes, asterisks, and source code "
+    "through the Web page's rendered text. JSON-escape embedded double quotes as \\\", backslashes as \\\\, "
+    "and newlines as \\n."
+)
+
 DEFAULT_MACOS_SYSTEM_PROMPT = """You are the reasoning component of a local Computer Use coding agent.
 The controller runs on macOS and owns one selected project. It can read and change only that project and can run bounded local checks. Treat controller results as authoritative. Never claim a file changed or a check passed until the controller reports it.
 
 Work autonomously from the user's request. Read the repository instruction files before editing. Make the smallest correct change, preserve unrelated work, use existing project patterns, and verify material changes. Keep context economical: request only the files or ranges needed, keep command output bounded, and do not repeat controller results.
 
-Every response during execution must be exactly one JSON object, with no Markdown fence and no prose outside JSON. Use one of these actions:
+""" + JSON_ACTION_RESPONSE_INSTRUCTION + """
+
+Use one of these actions:
 {"action":"list","path":".","depth":2}
 {"action":"read","path":"relative/file","start_line":1,"end_line":240}
 {"action":"search","query":"text or regex","path":".","glob":"*.py","max_results":80}
@@ -177,7 +186,9 @@ Use read/search/list before editing. Use replace for existing files and write ma
 DEFAULT_WINDOWS_SYSTEM_PROMPT = """You are the reasoning component of a local Computer Use coding agent targeting Windows.
 The future controller will use PowerShell 7, Windows paths, and the selected project as its only writable root. Follow repository instruction files, preserve unrelated work, make focused changes, and verify them. Keep context economical.
 
-Every execution response must be exactly one JSON object using the controller actions list, read, search, replace, write, run, bodycheck, or final. Never claim an operation succeeded before the controller reports it. Run bodycheck after the latest edit and before final. Do not use commands to write, delete, move, install, download, change Git history, publish, or access secrets."""
+""" + JSON_ACTION_RESPONSE_INSTRUCTION + """
+
+Use the controller actions list, read, search, replace, write, run, bodycheck, or final. Never claim an operation succeeded before the controller reports it. Run bodycheck after the latest edit and before final. Do not use commands to write, delete, move, install, download, change Git history, publish, or access secrets."""
 
 _IGNORED_DIRECTORY_NAMES = frozenset(
     {
@@ -286,7 +297,11 @@ class AgentRunSnapshot:
     bodycheck_passed: bool = False
     session_mode: str = "new"
     platform: str = DEFAULT_AGENT_PLATFORM
+    browser: str = "edge"
     model: str = DEFAULT_CHATGPT_MODEL
+    traditional_handoff_available: bool = False
+    traditional_handoff_opened: bool = False
+    traditional_handoff_message: str = ""
 
 
 @dataclass(slots=True)
@@ -507,6 +522,93 @@ def open_agent_in_default_browser(platform: str = DEFAULT_AGENT_PLATFORM, target
         "platform": selected_platform,
         "url": destination,
         "targeted_conversation": bool(normalize_agent_conversation_url(selected_platform, target_url)),
+    }
+
+
+def open_agent_in_browser(
+    platform: str = DEFAULT_AGENT_PLATFORM,
+    browser: str = "edge",
+    target_url: str = "",
+    *,
+    background: bool = False,
+) -> dict[str, Any]:
+    """Open one trusted Web Agent target in the explicitly selected browser."""
+    selected_platform = str(platform or DEFAULT_AGENT_PLATFORM).strip().lower()
+    selected_browser = str(browser or "edge").strip().lower()
+    if selected_browser not in SUPPORTED_BROWSERS:
+        raise ValueError("The Agent browser must be Safari, Edge, or Chrome.")
+
+    destination = _normalize_web_agent_target(selected_platform, target_url)
+    process_options: dict[str, Any] = {
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+    }
+    application = selected_browser.title()
+
+    if sys.platform == "darwin":
+        application = {
+            "safari": "Safari",
+            "edge": "Microsoft Edge",
+            "chrome": "Google Chrome",
+        }[selected_browser]
+        if background and selected_browser in {"edge", "chrome"}:
+            command = [
+                "/usr/bin/osascript",
+                "-e",
+                "on run argv",
+                "-e",
+                "set destinationURL to item 1 of argv",
+                "-e",
+                f'tell application "{application}"',
+                "-e",
+                "set handoffWindow to make new window",
+                "-e",
+                "set URL of active tab of handoffWindow to destinationURL",
+                "-e",
+                "end tell",
+                "-e",
+                "end run",
+                destination,
+            ]
+        else:
+            command = ["/usr/bin/open"]
+            if background:
+                command.append("-g")
+            command.extend(["-a", application, destination])
+        process_options["start_new_session"] = True
+    elif os.name == "nt":
+        if selected_browser == "safari":
+            raise RuntimeError("Safari is not available for a traditional Windows handoff.")
+        application = "Microsoft Edge" if selected_browser == "edge" else "Google Chrome"
+        executable = "msedge.exe" if selected_browser == "edge" else "chrome.exe"
+        command = ["cmd.exe", "/c", "start", "", executable, destination]
+    else:
+        if selected_browser == "safari":
+            raise RuntimeError("Safari is not available for a traditional Linux handoff.")
+        application = "Microsoft Edge" if selected_browser == "edge" else "Google Chrome"
+        executable = "microsoft-edge" if selected_browser == "edge" else "google-chrome"
+        resolved_executable = shutil.which(executable)
+        if not resolved_executable:
+            raise RuntimeError(f"{application} could not be found on this host.")
+        command = [resolved_executable, destination]
+        process_options["start_new_session"] = True
+
+    try:
+        subprocess.Popen(command, **process_options)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Could not open {AGENT_PLATFORM_BY_KEY[selected_platform]['label']} in {application}: {exc}"
+        ) from exc
+
+    return {
+        "opened": True,
+        "platform": selected_platform,
+        "browser": selected_browser,
+        "application": application,
+        "url": destination,
+        "targeted_conversation": bool(normalize_agent_conversation_url(selected_platform, target_url)),
+        "background": bool(background),
     }
 
 
@@ -916,12 +1018,6 @@ def parse_agent_action(response: str) -> dict[str, Any]:
 
     candidates: list[dict[str, Any]] = []
     candidate_signatures: set[str] = set()
-    fenced_matches = re.findall(
-        r"```(?:json)?\s*(\{.*?\})\s*```",
-        text,
-        flags=re.DOTALL | re.IGNORECASE,
-    )
-    parse_targets = [*fenced_matches, text]
     decoder = json.JSONDecoder()
 
     def register(payload: Any) -> None:
@@ -932,23 +1028,32 @@ def parse_agent_action(response: str) -> dict[str, Any]:
             candidate_signatures.add(signature)
             candidates.append(payload)
 
-    for target in parse_targets:
-        candidate_text = str(target or "").strip()
-        try:
-            register(json.loads(candidate_text))
-        except json.JSONDecodeError:
-            for start, character in enumerate(candidate_text):
-                if character != "{":
-                    continue
-                try:
-                    payload, _end = decoder.raw_decode(candidate_text, start)
-                except json.JSONDecodeError:
-                    continue
-                register(payload)
+    try:
+        register(json.loads(text))
+    except json.JSONDecodeError:
+        cursor = 0
+        while cursor < len(text):
+            start = text.find("{", cursor)
+            if start < 0:
+                break
+            try:
+                payload, end = decoder.raw_decode(text, start)
+            except json.JSONDecodeError:
+                cursor = start + 1
+                continue
+            register(payload)
+            cursor = end
 
     if len(candidates) == 1:
         return candidates[0]
     if len(candidates) > 1:
+        action_names = {str(candidate.get("action") or "").strip().lower() for candidate in candidates}
+        if len(action_names) == 1:
+            LOGGER.warning(
+                "The Web provider returned %s same-action controller candidates; using the final candidate.",
+                len(candidates),
+            )
+            return candidates[-1]
         raise ValueError("The Web provider returned more than one JSON controller action.")
     raise ValueError("The Web provider must return exactly one JSON controller action.")
 
@@ -1336,10 +1441,12 @@ class ComputerUseAgentService:
         settings_store: ComputerUseSettingsStore,
         runner: Callable[..., tuple[str, str, int, bool]] | None = None,
         runtime_root: Path = DEFAULT_AGENT_RUNTIME_ROOT,
+        browser_opener: Callable[..., dict[str, Any]] | None = None,
     ) -> None:
         self._settings_store = settings_store
         self._runner = runner or run_chatgpt_web_computer_use
         self._runtime_root = runtime_root
+        self._browser_opener = browser_opener or open_agent_in_browser
         self._lock = RLock()
         self._snapshot = AgentRunSnapshot()
         self._stop_requested = Event()
@@ -1433,6 +1540,7 @@ class ComputerUseAgentService:
                 started_at=utc_now(),
                 session_mode=normalized_session_mode,
                 platform=settings.platform,
+                browser=settings.browser,
                 model=settings.model,
             )
             self._worker = Thread(
@@ -1563,10 +1671,52 @@ class ComputerUseAgentService:
         except Exception as exc:
             LOGGER.exception("Computer Use web-agent request failed.")
             with self._lock:
+                recorded_conversation_url = str(self._snapshot.conversation_url or "")
+            handoff_url = normalize_agent_conversation_url(
+                settings.platform,
+                recorded_conversation_url,
+            )
+            handoff_available = bool(
+                settings.platform == "chatgpt"
+                and settings.browser == "edge"
+                and handoff_url
+                and not self._stop_requested.is_set()
+            )
+            handoff_opened = False
+            handoff_message = ""
+            if handoff_available:
+                try:
+                    self._browser_opener(
+                        settings.platform,
+                        settings.browser,
+                        handoff_url,
+                        background=True,
+                    )
+                    handoff_opened = True
+                    handoff_message = (
+                        "The same ChatGPT conversation was opened quietly in Edge for traditional "
+                        "continuation. Local edits and bodycheck remain unfinished until the Agent "
+                        "controller verifies them."
+                    )
+                except (OSError, RuntimeError, ValueError) as handoff_exc:
+                    LOGGER.warning("Could not open the traditional Edge handoff: %s", handoff_exc)
+                    handoff_message = (
+                        "Continue the same ChatGPT conversation with the Edge button. Local edits "
+                        "and bodycheck remain unfinished until the Agent controller verifies them."
+                    )
+            failure_message = str(exc).splitlines()[0][:500]
+            with self._lock:
                 self._snapshot.running = False
                 self._snapshot.phase = "failed"
-                self._snapshot.message = str(exc).splitlines()[0][:500]
+                self._snapshot.message = (
+                    f"{failure_message} {handoff_message}".strip()
+                    if handoff_message
+                    else failure_message
+                )
                 self._snapshot.last_error = str(exc)
+                self._snapshot.traditional_handoff_available = handoff_available
+                self._snapshot.traditional_handoff_opened = handoff_opened
+                self._snapshot.traditional_handoff_message = handoff_message
                 self._snapshot.finished_at = utc_now()
         finally:
             self._set_active_process(None)
@@ -1779,6 +1929,10 @@ def _run_web_action_loop(
         ),
     )
     conversation_url = str(page.url or "")
+    normalized_conversation_url = normalize_agent_conversation_url(platform, conversation_url)
+    if normalized_conversation_url:
+        conversation_url = normalized_conversation_url
+        update(conversation_url=conversation_url)
     activity: list[dict[str, str]] = []
 
     turn_index = 0
@@ -1805,7 +1959,7 @@ def _run_web_action_loop(
             observation = {
                 "ok": False,
                 "error": str(exc),
-                "instruction": "Return exactly one valid JSON controller action with no surrounding prose.",
+                "instruction": JSON_ACTION_RESPONSE_INSTRUCTION,
             }
             response = _submit_and_wait(
                 page,
@@ -1918,7 +2072,8 @@ def _observation_message(turn_index: int, observation: dict[str, Any]) -> str:
     return (
         f"Controller observation for turn {turn_index:,}:\n"
         + json.dumps(observation, ensure_ascii=False, separators=(",", ":"))
-        + "\nReturn exactly one next JSON action."
+        + "\n"
+        + JSON_ACTION_RESPONSE_INSTRUCTION
     )
 
 
@@ -2676,15 +2831,22 @@ def _web_count(page: Any, browser_kind: str, selector: str, platform: str = DEFA
 
 
 def _web_last_text(page: Any, browser_kind: str, selector: str, platform: str = DEFAULT_AGENT_PLATFORM) -> str:
-    """Read the last rendered provider response without storing the page."""
+    """Read the last provider action while preserving fenced source text."""
     del platform
     if browser_kind == "safari":
         return str(
             page.evaluate(
-                """(selector) => {
+                r"""(selector) => {
                     const elements = document.querySelectorAll(selector);
                     const element = elements[elements.length - 1];
-                    return element ? (element.innerText || element.textContent || '').trim() : '';
+                    if (!element) return '';
+                    const codeBlocks = Array.from(element.querySelectorAll('pre code'));
+                    const actionBlock = codeBlocks.reverse().find((block) =>
+                        /[\"']action[\"']\s*:/.test(block.innerText || block.textContent || '')
+                    );
+                    return actionBlock
+                        ? (actionBlock.innerText || actionBlock.textContent || '').trim()
+                        : (element.innerText || element.textContent || '').trim();
                 }""",
                 selector,
             )
@@ -2693,7 +2855,13 @@ def _web_last_text(page: Any, browser_kind: str, selector: str, platform: str = 
     elements = page.locator(selector)
     if elements.count() == 0:
         return ""
-    return elements.last.inner_text(timeout=5_000).strip()
+    latest = elements.last
+    code_blocks = latest.locator("pre code")
+    for index in range(min(code_blocks.count(), 8) - 1, -1, -1):
+        candidate = code_blocks.nth(index).inner_text(timeout=5_000).strip()
+        if re.search(r'[\"\']action[\"\']\s*:', candidate):
+            return candidate
+    return latest.inner_text(timeout=5_000).strip()
 
 
 def _platform_web_count(page: Any, browser_kind: str, platform: str, selector: str) -> int:

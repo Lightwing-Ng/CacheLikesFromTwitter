@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.10.0-codex.1
+Code version: v3.12.0-codex.1
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ from app.core.computer_use_agent import (
     detect_host_operating_system,
     is_loopback_address,
     launch_terminal_authorization,
+    open_agent_in_browser,
     open_chatgpt_in_default_browser,
     open_agent_in_default_browser,
     parse_agent_action,
@@ -74,6 +75,8 @@ def test_settings_validate_workspace_environment_browser_and_limits() -> None:
         assert settings.max_turns == 55
         assert settings.command_timeout_seconds == 300
         assert "bodycheck" in settings.macos_system_prompt
+        assert "fenced code block labelled json" in settings.macos_system_prompt
+        assert "preserves quotes, backslashes, asterisks" in settings.macos_system_prompt
         assert "PowerShell" in settings.windows_system_prompt
 
         with pytest.raises(ValueError, match="macOS or Windows"):
@@ -212,6 +215,65 @@ def test_open_agent_in_default_browser_accepts_gemini_home(monkeypatch: pytest.M
     assert result["platform"] == "gemini"
     assert result["url"] == "https://gemini.google.com/app/demo"
     assert launched == [["/usr/bin/open", "https://gemini.google.com/app/demo"]]
+
+
+def test_open_agent_in_browser_opens_chatgpt_quietly_in_edge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    launched: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **options: launched.append((command, options)),
+    )
+
+    result = open_agent_in_browser(
+        "chatgpt",
+        "edge",
+        "https://www.chatgpt.com/c/session-123?messageId=abc",
+        background=True,
+    )
+
+    assert result == {
+        "opened": True,
+        "platform": "chatgpt",
+        "browser": "edge",
+        "application": "Microsoft Edge",
+        "url": "https://chatgpt.com/c/session-123",
+        "targeted_conversation": True,
+        "background": True,
+    }
+    assert launched == [
+        (
+            [
+                "/usr/bin/osascript",
+                "-e",
+                "on run argv",
+                "-e",
+                "set destinationURL to item 1 of argv",
+                "-e",
+                'tell application "Microsoft Edge"',
+                "-e",
+                "set handoffWindow to make new window",
+                "-e",
+                "set URL of active tab of handoffWindow to destinationURL",
+                "-e",
+                "end tell",
+                "-e",
+                "end run",
+                "https://chatgpt.com/c/session-123",
+            ],
+            {
+                "stdin": computer_use_agent.subprocess.DEVNULL,
+                "stdout": computer_use_agent.subprocess.DEVNULL,
+                "stderr": computer_use_agent.subprocess.DEVNULL,
+                "start_new_session": True,
+            },
+        )
+    ]
 
 
 def test_host_operating_system_detection_uses_supported_host_keys(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -491,6 +553,29 @@ def test_action_parser_requires_one_json_object() -> None:
         "action": "read",
         "path": "README.md",
     }
+    assert parse_agent_action(
+        '{"action":"replace","path":"app.css","old":"font-size: 14px;","new":"font-size: var(--font-size-5);"}\n'
+        '{"action":"replace","path":"app.css","old":"font-size: 15px;","new":"font-size: var(--font-size-5);"}'
+    ) == {
+        "action": "replace",
+        "path": "app.css",
+        "old": "font-size: 15px;",
+        "new": "font-size: var(--font-size-5);",
+    }
+    assert parse_agent_action(
+        '{"action":"read","path":"first.txt"}\n'
+        '```json\n{"action":"read","path":"final.txt"}\n```'
+    ) == {
+        "action": "read",
+        "path": "final.txt",
+    }
+    assert parse_agent_action(
+        '```json\n{"action":"read","path":"first.txt"}\n```\n'
+        '{"action":"read","path":"final.txt"}'
+    ) == {
+        "action": "read",
+        "path": "final.txt",
+    }
     with pytest.raises(ValueError, match="more than one"):
         parse_agent_action(
             '{"action":"read","path":"README.md"}\n'
@@ -534,6 +619,7 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
         )
     )
     submitted: list[str] = []
+    updates: list[dict[str, object]] = []
 
     def submit(_page: object, _browser: str, message: str, _should_stop: object, **_kwargs: object) -> str:
         submitted.append(message)
@@ -555,12 +641,15 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
         session_mode="recent",
         selected_target_url="https://chatgpt.com/c/example",
         should_stop=lambda: False,
-        update=lambda **_changes: None,
+        update=lambda **changes: updates.append(changes),
     )
 
     assert result == ("Done.", "https://chatgpt.com/c/example", 2, True)
     assert len(submitted) == 3
     assert "Controller observation for turn 1" in submitted[1]
+    assert "fenced code block labelled json" in submitted[1]
+    assert "JSON-escape embedded double quotes" in submitted[1]
+    assert {"conversation_url": "https://chatgpt.com/c/example"} in updates
 
 
 @pytest.mark.parametrize(
@@ -732,7 +821,10 @@ def test_agent_service_reports_browser_result_without_api_credentials(
         assert snapshot["turn_count"] == 4
         assert snapshot["bodycheck_passed"]
         assert snapshot["session_mode"] == "new"
+        assert snapshot["browser"] == "edge"
         assert snapshot["session_title"] == "Inspect the workspace"
+        assert not snapshot["traditional_handoff_available"]
+        assert not snapshot["traditional_handoff_opened"]
         assert snapshot["history"] == [
             {
                 "prompt": "Inspect the workspace",
@@ -743,6 +835,89 @@ def test_agent_service_reports_browser_result_without_api_credentials(
         ]
         assert "token" not in snapshot
         assert released_assertions == [sleep_assertion]
+
+
+def test_agent_service_hands_a_failed_chatgpt_session_to_background_edge(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    opened: list[tuple[str, str, str, bool]] = []
+
+    def runner(**kwargs: object) -> tuple[str, str, int, bool]:
+        update = kwargs["update"]
+        assert callable(update)
+        update(conversation_url="https://chatgpt.com/c/failed-session")
+        raise RuntimeError("ChatGPT returned too many invalid controller actions in a row.")
+
+    def browser_opener(
+        platform: str,
+        browser: str,
+        target_url: str,
+        *,
+        background: bool,
+    ) -> dict[str, object]:
+        opened.append((platform, browser, target_url, background))
+        return {"opened": True}
+
+    service = ComputerUseAgentService(
+        store,
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+        browser_opener=browser_opener,
+    )
+    service.start("Apply the sibling font token", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    snapshot = service.snapshot()
+    assert snapshot["phase"] == "failed"
+    assert snapshot["conversation_url"] == "https://chatgpt.com/c/failed-session"
+    assert snapshot["traditional_handoff_available"]
+    assert snapshot["traditional_handoff_opened"]
+    assert "opened quietly in Edge" in snapshot["message"]
+    assert "bodycheck remain unfinished" in snapshot["traditional_handoff_message"]
+    assert not snapshot["bodycheck_passed"]
+    assert opened == [
+        ("chatgpt", "edge", "https://chatgpt.com/c/failed-session", True)
+    ]
+
+
+def test_agent_service_does_not_auto_handoff_a_non_edge_failure(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    opened: list[object] = []
+
+    def runner(**kwargs: object) -> tuple[str, str, int, bool]:
+        update = kwargs["update"]
+        assert callable(update)
+        update(conversation_url="https://chatgpt.com/c/chrome-session")
+        raise RuntimeError("Provider action failed.")
+
+    service = ComputerUseAgentService(
+        store,
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+        browser_opener=lambda *_args, **_kwargs: opened.append(object()),
+    )
+    service.start(
+        "Inspect the project",
+        str(workspace),
+        CrawlConfig(),
+        browser="chrome",
+    )
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    snapshot = service.snapshot()
+    assert snapshot["phase"] == "failed"
+    assert not snapshot["traditional_handoff_available"]
+    assert not snapshot["traditional_handoff_opened"]
+    assert opened == []
 
 
 @pytest.mark.parametrize(
@@ -1215,6 +1390,53 @@ def test_chromium_last_response_is_empty_before_a_new_session_has_messages() -> 
         "chromium",
         '[data-message-author-role="assistant"]',
     ) == ""
+
+
+def test_chromium_last_response_prefers_fenced_controller_source() -> None:
+    source = (
+        '{"action":"replace","path":"style.css",'
+        '"old":"/* Code version: v1 */",'
+        '"new":"/* Code version: v2 */"}'
+    )
+
+    class _CodeBlock:
+        def inner_text(self, **_kwargs: object) -> str:
+            return source
+
+    class _CodeBlocks:
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> _CodeBlock:
+            assert index == 0
+            return _CodeBlock()
+
+    class _Message:
+        def locator(self, selector: str) -> _CodeBlocks:
+            assert selector == "pre code"
+            return _CodeBlocks()
+
+        def inner_text(self, **_kwargs: object) -> str:
+            return '{"action":"replace","old":" / Code version: v1 / "}'
+
+    class _Messages:
+        @property
+        def last(self) -> _Message:
+            return _Message()
+
+        def count(self) -> int:
+            return 1
+
+    class _Page:
+        def locator(self, selector: str) -> _Messages:
+            assert selector == '[data-message-author-role="assistant"]'
+            return _Messages()
+
+    assert _web_last_text(
+        _Page(),
+        "chromium",
+        '[data-message-author-role="assistant"]',
+    ) == source
 
 
 def test_chromium_composer_reloads_once_after_a_stalled_page() -> None:

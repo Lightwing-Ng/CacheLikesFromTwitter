@@ -1,6 +1,36 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.1.2-codex.1`
+Documentation version: `v1.1.5-codex.1`
+
+## Agentic failure handoff to traditional Edge on 20 Aug 2026
+
+- A normal ChatGPT browser window cannot perform project-confined local file actions, so it is not
+  treated as a successful Agent replacement. When an Edge and ChatGPT controller run fails after the
+  exact conversation URL is known, the service now opens that same conversation through normal Edge
+  with macOS background activation, keeps the Agent phase failed, and marks local edits and bodycheck
+  unfinished.
+- The response toolbar expands to `Continue in Edge`, and explicit conversation opening targets the
+  browser selected for the task instead of the system default. The automatic Edge path creates a
+  normal window through Edge's AppleScript model without calling `activate`, leaving the current
+  foreground application unchanged while macOS controls Stage Manager grouping.
+
+## ChatGPT Agent rendered-action and history retry recovery on 19 Aug 2026
+
+- The latest failed ChatGPT Agent run returned action strings containing quotes, backslashes, and CSS comment
+  delimiters. Reading the bare JSON through rendered Markdown removed significant characters, after which four
+  format attempts failed. Agent actions now use fenced `json` transport and prefer the literal code-block text.
+- The selected-session history route also observed a transient TLS disconnect while reading `/api/auth/session`.
+  Session authorization now reuses the bounded ChatGPT API retry path instead of surfacing that first disconnect
+  as an HTTP 500 response.
+
+## Agent action recovery and response typography on 19 Aug 2026
+
+- A prompt that asks the Agent response node to use the sibling `--font-size-5` token now applies
+  `font-size: var(--font-size-5)` to `.agent-response-answer-content`, updates the CSS cache-buster,
+  and has a focused style contract. If a provider repeats multiple complete candidates with the same
+  controller action, the local loop keeps the final candidate instead of exhausting format retries.
+- Candidates with different action names remain rejected so an ambiguous provider response cannot perform
+  an unintended operation.
 
 ## Agentic provider audit and Grok Auto follow-up limitation on 19 Aug 2026
 

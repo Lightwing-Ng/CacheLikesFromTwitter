@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.5-codex.1
+Code version: v1.47.6-codex.1
 """
 
 from pathlib import Path
@@ -994,7 +994,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.82.0-codex.1 */",
+        "/* Code version: v2.82.2-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1008,6 +1008,8 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         "flex: 1 1 auto;",
         ".agent-response-question-header {",
         ".agent-response-answer {",
+        ".agent-response-answer-content {",
+        "font-size: var(--font-size-5);",
         ".agent-response-pagination {",
         ".agent-platform-combobox .trade-strategy-trigger-label.browser-session-trigger-label {",
         ".agent-platform-combobox .browser-picker-selected-icon-shell {",
@@ -1017,6 +1019,9 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-combobox-loading-spinner {",
         ".agent-empty-response {",
         ".agent-empty-response-spinner {",
+        ".agent-conversation-link.is-traditional-handoff {",
+        ".agent-conversation-link-label {",
+        'background-image: url("/static/images/browser.edge.png");',
         ".agent-combobox-dropdown .trade-strategy-dropdown-option,",
         "font-weight: var(--font-weight-regular);",
         ".browser-session-status-item {",

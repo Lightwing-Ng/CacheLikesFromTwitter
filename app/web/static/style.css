@@ -1,4 +1,4 @@
-/* Code version: v2.82.1-codex.1 */
+/* Code version: v2.82.2-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -3530,6 +3530,36 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     text-decoration: none;
 }
 
+.agent-conversation-link-label {
+    display: none;
+    font-size: var(--font-ui-sm);
+    font-weight: var(--font-weight-semibold);
+    line-height: 1;
+    white-space: nowrap;
+}
+
+.agent-conversation-link.is-traditional-handoff {
+    width: auto;
+    min-width: var(--settings-round-icon-button-size);
+    padding: 0 12px;
+    gap: 7px;
+    border-radius: var(--radius-pill);
+}
+
+.agent-conversation-link.is-traditional-handoff .agent-conversation-link-label {
+    display: inline;
+}
+
+.agent-conversation-link.is-traditional-handoff[data-agent-browser="edge"] .browser-media-source-link-icon {
+    background-color: transparent;
+    background-image: url("/static/images/browser.edge.png");
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: contain;
+    mask: none;
+    -webkit-mask: none;
+}
+
 .agent-response-output {
     flex: 1 1 auto;
     display: flex;
@@ -3603,7 +3633,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-response-answer-content {
     flex: 0 0 auto;
     min-width: 0;
- font-size: var(--font-size-5);
+    font-size: var(--font-size-5);
 }
 
 .agent-response-answer .agent-response-overflow-toggle {

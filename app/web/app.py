@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.39.0-codex.1
+# Code version: v1.40.0-codex.1
 
 from __future__ import annotations
 
@@ -74,8 +74,7 @@ from app.core.computer_use_agent import (
     ComputerUseSettingsStore,
     is_loopback_address,
     launch_terminal_authorization,
-    open_agent_in_default_browser,
-    open_chatgpt_in_default_browser,
+    open_agent_in_browser,
     validate_computer_use_settings,
 )
 from app.core.gemini_downloader import build_gemini_initial_snapshot
@@ -959,18 +958,20 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.post("/api/agent/open-conversation")
     def open_agent_conversation():
-        """Open the current Agent Web target in the system default browser."""
+        """Open the current Agent Web target in the browser selected for the task."""
         require_local_agent_request()
         snapshot = computer_use_agent_service.snapshot()
         try:
             platform = str(snapshot.get("platform", computer_use_settings.settings.platform))
+            browser = str(snapshot.get("browser", computer_use_settings.settings.browser))
             target_url = str(snapshot.get("conversation_url", ""))
-            result = (
-                open_chatgpt_in_default_browser(target_url)
-                if platform == "chatgpt"
-                else open_agent_in_default_browser(platform, target_url)
+            result = open_agent_in_browser(
+                platform,
+                browser,
+                target_url,
+                background=False,
             )
-        except RuntimeError as exc:
+        except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify(result)
 
