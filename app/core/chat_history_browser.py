@@ -1,6 +1,6 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.8.0-codex.1
+# Code version: v1.9.0-codex.1
 
 from __future__ import annotations
 
@@ -228,6 +228,57 @@ def _message_from_row(row: dict[str, Any], source: str) -> ChatHistoryMessage | 
     )
 
 
+def load_chat_history_messages(
+    local_store_root: Path | str,
+    source: str = "all",
+) -> tuple[ChatHistoryMessage, ...]:
+    """Load all valid cached messages for one source without paging them."""
+    normalized_source = normalize_chat_history_source(source)
+    source_paths = (
+        ((normalized_source, chat_history_path(local_store_root, normalized_source)),)
+        if normalized_source != "all"
+        else (
+            ("chatgpt", chat_history_path(local_store_root, "chatgpt")),
+            ("gemini", chat_history_path(local_store_root, "gemini")),
+            ("grok", chat_history_path(local_store_root, "grok")),
+        )
+    )
+    return tuple(
+        item
+        for row_source, path in source_paths
+        for row in (read_parquet_rows(path) or [])
+        if (item := _message_from_row(row, row_source)) is not None
+    )
+
+
+def find_chat_history_message(
+    local_store_root: Path | str,
+    *,
+    source: str,
+    conversation_id: str,
+    message_key: str,
+) -> ChatHistoryMessage | None:
+    """Resolve one durable message pointer from the current typed history cache."""
+    normalized_source = normalize_chat_history_source(source)
+    normalized_conversation_id = str(conversation_id or "").strip()[:160]
+    normalized_message_key = str(message_key or "").strip()[:240]
+    if (
+        normalized_source == "all"
+        or not normalized_conversation_id
+        or not normalized_message_key
+    ):
+        return None
+    return next(
+        (
+            message
+            for message in load_chat_history_messages(local_store_root, normalized_source)
+            if message.conversation_id == normalized_conversation_id
+            and message.message_key == normalized_message_key
+        ),
+        None,
+    )
+
+
 def _sort_messages(messages: Iterable[ChatHistoryMessage], sort: str) -> tuple[ChatHistoryMessage, ...]:
     """Sort messages by recency or session title."""
     normalized_sort = normalize_chat_history_sort(sort)
@@ -333,26 +384,7 @@ def query_chat_history(
     normalized_source = normalize_chat_history_source(source)
     normalized_query = str(query or "").strip()[:120].casefold()
     query_terms = tuple(normalized_query.split())
-    source_paths = (
-        ((normalized_source, chat_history_path(local_store_root, normalized_source)),)
-        if normalized_source != "all"
-        else (
-            ("chatgpt", chat_history_path(local_store_root, "chatgpt")),
-            ("gemini", chat_history_path(local_store_root, "gemini")),
-            ("grok", chat_history_path(local_store_root, "grok")),
-        )
-    )
-    rows_with_sources = [
-        (row, row_source)
-        for row_source, path in source_paths
-        for row in (read_parquet_rows(path) or [])
-    ]
-    all_messages = tuple(
-        item
-        for row, row_source in rows_with_sources
-        if (item := _message_from_row(row, row_source)) is not None
-        and (normalized_source == "all" or item.source == normalized_source)
-    )
+    all_messages = load_chat_history_messages(local_store_root, normalized_source)
     requested_session = str(session or "").strip()[:160]
     all_sessions = _sort_chat_history_sessions(_build_chat_history_sessions(all_messages), sort)
     selected_session = next(

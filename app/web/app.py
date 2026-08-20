@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.43.0-codex.1
+# Code version: v1.44.0-codex.1
 
 from __future__ import annotations
 
@@ -92,6 +92,8 @@ from app.core.storage import (
     local_file_manager_label,
     media_route_relative_path,
     normalize_browser_filters,
+    PromptStore,
+    prompt_pointer_key,
     query_chat_history,
     reveal_media_path,
     resolve_browser_media_path,
@@ -279,11 +281,17 @@ def build_browser_search_suggestions(
     view: str,
     media_items: Iterable[Any] = (),
     text_page: Any = None,
+    prompt_page: Any = None,
 ) -> tuple[dict[str, str], ...]:
     """Build bounded, local-only search recommendations for the browser heading."""
     normalized_view = str(view or "").strip().lower()
     is_text_view = normalized_view == "text"
-    source_views = LLM_SWITCHER_SOURCE_VIEWS if is_text_view else MEDIA_CACHE_SOURCE_VIEWS
+    is_prompt_view = normalized_view == "prompts"
+    source_views = (
+        LLM_SWITCHER_SOURCE_VIEWS
+        if is_text_view or is_prompt_view
+        else MEDIA_CACHE_SOURCE_VIEWS
+    )
     suggestions: list[dict[str, str]] = []
     seen: set[str] = set()
 
@@ -298,7 +306,10 @@ def build_browser_search_suggestions(
         suggestions.append({"value": normalized, "detail": detail})
 
     for source in source_views:
-        add(source.label, "Chat source" if is_text_view else "Media source")
+        add(
+            source.label,
+            "Prompt source" if is_prompt_view else ("Chat source" if is_text_view else "Media source"),
+        )
 
     if is_text_view and text_page is not None:
         sessions = [
@@ -318,6 +329,11 @@ def build_browser_search_suggestions(
                 getattr(message, "conversation_title", ""),
                 f"{get_cache_source_label(getattr(message, 'source', ''))} session",
             )
+    elif is_prompt_view and prompt_page is not None:
+        for prompt in getattr(prompt_page, "items", ()) or ():
+            source_label = get_cache_source_label(getattr(prompt, "source", ""))
+            add(getattr(prompt, "conversation_title", ""), f"{source_label} session")
+            add(getattr(prompt, "content_text", ""), f"{source_label} prompt")
     else:
         for item in media_items:
             source_label = get_cache_source_label(getattr(item, "source", ""))
@@ -377,6 +393,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     media_catalog = LocalMediaCatalog(local_store_root or LOCAL_STORE_ROOT)
     app.extensions["local_media_catalog"] = media_catalog
+    prompt_store = PromptStore(media_catalog.local_store_root)
+    app.extensions["prompt_store"] = prompt_store
     agent_source_cache = AgentSourceCache(media_catalog.local_store_root)
     app.extensions["agent_source_cache"] = agent_source_cache
     shadow_backup_service = ShadowBackupService(media_catalog.local_store_root)
@@ -538,6 +556,22 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             "width": item.width,
             "height": item.height,
             "is_deleted": item.is_deleted,
+        }
+
+    def serialize_prompt_item(item) -> dict[str, Any]:
+        """Serialize one resolved prompt without exposing duplicated storage."""
+        return {
+            "id": item.stable_id,
+            "source": item.source,
+            "source_label": get_cache_source_label(item.source),
+            "conversation_id": item.conversation_id,
+            "message_key": item.message_key,
+            "conversation_title": item.conversation_title,
+            "conversation_url": item.conversation_url,
+            "author_label": item.author_label,
+            "content_text": item.content_text,
+            "captured_at": item.captured_at,
+            "added_at": item.added_at,
         }
 
     def build_reconciled_cache_snapshot(source_key: str) -> dict[str, Any]:
@@ -712,7 +746,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 for option in browser_options
                 if option["id"] == selected_browser_id
             ),
-            "background browser",
+            "Safari" if selected_browser_id == "safari" else "background browser",
         )
         return render_template(
             cache_source.template_name,
@@ -1175,6 +1209,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             session_page=request.args.get("session_page"),
         )
         force_refresh = request.args.get("refresh") == "1"
+        prompt_page = None
+        saved_prompt_keys = prompt_store.saved_pointer_keys()
         if filters["view"] == "text":
             media_items = media_catalog.snapshot(force_refresh=force_refresh)
             text_page = query_chat_history(
@@ -1202,6 +1238,17 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             all_items = ()
             media_page = None
             media_payload = []
+        elif filters["view"] == "prompts":
+            prompt_page = prompt_store.query(
+                source=filters["source"],
+                query=filters["q"],
+                sort=filters["sort"],
+                page=filters["page"],
+            )
+            all_items = ()
+            media_page = None
+            text_page = None
+            media_payload = []
         else:
             all_items = media_catalog.snapshot(force_refresh=force_refresh)
             media_page = media_catalog.query(
@@ -1220,16 +1267,21 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             view=filters["view"],
             media_items=media_page.items if media_page is not None else all_items,
             text_page=text_page,
+            prompt_page=prompt_page,
         )
         return render_template(
             "browser.html",
             media_page=media_page,
             text_page=text_page,
+            prompt_page=prompt_page,
             media_payload=media_payload,
             filters=filters,
             browser_search_suggestions=browser_search_suggestions,
             has_any_media=bool(all_items),
             has_any_text=bool(text_page and text_page.total_count),
+            has_any_prompts=prompt_store.has_any(),
+            saved_prompt_keys=saved_prompt_keys,
+            prompt_pointer_key=prompt_pointer_key,
             format_captured_at_timestamp_label=format_captured_at_timestamp_label,
             format_chat_message_timestamp_label=format_chat_message_timestamp_label,
             format_media_size=format_media_size,
@@ -1293,6 +1345,21 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         if resolved_path is None:
             abort(404)
         return send_file(resolved_path, conditional=True, etag=True, max_age=0)
+
+    @app.post("/api/browser/prompts")
+    def add_browser_prompt():
+        payload = request.get_json(silent=True) or {}
+        try:
+            item, created = prompt_store.add_pointer(
+                source=str(payload.get("source") or ""),
+                conversation_id=str(payload.get("conversation_id") or ""),
+                message_key=str(payload.get("message_key") or ""),
+            )
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except LookupError as exc:
+            return jsonify({"error": str(exc)}), 404
+        return jsonify({"created": created, "item": serialize_prompt_item(item)})
 
     @app.get("/browser/deleted-preview/<stable_id>")
     def browser_deleted_preview(stable_id: str):

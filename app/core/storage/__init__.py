@@ -1,6 +1,6 @@
 """Durable local-resource boundary for catalogs, history, and backups."""
 
-# Code version: v1.1.0-codex.1
+# Code version: v1.2.0-codex.1
 
 from ..chat_history_browser import (
     attach_media_references,
@@ -18,6 +18,7 @@ from ..local_media_browser import (
     resolve_browser_media_path,
     resolve_local_media_path,
 )
+from ..prompt_store import PromptPage, PromptStore, SavedPrompt, prompt_pointer_key
 from ..shadow_backup import (
     ShadowBackupError,
     ShadowBackupService,
@@ -27,6 +28,9 @@ from ..shadow_backup import (
 
 __all__ = [
     "LocalMediaCatalog",
+    "PromptPage",
+    "PromptStore",
+    "SavedPrompt",
     "ShadowBackupError",
     "ShadowBackupService",
     "attach_media_references",
@@ -38,6 +42,7 @@ __all__ = [
     "local_file_manager_label",
     "media_route_relative_path",
     "normalize_browser_filters",
+    "prompt_pointer_key",
     "query_chat_history",
     "resolve_browser_media_path",
     "resolve_local_media_path",

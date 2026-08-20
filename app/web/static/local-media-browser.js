@@ -1,4 +1,4 @@
-/* Code version: v1.27.2-codex.1 */
+/* Code version: v1.28.0-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -19,14 +19,14 @@
     function readRememberedContentMode() {
         try {
             const stored = window.sessionStorage.getItem(contentModeStorageKey);
-            return ["media", "text"].includes(stored) ? stored : "";
+            return ["media", "text", "prompts"].includes(stored) ? stored : "";
         } catch (_error) {
             return "";
         }
     }
 
     function rememberContentMode(mode) {
-        if (!["media", "text"].includes(mode)) return;
+        if (!["media", "text", "prompts"].includes(mode)) return;
         try {
             window.sessionStorage.setItem(contentModeStorageKey, mode);
         } catch (_error) {
@@ -34,13 +34,13 @@
     }
 
     function navigateToContentMode(mode) {
-        if (!filterForm || !["media", "text"].includes(mode)) return;
+        if (!filterForm || !["media", "text", "prompts"].includes(mode)) return;
         const targetUrl = new URL(filterForm.action || window.location.href, window.location.origin);
         const formData = new FormData(filterForm);
         formData.set("view", mode);
         targetUrl.search = new URLSearchParams(formData).toString();
         ["page", "media_id", "session"].forEach((name) => targetUrl.searchParams.delete(name));
-        if (mode === "text") targetUrl.searchParams.delete("kind");
+        if (mode !== "media") targetUrl.searchParams.delete("kind");
         window.location.assign(targetUrl.toString());
     }
 
@@ -105,6 +105,8 @@
     const sourceCopyButtons = Array.from(document.querySelectorAll("[data-media-copy-source-url]"));
     const revealButtons = Array.from(document.querySelectorAll("[data-media-reveal]"));
     const promptToggleButtons = Array.from(document.querySelectorAll("[data-media-prompt-toggle]"));
+    const promptAddButtons = Array.from(document.querySelectorAll("[data-prompt-add]"));
+    const promptCopyButtons = Array.from(document.querySelectorAll("[data-prompt-copy]"));
     const mediaViewStorageKey = "cachelikes.browser.mediaView";
     const paginationMotion = window.CACHELIKES_PAGINATION_MOTION;
 
@@ -350,6 +352,61 @@
         textarea.remove();
         return didCopy;
     }
+
+    function setPromptCopyFeedback(button, didCopy) {
+        const feedback = button.querySelector("[data-prompt-copy-feedback]");
+        button.classList.remove("is-copied", "is-copy-failed");
+        void button.offsetWidth;
+        button.classList.add(didCopy ? "is-copied" : "is-copy-failed");
+        button.setAttribute("aria-label", didCopy ? "Prompt copied" : "Unable to copy prompt");
+        button.title = didCopy ? "Prompt copied" : "Unable to copy prompt";
+        if (feedback) feedback.textContent = didCopy ? "Prompt copied." : "Unable to copy prompt.";
+        window.setTimeout(() => {
+            button.classList.remove("is-copied", "is-copy-failed");
+            button.setAttribute("aria-label", "Copy prompt");
+            button.title = "Copy prompt";
+            if (feedback) feedback.textContent = "";
+        }, 1_600);
+    }
+
+    promptCopyButtons.forEach((button) => {
+        button.addEventListener("click", async () => {
+            const didCopy = await copyText(button.dataset.promptText || "");
+            setPromptCopyFeedback(button, didCopy);
+        });
+    });
+
+    promptAddButtons.forEach((button) => {
+        button.addEventListener("click", async () => {
+            if (button.disabled) return;
+            button.disabled = true;
+            try {
+                const response = await fetch("/api/browser/prompts", {
+                    method: "POST",
+                    cache: "no-store",
+                    headers: {
+                        Accept: "application/json",
+                        "Content-Type": "application/json",
+                    },
+                    body: JSON.stringify({
+                        source: button.dataset.promptSource || "",
+                        conversation_id: button.dataset.promptConversationId || "",
+                        message_key: button.dataset.promptMessageKey || "",
+                    }),
+                });
+                const payload = await response.json();
+                if (!response.ok) throw new Error(payload.error || "Unable to save this prompt.");
+                button.classList.add("is-added");
+                button.setAttribute("aria-label", "Added as prompt");
+                button.title = "Added as prompt";
+                const feedback = button.querySelector("[data-prompt-add-feedback]");
+                if (feedback) feedback.textContent = "Added as prompt.";
+            } catch (error) {
+                button.disabled = false;
+                window.alert(error instanceof Error ? error.message : "Unable to save this prompt.");
+            }
+        });
+    });
 
     const copyFeedbackTimers = new WeakMap();
 

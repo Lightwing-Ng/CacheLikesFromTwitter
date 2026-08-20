@@ -1,4 +1,4 @@
-<!-- Code version: v1.50.0-codex.1 -->
+<!-- Code version: v1.48.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,13 +8,13 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.8-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.4-codex.1') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.3.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='notice-banner.js', v='notice-banner-v0.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.28.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.27.1-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
     <script type="module" src="{{ url_for('static', filename='browser-search.js', v='browser-search-v2.0.1-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-source-filter.js', v='browser-source-filter-v1.2.0-codex.1') }}"></script>
@@ -33,7 +33,7 @@
         class="sidebar-toggle"
         id="sidebar_toggle"
         aria-label="Toggle sidebar"
-        aria-expanded="false"
+        aria-expanded="true"
     >
         <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
     </button>
@@ -64,7 +64,7 @@
                     data-wait-title="Updating cache browser"
                     data-wait-copy="Applying the selected filters to the local cache."
                 >
-                    <div class="browser-content-mode-control" role="radiogroup" aria-label="Cache content type" data-option-count="3" data-segmented-active-index="{{ {'text': 0, 'media': 1, 'prompts': 2}[filters.view] }}">
+                    <div class="browser-content-mode-control" role="radiogroup" aria-label="Cache content type" data-option-count="2" data-segmented-active-index="{{ 0 if filters.view == 'text' else 1 }}">
                         <label class="browser-content-mode-option" for="browser_view_text">
                             <input id="browser_view_text" name="view" type="radio" value="text" {% if filters.view == "text" %}checked{% endif %}>
                             <span>Text</span>
@@ -73,17 +73,13 @@
                             <input id="browser_view_media" name="view" type="radio" value="media" {% if filters.view == "media" %}checked{% endif %}>
                             <span>Media</span>
                         </label>
-                        <label class="browser-content-mode-option" for="browser_view_prompts">
-                            <input id="browser_view_prompts" name="view" type="radio" value="prompts" {% if filters.view == "prompts" %}checked{% endif %}>
-                            <span>Prompts</span>
-                        </label>
                     </div>
                     <input type="hidden" name="session_view" value="{{ '1' if filters.session_view else '0' }}">
                     {% if filters.session %}<input type="hidden" name="session" value="{{ filters.session }}">{% endif %}
                     <label class="field browser-filter-field">
                         <span>{{ "Source" if filters.view == "media" else "Chat source" }}</span>
                         {% set source_options = cache_sources if filters.view == "media" else chat_history_sources %}
-                        {% set all_source_label = "All chats" if filters.view == "text" else "All sources" %}
+                        {% set all_source_label = "All sources" if filters.view == "media" else "All chats" %}
                         {% set all_source_icon = "images/photo.stack.svg" if filters.view == "media" else "images/arrow.down.message.fill.svg" %}
                         {% set selected_source = namespace(label=all_source_label, icon=all_source_icon) %}
                         {% for source in source_options %}
@@ -179,11 +175,11 @@
                     </label>
                     {% endif %}
                     <label class="field browser-filter-field">
-                        <span>{{ "Image order in session" if filters.view == "media" and filters.source == "chatgpt" and filters.session_view else ("Sort prompts" if filters.view == "prompts" else "Sort order") }}</span>
-                        <select name="sort" class="form-select" aria-label="{{ 'Order images in the current session' if filters.view == 'media' and filters.source == 'chatgpt' and filters.session_view else ('Sort saved prompts' if filters.view == 'prompts' else ('Sort cached media' if filters.view == 'media' else 'Sort cached text')) }}">
+                        <span>{{ "Image order in session" if filters.view == "media" and filters.source == "chatgpt" and filters.session_view else "Sort order" }}</span>
+                        <select name="sort" class="form-select" aria-label="{{ 'Order images in the current session' if filters.view == 'media' and filters.source == 'chatgpt' and filters.session_view else ('Sort cached media' if filters.view == 'media' else 'Sort cached text') }}">
                             <option value="newest" {% if filters.sort == "newest" %}selected{% endif %}>Newest first</option>
                             <option value="oldest" {% if filters.sort == "oldest" %}selected{% endif %}>Oldest first</option>
-                            <option value="name" {% if filters.sort == "name" %}selected{% endif %}>{{ "File name" if filters.view == "media" else ("Prompt title" if filters.view == "prompts" else "Session title") }}</option>
+                            <option value="name" {% if filters.sort == "name" %}selected{% endif %}>{{ "File name" if filters.view == "media" else "Session title" }}</option>
                         </select>
                     </label>
                     <div class="browser-filter-actions">
@@ -216,7 +212,7 @@
                             <h2 lang="zh-CN">{{ text_page.current_session.conversation_title }}</h2>
                             <p class="browser-session-detail-summary">{{ "{:,}".format(text_page.current_session.message_count) }} messages</p>
                             {% else %}
-                            <h2>{{ "Cached media browser" if filters.view == "media" else ("Saved prompts" if filters.view == "prompts" else "Cached text browser") }}</h2>
+                            <h2>{{ "Cached media browser" if filters.view == "media" else "Cached text browser" }}</h2>
                             {% endif %}
                             <div class="browser-session-detail-actions browser-local-resources-header-actions" data-browser-local-resources-header-actions>
                                 {% if filters.view == "text" and text_page.session_detail %}
@@ -363,21 +359,6 @@
                         </div>
                         {% endif %}
                     </div>
-                    {% elif filters.view == "prompts" %}
-                    <div class="metric-grid browser-metric-grid browser-text-metric-grid" aria-label="Saved prompt totals">
-                        <div class="metric-card metric-card-accent">
-                            <span class="metric-label">Saved prompts</span>
-                            <strong>{{ "{:,}".format(prompt_page.total_count) }}</strong>
-                        </div>
-                        <div class="metric-card metric-card-accent">
-                            <span class="metric-label">Sources</span>
-                            <strong>{{ "{:,}".format(prompt_page.items|map(attribute="source")|unique|list|length) }}</strong>
-                        </div>
-                        <div class="metric-card">
-                            <span class="metric-label">Page</span>
-                            <strong>{{ "{:,}".format(prompt_page.current_page) }} / {{ "{:,}".format(prompt_page.total_pages) }}</strong>
-                        </div>
-                    </div>
                     {% else %}
                     <div class="metric-grid browser-metric-grid browser-text-metric-grid" aria-label="Cached text totals">
                         <div class="metric-card metric-card-accent">
@@ -395,15 +376,7 @@
                     </div>
                     {% endif %}
 
-                    {% if filters.view == "prompts" and prompt_page.items %}
-                    <div class="browser-result-summary" aria-live="polite">
-                        <p>
-                            Showing page {{ "{:,}".format(prompt_page.current_page) }} of {{ "{:,}".format(prompt_page.total_pages) }}
-                            · {{ "{:,}".format(prompt_page.total_count) }} saved prompts
-                        </p>
-                        {% if filters.q or filters.source != "all" %}<span class="status-chip browser-filter-chip">Filtered view</span>{% endif %}
-                    </div>
-                    {% elif filters.view == "media" and media_page.items %}
+                    {% if filters.view == "media" and media_page.items %}
                     <div class="browser-result-summary{% if media_page.pagination_unit == 'session' %} browser-session-controls-row{% endif %}" aria-live="polite">
                         {% if media_page.pagination_unit == "session" %}
                         <div class="browser-result-controls">
@@ -523,8 +496,6 @@
                         </div>
                         {% endif %}
                     </div>
-                    {% endif %}
-                    {% if filters.view == "media" %}
                     <div class="browser-gallery" data-view="grid" aria-label="Cached media gallery">
                         {% for item in media_page.items %}
                         <article
@@ -545,7 +516,7 @@
                                 <video
                                     class="browser-preview-media"
                                     data-preview
-                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else browser_media_url(item.relative_path) }}"
+                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else url_for('browser_media', relative_path=item.relative_path) }}"
                                     muted
                                     playsinline
                                     preload="none"
@@ -555,7 +526,7 @@
                                 <img
                                     class="browser-preview-media"
                                     data-preview
-                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else browser_media_url(item.relative_path) }}"
+                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else url_for('browser_media', relative_path=item.relative_path) }}"
                                     alt="{{ item.alt_text or item.title }}"
                                     loading="lazy"
                                     decoding="async"
@@ -660,63 +631,6 @@
                         </article>
                         {% endfor %}
                     </div>
-                    {% elif filters.view == "prompts" and prompt_page.items %}
-                    <div class="events-table-shell browser-session-table-shell browser-prompt-table-shell">
-                        <div class="events-table-scroll browser-session-table-scroll">
-                            <table class="events-table browser-session-table browser-prompt-table" aria-label="Saved prompts">
-                                <thead>
-                                    <tr>
-                                        <th scope="col" class="browser-prompt-col-number">No.</th>
-                                        <th scope="col" class="browser-prompt-col-content">Prompt</th>
-                                        <th scope="col" class="browser-prompt-col-source">Source</th>
-                                        <th scope="col" class="browser-prompt-col-added">Saved</th>
-                                        <th scope="col" class="browser-prompt-col-actions">Actions</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {% for prompt in prompt_page.items %}
-                                    <tr data-prompt-id="{{ prompt.stable_id }}">
-                                        <td class="browser-session-table-number">{{ ((prompt_page.current_page - 1) * prompt_page.page_size) + loop.index }}</td>
-                                        <td>
-                                            <div class="browser-prompt-table-content" lang="zh-CN">{{ render_prompt_markdown(prompt.content_text) }}</div>
-                                            <span class="browser-session-table-id" title="{{ prompt.conversation_title }}">{{ prompt.conversation_title }}</span>
-                                        </td>
-                                        <td class="browser-session-table-source">
-                                            {% set prompt_source = namespace(icon="images/arrow.down.message.fill.svg", label=prompt.source|capitalize) %}
-                                            {% for source in chat_history_sources %}
-                                                {% if source.key == prompt.source %}
-                                                    {% set prompt_source.icon = source.icon_filename %}
-                                                    {% set prompt_source.label = source.label %}
-                                                {% endif %}
-                                            {% endfor %}
-                                            <span class="browser-session-source-mark" role="img" aria-label="{{ prompt_source.label }}" title="{{ prompt_source.label }}">
-                                                <span
-                                                    class="cache-source-mark is-full-color"
-                                                    style="--cache-source-mark: url('{{ url_for('static', filename=prompt_source.icon) }}');"
-                                                    aria-hidden="true"
-                                                ></span>
-                                            </span>
-                                        </td>
-                                        <td><time datetime="{{ prompt.added_at }}">{{ format_chat_message_timestamp_label(prompt.added_at) }}</time></td>
-                                        <td class="browser-prompt-table-actions">
-                                            <button
-                                                type="button"
-                                                class="browser-media-round-action browser-prompt-copy-button"
-                                                data-prompt-copy
-                                                data-prompt-text="{{ prompt.content_text }}"
-                                                aria-label="Copy prompt"
-                                                title="Copy prompt"
-                                            >
-                                                <span class="icon browser-prompt-copy-icon" aria-hidden="true"></span>
-                                                <span class="browser-prompt-copy-feedback" data-prompt-copy-feedback aria-live="polite"></span>
-                                            </button>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
                     {% elif filters.view == "text" and text_page.session_detail %}
                     {% if text_page.items %}
                     <div class="events-table-shell browser-session-table-shell browser-session-detail-shell">
@@ -767,20 +681,6 @@
                                                     title="Expand message"
                                                     hidden
                                                 ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
-                                                {% set message_prompt_key = prompt_pointer_key(message.source, message.conversation_id, message.message_key) %}
-                                                <div class="browser-session-message-actions">
-                                                    <button
-                                                        type="button"
-                                                        class="browser-prompt-add-button{% if message_prompt_key in saved_prompt_keys %} is-added{% endif %}"
-                                                        data-prompt-add
-                                                        data-prompt-source="{{ message.source }}"
-                                                        data-prompt-conversation-id="{{ message.conversation_id }}"
-                                                        data-prompt-message-key="{{ message.message_key }}"
-                                                        aria-label="{{ 'Added as prompt' if message_prompt_key in saved_prompt_keys else 'Add as prompt' }}"
-                                                        title="{{ 'Added as prompt' if message_prompt_key in saved_prompt_keys else 'Add as prompt' }}"
-                                                        {% if message_prompt_key in saved_prompt_keys %}disabled{% endif %}
-                                                    ><span class="icon browser-prompt-add-icon" aria-hidden="true"></span><span class="browser-prompt-add-feedback" data-prompt-add-feedback aria-live="polite"></span></button>
-                                                </div>
                                             </div>
                                             {% if message.media_refs or message.source_links %}
                                             <div class="browser-session-table-links">
@@ -890,33 +790,6 @@
                         </article>
                         {% endfor %}
                     </div>
-                    {% endif %}
-                    {% set browser_has_result = (
-                        (filters.view == "media" and media_page.items)
-                        or (filters.view == "prompts" and prompt_page.items)
-                        or (
-                            filters.view == "text"
-                            and text_page
-                            and (
-                                (text_page.session_detail and text_page.items)
-                                or (filters.session_view and text_page.sessions)
-                                or (not filters.session_view and not text_page.session_detail and text_page.items)
-                            )
-                        )
-                    ) %}
-                    {% if not browser_has_result %}
-                    {% if filters.view == "prompts" and has_any_prompts %}
-                    <div class="browser-empty-state" role="status">
-                        <span class="browser-empty-icon browser-empty-icon-text" aria-hidden="true"></span>
-                        <h3>No saved prompts match these filters.</h3>
-                        <p>Try a broader source or search term.</p>
-                    </div>
-                    {% elif filters.view == "prompts" %}
-                    <div class="browser-empty-state" role="status">
-                        <span class="browser-empty-icon browser-empty-icon-text" aria-hidden="true"></span>
-                        <h3>No saved prompts yet.</h3>
-                        <p>Use Add as prompt on a cached message to save a pointer here.</p>
-                    </div>
                     {% elif filters.view == "media" and has_any_media %}
                     <div class="browser-empty-state" role="status">
                         <span class="browser-empty-icon" aria-hidden="true"></span>
@@ -942,7 +815,6 @@
                         <p>Cached chat sessions will appear here after a history sync.</p>
                     </div>
                     {% endif %}
-                    {% endif %}
 
                     {% if filters.view == "media" %}
                     {{ render_browser_pagination(
@@ -952,9 +824,6 @@
                         filters,
                         'sessions' if media_page.pagination_unit == 'session' else 'pages'
                     ) }}
-                    {% endif %}
-                    {% if filters.view == "prompts" %}
-                    {{ render_browser_pagination(prompt_page, 'Saved prompts', 'prompts', filters, 'prompts') }}
                     {% endif %}
                     {% if filters.view == "text" %}
                     {{ render_browser_pagination(text_page, 'Message pages' if text_page.session_detail else ('Sessions' if filters.session_view else 'Text pages'), 'text', filters, 'messages' if text_page.session_detail else ('sessions' if filters.session_view else 'pages')) }}
@@ -1005,6 +874,6 @@
 
 {% include "_waiting_modal.html" %}
 <script type="application/json" id="browser_media_data">{{ media_payload|tojson }}</script>
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.18.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.17.0-codex.1') }}"></script>
 </body>
 </html>

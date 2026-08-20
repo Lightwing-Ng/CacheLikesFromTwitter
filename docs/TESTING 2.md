@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.3.2-codex.1`
+Documentation version: `v1.3.0-codex.1`
 
 ## Supported commands
 
@@ -61,8 +61,8 @@ regression pass.
 Baseline measured on 20 Aug 2026 with Python 3.13, pytest 9.0.3,
 pytest-cov 7.1.0, and Ruff 0.15.21:
 
-- 534 tests passed, with 293 unittest subtests passed.
-- Combined coverage for `app/` was 63.84% using branch coverage.
+- 528 tests passed, with 293 unittest subtests passed.
+- Combined coverage for `app/` was 64.75% using branch coverage.
 - All 24 first-party JavaScript files passed syntax checks.
 
 Raise the coverage floor only after adding behavior-level tests. Do not exclude production modules
@@ -90,12 +90,6 @@ Tests must follow these rules:
 - Do not hard-code `Finder`, `open -R`, or macOS permission messages in a host-neutral test. Test
   each platform through explicit platform arguments or monkeypatch the host predicate when the
   test is specifically for macOS or Windows.
-- The yt-dlp cookie-source mapper may return the explicit `safari` backend on every CI host;
-  browser automation remains host-aware and must still reject Safari where the runtime registry
-  does not expose it.
-- Overlay sidebars must use an explicit viewport-bounded height with internal scrolling. Do not
-  rely on intrinsic fixed-position height on touch viewports, because Chromium implementations
-  can report a transient bottom edge outside `window.innerHeight`.
 - Keep filesystem, browser-profile, and subprocess tests inside `tmp_path` or an explicit fake
   platform boundary. Never inspect the runner's real browser profile or file manager.
 - Browser E2E tests must use a clean context and local Flask server only. Disable or stub unrelated

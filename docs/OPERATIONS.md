@@ -86,6 +86,7 @@ to override it. A successful unlock is stored in the signed Flask session for th
 | `local_store/llm/chatgpt/history.parquet` | ChatGPT typed text history |
 | `local_store/llm/gemini/history.parquet` | Gemini typed text history |
 | `local_store/llm/grok/history.parquet` | Grok typed text history |
+| `local_store/prompt/prompts.parquet` | Deduplicated pointers to saved prompts; message text remains in the source history |
 | `local_store/agent/agent_source_catalog.parquet` | Provider-neutral Agent session and Project discovery cache |
 | `local_store/.cache_task.lock` | Cross-source advisory task lock |
 | `local_store/.browser-trash/` | Recoverable previews moved by the local-media browser |

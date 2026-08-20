@@ -1,6 +1,6 @@
 """Shared pytest fixtures for isolated CacheLikesFromTwitter tests.
 
-Code version: v1.2.0-codex.1
+Code version: v1.2.1-codex.1
 """
 
 from __future__ import annotations
@@ -16,6 +16,8 @@ from flask.testing import FlaskClient
 
 _TEST_HOME = TemporaryDirectory(prefix="cachelikes-pytest-home-")
 _TEST_RUNTIME_ROOT = TemporaryDirectory(prefix="cachelikes-pytest-runtime-")
+# Keep attachment/editor duplicate copies out of test collection without deleting user files.
+collect_ignore_glob = ["* 2.py"]
 os.environ["HOME"] = _TEST_HOME.name
 os.environ["CACHELIKES_RUNTIME_ROOT"] = _TEST_RUNTIME_ROOT.name
 os.environ["CACHELIKES_SETTINGS_PATH"] = str(

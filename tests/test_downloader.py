@@ -1,6 +1,6 @@
 """Tests for yt-dlp output classification and retry boundaries.
 
-Code version: v1.3.0-codex.1
+Code version: v1.3.1-codex.1
 """
 
 from __future__ import annotations
@@ -127,6 +127,13 @@ def test_browser_cookie_arguments_follow_selected_browser() -> None:
     assert build_cookies_from_browser_arg(CrawlConfig(x_browser="safari")) == "safari"
     with pytest.raises(RuntimeError, match="Unsupported X browser"):
         build_cookies_from_browser_arg(CrawlConfig(x_browser="firefox"))
+
+
+def test_safari_cookie_source_is_independent_of_host_browser_registry(monkeypatch) -> None:
+    """Keep yt-dlp's Safari cookie source portable across CI host platforms."""
+    monkeypatch.setattr("app.core.downloader.browser_descriptors", lambda _config: {})
+
+    assert build_cookies_from_browser_arg(CrawlConfig(x_browser="safari")) == "safari"
 
 
 def test_transient_yt_dlp_failure_retries_then_returns_success() -> None:

@@ -1,6 +1,6 @@
 """Download media from tweet URLs with yt-dlp."""
 
-# Code version: v1.8.0-codex.1
+# Code version: v1.9.0-codex.1
 
 from __future__ import annotations
 
@@ -269,7 +269,15 @@ def ensure_yt_dlp_available() -> list[str]:
 
 def build_cookies_from_browser_arg(config: CrawlConfig) -> str:
     """Match yt-dlp's browser cookies source to the selected X browser."""
-    descriptor = browser_descriptors(config).get(config.x_browser)
+    selected_browser = str(config.x_browser or "").strip().lower()
+    # yt-dlp accepts Safari as a cookie backend even when the host-aware browser
+    # registry does not expose Safari for automation on this platform. The
+    # collection and browser-session paths still validate Safari availability
+    # through browser_descriptors before attempting to launch it.
+    if selected_browser == "safari":
+        return "safari"
+
+    descriptor = browser_descriptors(config).get(selected_browser)
     if descriptor is None:
         raise RuntimeError(f"Unsupported X browser: {config.x_browser}")
     if descriptor.engine == "safari":

@@ -1,6 +1,6 @@
 """Shared Parquet schemas and atomic persistence for cached resource state."""
 
-# Code version: v1.4.0-codex.1
+# Code version: v1.5.0-codex.1
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ X_CACHE_CATALOG_FILENAME = ".cache_catalog.parquet"
 GEMINI_HISTORY_FILENAME = "history.parquet"
 CHATGPT_HISTORY_FILENAME = "history.parquet"
 GROK_HISTORY_FILENAME = "history.parquet"
+PROMPT_FILENAME = "prompts.parquet"
 
 CHATGPT_CATALOG_SCHEMA_VERSION = 2
 GROK_CATALOG_SCHEMA_VERSION = 2
@@ -38,6 +39,7 @@ X_CACHE_CATALOG_SCHEMA_VERSION = 3
 GEMINI_HISTORY_SCHEMA_VERSION = 1
 CHATGPT_HISTORY_SCHEMA_VERSION = 1
 GROK_HISTORY_SCHEMA_VERSION = 1
+PROMPT_SCHEMA_VERSION = 1
 
 
 CHATGPT_CATALOG_SCHEMA = pa.schema(
@@ -141,6 +143,16 @@ DELETED_MEDIA_SCHEMA = pa.schema(
         pa.field("height", pa.int32(), nullable=False),
         pa.field("chatgpt_session_key", pa.string(), nullable=False),
         pa.field("chatgpt_branch_key", pa.string(), nullable=False),
+    ]
+)
+
+PROMPT_SCHEMA = pa.schema(
+    [
+        pa.field("schema_version", pa.int16(), nullable=False),
+        pa.field("source", pa.string(), nullable=False),
+        pa.field("conversation_id", pa.string(), nullable=False),
+        pa.field("message_key", pa.string(), nullable=False),
+        pa.field("added_at", pa.string(), nullable=False),
     ]
 )
 

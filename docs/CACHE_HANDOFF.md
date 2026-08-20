@@ -98,6 +98,7 @@ The current local store layout is:
 | `local_store/llm/chatgpt/history.parquet` | ChatGPT Text runtime | Typed ChatGPT messages |
 | `local_store/llm/gemini/history.parquet` | Gemini Text runtime | Typed Gemini messages |
 | `local_store/llm/grok/history.parquet` | Grok Text runtime | Typed Grok messages |
+| `local_store/prompt/prompts.parquet` | Prompt manager | Deduplicated source-message pointers for saved prompts |
 | `local_store/.cache_task.lock` | All cache runtimes | Cross-process advisory task lock |
 | `logs/cachelikes.log.jsonl` | All runtimes | Structured diagnostics |
 
