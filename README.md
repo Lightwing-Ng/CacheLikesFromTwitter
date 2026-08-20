@@ -84,6 +84,8 @@ The quality gate runs Ruff, JavaScript syntax checks, the Python suite with bran
 and a disposable Chromium sidebar E2E flow. It is the same command executed by GitHub Actions.
 The browser flow uses a clean context against an isolated local server; the suite never opens
 an authenticated profile, downloads media, or writes to user-owned caches, logs, or settings.
+The CI portability rules and failure-triage contract are documented in
+[docs/TESTING.md](docs/TESTING.md#ci-portability-contract).
 
 ## Documentation
 

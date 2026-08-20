@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.2.2-codex.1`
+Documentation version: `v1.3.0-codex.1`
 
 ## Supported commands
 
@@ -58,15 +58,50 @@ ignored by Git. The gate currently enforces a 55% combined statement-and-branch 
 Override `CACHELIKES_COVERAGE_MINIMUM` only for an intentional local diagnostic, never to make a
 regression pass.
 
-Baseline measured on 12 Aug 2026 with a supported Python 3.13/3.14 runtime, pytest 9.0.3,
+Baseline measured on 20 Aug 2026 with Python 3.13, pytest 9.0.3,
 pytest-cov 7.1.0, and Ruff 0.15.21:
 
-- 262 tests passed, with 149 unittest subtests passed.
-- Combined coverage for `app/` was 64.46% using branch coverage.
-- All 12 first-party JavaScript files passed syntax checks.
+- 528 tests passed, with 293 unittest subtests passed.
+- Combined coverage for `app/` was 64.75% using branch coverage.
+- All 24 first-party JavaScript files passed syntax checks.
 
 Raise the coverage floor only after adding behavior-level tests. Do not exclude production modules
 or lower the threshold to mask a gap.
+
+## CI portability contract
+
+GitHub Actions is the canonical clean-room gate. It runs on `ubuntu-latest` with Python 3.13,
+Node.js 22, UTC, and a freshly installed Playwright Chromium. A test that passes only on the
+developer's macOS workstation is not evidence of a passing project contract.
+
+Use this command to reproduce the CI timezone locally:
+
+```bash
+TZ=UTC CACHELIKES_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh
+```
+
+Tests must follow these rules:
+
+- Do not hard-code local-time output such as `13:00`. Use UTC fixtures, the production formatter,
+  or an explicit timezone in the assertion.
+- Do not hard-code `Finder`, `open -R`, or macOS permission messages in a host-neutral test. Test
+  each platform through explicit platform arguments or monkeypatch the host predicate when the
+  test is specifically for macOS or Windows.
+- Keep filesystem, browser-profile, and subprocess tests inside `tmp_path` or an explicit fake
+  platform boundary. Never inspect the runner's real browser profile or file manager.
+- Browser E2E tests must use a clean context and local Flask server only. Disable or stub unrelated
+  background polling when the test injects a DOM fixture; otherwise the application may replace
+  the fixture during the assertion.
+- For responsive geometry and hit testing, wait for the relevant rectangle to become stable before
+  asserting `document.elementFromPoint()`. Reduced motion shortens transitions but is not a promise
+  that a DOM update is synchronous.
+- Keep live, authenticated, and remote-service checks under `@pytest.mark.live`; they do not belong
+  in the default quality gate.
+
+When a gate fails on GitHub, reproduce the exact failing node first with `TZ=UTC`, then run the
+complete `./scripts/check.sh`. Do not weaken an assertion, skip a platform branch, lower coverage,
+or add a retry until the failure has been classified as a real product regression or a test
+environment assumption.
 
 ## Test organization
 
