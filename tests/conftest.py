@@ -1,6 +1,6 @@
 """Shared pytest fixtures for isolated CacheLikesFromTwitter tests.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -44,3 +44,12 @@ def app() -> Flask:
 def client(app: Flask) -> FlaskClient:
     """Return the configured Flask test client."""
     return app.test_client()
+
+
+@pytest.fixture
+def macos_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Expose macOS-only browser descriptors to portable tests."""
+    from app.core import browser_sessions, config
+
+    monkeypatch.setattr(config, "is_macos_host", lambda: True)
+    monkeypatch.setattr(browser_sessions, "is_macos_host", lambda: True)

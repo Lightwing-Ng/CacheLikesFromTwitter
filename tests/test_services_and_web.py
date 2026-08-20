@@ -1,6 +1,6 @@
 """Service orchestration and Flask contract tests.
 
-Code version: v1.8.0-codex.1
+Code version: v1.8.1-codex.1
 """
 
 from __future__ import annotations
@@ -159,7 +159,7 @@ def test_settings_and_grok_reset_routes_redirect_without_external_work(client, t
 
 
 @pytest.mark.integration
-def test_grok_start_route_accepts_safari(client) -> None:
+def test_grok_start_route_accepts_safari(client, macos_host) -> None:
     with patch("app.core.grok_service.GrokDownloadService.start") as start:
         response = client.post(
             "/grok/start",
@@ -198,7 +198,9 @@ def test_gemini_start_route_accepts_browser_and_history_limits(client) -> None:
     assert config.gemini_stale_round_limit == 7
 
 
-def test_chatgpt_text_start_preserves_media_settings_and_selects_text_mode(tmp_path: Path) -> None:
+def test_chatgpt_text_start_preserves_media_settings_and_selects_text_mode(
+    tmp_path: Path, macos_host
+) -> None:
     saved_project_url = "https://chatgpt.com/c/specific-session"
     initial_config = CrawlConfig(chatgpt_project_url=saved_project_url)
 
@@ -224,7 +226,7 @@ def test_chatgpt_text_start_preserves_media_settings_and_selects_text_mode(tmp_p
     assert save_config.call_args.args[0].chatgpt_project_url == saved_project_url
 
 
-def test_chatgpt_media_start_uses_safari_project_settings(tmp_path: Path) -> None:
+def test_chatgpt_media_start_uses_safari_project_settings(tmp_path: Path, macos_host) -> None:
     project_url = "https://chatgpt.com/g/g-p-demo/project"
     initial_config = CrawlConfig(chatgpt_project_url=project_url)
 

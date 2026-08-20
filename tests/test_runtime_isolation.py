@@ -1,6 +1,6 @@
 """Regression tests for the process-wide pytest runtime boundary.
 
-Code version: v1.0.0-codex.1
+Code version: v1.0.1-codex.1
 """
 
 from __future__ import annotations
@@ -42,8 +42,16 @@ def test_runtime_helpers_preserve_production_defaults_when_unconfigured(monkeypa
     monkeypatch.delenv(config.RUNTIME_ROOT_ENV)
     monkeypatch.delenv(config.SETTINGS_PATH_ENV)
     monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.setenv("USERPROFILE", str(home_dir))
+    monkeypatch.setenv("APPDATA", str(home_dir / "AppData/Roaming"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(home_dir / ".config"))
 
     assert config.resolve_runtime_root() == config.PROJECT_ROOT
-    assert config.default_settings_path() == (
-        home_dir / "Library/Application Support/CacheLikesFromTwitter/settings.json"
-    )
+    if config.is_macos_host():
+        expected_path = home_dir / "Library/Application Support/CacheLikesFromTwitter/settings.json"
+    elif config.is_windows_host():
+        expected_path = home_dir / "AppData/Roaming/CacheLikesFromTwitter/settings.json"
+    else:
+        expected_path = home_dir / ".config/CacheLikesFromTwitter/settings.json"
+
+    assert config.default_settings_path() == expected_path

@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.2-codex.1
+Code version: v1.6.3-codex.1
 """
 
 from __future__ import annotations
@@ -163,7 +163,7 @@ def test_background_chromium_launch_args_keep_the_window_offscreen() -> None:
     ]
 
 
-def test_gemini_browser_probe_routes_through_the_shared_browser_registry() -> None:
+def test_gemini_browser_probe_routes_through_the_shared_browser_registry(macos_host) -> None:
     with patch(
         "app.core.browser_sessions._probe_gemini_session",
         return_value={
@@ -416,7 +416,7 @@ def test_safari_likes_collection_uses_window_id_targeting() -> None:
     assert state.snapshot()["discovered_tweets"] == 2
 
 
-def test_safari_collection_prefers_navigation_handle_before_page_source() -> None:
+def test_safari_collection_prefers_navigation_handle_before_page_source(macos_host) -> None:
     config = CrawlConfig(x_browser="safari")
     state = TaskState("test")
     collected_urls = ["https://x.com/demo_user/status/123"]
@@ -434,7 +434,7 @@ def test_safari_collection_prefers_navigation_handle_before_page_source() -> Non
     snapshot.assert_not_called()
 
 
-def test_safari_grok_probe_marks_verified_session_ready_to_download() -> None:
+def test_safari_grok_probe_marks_verified_session_ready_to_download(macos_host) -> None:
     source = '{"givenName":"Demo","xUsername":"demo_x"}'
 
     with patch(

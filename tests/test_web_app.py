@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.80.3-codex.1
+# Code version: v1.80.4-codex.1
 
 from __future__ import annotations
 
@@ -233,7 +233,7 @@ class WebAppTests(unittest.TestCase):
         with patch(
             "app.web.app.load_saved_config",
             return_value=CrawlConfig(chatgpt_browser="safari"),
-        ):
+        ), patch("app.core.browser_sessions.is_macos_host", return_value=True):
             app = create_app()
         with app.test_client() as client:
             response = client.get("/cache/chatgpt")

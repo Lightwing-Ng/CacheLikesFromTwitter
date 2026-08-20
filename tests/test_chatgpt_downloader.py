@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.36.2-codex.1
+# Code version: v1.36.3-codex.1
 
 from __future__ import annotations
 
@@ -1612,7 +1612,7 @@ def test_chatgpt_browser_probe_verifies_chromium_navigation_and_session() -> Non
     assert page.goto_calls == [("https://chatgpt.com/", "domcontentloaded", 30_000)]
 
 
-def test_chatgpt_browser_probe_verifies_safari_session_in_a_hidden_context() -> None:
+def test_chatgpt_browser_probe_verifies_safari_session_in_a_hidden_context(macos_host) -> None:
     class _ProbeResponse:
         ok = True
         status = 200
@@ -1833,7 +1833,7 @@ def test_chatgpt_sync_launches_edge_offscreen_with_a_rendered_window(tmp_path: P
     assert launch_context.call_args.kwargs["background_window"] is True
 
 
-def test_chatgpt_sync_accepts_safari_without_playwright(tmp_path: Path) -> None:
+def test_chatgpt_sync_accepts_safari_without_playwright(tmp_path: Path, macos_host) -> None:
     state = TaskState("test")
     browser_context = _ClosableBrowserContext()
 
@@ -1856,7 +1856,9 @@ def test_chatgpt_sync_accepts_safari_without_playwright(tmp_path: Path) -> None:
     assert any("offscreen Safari" in event for event in state.snapshot()["recent_events"])
 
 
-def test_chatgpt_text_sync_uses_safari_home_and_skips_media_pipeline(tmp_path: Path) -> None:
+def test_chatgpt_text_sync_uses_safari_home_and_skips_media_pipeline(
+    tmp_path: Path, macos_host
+) -> None:
     state = TaskState("test")
     browser_context = _ClosableBrowserContext()
     conversation_urls = [
@@ -1904,7 +1906,9 @@ def test_chatgpt_text_sync_uses_safari_home_and_skips_media_pipeline(tmp_path: P
     assert snapshot["discovery_complete"] is True
 
 
-def test_chatgpt_direct_session_refresh_skips_the_global_project_image_index(tmp_path: Path) -> None:
+def test_chatgpt_direct_session_refresh_skips_the_global_project_image_index(
+    tmp_path: Path, macos_host
+) -> None:
     session_url = "https://chatgpt.com/g/g-p-demo/c/session-123"
     state = TaskState("test")
     browser_context = _ClosableBrowserContext()
