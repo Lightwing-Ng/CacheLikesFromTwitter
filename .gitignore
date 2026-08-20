@@ -12,8 +12,7 @@ playwright-report/
 test-results/*
 !test-results/.gitkeep
 /local_store/
-logs/*
-!logs/.gitkeep
+/logs/
 grok_local/
 tools/
 /forPrompts/
