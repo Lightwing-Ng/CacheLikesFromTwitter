@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.16.0-codex.1
+# Code version: v1.17.0-codex.1
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
 
 from .browser_sessions import browser_descriptors, launch_chromium_context
-from .config import LOCAL_STORE_ROOT, CrawlConfig, default_edge_user_data_dir, is_windows_host
+from .config import MEDIA_STORE_ROOT, CrawlConfig, default_edge_user_data_dir, is_windows_host
 from .local_media_browser import BrowserDeletionCatalog
 from .resource_persistence import (
     GROK_CATALOG_FILENAME,
@@ -67,7 +67,7 @@ DEFAULT_GROK_USER_AGENT = (
 
 EDGE_USER_DATA_DIR = default_edge_user_data_dir()
 EDGE_PROFILE_DIR = "Default"
-GROK_TARGET_DIR = LOCAL_STORE_ROOT / "grok"
+GROK_TARGET_DIR = MEDIA_STORE_ROOT / "grok"
 GROK_FILES_URL = "https://grok.com/files?sort=&fileType=&createdBy="
 GROK_SCROLL_ROUNDS = 480
 GROK_STALE_SCROLL_LIMIT = 12

@@ -1,6 +1,6 @@
 """Regression tests for the process-wide pytest runtime boundary.
 
-Code version: v1.0.2-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ def test_pytest_runtime_paths_are_outside_the_repository() -> None:
 
 def test_grok_snapshot_resolves_its_default_target_at_call_time(monkeypatch, tmp_path) -> None:
     """Allow tests to redirect the Grok cache without a frozen default argument."""
-    target_dir = tmp_path / "grok"
+    target_dir = tmp_path / "media" / "grok"
     monkeypatch.setattr(grok_downloader, "GROK_TARGET_DIR", target_dir)
 
     snapshot = grok_downloader.build_grok_initial_snapshot("v-test")

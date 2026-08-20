@@ -132,7 +132,7 @@ task lock, and records the resulting summary in `TaskState`.
 authenticated Grok browser session
   -> GrokDownloadService
   -> catalog, manifest, and work queue
-  -> validated media files in local_store/grok/
+  -> validated media files in local_store/media/grok/
 ```
 
 The Grok downloader persists catalog, resumable download-manifest, and work-queue state. A
@@ -163,7 +163,7 @@ configured ChatGPT project or conversation URL
   -> ChatGPTDownloadService
   -> bounded parallel conversation workers with isolated Edge contexts
   -> original-image discovery, download claims, and catalog validation
-  -> local_store/chatgpt/<project-name>/
+  -> local_store/media/chatgpt/<project-name>/
 ```
 
 Up to three workers scan conversations and download original image payloads concurrently. Each

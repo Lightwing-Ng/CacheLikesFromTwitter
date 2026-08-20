@@ -94,7 +94,7 @@ The current local store layout is:
 
 | Path | Owner | Meaning |
 | --- | --- | --- |
-| `local_store/grok/` | Grok media runtime | Media files, catalog, manifest, and work queue |
+| `local_store/media/grok/` | Grok media runtime | Media files, catalog, manifest, and work queue |
 | `local_store/llm/chatgpt/history.parquet` | ChatGPT Text runtime | Typed ChatGPT messages |
 | `local_store/llm/gemini/history.parquet` | Gemini Text runtime | Typed Gemini messages |
 | `local_store/llm/grok/history.parquet` | Grok Text runtime | Typed Grok messages |

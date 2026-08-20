@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.19.0-codex.1
+# Code version: v1.20.0-codex.1
 
 from __future__ import annotations
 
@@ -202,6 +202,38 @@ def resolve_local_media_path(local_store_root: Path | str, relative_path: str) -
     return resolved
 
 
+def media_route_relative_path(relative_path: str) -> str:
+    """Return the stable public URL path for a stored media relative path."""
+    decoded_path = _decode_relative_path(relative_path)
+    if decoded_path is None:
+        return ""
+
+    parts = PurePosixPath(decoded_path).parts
+    if (
+        len(parts) >= 3
+        and parts[0].casefold() == config.MEDIA_STORE_DIRNAME.casefold()
+        and parts[1] in {"chatgpt", "grok"}
+    ):
+        return PurePosixPath(*parts[1:]).as_posix()
+    return decoded_path
+
+
+def resolve_browser_media_path(local_store_root: Path | str, relative_path: str) -> Path | None:
+    """Resolve a public browser path against the current media storage layout."""
+    resolved_path = resolve_local_media_path(local_store_root, relative_path)
+    if resolved_path is not None:
+        return resolved_path
+
+    decoded_path = _decode_relative_path(relative_path)
+    if decoded_path is None:
+        return None
+    parts = PurePosixPath(decoded_path).parts
+    if not parts or parts[0] not in {"chatgpt", "grok"}:
+        return None
+    stored_path = PurePosixPath(config.MEDIA_STORE_DIRNAME, *parts).as_posix()
+    return resolve_local_media_path(local_store_root, stored_path)
+
+
 def local_file_manager_label(*, platform_name: str | None = None, os_name: str | None = None) -> str:
     """Return the platform-native file manager name for interface copy."""
     resolved_platform = sys.platform if platform_name is None else platform_name
@@ -270,8 +302,18 @@ def normalize_resource_key(source: str, value: str) -> str:
 
 def is_exempt_media_path(relative_path: str) -> bool:
     """Return whether a path belongs to the ChatGPT temporary work directory."""
+    parts = _chatgpt_project_relative_parts(relative_path)
+    return len(parts) >= 1 and parts[0].casefold() in CHATGPT_TEMPORARY_PROJECT_NAMES
+
+
+def _chatgpt_project_relative_parts(relative_path: str | None) -> tuple[str, ...]:
+    """Return project-relative ChatGPT path parts for current and legacy layouts."""
     parts = PurePosixPath(str(relative_path or "").replace("\\", "/")).parts
-    return len(parts) >= 2 and parts[0].casefold() == "chatgpt" and parts[1].casefold() in CHATGPT_TEMPORARY_PROJECT_NAMES
+    if len(parts) >= 3 and parts[0].casefold() == config.MEDIA_STORE_DIRNAME and parts[1].casefold() == "chatgpt":
+        return tuple(parts[2:])
+    if len(parts) >= 2 and parts[0].casefold() == "chatgpt":
+        return tuple(parts[1:])
+    return ()
 
 
 class BrowserDeletionCatalog:
@@ -919,14 +961,19 @@ class LocalMediaCatalog:
                 continue
 
             decoded_path = _decode_relative_path(item.relative_path)
-            relative_path = PurePosixPath(decoded_path or "")
-            if len(relative_path.parts) < 3 or relative_path.parts[0].casefold() != "chatgpt":
+            project_relative_parts = _chatgpt_project_relative_parts(decoded_path)
+            if len(project_relative_parts) < 2:
                 hydrated_items.append(item)
                 continue
 
-            project_directory_name = relative_path.parts[1]
+            project_directory_name = project_relative_parts[0]
             if project_directory_name not in catalogs_by_project:
-                project_dir = self.local_store_root / "chatgpt" / project_directory_name
+                project_dir = (
+                    self.local_store_root
+                    / config.MEDIA_STORE_DIRNAME
+                    / "chatgpt"
+                    / project_directory_name
+                )
                 if self._resolve_inside(project_dir, require_directory=True) is None:
                     catalogs_by_project[project_directory_name] = ({}, {})
                 else:
@@ -939,7 +986,7 @@ class LocalMediaCatalog:
                     catalogs_by_project[project_directory_name] = (entries_by_path, entries_by_file_id)
 
             entries_by_path, entries_by_file_id = catalogs_by_project[project_directory_name]
-            project_relative_path = PurePosixPath(*relative_path.parts[2:]).as_posix()
+            project_relative_path = PurePosixPath(*project_relative_parts[1:]).as_posix()
             entry = entries_by_file_id.get(item.resource_key) or entries_by_path.get(project_relative_path)
             if entry is None:
                 hydrated_items.append(item)
@@ -1098,7 +1145,7 @@ class LocalMediaCatalog:
         return items
 
     def _scan_grok(self) -> list[LocalMediaItem]:
-        root = self.local_store_root / "grok"
+        root = self.local_store_root / config.MEDIA_STORE_DIRNAME / "grok"
         files = self._media_files_by_relative_path(root)
         catalog_entries = self._load_grok_catalog(root)
         items: list[LocalMediaItem] = []
@@ -1126,7 +1173,7 @@ class LocalMediaCatalog:
         return items
 
     def _scan_chatgpt(self) -> list[LocalMediaItem]:
-        root = self.local_store_root / "chatgpt"
+        root = self.local_store_root / config.MEDIA_STORE_DIRNAME / "chatgpt"
         items: list[LocalMediaItem] = []
         for project_dir in self._iter_visible_directories(root):
             if project_dir.name.casefold() in CHATGPT_TEMPORARY_PROJECT_NAMES:

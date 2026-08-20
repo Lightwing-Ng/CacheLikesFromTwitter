@@ -1,6 +1,6 @@
 """Regression tests for the one-way shadow cloud backup.
 
-Code version: v1.1.1-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -82,7 +82,7 @@ def test_shadow_backup_keeps_cloud_type_conflicts_without_mirror_deletions(tmp_p
 def test_shadow_backup_service_runs_a_manual_sync_with_the_shared_task_lock(tmp_path: Path) -> None:
     source_root = tmp_path / "local_store"
     destination_root = tmp_path / "OneDrive" / "AICaches"
-    source_file = source_root / "grok" / "asset.png"
+    source_file = source_root / "media" / "grok" / "asset.png"
     source_file.parent.mkdir(parents=True)
     source_file.write_bytes(b"asset")
     service = ShadowBackupService(source_root, task_lock=CacheTaskLock(tmp_path / "cache-task.lock"))
@@ -99,4 +99,4 @@ def test_shadow_backup_service_runs_a_manual_sync_with_the_shared_task_lock(tmp_
     assert not snapshot["running"]
     assert snapshot["phase"] == "finished"
     assert snapshot["copied_files"] == 1
-    assert (destination_root / "grok" / "asset.png").read_bytes() == b"asset"
+    assert (destination_root / "media" / "grok" / "asset.png").read_bytes() == b"asset"

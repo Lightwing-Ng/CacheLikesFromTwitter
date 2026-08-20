@@ -1,6 +1,6 @@
 """Read-only local media browser tests.
 
-Code version: v1.10.4-codex.1
+Code version: v1.11.0-codex.1
 """
 
 from __future__ import annotations
@@ -276,9 +276,9 @@ def test_scans_x_video_and_supports_double_info_suffix(tmp_path: Path) -> None:
 
 def test_scans_grok_catalog_metadata(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
-    media_path = root / "grok" / "img_asset.jpg"
+    media_path = root / "media" / "grok" / "img_asset.jpg"
     _write_media(media_path, b"grok-image")
-    (root / "grok" / ".grok_catalog.json").write_text(
+    (root / "media" / "grok" / ".grok_catalog.json").write_text(
         json.dumps(
             {
                 "version": 1,
@@ -309,10 +309,10 @@ def test_scans_grok_catalog_metadata(tmp_path: Path) -> None:
 
 def test_grok_catalog_damage_falls_back_to_filename_and_mtime(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
-    media_path = root / "grok" / "fallback.webp"
+    media_path = root / "media" / "grok" / "fallback.webp"
     _write_media(media_path, b"fallback")
     os.utime(media_path, (1786147200, 1786147200))
-    (root / "grok" / ".grok_catalog.json").write_text("{not valid", encoding="utf-8")
+    (root / "media" / "grok" / ".grok_catalog.json").write_text("{not valid", encoding="utf-8")
 
     items = LocalMediaCatalog(root).snapshot(force_refresh=True)
 
@@ -324,7 +324,7 @@ def test_grok_catalog_damage_falls_back_to_filename_and_mtime(tmp_path: Path) ->
 
 def test_scans_chatgpt_catalog_and_project_name(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
-    media_path = root / "chatgpt" / "Demo Project" / "img_file.png"
+    media_path = root / "media" / "chatgpt" / "Demo Project" / "img_file.png"
     _write_media(media_path, b"chatgpt-image")
     (media_path.parent / ".chatgpt_catalog.json").write_text(
         json.dumps(
@@ -369,7 +369,7 @@ def test_scans_chatgpt_catalog_and_project_name(tmp_path: Path) -> None:
 
 def test_chatgpt_direct_session_uses_its_recorded_title(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
-    media_path = root / "chatgpt" / "Configured Project" / "img_file.png"
+    media_path = root / "media" / "chatgpt" / "Configured Project" / "img_file.png"
     _write_media(media_path, b"chatgpt-image")
     (media_path.parent / ".chatgpt_catalog.json").write_text(
         json.dumps(
@@ -396,7 +396,7 @@ def test_chatgpt_direct_session_uses_its_recorded_title(tmp_path: Path) -> None:
 
 def test_legacy_chatgpt_tombstone_hydrates_source_metadata_from_catalog(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
-    project_dir = root / "chatgpt" / "demo-project"
+    project_dir = root / "media" / "chatgpt" / "demo-project"
     media_path = project_dir / "img_file-123.png"
     _write_media(media_path, b"chatgpt-image")
     catalog_path = project_dir / ".chatgpt_catalog.json"
@@ -704,7 +704,7 @@ def test_catalog_query_uses_session_pagination_only_for_the_chatgpt_filter(
 
 def test_chatgpt_catalog_missing_falls_back_to_filename(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
-    media_path = root / "chatgpt" / "Fallback" / "img_file.avif"
+    media_path = root / "media" / "chatgpt" / "Fallback" / "img_file.avif"
     _write_media(media_path, b"avif-bytes")
 
     items = LocalMediaCatalog(root).snapshot(force_refresh=True)
@@ -721,12 +721,12 @@ def test_formats_captured_timestamp_with_minute_precision() -> None:
 
 def test_chatgpt_for_prompts_is_exempt_from_regular_inventory(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
-    _write_media(root / "chatgpt" / "forPrompts" / "temporary.png")
-    _write_media(root / "chatgpt" / "RegularProject" / "inventory.png")
+    _write_media(root / "media" / "chatgpt" / "forPrompts" / "temporary.png")
+    _write_media(root / "media" / "chatgpt" / "RegularProject" / "inventory.png")
 
     items = LocalMediaCatalog(root).snapshot(force_refresh=True)
 
-    assert [item.relative_path for item in items] == ["chatgpt/RegularProject/inventory.png"]
+    assert [item.relative_path for item in items] == ["media/chatgpt/RegularProject/inventory.png"]
 
 
 def test_ignores_hidden_partial_state_and_unknown_files(tmp_path: Path) -> None:
@@ -748,7 +748,7 @@ def test_ignores_hidden_partial_state_and_unknown_files(tmp_path: Path) -> None:
 def test_search_is_case_insensitive_and_source_kind_filters_apply(tmp_path: Path) -> None:
     root = tmp_path / "local_store"
     _write_media(root / "x" / "demo" / "Summer-Trip.jpg")
-    _write_media(root / "grok" / "winter-video.mp4")
+    _write_media(root / "media" / "grok" / "winter-video.mp4")
     catalog = LocalMediaCatalog(root)
 
     search_page = catalog.query(query="SUMMER", force_refresh=True)

@@ -1,4 +1,4 @@
-<!-- Code version: v1.48.0-codex.1 -->
+<!-- Code version: v1.49.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -516,7 +516,7 @@
                                 <video
                                     class="browser-preview-media"
                                     data-preview
-                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else url_for('browser_media', relative_path=item.relative_path) }}"
+                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else browser_media_url(item.relative_path) }}"
                                     muted
                                     playsinline
                                     preload="none"
@@ -526,7 +526,7 @@
                                 <img
                                     class="browser-preview-media"
                                     data-preview
-                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else url_for('browser_media', relative_path=item.relative_path) }}"
+                                    data-media-src="{{ url_for('browser_deleted_preview', stable_id=item.stable_id) if item.is_deleted else browser_media_url(item.relative_path) }}"
                                     alt="{{ item.alt_text or item.title }}"
                                     loading="lazy"
                                     decoding="async"

@@ -81,8 +81,8 @@ to override it. A successful unlock is stored in the signed Flask session for th
 | Location | Contents |
 | --- | --- |
 | `local_store/x/` | X media and cache-catalog state |
-| `local_store/grok/` | Grok media, catalog, manifest, and work queue |
-| `local_store/chatgpt/<project-name>/` | ChatGPT images and catalog state |
+| `local_store/media/grok/` | Grok media, catalog, manifest, and work queue |
+| `local_store/media/chatgpt/<project-name>/` | ChatGPT images and catalog state |
 | `local_store/llm/chatgpt/history.parquet` | ChatGPT typed text history |
 | `local_store/llm/gemini/history.parquet` | Gemini typed text history |
 | `local_store/llm/grok/history.parquet` | Grok typed text history |

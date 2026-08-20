@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.41.1-codex.1
+# Code version: v1.42.0-codex.1
 
 from __future__ import annotations
 
@@ -30,6 +30,7 @@ from .config import (
     DEFAULT_CHATGPT_PROJECT_URL,
     DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS,
     LOCAL_STORE_ROOT,
+    MEDIA_STORE_ROOT,
     MAX_CHATGPT_SCAN_WAIT_SECONDS,
     MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
     MIN_CHATGPT_SCAN_WAIT_SECONDS,
@@ -60,7 +61,7 @@ except ImportError:  # pragma: no cover - exercised in environments without Play
     sync_playwright = None
 
 
-CHATGPT_TARGET_DIR = LOCAL_STORE_ROOT / "chatgpt" / DEFAULT_CHATGPT_PROJECT_NAME
+CHATGPT_TARGET_DIR = MEDIA_STORE_ROOT / "chatgpt" / DEFAULT_CHATGPT_PROJECT_NAME
 CHATGPT_PARTIAL_DIRNAME = ".chatgpt-partial"
 CHATGPT_PAGE_GOTO_TIMEOUT_MS = 120_000
 CHATGPT_IMAGE_TIMEOUT_MS = 60_000
@@ -516,7 +517,7 @@ def sanitize_filename_part(value: str) -> str:
 
 def chatgpt_target_dir(project_name: str = DEFAULT_CHATGPT_PROJECT_NAME) -> Path:
     """Return the dedicated local directory for one ChatGPT project."""
-    return LOCAL_STORE_ROOT / "chatgpt" / sanitize_filename_part(project_name)
+    return MEDIA_STORE_ROOT / "chatgpt" / sanitize_filename_part(project_name)
 
 
 def extract_chatgpt_file_id(source_url: str) -> str:

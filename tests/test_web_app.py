@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.80.5-codex.1
+# Code version: v1.81.0-codex.1
 
 from __future__ import annotations
 
@@ -1817,7 +1817,7 @@ class WebAppTests(unittest.TestCase):
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
             image_path = root / "x" / "demo" / "image.jpg"
-            video_path = root / "grok" / "clip.mp4"
+            video_path = root / "media" / "grok" / "clip.mp4"
             image_path.parent.mkdir(parents=True)
             video_path.parent.mkdir(parents=True)
             image_path.write_bytes(b"image")
@@ -1830,7 +1830,7 @@ class WebAppTests(unittest.TestCase):
             video_path.write_bytes(b"0123456789")
             outside_path = Path(raw_root) / "outside.mp4"
             outside_path.write_bytes(b"outside")
-            link_path = root / "grok" / "outside.mp4"
+            link_path = root / "media" / "grok" / "outside.mp4"
             try:
                 link_path.symlink_to(outside_path)
             except OSError as exc:
@@ -1852,6 +1852,8 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("Cached media browser", body)
             self.assertNotIn("No cached media found.", body)
             self.assertNotIn(str(root), body)
+            self.assertIn("/browser/media/grok/clip.mp4", body)
+            self.assertNotIn("/browser/media/media/", body)
             self.assertIn("style-v2.82.6-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
@@ -1907,7 +1909,7 @@ class WebAppTests(unittest.TestCase):
                 ],
                 GEMINI_HISTORY_SCHEMA,
             )
-            media_path = root / "chatgpt" / "Demo" / "image.png"
+            media_path = root / "media" / "chatgpt" / "Demo" / "image.png"
             media_path.parent.mkdir(parents=True)
             media_path.write_bytes(b"image")
             (media_path.parent / ".chatgpt_catalog.json").write_text(
@@ -2055,7 +2057,7 @@ class WebAppTests(unittest.TestCase):
     def test_browser_card_uses_filename_metadata_and_binary_size_units(self) -> None:
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
-            media_path = root / "chatgpt" / "demo-project" / "img_file.png"
+            media_path = root / "media" / "chatgpt" / "demo-project" / "img_file.png"
             media_path.parent.mkdir(parents=True)
             media_path.write_bytes(b"x" * 1_805_089)
             (media_path.parent / ".chatgpt_catalog.json").write_text(
@@ -2104,7 +2106,7 @@ class WebAppTests(unittest.TestCase):
     def test_browser_paginates_chatgpt_by_session_and_labels_the_latest_image(self) -> None:
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
-            project_dir = root / "chatgpt" / "demo-project"
+            project_dir = root / "media" / "chatgpt" / "demo-project"
             project_dir.mkdir(parents=True)
             for filename in ("new-old.png", "new-latest.png", "older-session.png"):
                 (project_dir / filename).write_bytes(filename.encode("utf-8"))
@@ -2214,7 +2216,7 @@ class WebAppTests(unittest.TestCase):
     def test_legacy_gemini_browser_url_falls_back_to_chatgpt_media_sessions(self) -> None:
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
-            project_dir = root / "chatgpt" / "demo-project"
+            project_dir = root / "media" / "chatgpt" / "demo-project"
             project_dir.mkdir(parents=True)
             for filename in ("new-session.png", "older-session.png"):
                 (project_dir / filename).write_bytes(filename.encode("utf-8"))
@@ -2464,7 +2466,7 @@ class WebAppTests(unittest.TestCase):
     def test_browser_session_refresh_route_uses_a_temporary_session_url(self) -> None:
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
-            project_dir = root / "chatgpt" / "demo-project"
+            project_dir = root / "media" / "chatgpt" / "demo-project"
             project_dir.mkdir(parents=True)
             media_path = project_dir / "img_file.png"
             media_path.write_bytes(b"chatgpt-image")

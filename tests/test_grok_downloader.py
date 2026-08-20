@@ -1,6 +1,6 @@
 """Focused regression tests for Grok media sync dedupe."""
 
-# Code version: v1.5.0-codex.1
+# Code version: v1.6.0-codex.1
 
 from __future__ import annotations
 
@@ -118,7 +118,7 @@ class GrokDownloaderTests(unittest.TestCase):
 
     def test_catalog_rebuild_recovers_existing_flat_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            target_dir = Path(temp_dir) / "grok"
+            target_dir = Path(temp_dir) / "media" / "grok"
             target_dir.mkdir(parents=True, exist_ok=True)
             (target_dir / "a8db63dd-1a37-42c3-b804-17869ca83f8e_preview_image.jpg").write_bytes(_JPEG_BYTES)
             (target_dir / "cebf0764-8ee5-44f5-9653-753701bfdb96_generated_video.mp4").write_bytes(_MP4_BYTES)
@@ -133,7 +133,7 @@ class GrokDownloaderTests(unittest.TestCase):
 
     def test_download_candidate_reuses_existing_file_when_content_matches(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            target_dir = Path(temp_dir) / "grok"
+            target_dir = Path(temp_dir) / "media" / "grok"
             target_dir.mkdir(parents=True, exist_ok=True)
             existing_path = target_dir / "a8db63dd-1a37-42c3-b804-17869ca83f8e_preview-image.jpg"
             existing_path.write_bytes(_JPEG_BYTES)
@@ -171,7 +171,7 @@ class GrokDownloaderTests(unittest.TestCase):
 
     def test_download_candidate_skips_known_oversized_asset(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            target_dir = Path(temp_dir) / "grok"
+            target_dir = Path(temp_dir) / "media" / "grok"
             target_dir.mkdir(parents=True, exist_ok=True)
             candidate = GrokMediaCandidate(
                 source_url="https://assets.grok.com/users/demo/generated/cebf0764-8ee5-44f5-9653-753701bfdb96/image.jpg",
@@ -231,7 +231,7 @@ class GrokDownloaderTests(unittest.TestCase):
 
     def test_catalog_contains_asset_id_requires_a_valid_local_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            target_dir = Path(temp_dir) / "grok"
+            target_dir = Path(temp_dir) / "media" / "grok"
             target_dir.mkdir(parents=True, exist_ok=True)
             asset_id = "cebf0764-8ee5-44f5-9653-753701bfdb96"
             media_path = target_dir / "image.jpg"
@@ -257,7 +257,7 @@ class GrokDownloaderTests(unittest.TestCase):
 
     def test_build_grok_initial_snapshot_hydrates_cached_totals(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            target_dir = Path(temp_dir) / "grok"
+            target_dir = Path(temp_dir) / "media" / "grok"
             target_dir.mkdir(parents=True, exist_ok=True)
             (target_dir / "a8db63dd-1a37-42c3-b804-17869ca83f8e_preview_image.jpg").write_bytes(_JPEG_BYTES)
 
@@ -269,7 +269,7 @@ class GrokDownloaderTests(unittest.TestCase):
 
     def test_catalog_rebuild_prefers_earlier_file_for_duplicate_content(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            target_dir = Path(temp_dir) / "grok"
+            target_dir = Path(temp_dir) / "media" / "grok"
             target_dir.mkdir(parents=True, exist_ok=True)
             earlier = target_dir / "11111111-1111-1111-1111-111111111111_content.jpg"
             later = target_dir / "22222222-2222-2222-2222-222222222222_content.jpg"
@@ -294,7 +294,7 @@ class GrokDownloaderTests(unittest.TestCase):
 
     def test_catalog_load_prefers_earlier_first_seen_path_for_duplicate_content(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            target_dir = Path(temp_dir) / "grok"
+            target_dir = Path(temp_dir) / "media" / "grok"
             target_dir.mkdir(parents=True, exist_ok=True)
             earlier = target_dir / "11111111-1111-1111-1111-111111111111_content.jpg"
             later = target_dir / "22222222-2222-2222-2222-222222222222_content.jpg"
@@ -394,7 +394,7 @@ class GrokDownloaderTests(unittest.TestCase):
 
     def test_download_candidate_aliases_matching_content_without_duplicate_file(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
-            target_dir = Path(temp_dir) / "grok"
+            target_dir = Path(temp_dir) / "media" / "grok"
             target_dir.mkdir(parents=True, exist_ok=True)
             preview_path = target_dir / "585da42d-eaff-45c4-9ec5-d1159df2bee8_preview-image.jpg"
             preview_path.write_bytes(_JPEG_BYTES)

@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.42.0-codex.1
+# Code version: v1.43.0-codex.1
 
 from __future__ import annotations
 
@@ -90,10 +90,11 @@ from app.core.storage import (
     format_captured_at_timestamp_label,
     format_chat_message_timestamp_label,
     local_file_manager_label,
+    media_route_relative_path,
     normalize_browser_filters,
     query_chat_history,
     reveal_media_path,
-    resolve_local_media_path,
+    resolve_browser_media_path,
 )
 from app.web.cache_sources import (
     LLM_CACHE_SOURCE_VIEWS,
@@ -457,6 +458,14 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 browser = "edge"
             platform = computer_use_settings.settings.platform
         return url_for("agent_selected", browser=browser, platform=platform)
+
+    @app.template_global("browser_media_url")
+    def browser_media_url(relative_path: str) -> str:
+        """Return the stable public URL for one stored media path."""
+        return url_for(
+            "browser_media",
+            relative_path=media_route_relative_path(relative_path),
+        )
     cache_runtimes = {
         "x": CacheRuntimeAdapter(
             state=state,
@@ -500,7 +509,10 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         media_url = (
             url_for("browser_deleted_preview", stable_id=item.stable_id)
             if item.is_deleted
-            else url_for("browser_media", relative_path=item.relative_path)
+            else url_for(
+                "browser_media",
+                relative_path=media_route_relative_path(item.relative_path),
+            )
         )
         return {
             "id": item.stable_id,
@@ -1277,7 +1289,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.get("/browser/media/<path:relative_path>")
     def browser_media(relative_path: str):
-        resolved_path = resolve_local_media_path(media_catalog.local_store_root, relative_path)
+        resolved_path = resolve_browser_media_path(media_catalog.local_store_root, relative_path)
         if resolved_path is None:
             abort(404)
         return send_file(resolved_path, conditional=True, etag=True, max_age=0)
