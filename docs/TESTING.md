@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.3.3-codex.1`
+Documentation version: `v1.4.0-codex.1`
 
 ## Supported commands
 
@@ -31,6 +31,9 @@ Run the complete quality gate:
 ```bash
 ./scripts/check.sh
 ```
+
+When the quality gate fails, read the [CI Failure Playbook](CI_FAILURE_PLAYBOOK.md) before changing
+production code, tests, platform branches, or retry behavior.
 
 Run the responsive contract and sidebar browser layers independently with:
 

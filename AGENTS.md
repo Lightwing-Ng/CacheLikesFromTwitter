@@ -44,6 +44,9 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Add or update tests when behavior changes or regression risk is meaningful.
 - Do not add low-value tests that only mirror implementation details.
 - If tests are not added, explain why validation is still sufficient.
+- When a CI or GitHub quality gate fails, read [`docs/CI_FAILURE_PLAYBOOK.md`](docs/CI_FAILURE_PLAYBOOK.md)
+  before changing production code, tests, responsive breakpoints, browser support, skips, or retries.
+  Treat automated repair suggestions as hypotheses until the latest failure is reproduced locally.
 
 ## 6) UI and Frontend Changes
 - Use local assets first (icons, images, styles) before introducing new resources.
