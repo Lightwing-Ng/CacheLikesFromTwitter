@@ -1,4 +1,4 @@
-/* Code version: v2.0.0-codex.1 */
+/* Code version: v2.0.1-codex.1 */
 
 import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
 
@@ -193,11 +193,15 @@ import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
         }
     }
 
-    function selectCandidate(candidate) {
-        input.value = candidate.value;
-        rememberSearch(candidate.value);
+    function submitSearch() {
+        rememberSearch(input.value);
         setMenuOpen(false);
         form.requestSubmit();
+    }
+
+    function selectCandidate(candidate) {
+        input.value = candidate.value;
+        submitSearch();
     }
 
     function renderMenu(query) {
@@ -259,9 +263,13 @@ import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
             setActiveIndex(activeIndex + (event.key === "ArrowDown" ? 1 : -1));
             return;
         }
-        if (event.key === "Enter" && !menu.hidden && activeIndex >= 0) {
+        if (event.key === "Enter") {
             event.preventDefault();
-            selectCandidate(visibleCandidates[activeIndex]);
+            if (!menu.hidden && activeIndex >= 0) {
+                selectCandidate(visibleCandidates[activeIndex]);
+                return;
+            }
+            submitSearch();
             return;
         }
         if (event.key === "Tab") setMenuOpen(false);

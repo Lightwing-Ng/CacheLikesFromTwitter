@@ -1788,6 +1788,9 @@ class WebAppTests(unittest.TestCase):
             "const fuzzyScoreThreshold = 0.2;",
             "function appendHighlightedText",
             'event.key === "ArrowDown"',
+            'event.key === "Enter"',
+            "function submitSearch",
+            "submitSearch();",
             "form.requestSubmit();",
             "function parseServerCandidates",
         ):
