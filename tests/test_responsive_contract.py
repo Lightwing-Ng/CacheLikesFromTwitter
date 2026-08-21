@@ -1,6 +1,6 @@
 """Responsive sidebar contract tests.
 
-Code version: v1.0.4-codex.1
+Code version: v1.0.5-codex.1
 """
 
 from __future__ import annotations
@@ -167,11 +167,17 @@ def test_coarse_pointer_sidebar_toggle_keeps_its_hit_target_stationary() -> None
     stylesheet = _read(STYLE_PATH)
     touch_block = _extract_block(
         stylesheet,
-        "@media (max-width: 900px) and (hover: none) and (pointer: coarse)",
+        "@media (hover: none) and (pointer: coarse)",
     )
 
     assert ".page > .sidebar-toggle:hover" in touch_block
     assert ".page > .sidebar-toggle:focus-visible" in touch_block
     assert ".page > .sidebar-toggle:active" in touch_block
+    assert "width: 44px;" in touch_block
+    assert "min-width: 44px;" in touch_block
+    assert "height: 44px;" in touch_block
+    assert "min-height: 44px;" in touch_block
+    assert "touch-action: manipulation;" in touch_block
+    assert "z-index: var(--layer-sidebar-toggle);" in touch_block
     assert "transform: translate3d(var(--sidebar-toggle-x), 0, 0);" in touch_block
     assert "transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), color 160ms var(--motion-standard);" in touch_block

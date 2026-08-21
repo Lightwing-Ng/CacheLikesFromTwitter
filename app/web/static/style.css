@@ -1,4 +1,4 @@
-/* Code version: v2.82.12-codex.1 */
+/* Code version: v2.82.13-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -4295,11 +4295,17 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 }
 
 /* Keep the touch target stationary while the overlay itself transitions. */
-@media (max-width: 900px) and (hover: none) and (pointer: coarse) {
+@media (hover: none) and (pointer: coarse) {
     .page > .sidebar-toggle,
     .page > .sidebar-toggle:hover,
     .page > .sidebar-toggle:focus-visible,
     .page > .sidebar-toggle:active {
+        width: 44px;
+        min-width: 44px;
+        height: 44px;
+        min-height: 44px;
+        touch-action: manipulation;
+        z-index: var(--layer-sidebar-toggle);
         transform: translate3d(var(--sidebar-toggle-x), 0, 0);
         transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), color 160ms var(--motion-standard);
     }

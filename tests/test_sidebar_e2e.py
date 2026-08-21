@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.8.9-codex.1
+Code version: v1.9.0-codex.1
 """
 
 from __future__ import annotations
