@@ -1,4 +1,4 @@
-/* Code version: v2.82.13-codex.1 */
+/* Code version: v2.82.14-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -3205,6 +3205,11 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     max-height: min(340px, 42vh);
     overflow-y: auto;
     scrollbar-gutter: stable;
+}
+
+.agent-session-list-combobox .agent-session-list-menu {
+    top: auto;
+    bottom: calc(100% + 4px);
 }
 
 .agent-session-list-menu .agent-combobox-option {

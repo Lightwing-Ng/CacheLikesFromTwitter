@@ -1,6 +1,6 @@
 """Focused tests for the provider-neutral Agent session source adapter.
 
-Code version: v1.1.0-codex.2
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from app.core.agent_session_sources import (
+    _claude_page_status,
     _read_grok_project_links,
     _read_grok_project_session_links,
     list_agent_project_sessions,
@@ -38,6 +39,18 @@ def test_agent_conversation_url_normalization_is_provider_specific() -> None:
         "grok",
         "https://grok.com/project/project-1?chat=session-1",
     ) == "https://grok.com/project/project-1?chat=session-1"
+    assert normalize_agent_conversation_url(
+        "claude",
+        "https://www.claude.ai/chat/session-4/?utm_source=agent",
+    ) == "https://claude.ai/chat/session-4"
+    assert normalize_agent_conversation_url(
+        "claude",
+        "https://claude.ai/project/project-1/chat/session-4",
+    ) == "https://claude.ai/project/project-1/chat/session-4"
+    assert normalize_agent_conversation_url(
+        "claude",
+        "https://claude.ai/project/project-1?chat=session-4",
+    ) == "https://claude.ai/project/project-1/chat/session-4"
 
 
 def test_agent_project_url_normalization_hides_provider_specific_routes() -> None:
@@ -53,7 +66,59 @@ def test_agent_project_url_normalization_hides_provider_specific_routes() -> Non
         "grok",
         "https://www.grok.com/project/project-1?tab=conversations",
     ) == "https://grok.com/project/project-1?tab=conversations"
+    assert normalize_agent_project_url(
+        "claude",
+        "https://www.claude.ai/project/project-1/?tab=chats",
+    ) == "https://claude.ai/project/project-1"
     assert normalize_agent_project_url("grok", "https://example.com/project/project-1") == ""
+
+
+def test_claude_sources_use_the_shared_chromium_source_collection() -> None:
+    with patch(
+        "app.core.agent_session_sources._run_chromium_source_collection",
+        return_value={
+            "recent_sessions": [
+                {
+                    "id": "claude-1",
+                    "title": "Claude session",
+                    "url": "https://claude.ai/chat/claude-1",
+                }
+            ],
+            "projects": [
+                {
+                    "id": "project-1",
+                    "title": "Claude project",
+                    "url": "https://claude.ai/project/project-1",
+                }
+            ],
+        },
+    ) as collector:
+        payload = list_agent_sources("claude", "edge", CrawlConfig())
+
+    assert payload["platform"] == "claude"
+    assert payload["recent_sessions"][0]["url"] == "https://claude.ai/chat/claude-1"
+    assert payload["projects"][0]["url"] == "https://claude.ai/project/project-1"
+    assert collector.call_args.args[:3] == ("edge", CrawlConfig(), "https://claude.ai/new")
+
+
+def test_claude_status_exposes_account_restriction_without_attempting_login_bypass() -> None:
+    class _Body:
+        def inner_text(self, **_kwargs: object) -> str:
+            return "Your account has been disabled for violating the usage policy."
+
+    class _Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def locator(self, selector: str) -> _Body:
+            assert selector == "body"
+            return _Body()
+
+    status = _claude_page_status(_Page(), "Edge")
+
+    assert status["can_download"] is False
+    assert status["account_name"] == "Claude account restricted"
+    assert "restricted or unavailable" in status["message"]
 
 
 def test_gemini_sources_reuse_the_existing_history_link_collector() -> None:

@@ -181,6 +181,24 @@ def test_gemini_browser_probe_routes_through_the_shared_browser_registry(macos_h
     probe.assert_called_once()
 
 
+def test_claude_browser_probe_routes_through_the_shared_browser_registry() -> None:
+    with patch(
+        "app.core.browser_sessions._probe_claude_session",
+        return_value={
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "Claude account restricted",
+            "message": "Edge reported that the Claude account is restricted or unavailable.",
+        },
+    ) as probe:
+        result = probe_browser_session("claude", "edge", CrawlConfig())
+
+    assert result["logged_in"] is False
+    assert result["can_download"] is False
+    assert result["account_name"] == "Claude account restricted"
+    probe.assert_called_once()
+
+
 def test_chromium_context_defaults_to_an_isolated_background_profile(tmp_path: Path) -> None:
     source_user_data_dir = tmp_path / "Edge"
     source_profile_dir = source_user_data_dir / "Default"

@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.44.0-codex.1
+# Code version: v1.45.0-codex.1
 
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ from app.core.agent import (
     list_agent_sources,
     normalize_agent_project_url,
     open_agent_in_browser,
+    probe_and_collect_claude_sources,
     validate_computer_use_settings,
     validate_agent_access_password,
 )
@@ -929,6 +930,23 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         browser = settings.browser if settings.browser in available_agent_browser_keys() else "edge"
         return redirect(build_agent_path(browser, settings.platform))
 
+    @app.get("/agent/<browser>/")
+    def agent_browser(browser: str):
+        """Keep the browser-scoped Agent URL useful while exposing provider selection."""
+        require_local_agent_request(allow_locked=True)
+        selected_browser = browser.strip().lower()
+        if selected_browser not in available_agent_browser_keys():
+            abort(404)
+        platform = computer_use_settings.settings.platform
+        if not is_supported_agent_selection(selected_browser, platform):
+            platform = "chatgpt"
+        if not is_supported_agent_selection(selected_browser, platform):
+            abort(404)
+        return redirect(
+            url_for("agent_selected", browser=selected_browser, platform=platform),
+            code=302,
+        )
+
     @app.get("/agent/<browser>/<platform>")
     def agent_selected(browser: str, platform: str):
         """Render the Agent page for one explicit browser/provider selection."""
@@ -1775,6 +1793,28 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             elif payload.get("can_download"):
                 payload["agent_sources_error"] = (
                     "ChatGPT is signed in, but Recent sessions could not be loaded from this browser."
+                )
+            return jsonify(payload)
+        if scope == "agent" and platform_name == "claude":
+            try:
+                payload, source_payload = probe_and_collect_claude_sources(
+                    browser_name,
+                    saved_config,
+                    silent=True,
+                )
+            except ValueError as exc:
+                return jsonify({"error": str(exc)}), 400
+            if source_payload is not None:
+                agent_source_cache.store(
+                    platform="claude",
+                    browser=browser_name,
+                    source_kind="sources",
+                    payload=source_payload,
+                )
+                payload["agent_sources"] = source_payload
+            elif payload.get("can_download"):
+                payload["agent_sources_error"] = (
+                    "Claude is signed in, but Recent sessions could not be loaded from this browser."
                 )
             return jsonify(payload)
         try:

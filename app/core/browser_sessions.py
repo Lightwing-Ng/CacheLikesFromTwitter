@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.17.0-codex.1
+# Code version: v1.18.0-codex.1
 
 from __future__ import annotations
 
@@ -41,6 +41,11 @@ GROK_FILES_URL = "https://grok.com/files"
 CHATGPT_HOME_URL = "https://chatgpt.com/"
 CHATGPT_AUTH_SESSION_URL = "https://chatgpt.com/api/auth/session"
 GEMINI_HOME_URL = "https://gemini.google.com/app"
+CLAUDE_HOME_URL = "https://claude.ai/new"
+CLAUDE_COMPOSER_SELECTOR = (
+    'textarea, [contenteditable="true"][role="textbox"], '
+    'div.ProseMirror[contenteditable="true"], [contenteditable="true"]'
+)
 EDGE_USER_DATA_DIR = default_edge_user_data_dir()
 EDGE_PROFILE_DIRECTORY = "Default"
 SAFARI_APPLESCRIPT_SOURCE_LIMIT = 500_000
@@ -148,7 +153,7 @@ def probe_browser_session(
         raise ValueError(f"Unsupported browser: {browser_name}")
 
     platform_key = (platform_name or "").strip().lower()
-    if platform_key not in {"x", "grok", "chatgpt", "gemini"}:
+    if platform_key not in {"x", "grok", "chatgpt", "gemini", "claude"}:
         raise ValueError(f"Unsupported platform: {platform_name}")
 
     result = {
@@ -167,6 +172,8 @@ def probe_browser_session(
             result.update(_probe_chatgpt_session(descriptor, config, silent=silent))
         elif platform_key == "gemini":
             result.update(_probe_gemini_session(descriptor, config, silent=silent))
+        elif platform_key == "claude":
+            result.update(_probe_claude_session(descriptor, silent=silent))
         elif descriptor.engine == "safari":
             if platform_key == "x":
                 result.update(_probe_safari_x_session(descriptor))
@@ -186,6 +193,84 @@ def probe_browser_session(
         else:
             result["message"] = f"{descriptor.label} is not ready for {platform_key.upper()} yet."
     return result
+
+
+def _probe_claude_session(
+    descriptor: BrowserDescriptor,
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
+    """Verify a Claude Web composer without reading account or credential data."""
+    if descriptor.engine != "chromium":
+        return {
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "",
+            "message": f"Claude Agent sessions require Edge or Chrome, not {descriptor.label}.",
+        }
+    with sync_playwright_or_error() as playwright:
+        with launch_chromium_context(
+            playwright,
+            descriptor,
+            headless=True,
+            clone_profile_first=True,
+            background_window=True,
+            silent=silent,
+        ) as context:
+            page = context.pages[0] if context.pages else context.new_page()
+            goto_with_retry(page, CLAUDE_HOME_URL, attempts=2, timeout_ms=60_000)
+            page.wait_for_timeout(2_000)
+            try:
+                body_text = page.locator("body").inner_text(timeout=5_000)
+            except Exception:
+                body_text = ""
+            normalized_body = str(body_text or "").casefold()
+            if any(
+                marker in normalized_body
+                for marker in (
+                    "account suspended",
+                    "account has been suspended",
+                    "account disabled",
+                    "account has been disabled",
+                    "banned",
+                    "deactivated",
+                    "access restricted",
+                    "account is unavailable",
+                    "usage policy",
+                    "terms of service",
+                )
+            ):
+                return {
+                    "logged_in": False,
+                    "can_download": False,
+                    "account_name": "Claude account restricted",
+                    "message": (
+                        f"{descriptor.label} reported that the Claude account is restricted or unavailable."
+                    ),
+                }
+            try:
+                page.locator(CLAUDE_COMPOSER_SELECTOR).first.wait_for(
+                    state="visible",
+                    timeout=20_000,
+                )
+            except Exception:
+                message = (
+                    f"{descriptor.label} is not signed in to Claude."
+                    if re.search(r"\b(?:sign in|log in|sign up|create account)\b", normalized_body)
+                    else f"{descriptor.label} could not verify an available Claude message composer."
+                )
+                return {
+                    "logged_in": False,
+                    "can_download": False,
+                    "account_name": "",
+                    "message": message,
+                }
+            return {
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "Claude account",
+                "message": f"{descriptor.label} is ready to use Claude Web.",
+            }
 
 
 def _probe_gemini_session(

@@ -1,20 +1,21 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.17.0-codex.1`
+Documentation version: `v3.18.0-codex.1`
 
 ## Purpose
 
 The Agent workspace is a browser-mediated fallback for times when the local coding-agent token
-pool is constrained. It uses an already signed-in Web session for ChatGPT, Gemini, or Grok, with
+pool is constrained. It uses an already signed-in Web session for ChatGPT, Gemini, Grok, or Claude, with
 Edge or Chrome as the supported background Chromium browsers. ChatGPT also remains available in
 Safari for the existing session flows. Edge is the default because its Chromium controller does
 not depend on desktop clicks; Chrome uses the same isolated controller.
 
 The default is a new root-level session. Every provider can also join one of the 20 most recent
 sessions, start a session in one of the 20 most recent Projects, or join one of that Project's 20
-most recent sessions. The adapter maps ChatGPT Projects, Gemini Notebooks, and Grok Projects to
-the same Project contract, so the Agent UI and execution loop do not expose provider-specific
-container names. A run-scoped `session_title` is preserved as the local session label and included
+most recent sessions. The adapter maps ChatGPT Projects, Gemini Notebooks, Grok Projects, and Claude
+Projects to the same Project contract, so the Agent UI and execution loop do not expose
+provider-specific container names. Claude source discovery reads rendered links only and does not
+call a Claude API or extract credentials. A run-scoped `session_title` is preserved as the local session label and included
 in the first provider message; the provider may still choose its own remote conversation title. The
 selected Web provider supplies reasoning; a bounded local controller
 performs project actions and returns compact observations to the same conversation.
@@ -40,7 +41,8 @@ ChatGPT plan limits, file-upload limits, data controls, storage, and retention s
 ## Canonical navigation
 
 The Agent entrypoint is scoped by the selected browser and Web provider. The canonical form is
-`/agent/<browser>/<platform>`, such as `/agent/edge/chatgpt`; the legacy `/agent` path redirects to
+`/agent/<browser>/<platform>`, such as `/agent/edge/chatgpt` or `/agent/edge/claude`; `/agent/<browser>/`
+is a browser-scoped compatibility alias, and the legacy `/agent` path redirects to
 the persisted selection. Changing either selector updates the canonical path without reloading the
 page, so a copied URL preserves the intended Edge/ChatGPT selection.
 
@@ -133,7 +135,7 @@ Settings → Agent stores:
 
 The selected provider's file-upload limit remains authoritative. ChatGPT documents a 512 MB hard
 file limit and a 2 million-token limit for text and document files; the application uses the lower
-applicable boundary and keeps the local byte ceiling configurable. Gemini and Grok may impose
+applicable boundary and keeps the local byte ceiling configurable. Gemini, Grok, and Claude may impose
 different limits or attachment behavior, so the controller treats a missing attachment control
 as a signal to fall back to bounded controller observations.
 
@@ -148,7 +150,9 @@ visible Stage Manager window, take focus, or interrupt normal macOS use. The use
 is never opened for writing. A normal task exit closes the isolated context and removes its
 temporary profile; the next Chromium launch removes only abandoned `cachelikes-edge-*` or
 `cachelikes-chrome-*` directories older than 24 hours. Safari uses Apple Events and remains available
-only for ChatGPT's existing session flows.
+only for ChatGPT's existing session flows. Claude requires Edge or Chrome. If Claude renders an
+account suspension, ban, deactivation, or other restricted-state message, the readiness card reports
+that state and does not attempt a login bypass.
 
 The traditional Edge handoff is intentionally separate from the isolated Agent context. On a failed
 Edge and ChatGPT run with a verified conversation URL, macOS asks the normal `Microsoft Edge`
@@ -158,7 +162,7 @@ Stage Manager places the Edge window in the background. Clicking the handoff pil
 URL in Edge normally.
 
 The model selector is provider-specific: ChatGPT exposes `5.6 Sol`, Gemini exposes `3.1 Pro`, and
-Grok exposes `Auto`. The controller selects the requested model only when the provider exposes a
+Grok and Claude expose `Auto`. The controller selects the requested model only when the provider exposes a
 matching visible menu option. If the remote UI is localized or exposes a different model set, it
 leaves the current remote model unchanged and reports that limitation rather than claiming success.
 
@@ -172,7 +176,9 @@ interrupt a task.
 
 Default tests use temporary projects, fake browser runners, and isolated settings paths. Live
 read-only capability probes verified signed-in sessions, composers, send controls, and model-menu
-behavior for ChatGPT, Gemini, and Grok in both Edge and Chrome on 14 Aug 2026. The probes did not
+behavior for ChatGPT, Gemini, and Grok in both Edge and Chrome on 14 Aug 2026. Claude's provider
+contract is covered by mocked readiness, URL, source, and route checks in this change; a live Claude
+probe was not possible because the selected account is currently restricted. The probes did not
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
 

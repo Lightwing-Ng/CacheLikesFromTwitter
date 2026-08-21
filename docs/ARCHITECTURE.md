@@ -65,13 +65,15 @@ export only the symbols needed by its caller and should not become a second impl
   recent root ChatGPT sessions, projects, and project sessions for the Agent sidebar. Its Agent
   bootstrap combines ChatGPT readiness and root-catalog collection in one browser context.
 - `app/core/agent_session_sources.py`: the provider-neutral Agent session and Project adapter;
-  it maps ChatGPT Projects, Gemini Notebooks, and Grok Projects into one URL and source contract.
+  it maps ChatGPT Projects, Gemini Notebooks, Grok Projects, and Claude Projects into one URL and
+  source contract. Claude source discovery reads rendered links only and shares the Chromium launch
+  and Parquet cache boundary.
 - `app/core/agent_source_cache.py`: the shared typed Parquet catalog for Agent recent sessions,
   Projects, and Project sessions. Its cache key isolates provider, browser, source kind, and
   Project URL, while atomic replacement preserves the other providers' entries.
 - `app/core/agent_access_security.py`: the Agent password resolver, constant-time password
   comparison, and loopback/private-network request boundary.
-- `app/core/computer_use_agent.py`: selected ChatGPT, Gemini, or Grok Web session targets, bounded context
+- `app/core/computer_use_agent.py`: selected ChatGPT, Gemini, Grok, or Claude Web session targets, bounded context
   packages, the local JSON action protocol, project path confinement, command policy, and
   mandatory bodycheck ordering for the optional Agent workspace.
 - `app/core/cache_catalog.py` and `app/core/local_media_browser.py`: durable local indexes,

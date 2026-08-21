@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.11-codex.1
+Code version: v1.47.12-codex.1
 """
 
 from pathlib import Path
@@ -1021,7 +1021,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.82.13-codex.1 */",
+        "/* Code version: v2.82.14-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1115,6 +1115,17 @@ def test_agent_combobox_trigger_labels_share_typography_contract() -> None:
         "line-height: 1.45;",
     ):
         assert token in selector_rule
+
+
+def test_agent_session_lists_open_above_the_sidebar_trigger() -> None:
+    """Keep long session menus inside the sidebar viewport near its bottom edge."""
+    stylesheet = _stylesheet()
+    selector = ".agent-session-list-combobox .agent-session-list-menu {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "top: auto;" in selector_rule
+    assert "bottom: calc(100% + 4px);" in selector_rule
 
 
 def test_browser_session_status_labels_share_nonbold_left_typography() -> None:

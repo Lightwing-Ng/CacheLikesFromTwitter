@@ -7,9 +7,9 @@ currently signed-in X account's Likes timeline, Grok's Files library, and a
 configured ChatGPT project or session. It stores media locally and provides
 a browser for reviewing, deleting, and restoring cached files.
 
-Its Agent workspace uses the selected authenticated Web session for ChatGPT, Gemini, or Grok.
+Its Agent workspace uses the selected authenticated Web session for ChatGPT, Gemini, Grok, or Claude.
 The sidebar exposes one provider-neutral Project concept: ChatGPT Projects, Gemini Notebooks, and
-Grok Projects are adapted behind the same Project selector and execution contract. It defaults to
+Grok Projects, and Claude Projects are adapted behind the same Project selector and execution contract. It defaults to
 a new root-level session, while the sidebar can join one of the 20 most recent sessions, start a
 session in one of the 20 most recent Projects, or join one of a Project's 20 most recent sessions.
 The selected Web provider supplies reasoning while a bounded local Computer Use controller
@@ -37,7 +37,7 @@ public reverse proxy.
   source you want to cache
 - Playwright Chromium for Chromium-backed X, Grok, and ChatGPT automation
 - `yt-dlp` for X media downloads
-- An authenticated ChatGPT Web account for the optional Computer Use Agent workspace
+- An authenticated ChatGPT, Gemini, Grok, or Claude Web account for the optional Computer Use Agent workspace
 
 ChatGPT project caching uses up to three isolated Edge workers in parallel. The worker count is
 bounded deliberately because each worker owns a separate authenticated browser context.

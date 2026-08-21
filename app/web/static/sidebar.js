@@ -1,4 +1,4 @@
-/* Code version: v1.18.0-codex.1 */
+/* Code version: v1.19.0-codex.1 */
 
 (function initializeSidebar() {
     "use strict";
@@ -22,7 +22,7 @@
         ["/gemini", "/cache/gemini"],
     ]);
     const localResourceFilterNames = ["view", "source", "kind", "q", "sort", "session_view"];
-    const agentRoutePattern = /^\/agent\/(?:safari\/chatgpt|(?:edge|chrome)\/(?:chatgpt|gemini|grok))$/;
+    const agentRoutePattern = /^\/agent\/(?:safari\/chatgpt|(?:edge|chrome)\/(?:chatgpt|gemini|grok|claude))$/;
     const settingsCategoryPattern = /^#settings-(browser|downloads|chatgpt|cloud|maintenance)$/;
     const dockLinks = sidebarDock
         ? Array.from(sidebarDock.querySelectorAll("[data-dock-section], [data-section-link]"))

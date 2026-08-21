@@ -466,10 +466,10 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('aria-haspopup', dock_markup)
                 self.assertNotIn('aria-expanded', dock_markup)
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
-                self.assertIn('src="/static/sidebar.js?v=sidebar-v1.18.0-codex.1"', body)
+                self.assertIn('src="/static/sidebar.js?v=sidebar-v1.19.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.82.13-codex.1"
+                    "style-v2.82.14-codex.1"
                 )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
@@ -488,7 +488,7 @@ class WebAppTests(unittest.TestCase):
             "const shouldShowBackdrop = sidebarOverlayMedia.matches && isSidebarOpen;",
             'const dockLocationMemoryPrefix = "cachelikes:dock-location:v1:";',
             'const dockSections = new Set(["agent", "cache", "local-resources", "settings"]);',
-            'const agentRoutePattern = /^\\/agent\\/(?:safari\\/chatgpt|(?:edge|chrome)\\/(?:chatgpt|gemini|grok))$/;',
+            'const agentRoutePattern = /^\\/agent\\/(?:safari\\/chatgpt|(?:edge|chrome)\\/(?:chatgpt|gemini|grok|claude))$/;',
             'const localResourceFilterNames = ["view", "source", "kind", "q", "sort", "session_view"];',
             'const cacheSectionPaths = new Set(["/cache/x", "/cache/grok", "/cache/chatgpt", "/cache/gemini"]);',
             'if (targetUrl.pathname === "/browser") return "/cache/chatgpt";',
@@ -794,7 +794,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.1.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.16.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.17.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -1096,7 +1096,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.16.0-codex.1',
+            'computer-use-agent-v3.17.0-codex.1',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
@@ -1112,7 +1112,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("selectedOption?.dataset.agentComboboxLabel", script)
         self.assertNotIn('data-agent-session-platforms="chatgpt"', body)
 
-    def test_agent_page_exposes_the_three_web_provider_model_pairs(self) -> None:
+    def test_agent_page_exposes_the_four_web_provider_model_pairs(self) -> None:
         app = create_app()
         script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
 
@@ -1123,13 +1123,65 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('class="browser-picker-option-icon" src="/static/images/ChatGPT-Logo.svg"', body)
         self.assertIn('data-agent-combobox-icon="/static/images/Google_Gemini_logo_2025_symbol.svg"', body)
         self.assertIn('data-agent-combobox-icon="/static/images/grok.svg"', body)
+        self.assertIn('data-agent-combobox-icon="/static/images/claude.svg"', body)
         self.assertIn('class="browser-session-trigger-leading"', body)
         self.assertIn('data-browser-session-platform="chatgpt"', body)
         self.assertIn('data-agent-combobox-option="gpt-5.6-sol"', body)
         self.assertIn('data-agent-combobox-option="gemini-3.1-pro"', body)
         self.assertIn('data-agent-combobox-option="grok-auto"', body)
+        self.assertIn('data-agent-combobox-option="claude-auto"', body)
         self.assertIn('placeholder="Do anything"', body)
         self.assertIn('elements.promptInput.placeholder = "Do anything"', script)
+
+    def test_agent_browser_alias_and_claude_route_render_the_shared_workspace(self) -> None:
+        with patch(
+            "app.core.computer_use_agent.load_computer_use_settings",
+            return_value=ComputerUseSettings(browser="edge", platform="chatgpt"),
+        ):
+            app = create_app()
+
+        with app.test_client() as client:
+            browser_alias = client.get("/agent/edge/")
+            claude_page = client.get("/agent/edge/claude")
+            safari_claude_page = client.get("/agent/safari/claude")
+
+        self.assertEqual(browser_alias.status_code, 302)
+        self.assertEqual(browser_alias.headers["Location"], "/agent/edge/chatgpt")
+        self.assertEqual(claude_page.status_code, 200)
+        claude_body = claude_page.get_data(as_text=True)
+        self.assertIn("Claude Web Agent", claude_body)
+        self.assertIn('data-agent-platform-home-url="https://claude.ai/new"', claude_body)
+        self.assertEqual(safari_claude_page.status_code, 404)
+
+    def test_claude_agent_browser_bootstrap_reuses_one_status_and_source_payload(self) -> None:
+        source_payload = {
+            "platform": "claude",
+            "recent_sessions": [],
+            "projects": [],
+            "limit": 20,
+        }
+        status_payload = {
+            "platform": "claude",
+            "browser": "edge",
+            "browser_label": "Edge",
+            "logged_in": True,
+            "can_download": True,
+            "account_name": "Claude account",
+            "message": "Edge verified Claude.",
+        }
+        app = create_app()
+        with patch(
+            "app.web.app.probe_and_collect_claude_sources",
+            return_value=(status_payload, source_payload),
+        ) as probe:
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/browser-session?platform=claude&browser=edge&scope=agent"
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["agent_sources"], source_payload)
+        probe.assert_called_once()
 
     def test_agent_preferences_accept_gemini_and_grok_model_choices(self) -> None:
         with TemporaryDirectory() as raw_root:
@@ -1873,7 +1925,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.82.13-codex.1", body)
+            self.assertIn("style-v2.82.14-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.28.0-codex.1', body)

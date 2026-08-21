@@ -22,6 +22,7 @@ from app.core.computer_use_agent import (
     ComputerUseSettingsStore,
     WorkspaceController,
     _chatgpt_target_is_open,
+    _web_target_is_open,
     _initial_web_agent_message,
     _run_web_action_loop,
     _select_chatgpt_model,
@@ -128,16 +129,18 @@ def test_windows_inspection_commands_use_powershell_for_safe_scripts(
 
 
 def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None:
-    assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok"]
+    assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok", "claude"]
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["gemini"][0]["ui_label"] == "3.1 Pro"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["ui_label"] == "Auto"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["claude"][0]["ui_label"] == "Auto"
 
     with TemporaryDirectory() as raw_root:
         for platform, model, target_url in (
             ("chatgpt", "gpt-5.6-sol", "https://chatgpt.com/"),
             ("gemini", "gemini-3.1-pro", "https://gemini.google.com/app"),
             ("grok", "grok-auto", "https://grok.com/"),
+            ("claude", "claude-auto", "https://claude.ai/new"),
         ):
             settings = validate_computer_use_settings(
                 {
@@ -197,6 +200,7 @@ def test_non_chatgpt_model_selection_uses_the_provider_menu_when_exposed() -> No
 def test_all_web_agent_platforms_support_new_recent_and_project_targets() -> None:
     assert resolve_agent_session_target("new", platform="gemini") == "https://gemini.google.com/app"
     assert resolve_agent_session_target("new", platform="grok") == "https://grok.com/"
+    assert resolve_agent_session_target("new", platform="claude") == "https://claude.ai/new"
     assert resolve_agent_session_target(
         "recent",
         conversation_url="https://gemini.google.com/app/gemini-session",
@@ -207,6 +211,11 @@ def test_all_web_agent_platforms_support_new_recent_and_project_targets() -> Non
         conversation_url="https://www.grok.com/c/grok-session/",
         platform="grok",
     ) == "https://grok.com/c/grok-session"
+    assert resolve_agent_session_target(
+        "recent",
+        conversation_url="https://www.claude.ai/chat/claude-session/",
+        platform="claude",
+    ) == "https://claude.ai/chat/claude-session"
     with pytest.raises(ValueError, match="Choose a recent Gemini session"):
         resolve_agent_session_target(
             "recent",
@@ -223,6 +232,24 @@ def test_all_web_agent_platforms_support_new_recent_and_project_targets() -> Non
         project_url="https://www.grok.com/project/project-1",
         platform="grok",
     ) == "https://grok.com/project/project-1?tab=conversations"
+    assert resolve_agent_session_target(
+        "project_new",
+        project_url="https://www.claude.ai/project/project-1",
+        platform="claude",
+    ) == "https://claude.ai/project/project-1"
+    assert resolve_agent_session_target(
+        "project_session",
+        conversation_url="https://claude.ai/project/project-1/chat/session-4",
+        project_url="https://claude.ai/project/project-1",
+        platform="claude",
+    ) == "https://claude.ai/project/project-1/chat/session-4"
+    with pytest.raises(ValueError, match="does not belong"):
+        resolve_agent_session_target(
+            "project_session",
+            conversation_url="https://claude.ai/chat/root-session",
+            project_url="https://claude.ai/project/project-1",
+            platform="claude",
+        )
     assert resolve_agent_session_target(
         "project_session",
         conversation_url="https://www.grok.com/c/grok-session/",
@@ -518,6 +545,24 @@ def test_chatgpt_target_check_requires_the_selected_conversation_path() -> None:
     assert not _chatgpt_target_is_open(target, "https://chatgpt.com/")
     assert not _chatgpt_target_is_open(target, "https://chatgpt.com/c/different-session")
     assert not _chatgpt_target_is_open(target, "https://example.com/c/session-123")
+
+
+def test_claude_new_target_allows_the_provider_conversation_redirect() -> None:
+    assert _web_target_is_open(
+        "claude",
+        "https://claude.ai/new",
+        "https://claude.ai/chat/generated-session",
+    )
+    assert _web_target_is_open(
+        "claude",
+        "https://claude.ai/new",
+        "https://claude.ai/new",
+    )
+    assert not _web_target_is_open(
+        "claude",
+        "https://claude.ai/new",
+        "https://example.com/chat/generated-session",
+    )
 
 
 def test_saved_settings_are_owner_readable_only() -> None:

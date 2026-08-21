@@ -50,8 +50,9 @@ to override it. A successful unlock is stored in the signed Flask session for th
 - `/agent` and its `/api/agent/*` control routes accept host-loopback requests directly. Requests
   from RFC1918 private IPv4 or IPv6 ULA addresses show the password gate before the Agent page or
   API is served; public and host-rebinding addresses remain rejected.
-- Each task defaults to a new root-level ChatGPT Web conversation in the selected authenticated
-  Safari, Edge, or Chrome session. The Agent sidebar can also join one of the 20 most recent root
+- Each task defaults to a new root-level ChatGPT, Gemini, Grok, or Claude Web conversation in the
+  selected authenticated browser session. Safari remains available only for ChatGPT; Claude uses
+  Edge or Chrome. The Agent sidebar can also join one of the 20 most recent root
   sessions, start a session in one of the 20 most recent projects, or join one of a project's
   20 most recent sessions.
 - Settings → Agent controls the operating system, terminal permissions, context limit, turn limit,
@@ -61,8 +62,8 @@ to override it. A successful unlock is stored in the signed Flask session for th
 - Chromium can attach the generated Markdown context directly. Safari falls back to compact
   on-demand reads because web content cannot programmatically assign a local file to a protected
   file input.
-- Sending a task transmits the generated context and requested source excerpts to the selected
-  ChatGPT account. Review ChatGPT data controls before using private or regulated source code.
+- Sending a task transmits the generated context and requested source excerpts to the selected Web
+  account. Review that provider's data controls before using private or regulated source code.
 - Stop requests end current web generation and terminate the active local command process group.
 - Agent source discovery is cached in `local_store/agent/agent_source_catalog.parquet` for 15
   minutes per provider/browser/Project key. Fresh reads use process memory; the first read after a
@@ -71,10 +72,11 @@ to override it. A successful unlock is stored in the signed Flask session for th
   `/api/agent/project-sessions` for an intentional synchronous Edge/Chrome/Safari re-check. The
   response's `cache.status` is `hit`, `miss`, `refreshed`, or `stale`; a stale response means the
   browser check failed or is still refreshing while the previous catalog was retained.
-- ChatGPT on `/agent` uses one agent-scoped browser bootstrap through Recent sessions: the same
-  browser context verifies readiness, collects the root session/project catalog, returns it to the
-  selector, and seeds the memory/Parquet cache. A second browser launch is reserved for a later
-  Project-session selection or an explicit refresh.
+- ChatGPT and Claude on `/agent` use one agent-scoped browser bootstrap through Recent sessions:
+  the same browser context verifies readiness, collects the root session/project catalog, returns
+  it to the selector, and seeds the memory/Parquet cache. A second browser launch is reserved for
+  a later Project-session selection or an explicit refresh. Restricted Claude accounts remain
+  unavailable and are not sent through a login-bypass flow.
 
 ## Local data
 

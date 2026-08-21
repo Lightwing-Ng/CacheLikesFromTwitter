@@ -1,4 +1,4 @@
-/* Code version: v3.16.0-codex.1 */
+/* Code version: v3.17.0-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -180,6 +180,9 @@
         if (platform === "chatgpt") return isChatgptConversationUrl(candidate);
         if (platform === "gemini") return /^https:\/\/gemini\.google\.com\/app\/[A-Za-z0-9_-]+\/?$/i.test(candidate);
         if (platform === "grok") return /^https:\/\/grok\.com\/c\/[A-Za-z0-9_-]+\/?$/i.test(candidate);
+        if (platform === "claude") {
+            return /^https:\/\/claude\.ai\/(?:chat\/[A-Za-z0-9_-]+|project\/[A-Za-z0-9_-]+\/(?:chat|c)\/[A-Za-z0-9_-]+)\/?$/i.test(candidate);
+        }
         return false;
     }
 
@@ -274,7 +277,7 @@
         if (sessionLabel) sessionLabel.textContent = "Session source";
         const sessionModeMenu = elements.sessionModeCombobox?.querySelector("[data-agent-combobox-menu]");
         Array.from(sessionModeMenu?.querySelectorAll("[data-agent-combobox-option]") || []).forEach((option) => {
-            const supportedPlatforms = String(option.dataset.agentSessionPlatforms || "chatgpt,gemini,grok")
+        const supportedPlatforms = String(option.dataset.agentSessionPlatforms || "chatgpt,gemini,grok,claude")
                 .split(",")
                 .map((item) => item.trim())
                 .filter(Boolean);
@@ -302,6 +305,7 @@
         const targetUrl = samePlatform && (recordedUrl.startsWith("https://chatgpt.com/")
             || recordedUrl.startsWith("https://gemini.google.com/")
             || recordedUrl.startsWith("https://grok.com/")
+            || recordedUrl.startsWith("https://claude.ai/")
             ) ? recordedUrl
             : selectedPlatformHomeUrl();
         const hasRecordedTarget = samePlatform && isAgentConversationUrl(agentPlatform, recordedUrl);
@@ -926,11 +930,11 @@
         const bootstrappedError = lastBrowserStatus?.agent_sources_error;
         sourceBrowser = browserName;
         sourcePlatform = platform;
-        if (bootstrappedSources && platform === "chatgpt") {
+        if (bootstrappedSources && (platform === "chatgpt" || platform === "claude")) {
             applyAgentSources(bootstrappedSources);
             return;
         }
-        if (bootstrappedError && platform === "chatgpt") {
+        if (bootstrappedError && (platform === "chatgpt" || platform === "claude")) {
             applyAgentSourcesError(String(bootstrappedError));
             return;
         }

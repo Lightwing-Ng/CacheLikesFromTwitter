@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.9.0-codex.1
+Code version: v1.9.1-codex.1
 """
 
 from __future__ import annotations
@@ -1076,7 +1076,15 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
                 "browser_label": "Edge",
                 "recent_sessions": [
                     {
-                        "id": f"{platform}-recent-session",
+                        "id": f"{platform}-recent-session-{index}",
+                        "title": f"{platform_label} earlier session {index}",
+                        "url": f"{session_url}-{index}",
+                        "updated_at": "2026-08-14T04:00:00Z",
+                    }
+                    for index in range(19)
+                ] + [
+                    {
+                        "id": f"{platform}-recent-session-tail",
                         "title": f"{platform_label} selected session",
                         "url": session_url,
                         "updated_at": "2026-08-14T04:00:00Z",
@@ -1092,7 +1100,7 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
         route.fulfill(json=agent_payload(platform))
 
     context = disposable_browser.new_context(
-        viewport={"width": 1_280, "height": 900},
+        viewport={"width": 1_280, "height": 720},
         has_touch=False,
         is_mobile=False,
         reduced_motion="reduce",
@@ -1120,6 +1128,13 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
         )
         expect(recent_option).to_have_count(1)
         page.locator('[data-agent-session-list="recent"] [data-agent-combobox-trigger]').click()
+        recent_menu = page.locator(
+            '[data-agent-session-list="recent"] [data-agent-combobox-menu]'
+        )
+        menu_box = recent_menu.bounding_box()
+        assert menu_box is not None
+        assert menu_box["y"] >= 0
+        assert menu_box["y"] + menu_box["height"] <= 720
         expect(recent_option).to_be_visible()
         recent_option.click()
 

@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.17.0-codex.1
+Code version: v3.18.0-codex.1
 """
 
 from __future__ import annotations
@@ -22,7 +22,12 @@ import time
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
-from .agent_session_sources import normalize_agent_conversation_url, normalize_agent_project_url
+from .agent_session_sources import (
+    CLAUDE_HOME_URL,
+    CLAUDE_HOSTS,
+    normalize_agent_conversation_url,
+    normalize_agent_project_url,
+)
 from .browser_sessions import (
     browser_descriptors,
     goto_with_retry,
@@ -81,7 +86,7 @@ WEB_PROGRESS_TEXT = {"thinking", "working", "searching", "analyzing", "generatin
 SUPPORTED_BROWSERS = frozenset({"chrome", "edge", "safari"})
 SUPPORTED_OPERATING_SYSTEMS = frozenset({"macos", "windows"})
 SUPPORTED_AGENT_SESSION_MODES = frozenset({"new", "recent", "project_new", "project_session"})
-SUPPORTED_AGENT_PLATFORMS = frozenset({"chatgpt", "gemini", "grok"})
+SUPPORTED_AGENT_PLATFORMS = frozenset({"chatgpt", "gemini", "grok", "claude"})
 DEFAULT_AGENT_PLATFORM = "chatgpt"
 DEFAULT_CHATGPT_MODEL = "gpt-5.6-sol"
 CHATGPT_MODEL_OPTIONS = (
@@ -109,10 +114,19 @@ GROK_MODEL_OPTIONS = (
         "remote_labels": ("Auto", "自動", "自动"),
     },
 )
+CLAUDE_MODEL_OPTIONS = (
+    {
+        "key": "claude-auto",
+        "label": "Auto",
+        "ui_label": "Auto",
+        "remote_labels": ("Auto", "Default", "Claude"),
+    },
+)
 AGENT_MODEL_OPTIONS_BY_PLATFORM = {
     "chatgpt": CHATGPT_MODEL_OPTIONS,
     "gemini": GEMINI_MODEL_OPTIONS,
     "grok": GROK_MODEL_OPTIONS,
+    "claude": CLAUDE_MODEL_OPTIONS,
 }
 AGENT_PLATFORM_OPTIONS = (
     {
@@ -135,6 +149,13 @@ AGENT_PLATFORM_OPTIONS = (
         "icon_filename": "images/grok.svg",
         "home_url": GROK_HOME_URL,
         "hosts": GROK_HOSTS,
+    },
+    {
+        "key": "claude",
+        "label": "Claude",
+        "icon_filename": "images/claude.svg",
+        "home_url": CLAUDE_HOME_URL,
+        "hosts": CLAUDE_HOSTS,
     },
 )
 AGENT_PLATFORM_BY_KEY = {option["key"]: option for option in AGENT_PLATFORM_OPTIONS}
@@ -525,7 +546,7 @@ def _platform_home_url(platform: str) -> str:
     """Return the official home URL for one supported web platform."""
     option = AGENT_PLATFORM_BY_KEY.get(platform)
     if option is None:
-        raise ValueError("Choose ChatGPT, Gemini, or Grok for the Web Agent.")
+        raise ValueError("Choose ChatGPT, Gemini, Grok, or Claude for the Web Agent.")
     return str(option["home_url"])
 
 
@@ -533,7 +554,7 @@ def _platform_hosts(platform: str) -> set[str]:
     """Return the official HTTPS hosts accepted for one web platform."""
     option = AGENT_PLATFORM_BY_KEY.get(platform)
     if option is None:
-        raise ValueError("Choose ChatGPT, Gemini, or Grok for the Web Agent.")
+        raise ValueError("Choose ChatGPT, Gemini, Grok, or Claude for the Web Agent.")
     return set(option["hosts"])
 
 
@@ -687,7 +708,7 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
 
     platform = str(payload.get("platform", DEFAULT_AGENT_PLATFORM)).strip().lower()
     if platform not in SUPPORTED_AGENT_PLATFORMS:
-        raise ValueError("The Agent platform must be ChatGPT, Gemini, or Grok.")
+        raise ValueError("The Agent platform must be ChatGPT, Gemini, Grok, or Claude.")
 
     browser = str(payload.get("browser", "edge")).strip().lower()
     if browser not in SUPPORTED_BROWSERS:
@@ -695,7 +716,7 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
     if operating_system == "windows" and browser == "safari":
         raise ValueError("Windows Agent sessions require Edge or Chrome; Safari is macOS-only.")
     if platform != "chatgpt" and browser == "safari":
-        raise ValueError("Gemini and Grok Agent sessions require Edge or Chrome.")
+        raise ValueError("Gemini, Grok, and Claude Agent sessions require Edge or Chrome.")
 
     default_model = _platform_model_options(platform)[0]["key"]
     model = str(payload.get("model", default_model)).strip().lower()
@@ -879,7 +900,7 @@ def resolve_agent_session_target(
         raise ValueError("Choose a supported Web Agent session source.")
     selected_platform = str(platform or DEFAULT_AGENT_PLATFORM).strip().lower()
     if selected_platform not in SUPPORTED_AGENT_PLATFORMS:
-        raise ValueError("Choose ChatGPT, Gemini, or Grok for the Web Agent.")
+        raise ValueError("Choose ChatGPT, Gemini, Grok, or Claude for the Web Agent.")
     if mode == "new":
         return _platform_home_url(selected_platform)
 
@@ -901,6 +922,11 @@ def resolve_agent_session_target(
             project_path = project_path[: -len("/project")] if project_path.endswith("/project") else project_path
             conversation_path = urlsplit(normalized_conversation_url).path.rstrip("/")
             if not conversation_path.startswith(f"{project_path}/c/"):
+                raise ValueError("The selected session does not belong to the selected Project.")
+        elif selected_platform == "claude":
+            project_path = urlsplit(normalized_project_url).path.rstrip("/")
+            conversation_path = urlsplit(normalized_conversation_url).path.rstrip("/")
+            if not conversation_path.startswith(f"{project_path}/"):
                 raise ValueError("The selected session does not belong to the selected Project.")
     return normalized_conversation_url
 
@@ -2185,6 +2211,10 @@ def _web_composer_selector(platform: str) -> str:
         "chatgpt": "#prompt-textarea",
         "gemini": 'textarea, [contenteditable="true"]',
         "grok": "textarea",
+        "claude": (
+            'textarea, [contenteditable="true"][role="textbox"], '
+            'div.ProseMirror[contenteditable="true"], [contenteditable="true"]'
+        ),
     }.get(platform, 'textarea, [contenteditable="true"]')
 
 
@@ -2197,6 +2227,11 @@ def _web_assistant_selector(platform: str) -> str:
             '[data-testid="assistant-message"], [data-testid*="assistant" i], '
             '[data-testid*="response" i], [data-role="assistant"], '
             '[data-message-author-role="assistant"]'
+        ),
+        "claude": (
+            '[data-testid="assistant-message"], [data-testid*="assistant" i], '
+            '[data-message-author-role="assistant"], [data-role="assistant"], '
+            '.font-claude-message'
         ),
     }.get(platform, '[data-message-author-role="assistant"]')
 
@@ -2212,6 +2247,8 @@ def _web_target_is_open(platform: str, target_url: str, current_url: str) -> boo
         return _chatgpt_target_is_open(target_url, current_url)
     target_path = target.path.rstrip("/") or "/"
     current_path = current.path.rstrip("/") or "/"
+    if platform == "claude" and target_path == "/new":
+        return current_path == "/new" or current_path.startswith("/chat/") or current_path.startswith("/project/")
     return current_path == target_path or current_path.startswith(f"{target_path}/")
 
 
@@ -2456,7 +2493,8 @@ def _select_web_model(page: Any, browser_kind: str, platform: str, model: str) -
                 const normalized = normalize(label);
                 if (matches(label)) return true;
                 if (platform === 'gemini' && /mode picker|model|模式|模型|选择|選擇/i.test(normalized)) return true;
-                return platform === 'grok' && /model|mode|auto|grok|模式|模型|选择|選擇|自動|自动/i.test(normalized);
+                if (platform === 'grok' && /model|mode|auto|grok|模式|模型|选择|選擇|自動|自动/i.test(normalized)) return true;
+                return platform === 'claude' && /model|mode|auto|default|claude|sonnet|opus/i.test(normalized);
             });
             if (!trigger) return {ok: false, reason: 'model-control-not-found', available: []};
             if (matches(labelFor(trigger))) return {ok: true, selected: normalize(labelFor(trigger)), available: []};
@@ -2583,6 +2621,7 @@ def _web_user_selector(platform: str) -> str:
         "chatgpt": '[data-message-author-role="user"]',
         "gemini": 'user-query, [data-test-id="user-query-content"]',
         "grok": '[data-testid*="user" i], [data-role="user"], [data-message-author-role="user"]',
+        "claude": '[data-testid*="human" i], [data-testid*="user" i], [data-role="user"], [data-message-author-role="user"]',
     }.get(platform, '[data-message-author-role="user"]')
 
 

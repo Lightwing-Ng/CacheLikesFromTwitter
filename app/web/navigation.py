@@ -1,6 +1,6 @@
 """Canonical local-console navigation helpers.
 
-Code version: v1.0.0
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
