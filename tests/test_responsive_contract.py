@@ -1,6 +1,6 @@
 """Responsive sidebar contract tests.
 
-Code version: v1.0.3-codex.1
+Code version: v1.0.4-codex.1
 """
 
 from __future__ import annotations
@@ -161,3 +161,17 @@ def test_sidebar_toggle_is_outside_the_shell_stacking_context() -> None:
         assert toggle_index < shell_index, template_name
 
     assert ".page > .sidebar-toggle" in stylesheet
+
+
+def test_coarse_pointer_sidebar_toggle_keeps_its_hit_target_stationary() -> None:
+    stylesheet = _read(STYLE_PATH)
+    touch_block = _extract_block(
+        stylesheet,
+        "@media (max-width: 900px) and (hover: none) and (pointer: coarse)",
+    )
+
+    assert ".page > .sidebar-toggle:hover" in touch_block
+    assert ".page > .sidebar-toggle:focus-visible" in touch_block
+    assert ".page > .sidebar-toggle:active" in touch_block
+    assert "transform: translate3d(var(--sidebar-toggle-x), 0, 0);" in touch_block
+    assert "transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), color 160ms var(--motion-standard);" in touch_block

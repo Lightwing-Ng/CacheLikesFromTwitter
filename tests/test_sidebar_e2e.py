@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.8.8-codex.1
+Code version: v1.8.9-codex.1
 """
 
 from __future__ import annotations
@@ -94,12 +94,17 @@ def _open_page(
     *,
     touch: bool,
     init_script: str | None = None,
+    reduced_motion: str | None = "reduce",
 ) -> tuple[Page, BrowserContext]:
+    context_options = {
+        "viewport": {"width": width, "height": height},
+        "has_touch": touch,
+        "is_mobile": touch,
+    }
+    if reduced_motion is not None:
+        context_options["reduced_motion"] = reduced_motion
     context = browser.new_context(
-        viewport={"width": width, "height": height},
-        has_touch=touch,
-        is_mobile=touch,
-        reduced_motion="reduce",
+        **context_options,
     )
     page = context.new_page()
     if init_script:
@@ -869,6 +874,45 @@ def test_overlay_sidebar_is_touch_safe_across_phone_and_ipad_portraits(
         _tap_toggle_center(page, toggle)
         expect(toggle).to_have_attribute("aria-expanded", "false")
         _assert_hidden_backdrop(page)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_ipad_touch_toggle_does_not_move_its_hit_target_during_overlay_motion(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    page, context = _open_page(
+        disposable_browser,
+        sidebar_server_url,
+        820,
+        1_180,
+        touch=True,
+        reduced_motion=None,
+    )
+    try:
+        toggle = page.locator("#sidebar_toggle")
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        transition = toggle.evaluate(
+            """element => ({
+                pointerCoarse: matchMedia('(pointer: coarse)').matches,
+                transitionProperty: getComputedStyle(element).transitionProperty,
+            })"""
+        )
+        assert transition["pointerCoarse"]
+        assert "transform" not in {
+            value.strip() for value in transition["transitionProperty"].split(",")
+        }
+
+        _tap_toggle_center(page, toggle)
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        _assert_toggle_hit_target(page)
+        _tap_toggle_center(page, toggle)
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        _assert_hidden_backdrop(page)
+        _assert_toggle_hit_target(page)
     finally:
         context.close()
 
