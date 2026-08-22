@@ -1,4 +1,4 @@
-<!-- Code version: v1.25.0-codex.1 -->
+<!-- Code version: v1.26.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.47') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.48') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
@@ -56,69 +56,8 @@
                     <span class="status-chip status-{{ current_phase }}">{{ current_phase }}</span>
                 </div>
             </section>
-            <nav class="settings-category-nav" aria-label="Settings categories">
-                <a
-                    href="#settings-browser"
-                    class="settings-category-nav-item settings-category-nav-item-browser is-active"
-                    data-settings-category="browser"
-                    aria-current="page"
-                >
-                    <span class="settings-category-nav-icon-shell" aria-hidden="true">
-                        <span class="icon settings-category-nav-icon"></span>
-                    </span>
-                    <span class="settings-category-nav-label">Browser &amp; account</span>
-                </a>
-                <a
-                    href="#settings-downloads"
-                    class="settings-category-nav-item settings-category-nav-item-downloads"
-                    data-settings-category="downloads"
-                >
-                    <span class="settings-category-nav-icon-shell" aria-hidden="true">
-                        <span class="icon settings-category-nav-icon"></span>
-                    </span>
-                    <span class="settings-category-nav-label">Downloads</span>
-                </a>
-                <a
-                    href="#settings-chatgpt"
-                    class="settings-category-nav-item settings-category-nav-item-chatgpt"
-                    data-settings-category="chatgpt"
-                >
-                    <span class="settings-category-nav-icon-shell" aria-hidden="true">
-                        <span class="icon settings-category-nav-icon"></span>
-                    </span>
-                    <span class="settings-category-nav-label">ChatGPT</span>
-                </a>
-                <a
-                    href="#settings-agent"
-                    class="settings-category-nav-item settings-category-nav-item-agent"
-                    data-settings-category="agent"
-                >
-                    <span class="settings-category-nav-icon-shell" aria-hidden="true">
-                        <span class="icon settings-category-nav-icon"></span>
-                    </span>
-                    <span class="settings-category-nav-label">Agent</span>
-                </a>
-                <a
-                    href="#settings-cloud"
-                    class="settings-category-nav-item settings-category-nav-item-cloud"
-                    data-settings-category="cloud"
-                >
-                    <span class="settings-category-nav-icon-shell" aria-hidden="true">
-                        <span class="icon settings-category-nav-icon"></span>
-                    </span>
-                    <span class="settings-category-nav-label">Cloud backup</span>
-                </a>
-                <a
-                    href="#settings-maintenance"
-                    class="settings-category-nav-item settings-category-nav-item-maintenance"
-                    data-settings-category="maintenance"
-                >
-                    <span class="settings-category-nav-icon-shell" aria-hidden="true">
-                        <span class="icon settings-category-nav-icon"></span>
-                    </span>
-                    <span class="settings-category-nav-label">Maintenance</span>
-                </a>
-            </nav>
+            {% set current_category = 'browser' %}
+            {% include "_settings_category_nav.html" %}
         </aside>
 
         <section class="panel chart-panel workspace" id="settings_workspace">

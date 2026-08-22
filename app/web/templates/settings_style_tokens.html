@@ -1,0 +1,181 @@
+<!-- Code version: v1.0.0-codex.1 -->
+<!doctype html>
+<html lang="en-US">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>CacheLikesFromTwitter Style tokens</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
+    <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.48') }}">
+    <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.0.0-codex.1') }}"></script>
+</head>
+<body>
+{% include "_sidebar_bootstrap.html" %}
+<main class="page">
+    <button
+        type="button"
+        class="sidebar-toggle"
+        id="sidebar_toggle"
+        aria-label="Toggle sidebar"
+        aria-expanded="false"
+    >
+        <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
+    </button>
+    <div class="app-shell is-sidebar-open" id="app_shell">
+        {% include "_theme_toggle.html" %}
+
+        <button
+            type="button"
+            class="sidebar-backdrop"
+            id="sidebar_backdrop"
+            aria-label="Close sidebar"
+            aria-hidden="true"
+            tabindex="-1"
+            hidden
+        ></button>
+
+        <aside class="panel sidebar settings-category-sidebar" id="settings_sidebar">
+            <section class="hero">
+                <h1>Settings</h1>
+            </section>
+            <section class="sidebar-section anchor-section" id="settings">
+                <div class="section-heading">
+                    <p class="section-kicker">Control plane</p>
+                    <span class="status-chip status-idle">idle</span>
+                </div>
+            </section>
+            {% set current_category = 'style-tokens' %}
+            {% include "_settings_category_nav.html" %}
+        </aside>
+
+        <section class="panel chart-panel workspace style-token-workspace" id="settings_workspace">
+            <div class="workspace-header">
+                <div class="report-card workspace-summary-card workspace-article-card style-token-summary-card">
+                    <div class="report-heading-row">
+                        <div>
+                            <p class="workspace-kicker">Settings</p>
+                            <h2>Style tokens</h2>
+                        </div>
+                        <span class="status-chip status-success">{{ style_token_count }} reused tokens</span>
+                    </div>
+                    <p class="status-copy settings-intro-copy">
+                        One source of truth for CSS custom properties that are reused at least {{ minimum_references }} times. Each row is read from the live stylesheet, so new shared styles appear here automatically.
+                    </p>
+
+                    <section class="style-token-demo-grid" aria-label="Shared style previews">
+                        <article class="style-token-demo-card style-token-demo-card--surface">
+                            <div class="style-token-demo-heading">
+                                <div>
+                                    <p class="style-token-demo-kicker">Surface</p>
+                                    <h3>Frosted glass</h3>
+                                </div>
+                                <code>--frosted-glass-*</code>
+                            </div>
+                            <div class="style-token-demo-surface">
+                                <span>Shared surface</span>
+                                <button type="button" class="secondary-button style-token-demo-button">Preview</button>
+                            </div>
+                        </article>
+                        <article class="style-token-demo-card">
+                            <div class="style-token-demo-heading">
+                                <div>
+                                    <p class="style-token-demo-kicker">Control</p>
+                                    <h3>Form control</h3>
+                                </div>
+                                <code>--control-form-height</code>
+                            </div>
+                            <label class="style-token-demo-field">
+                                <span>Project folder</span>
+                                <input type="text" value="/local/cache" readonly aria-label="Project folder preview">
+                            </label>
+                        </article>
+                        <article class="style-token-demo-card">
+                            <div class="style-token-demo-heading">
+                                <div>
+                                    <p class="style-token-demo-kicker">Interaction</p>
+                                    <h3>Segmented control</h3>
+                                </div>
+                                <code>--mode-switch-*</code>
+                            </div>
+                            <div class="style-token-demo-segmented" role="group" aria-label="Segmented control preview">
+                                <button type="button" class="is-active">Text</button>
+                                <button type="button">Media</button>
+                                <button type="button">Prompts</button>
+                            </div>
+                        </article>
+                        <article class="style-token-demo-card style-token-demo-card--status">
+                            <div class="style-token-demo-heading">
+                                <div>
+                                    <p class="style-token-demo-kicker">Status</p>
+                                    <h3>Shared semantic colors</h3>
+                                </div>
+                                <code>--theme-*</code>
+                            </div>
+                            <div class="style-token-demo-status-row">
+                                <span class="status-chip status-success">Ready</span>
+                                <span class="status-chip status-running">Running</span>
+                                <span class="status-chip status-error">Error</span>
+                            </div>
+                        </article>
+                    </section>
+
+                    <section class="style-token-inventory" aria-labelledby="style-token-inventory-heading">
+                        <div class="style-token-inventory-heading">
+                            <div>
+                                <p class="workspace-kicker">Registry</p>
+                                <h3 id="style-token-inventory-heading">Reused style inventory</h3>
+                            </div>
+                            <p class="style-token-copy-status" data-style-token-copy-status aria-live="polite"></p>
+                        </div>
+                        {% for group in style_token_groups %}
+                        <article class="style-token-group" data-style-token-group="{{ group.name|lower|replace(' ', '-') }}">
+                            <div class="style-token-group-heading">
+                                <h4>{{ group.name }}</h4>
+                                <span>{{ group.tokens|length }} tokens</span>
+                            </div>
+                            <div class="style-token-table-shell">
+                                <table class="style-token-table" aria-label="{{ group.name }} style tokens">
+                                    <thead>
+                                    <tr>
+                                        <th scope="col">Token</th>
+                                        <th scope="col">Value</th>
+                                        <th scope="col">References</th>
+                                        <th scope="col">Source</th>
+                                        <th scope="col"><span class="visually-hidden">Action</span></th>
+                                    </tr>
+                                    </thead>
+                                    <tbody>
+                                    {% for token in group.tokens %}
+                                    <tr data-style-token-row="{{ token.name }}">
+                                        <td><code class="style-token-name">{{ token.name }}</code></td>
+                                        <td><code class="style-token-value">{{ token.value }}</code></td>
+                                        <td>{{ token.reference_count }}</td>
+                                        <td><code>style.css:{{ token.line }}</code></td>
+                                        <td>
+                                            <button
+                                                type="button"
+                                                class="ghost-link ghost-link--compact style-token-copy-button"
+                                                data-style-token-copy="{{ token.name }}"
+                                            >Copy</button>
+                                        </td>
+                                    </tr>
+                                    {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </article>
+                        {% endfor %}
+                    </section>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    {% set dock_section = "settings" %}
+    {% include "_sidebar_dock.html" %}
+</main>
+</body>
+</html>

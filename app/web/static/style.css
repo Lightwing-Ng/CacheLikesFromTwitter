@@ -1,4 +1,4 @@
-/* Code version: v2.82.17-codex.47 */
+/* Code version: v2.82.17-codex.48 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -213,6 +213,11 @@
     --workspace-modal-column-gap: 12px;
     --workspace-modal-row-gap: 4px;
     --workspace-modal-title-margin-end: 32px;
+    --style-token-card-gap: 12px;
+    --style-token-grid-gap: 14px;
+    --style-token-table-min-width: 600px;
+    --style-token-demo-min-height: 88px;
+    --style-token-code-size: var(--font-ui-sm);
     --workspace-article-radius: var(--radius-panel);
     --workspace-article-pad-block-start: 10px;
     --workspace-article-pad-inline: 12px;
@@ -5176,7 +5181,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     font-size: var(--font-metric-lg);
 }
 
-.browser-prompts-primary-metric strong {
+.browser-metric-grid:not(.browser-session-metric-grid) > .metric-card strong {
     font-size: var(--font-metric-lg);
     font-weight: 300;
     text-align: center;
@@ -5186,7 +5191,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     color: var(--accent-text);
 }
 
-.browser-prompts-primary-metric {
+.browser-metric-grid:not(.browser-session-metric-grid) > .metric-card {
     width: 192px;
     border-radius: 0;
 }
@@ -8063,7 +8068,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
         grid-template-columns: 1fr;
     }
 
-    .browser-prompts-primary-metric {
+    .browser-metric-grid:not(.browser-session-metric-grid) > .metric-card {
         width: 100%;
     }
 
@@ -8199,6 +8204,10 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 
 .settings-category-nav:has(.settings-category-nav-item:nth-child(6).is-active) {
     --settings-category-active-index: 5;
+}
+
+.settings-category-nav:has(.settings-category-nav-item:nth-child(7).is-active) {
+    --settings-category-active-index: 6;
 }
 
 .settings-category-nav-item {
@@ -8648,5 +8657,250 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 @media (max-width: 560px) {
     .browser-content-card {
         padding-bottom: calc(var(--sidebar-dock-bottom-gap) - 2px);
+    }
+}
+
+/* Settings Style tokens registry. */
+.style-token-workspace {
+    min-width: 0;
+}
+
+#settings_workspace .style-token-summary-card {
+    gap: var(--style-token-card-gap);
+    overflow-y: auto;
+}
+
+.style-token-summary-card > .report-heading-row {
+    align-items: center;
+    gap: var(--style-token-card-gap);
+}
+
+.style-token-summary-card > .report-heading-row .status-chip {
+    flex: 0 0 auto;
+}
+
+.style-token-demo-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--style-token-grid-gap);
+    margin: 0;
+}
+
+.style-token-demo-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--style-token-card-gap);
+    min-width: 0;
+    min-height: var(--style-token-demo-min-height);
+    padding: var(--style-token-card-gap);
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-panel);
+    background: var(--frosted-glass-background);
+    box-shadow: var(--frosted-glass-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
+}
+
+.style-token-demo-card--surface {
+    background: var(--glass-surface-background-strong);
+}
+
+.style-token-demo-card--status {
+    justify-content: space-between;
+}
+
+.style-token-demo-heading,
+.style-token-inventory-heading,
+.style-token-group-heading,
+.style-token-demo-status-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--style-token-card-gap);
+}
+
+.style-token-demo-heading h3,
+.style-token-inventory-heading h3,
+.style-token-group-heading h4 {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--font-ui-md);
+    font-weight: var(--font-weight-semibold);
+}
+
+.style-token-demo-kicker {
+    margin: 0 0 2px;
+    color: var(--muted);
+    font-size: var(--font-ui-xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.style-token-demo-heading code,
+.style-token-table code {
+    color: var(--accent-text);
+    font-family: var(--font-family-mono-cjk);
+    font-size: var(--style-token-code-size);
+    overflow-wrap: anywhere;
+}
+
+.style-token-demo-surface {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--style-token-card-gap);
+    min-height: var(--style-token-demo-min-height);
+    padding: var(--style-token-card-gap);
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-soft);
+    background: var(--frosted-glass-background-strong);
+    box-shadow: var(--frosted-glass-shadow);
+}
+
+.style-token-demo-field {
+    display: grid;
+    gap: 4px;
+    color: var(--muted);
+    font-size: var(--font-ui-sm);
+}
+
+.style-token-demo-field input {
+    width: 100%;
+    min-height: var(--control-form-height);
+    padding: var(--text-input-control-pad-block) var(--text-input-control-pad-inline);
+    border: var(--text-input-control-border);
+    border-radius: var(--text-input-control-radius);
+    background: var(--text-input-control-background);
+    color: var(--text-input-control-color);
+    font-family: var(--font-family-mono-cjk);
+    font-size: var(--text-input-control-font-size);
+}
+
+.style-token-demo-button {
+    flex: 0 0 auto;
+}
+
+.style-token-demo-segmented {
+    display: inline-flex;
+    align-self: flex-start;
+    gap: var(--mode-switch-gap);
+    padding: var(--mode-switch-pad);
+    border-radius: var(--mode-switch-radius);
+    background: var(--control-glass-background-hover);
+}
+
+.style-token-demo-segmented button {
+    min-height: var(--mode-switch-label-min-height);
+    padding: 0 var(--mode-switch-label-pad-inline);
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--font-ui-sm);
+    cursor: default;
+}
+
+.style-token-demo-segmented button.is-active {
+    background: var(--mode-switch-thumb-background);
+    box-shadow: var(--mode-switch-thumb-shadow);
+    color: var(--accent-contrast);
+    font-weight: var(--font-weight-semibold);
+}
+
+.style-token-demo-status-row {
+    justify-content: flex-start;
+    flex-wrap: wrap;
+}
+
+.style-token-inventory {
+    display: grid;
+    gap: var(--style-token-grid-gap);
+    min-width: 0;
+}
+
+.style-token-copy-status {
+    min-height: 1.2em;
+    margin: 0;
+    color: var(--accent-text);
+    font-size: var(--font-ui-sm);
+}
+
+.style-token-group {
+    display: grid;
+    gap: var(--style-token-card-gap);
+    min-width: 0;
+    padding: var(--style-token-card-gap);
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-panel);
+    background: var(--glass-surface-background-soft);
+}
+
+.style-token-group-heading > span {
+    color: var(--muted);
+    font-size: var(--font-ui-sm);
+}
+
+.style-token-table-shell {
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-gutter: stable;
+}
+
+.style-token-table {
+    width: 100%;
+    min-width: var(--style-token-table-min-width);
+    border-collapse: separate;
+    border-spacing: 0;
+    color: var(--text);
+    font-size: var(--font-table-body);
+}
+
+.style-token-table th,
+.style-token-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid color-mix(in srgb, var(--theme-text) 8%, transparent);
+    text-align: left;
+    vertical-align: middle;
+}
+
+.style-token-table th {
+    color: var(--muted);
+    font-weight: var(--font-weight-semibold);
+    white-space: nowrap;
+}
+
+.style-token-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.style-token-name {
+    white-space: nowrap;
+}
+
+.style-token-value {
+    display: inline-block;
+    max-width: 460px;
+}
+
+.style-token-copy-button {
+    min-width: 48px;
+}
+
+.settings-category-nav-item-style-tokens {
+    --settings-category-icon-url: url("/static/images/textformat.size.svg");
+    --settings-category-icon-tint: color-mix(in srgb, var(--theme-accent-primary) 76%, var(--theme-accent-secondary) 24%);
+    --settings-category-icon-surface: color-mix(in srgb, var(--theme-accent-primary) 12%, var(--theme-accent-secondary) 4%);
+}
+
+@media (max-width: 900px) {
+    .style-token-demo-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    .style-token-summary-card > .report-heading-row {
+        align-items: flex-start;
+        flex-direction: column;
     }
 }

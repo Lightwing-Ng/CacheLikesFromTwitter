@@ -1158,9 +1158,11 @@ def test_browser_prompt_source_header_is_centered() -> None:
 
 
 def test_browser_prompts_primary_metric_uses_light_large_blue_value_type() -> None:
-    """Keep the Saved prompts total on the lightweight large blue metric style."""
+    """Keep ordinary browser summary metrics on the lightweight large blue style."""
     stylesheet = _stylesheet()
-    metric_start = stylesheet.index(".browser-prompts-primary-metric strong {")
+    metric_start = stylesheet.index(
+        ".browser-metric-grid:not(.browser-session-metric-grid) > .metric-card strong {"
+    )
     metric_rule = stylesheet[metric_start:stylesheet.index("\n}", metric_start)]
 
     assert "font-size: var(--font-metric-lg);" in metric_rule
@@ -1172,10 +1174,27 @@ def test_browser_prompts_primary_metric_uses_light_large_blue_value_type() -> No
     assert "color: var(--accent-text);" in metric_rule
     assert "linear-gradient" not in metric_rule
 
-    card_start = stylesheet.index(".browser-prompts-primary-metric {")
+    card_start = stylesheet.index(
+        ".browser-metric-grid:not(.browser-session-metric-grid) > .metric-card {"
+    )
     card_rule = stylesheet[card_start:stylesheet.index("\n}", card_start)]
     assert "width: 192px;" in card_rule
     assert "border-radius: 0;" in card_rule
+
+
+def test_browser_summary_metric_contract_reuses_the_primary_card_for_siblings() -> None:
+    """Apply the Saved prompts exemplar to every ordinary three-column summary card."""
+    stylesheet = _stylesheet()
+
+    selector = ".browser-metric-grid:not(.browser-session-metric-grid) > .metric-card"
+    card_selector = f"{selector} {{"
+    assert stylesheet.count(card_selector) == 2
+    assert ".browser-prompts-primary-metric {" not in stylesheet
+    assert ".browser-prompts-primary-metric strong {" not in stylesheet
+
+    narrow_rule_start = stylesheet.rindex(card_selector)
+    narrow_rule = stylesheet[narrow_rule_start:stylesheet.index("\n}", narrow_rule_start)]
+    assert "width: 100%;" in narrow_rule
 
 
 def test_metric_labels_use_the_shared_regular_weight_token() -> None:
@@ -1415,7 +1434,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.82.17-codex.47 */",
+        "/* Code version: v2.82.17-codex.48 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
