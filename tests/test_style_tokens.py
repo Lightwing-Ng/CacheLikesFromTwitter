@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.12-codex.1
+Code version: v1.47.12-codex.6
 """
 
 from pathlib import Path
@@ -75,6 +75,15 @@ def test_settings_fields_use_a_single_column_layout() -> None:
     assert "grid-template-columns: minmax(0, 1fr);" in stylesheet
 
 
+def test_browser_filter_labels_use_the_medium_weight_token() -> None:
+    """Give Local resources filter labels the shared medium emphasis."""
+    stylesheet = _stylesheet()
+    selector_start = stylesheet.index(".browser-filter-field > span {")
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "font-weight: var(--font-weight-medium);" in selector_rule
+
+
 def test_form_inputs_use_regular_weight_monospace_text() -> None:
     """Keep path and numeric values legible without an inherited bold weight."""
     stylesheet = _stylesheet()
@@ -126,6 +135,26 @@ def test_settings_directory_picker_uses_the_folder_icon() -> None:
     assert "width: var(--settings-round-icon-button-size);" in stylesheet
     assert "height: var(--settings-round-icon-button-icon-size);" in stylesheet
     assert 'mask: url("/static/images/folder.fill.svg") center/contain no-repeat;' in stylesheet
+
+
+def test_cache_status_message_hangs_under_the_account_label() -> None:
+    """Keep wrapped readiness copy aligned after the leading status icon."""
+    stylesheet = _stylesheet()
+    selector_start = stylesheet.index('.browser-session-status-message[data-role="browser-session-message"] {')
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "--browser-session-status-indent: calc(18px + 8px);" in selector_rule
+    assert "padding-inline-start: var(--browser-session-status-indent);" in selector_rule
+    assert "text-indent: calc(-1 * var(--browser-session-status-indent));" in selector_rule
+
+
+def test_cache_output_directory_reuses_the_standard_folder_button() -> None:
+    """Keep the Cache output action on the shared circular directory-control contract."""
+    stylesheet = _stylesheet()
+
+    assert ".output-directory-status {" in stylesheet
+    assert ".settings-directory-choose-button," in stylesheet
+    assert ".settings-directory-choose-icon {" in stylesheet
 
 
 def test_cache_sidebar_parameter_grids_use_one_field_per_row() -> None:
@@ -334,6 +363,7 @@ def test_sidebar_titles_reuse_sibling_hero_tokens() -> None:
     expected_tokens = (
         "--font-card-title: var(--font-title-md);",
         "--workspace-title-rail-control-height: var(--settings-round-icon-button-size);",
+        "--workspace-title-rail-collapsed-pad-inline-start: calc(var(--settings-round-icon-button-size) + 22px);",
         "font-size: var(--font-card-title);",
         "line-height: 1.18;",
         "letter-spacing: 0;",
@@ -630,9 +660,17 @@ def test_browser_view_dock_switches_between_grid_and_list_layouts() -> None:
 
     expected_tokens = (
         ".browser-view-dock {",
+        "--browser-view-dock-item-step: calc(var(--settings-round-icon-button-size) + 6px);",
         ".browser-view-dock::before {",
+        "width: var(--settings-round-icon-button-size);",
+        "transform: translateX(var(--browser-view-active-shift, 0px));",
         ".browser-view-dock-item {",
+        "width: var(--settings-round-icon-button-size);",
+        "height: var(--settings-round-icon-button-size);",
         ".browser-view-dock-item.is-active {",
+        "transform: none;",
+        "width: var(--settings-round-icon-button-icon-size);",
+        "height: var(--settings-round-icon-button-icon-size);",
         'mask: url("/static/images/rectangle.grid.1x3.fill.svg") center/contain no-repeat;',
         'mask: url("/static/images/rectangle.grid.3x2.fill.svg") center/contain no-repeat;',
         '.browser-gallery[data-view="list"] {',
@@ -672,6 +710,122 @@ def test_browser_view_dock_switches_between_grid_and_list_layouts() -> None:
         assert token in stylesheet
 
 
+def test_browser_cached_media_previews_preserve_full_image_ratio() -> None:
+    """Keep cached image previews complete instead of forcing a crop box."""
+    stylesheet = _stylesheet()
+    preview_start = stylesheet.index(".browser-media-preview {")
+    preview_rule = stylesheet[preview_start:stylesheet.index("\n}", preview_start)]
+    media_start = stylesheet.index(".browser-media-preview img,\n.browser-media-preview video {")
+    media_rule = stylesheet[media_start:stylesheet.index("\n}", media_start)]
+
+    for token in ("height: auto;", "align-self: flex-start;"):
+        assert token in preview_rule
+
+    for token in (
+        "height: auto;",
+        "max-height: none;",
+        "object-fit: contain;",
+        "object-position: center;",
+    ):
+        assert token in media_rule
+
+    assert "aspect-ratio: 4 / 3;" not in preview_rule
+    assert "object-fit: cover;" not in media_rule
+
+
+def test_browser_compact_actions_reuse_one_local_resources_pattern() -> None:
+    """Keep compact utility links separate from the standard refresh button."""
+    stylesheet = _stylesheet()
+    for token in (
+        "--control-compact-height: 28px;",
+        "--control-form-height: 36px;",
+    ):
+        assert token in stylesheet
+
+    compact_start = stylesheet.index(".ghost-link--compact {")
+    compact_rule = stylesheet[compact_start:stylesheet.index("\n}", compact_start)]
+    select_start = stylesheet.index(".trade-strategy-select,\n.form-select {")
+    select_rule = stylesheet[select_start:stylesheet.index("\n}", select_start)]
+    source_start = stylesheet.index(".trade-strategy-select.browser-source-filter-trigger {")
+    source_rule = stylesheet[source_start:stylesheet.index("\n}", source_start)]
+    status_start = stylesheet.index(".status-chip,\n.ghost-link {")
+    status_rule = stylesheet[status_start:stylesheet.index("\n}", status_start)]
+    icon_start = stylesheet.index(".browser-source-filter-trigger .browser-picker-selected-icon-shell {")
+    icon_rule = stylesheet[icon_start:stylesheet.index("\n}", icon_start)]
+
+    assert "min-height: var(--control-compact-height);" in compact_rule
+    assert "height: var(--control-compact-height);" in compact_rule
+    assert "padding-inline: 4px;" in compact_rule
+    assert "font-size: var(--font-size-3);" in compact_rule
+    assert "line-height: 1;" in compact_rule
+    assert "min-height: var(--control-form-height);" in select_rule
+    assert "min-height: var(--control-form-height);" in source_rule
+    assert "min-height: var(--control-compact-height);" in status_rule
+    assert "width: 18px;" in icon_rule
+    assert "height: 18px;" in icon_rule
+
+    browser_template = (
+        STYLE_PATH.parents[1] / "templates/browser.html"
+    ).read_text(encoding="utf-8")
+    assert ".browser-filter-actions .ghost-link--compact {" in stylesheet
+    assert ".browser-filter-actions .secondary-button {" in stylesheet
+    media_start = stylesheet.index(".browser-chatgpt-media-link {")
+    media_rule = stylesheet[media_start:stylesheet.index("\n}", media_start)]
+    assert "width: fit-content;" in media_rule
+    assert "justify-self: center;" in media_rule
+    assert "width: 100%;" not in media_rule
+    for markup in (
+        'class="ghost-link ghost-link--compact browser-chatgpt-media-link"',
+        'class="ghost-link ghost-link--compact browser-clear-link"',
+        'class="ghost-link ghost-link--compact browser-session-back-link"',
+    ):
+        assert markup in browser_template
+    assert 'class="secondary-button browser-refresh-button"' in browser_template
+
+    cache_template = (
+        STYLE_PATH.parents[1] / "templates/_cache_page.html"
+    ).read_text(encoding="utf-8")
+    assert 'class="ghost-link ghost-link--compact cache-settings-link"' in cache_template
+
+
+def test_browser_session_actions_use_the_13px_annotation_size() -> None:
+    """Keep the annotated Local resources actions on the shared text-size token."""
+    stylesheet = _stylesheet()
+    compact_start = stylesheet.index(".ghost-link--compact {")
+    compact_rule = stylesheet[compact_start:stylesheet.index("\n}", compact_start)]
+    media_start = stylesheet.index(".browser-chatgpt-media-link {")
+    media_rule = stylesheet[media_start:stylesheet.index("\n}", media_start)]
+    refresh_start = stylesheet.index(".browser-refresh-button {")
+    refresh_rule = stylesheet[refresh_start:stylesheet.index("\n}", refresh_start)]
+
+    assert "font-size: var(--font-size-3);" in compact_rule
+    assert "font-size: var(--font-size-3);" not in media_rule
+    assert "font-size: var(--font-size-3);" in refresh_rule
+
+
+def test_browser_filter_select_uses_the_standard_frosted_popover_contract() -> None:
+    """Keep Local resources select menus on the shared 10px frosted surface."""
+    stylesheet = _stylesheet()
+    dropdown_start = stylesheet.index(".trade-strategy-dropdown {")
+    dropdown_rule = stylesheet[dropdown_start:stylesheet.index("\n}", dropdown_start)]
+    select_shell_start = stylesheet.index(".browser-filter-select {")
+    select_shell_rule = stylesheet[select_shell_start:stylesheet.index("\n}", select_shell_start)]
+    open_rule_start = stylesheet.index(".browser-filter-select.is-open .browser-filter-select-dropdown {")
+    open_rule = stylesheet[open_rule_start:stylesheet.index("\n}", open_rule_start)]
+
+    for token in (
+        "border-radius: var(--radius-soft);",
+        "background: var(--glass-popover-background);",
+        "box-shadow: var(--glass-popover-shadow),",
+        "backdrop-filter: var(--glass-popover-blur);",
+        "-webkit-backdrop-filter: var(--glass-popover-blur);",
+    ):
+        assert token in dropdown_rule
+    assert "position: relative;" in select_shell_rule
+    assert "z-index: var(--layer-global-popover);" in stylesheet
+    assert "display: grid;" in open_rule
+
+
 def test_browser_grid_filename_wraps_without_hiding_its_extension() -> None:
     """Allow grid filenames to wrap fully while keeping list rows compact."""
     stylesheet = _stylesheet()
@@ -701,10 +855,38 @@ def test_chatgpt_session_metrics_put_the_session_name_on_its_own_row() -> None:
         "grid-template-columns: repeat(2, minmax(0, 1fr));",
         ".browser-session-name-metric {",
         "grid-column: 1 / -1;",
+        "border-radius: 0;",
         ".browser-session-controls-row {",
         "justify-content: flex-end;",
     ):
         assert token in stylesheet
+
+    session_name_start = stylesheet.index(".browser-metric-grid .browser-session-name-metric strong {")
+    session_name_rule = stylesheet[session_name_start:stylesheet.index("\n}", session_name_start)]
+    assert "background: none;" in session_name_rule
+    assert "color: var(--accent-text);" in session_name_rule
+
+
+def test_browser_media_primary_metric_and_prompt_copy_use_shared_sizes() -> None:
+    """Keep media totals and inline prompt copy on the shared type scale."""
+    stylesheet = _stylesheet()
+
+    metric_start = stylesheet.index(".browser-media-primary-metric strong {")
+    metric_rule = stylesheet[metric_start:stylesheet.index("\n}", metric_start)]
+    prompt_start = stylesheet.index(".browser-media-prompt-preview {")
+    prompt_rule = stylesheet[prompt_start:stylesheet.index("\n}", prompt_start)]
+
+    assert "font-size: var(--font-metric-lg);" in metric_rule
+    assert "font-size: var(--font-ui-sm);" in prompt_rule
+
+
+def test_browser_media_preview_kind_uses_regular_weight() -> None:
+    """Keep Image and Video preview labels on the regular UI weight."""
+    stylesheet = _stylesheet()
+    kind_start = stylesheet.index(".browser-preview-kind {")
+    kind_rule = stylesheet[kind_start:stylesheet.index("\n}", kind_start)]
+
+    assert "font-weight: var(--font-weight-regular);" in kind_rule
 
 
 def test_browser_pagination_matches_the_sibling_floating_control_states() -> None:
@@ -854,6 +1036,10 @@ def test_browser_pagination_range_menu_respects_clipping_ancestors() -> None:
 def test_segmented_control_uses_the_sibling_generic_pill_contract() -> None:
     """Keep Cache content modes on the sibling project's generic control contract."""
     stylesheet = _stylesheet()
+    option_start = stylesheet.index(".segmented-control-option span {")
+    option_rule = stylesheet[option_start:stylesheet.index("\n}", option_start)]
+    selected_start = stylesheet.index(".segmented-control-option input:checked + span,")
+    selected_rule = stylesheet[selected_start:stylesheet.index("\n}", selected_start)]
 
     for token in (
         ".segmented-control {",
@@ -861,10 +1047,13 @@ def test_segmented_control_uses_the_sibling_generic_pill_contract() -> None:
         "grid-template-columns: repeat(var(--segmented-option-count), minmax(var(--segmented-option-min-width), 1fr));",
         "--mode-switch-radius: var(--radius-pill);",
         "--mode-switch-gap: 4px;",
+        "border: 0;",
         ".segmented-control[data-option-count]::before {",
         "transform: translateX(calc((100% + var(--mode-switch-gap)) * var(--segmented-active-index, 0)));",
         ".segmented-control-option {",
+        "text-decoration: none;",
         ".segmented-control-option input:checked + span,",
+        "font-weight: var(--font-weight-regular);",
         "font-weight: var(--font-weight-bold);",
         "color: var(--accent-contrast);",
         ".browser-chat-list {",
@@ -901,6 +1090,152 @@ def test_segmented_control_uses_the_sibling_generic_pill_contract() -> None:
         ".browser-session-table-updated-link {",
     ):
         assert token in stylesheet
+
+    assert "font-weight: var(--font-weight-regular);" in option_rule
+    assert "font-weight: var(--font-weight-bold);" not in option_rule
+    assert "font-weight: var(--font-weight-bold);" in selected_rule
+
+
+def test_browser_session_title_reuses_regular_untagged_link_contract() -> None:
+    """Keep cached session titles readable without browser-default underlines."""
+    stylesheet = _stylesheet()
+    title_start = stylesheet.index(".browser-session-table-title,")
+    title_rule = stylesheet[title_start:stylesheet.index("\n}", title_start)]
+
+    for token in (
+        "font-size: var(--font-ui-lg);",
+        "font-weight: var(--font-weight-regular);",
+        "text-decoration: none;",
+    ):
+        assert token in title_rule
+
+
+def test_browser_session_updated_link_reuses_untagged_link_contract() -> None:
+    """Keep updated timestamps readable without browser-default underlines."""
+    stylesheet = _stylesheet()
+    updated_start = stylesheet.index(".browser-session-table-updated-link {")
+    updated_rule = stylesheet[updated_start:stylesheet.index("\n}", updated_start)]
+
+    assert "text-decoration: none;" in updated_rule
+
+
+def test_browser_session_counts_reuse_regular_weight_and_roomy_cell_padding() -> None:
+    """Keep session message counts legible and separated from adjacent columns."""
+    stylesheet = _stylesheet()
+    count_start = stylesheet.index(".events-table tbody td.browser-session-table-count {")
+    count_rule = stylesheet[count_start:stylesheet.index("\n}", count_start)]
+
+    for token in (
+        "font-weight: var(--font-weight-regular);",
+        "padding-inline: 10px;",
+    ):
+        assert token in count_rule
+
+
+def test_cache_overview_aligns_to_sidebar_height_on_desktop() -> None:
+    """Keep the Cache overview edge aligned while the event log remains scrollable."""
+    stylesheet = _stylesheet()
+
+    for token in (
+        "@media (min-width: 901px)",
+        "main[data-cache-page] #workspace_panel > .workspace-header {",
+        "overflow-y: auto;",
+        "main[data-cache-page] #workspace_panel > .workspace-header > #overview {",
+        "flex: 0 0 100%;",
+        "main[data-cache-page] #workspace_panel > .workspace-header > .workspace-grid {",
+        "height: auto;",
+    ):
+        assert token in stylesheet
+
+
+def test_browser_prompt_source_header_is_centered() -> None:
+    """Keep the saved-prompts Source header aligned with its centered marks."""
+    stylesheet = _stylesheet()
+    rule_start = stylesheet.index(".browser-prompt-table .browser-prompt-col-source {")
+    rule = stylesheet[rule_start:stylesheet.index("\n}", rule_start)]
+
+    assert "text-align: center;" in rule
+
+
+def test_browser_prompts_primary_metric_uses_light_large_blue_value_type() -> None:
+    """Keep the Saved prompts total on the lightweight large blue metric style."""
+    stylesheet = _stylesheet()
+    metric_start = stylesheet.index(".browser-prompts-primary-metric strong {")
+    metric_rule = stylesheet[metric_start:stylesheet.index("\n}", metric_start)]
+
+    assert "font-size: var(--font-metric-lg);" in metric_rule
+    assert "font-weight: 300;" in metric_rule
+    assert "text-align: center;" in metric_rule
+    assert "background: none;" in metric_rule
+    assert "-webkit-background-clip: initial;" in metric_rule
+    assert "background-clip: initial;" in metric_rule
+    assert "color: var(--accent-text);" in metric_rule
+    assert "linear-gradient" not in metric_rule
+
+    card_start = stylesheet.index(".browser-prompts-primary-metric {")
+    card_rule = stylesheet[card_start:stylesheet.index("\n}", card_start)]
+    assert "width: 192px;" in card_rule
+    assert "border-radius: 0;" in card_rule
+
+
+def test_metric_labels_use_the_shared_regular_weight_token() -> None:
+    """Keep all Local resources metric labels on the 400-weight baseline."""
+    stylesheet = _stylesheet()
+    label_start = stylesheet.index(".metric-label {")
+    label_rule = stylesheet[label_start:stylesheet.index("\n}", label_start)]
+
+    assert "font-weight: var(--font-weight-regular);" in label_rule
+    assert "font-size: var(--font-ui-md);" in label_rule
+    assert "font-weight: var(--font-weight-semibold);" not in label_rule
+
+
+def test_browser_prompt_table_reallocates_space_after_saved_column_removal() -> None:
+    """Keep the remaining saved-prompts columns sized without a dead gap."""
+    stylesheet = _stylesheet()
+
+    assert ".browser-prompt-table .browser-prompt-col-added {" not in stylesheet
+    content_start = stylesheet.index(".browser-prompt-table .browser-prompt-col-content {")
+    content_rule = stylesheet[content_start:stylesheet.index("\n}", content_start)]
+    source_start = stylesheet.index(".browser-prompt-table .browser-prompt-col-source {")
+    source_rule = stylesheet[source_start:stylesheet.index("\n}", source_start)]
+    remarks_start = stylesheet.index(".browser-prompt-table .browser-prompt-col-remarks {")
+    remarks_rule = stylesheet[remarks_start:stylesheet.index("\n}", remarks_start)]
+
+    assert "width: 50%;" in content_rule
+    assert "width: 10%;" in source_rule
+    assert "width: 33%;" in remarks_rule
+
+
+def test_browser_prompt_copy_action_is_hidden_until_prompt_hover_or_focus() -> None:
+    """Keep prompt copying discoverable without occupying the prompt content."""
+    stylesheet = _stylesheet()
+
+    copy_start = stylesheet.index(".browser-prompt-table-prompt-cell .browser-prompt-copy-button {")
+    copy_rule = stylesheet[copy_start:stylesheet.index("\n}", copy_start)]
+    assert "position: absolute;" in copy_rule
+    assert "opacity: 0;" in copy_rule
+    assert "pointer-events: none;" in copy_rule
+    assert ".browser-prompt-table tbody tr:hover .browser-prompt-copy-button" in stylesheet
+    assert ".browser-prompt-table-prompt-cell:focus-within .browser-prompt-copy-button" in stylesheet
+
+
+def test_browser_prompt_remarks_use_pill_tags_and_stored_controls() -> None:
+    """Keep saved prompt remarks compact, removable, and keyboard reachable."""
+    stylesheet = _stylesheet()
+
+    tag_start = stylesheet.index(".browser-prompt-tag {")
+    tag_rule = stylesheet[tag_start:stylesheet.index("\n}", tag_start)]
+    assert "border-radius: var(--radius-pill);" in tag_rule
+    assert ".browser-prompt-remark-editor input {" in stylesheet
+    assert ".browser-prompt-remark-add {" not in stylesheet
+    assert ".browser-prompt-remark-add:focus-visible" not in stylesheet
+    input_start = stylesheet.index(".browser-prompt-remark-editor input {")
+    input_rule = stylesheet[input_start:stylesheet.index("\n}", input_start)]
+    assert "min-height: 32px;" in input_rule
+    assert "height: 32px;" in input_rule
+    assert "border: 0;" in input_rule
+    assert "border-radius: var(--radius-pill);" in input_rule
+    assert "font-size: var(--font-size-3);" in input_rule
 
 
 def test_browser_session_messages_wrap_rich_content_inside_fixed_cells() -> None:
@@ -985,15 +1320,44 @@ def test_browser_workspace_prefers_simplified_chinese_font_fallbacks() -> None:
     assert cjk_token.index('"Microsoft YaHei"') < cjk_token.index('"Noto Sans CJK SC"')
 
 
-def test_browser_summary_card_aligns_pagination_with_the_sidebar_dock() -> None:
-    """Let the session table consume the space above the shared bottom dock."""
+def test_browser_workspace_reuses_the_shared_title_rail_and_content_card() -> None:
+    """Keep Local resources on the same title-rail/content-card workspace contract."""
     stylesheet = _stylesheet()
     summary_start = stylesheet.index(".browser-summary-card {")
     summary_rule = stylesheet[summary_start:stylesheet.index("\n}", summary_start)]
+    content_start = stylesheet.index(".browser-content-card {")
+    content_rule = stylesheet[content_start:stylesheet.index("\n}", content_start)]
+    text_card_start = stylesheet.index(".browser-text-summary-card {")
+    text_card_rule = stylesheet[text_card_start:stylesheet.index("\n}", text_card_start)]
 
-    assert "padding-bottom: var(--sidebar-dock-bottom-gap);" in summary_rule
+    assert "display: flex;" in summary_rule
+    assert "flex: 0 0 auto;" in summary_rule
+    assert "min-height: calc(var(--workspace-title-rail-control-height) + var(--workspace-article-pad-block-start));" in summary_rule
+    assert "padding: var(--workspace-article-pad-block-start) var(--workspace-article-pad-inline) 0;" in summary_rule
+    assert "display: flex;" in content_rule
+    assert "flex: 1 1 0;" in content_rule
+    assert "padding: 0 var(--workspace-article-pad-inline) var(--sidebar-dock-bottom-gap);" in content_rule
+    assert "overflow: visible;" in text_card_rule
+    assert ".workspace > .workspace-header:first-child > .browser-summary-card {" in stylesheet
+    assert "html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-child > .workspace-summary-card:first-child {" in stylesheet
+    assert "padding-inline-start: var(--workspace-title-rail-collapsed-pad-inline-start);" in stylesheet
+    assert ".browser-workspace-header {" in stylesheet
+    assert "grid-template-rows: auto minmax(0, 1fr);" in stylesheet
     assert ".browser-text-summary-card .browser-session-table-shell {" in stylesheet
     assert ".browser-text-summary-card .browser-session-table-scroll {" in stylesheet
+
+
+def test_global_quick_actions_reuse_the_sibling_shell_positioning_contract() -> None:
+    """Keep the theme action on the same top/right contract as the sibling shell."""
+    stylesheet = _stylesheet()
+    token_start = stylesheet.index("--global-quick-actions-right:")
+    token_line = stylesheet[token_start:stylesheet.index("\n", token_start)]
+    action_start = stylesheet.index(".global-quick-actions {")
+    action_rule = stylesheet[action_start:stylesheet.index("\n}", action_start)]
+
+    assert token_line == "--global-quick-actions-right: max(calc(var(--page-edge-pad) * 2), calc(((100vw - 1560px) / 2) + (var(--page-edge-pad) * 2)));"
+    assert "top: calc(var(--page-edge-pad) + var(--sidebar-toggle-top));" in action_rule
+    assert "right: var(--global-quick-actions-right);" in action_rule
 
 
 def test_browser_picker_arrow_matches_the_shared_select_arrow() -> None:
@@ -1009,19 +1373,49 @@ def test_browser_picker_arrow_matches_the_shared_select_arrow() -> None:
         "background-repeat: no-repeat;",
         "background-position: center;",
         "background-size: 12px 8px;",
-        "fill='currentColor'",
     ):
         assert token in arrow_rule
 
+    select_start = stylesheet.index(".browser-filter-form select.form-select {")
+    select_rule = stylesheet[select_start:stylesheet.index("\n}", select_start)]
+    for token in (
+        "appearance: none;",
+        "-webkit-appearance: none;",
+        "padding-inline-end: 34px;",
+        "background-image: var(--browser-picker-chevron-image);",
+        "background-position: right 10px center;",
+        "background-size: 12px 8px;",
+    ):
+        assert token in select_rule
+
+    assert "fill='currentColor'" in stylesheet
     assert 'content: "\\25BE";' not in stylesheet
 
+
+def test_browser_content_mode_reuses_the_sibling_optimistic_navigation_skeleton() -> None:
+    """Keep content-mode navigation on the sibling's skeleton and motion contract."""
+    stylesheet = _stylesheet()
+
+    for token in (
+        ".navigation-skeleton-root {",
+        ".navigation-skeleton-card,",
+        ".navigation-skeleton-line {",
+        "animation: browser-navigation-skeleton-sheen 1.15s var(--motion-shimmer) infinite;",
+        ".browser-navigation-skeleton-root {",
+        ".browser-navigation-skeleton-heading {",
+        ".browser-navigation-skeleton-metrics {",
+        ".browser-navigation-skeleton-results {",
+        "@keyframes browser-navigation-skeleton-sheen {",
+        "@media (prefers-reduced-motion: reduce) {",
+    ):
+        assert token in stylesheet
 
 def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     """Keep the fourth dock item and Agent workspace aligned with the shared shell."""
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.82.14-codex.1 */",
+        "/* Code version: v2.82.17-codex.47 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',

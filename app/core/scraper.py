@@ -1,6 +1,6 @@
 """Collect liked tweet URLs from the logged-in X account."""
 
-# Code version: v1.4.0-codex.1
+# Code version: v1.4.1-codex.1
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import json
 import logging
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
@@ -20,17 +19,12 @@ from .browser.x_session import X_READY_SELECTORS, detect_account_handle, extract
 from .browser_sessions import (
     browser_descriptors,
     detect_safari_x_account_handle,
-    escape_applescript_text,
     extract_x_account_from_source,
     fetch_safari_page_snapshot,
     launch_chromium_context,
 )
 from .config import CrawlConfig
-from .safari_automation import (
-    SAFARI_BACKGROUND_WINDOW_APPLESCRIPT,
-    SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT,
-    safari_window_creation_guard,
-)
+from .safari_automation import SafariContext
 from .state import TaskState
 
 try:
@@ -600,17 +594,17 @@ def collect_liked_tweet_urls_via_safari(
     rounds = max(1, int(config.max_scroll_rounds))
     pause_seconds = max(0.2, float(config.scroll_pause_seconds))
     collect_links_js = """
-(() => {
+() => {
     const hrefs = Array.from(document.querySelectorAll('a[href*="/status/"], a[href*="/i/status/"]'))
         .map((element) => element.href)
         .filter(Boolean);
     const merged = Array.from(new Set([...(window.__cachelikesSeenLinks || []), ...hrefs]));
     window.__cachelikesSeenLinks = merged;
     return JSON.stringify(merged);
-})()
+}
 """.strip()
     scroll_js = """
-(() => {
+() => {
     window.scrollBy(0, Math.max(window.innerHeight, 6000));
     const scrollables = Array.from(document.querySelectorAll('*')).filter(
         (element) => element.scrollHeight > element.clientHeight + 24
@@ -619,45 +613,21 @@ def collect_liked_tweet_urls_via_safari(
         element.scrollBy(0, Math.max(element.clientHeight, 4000));
     });
     return String(window.__cachelikesSeenLinks ? window.__cachelikesSeenLinks.length : 0);
-})()
+}
 """.strip()
-    applescript = f"""
-tell application "Safari"
-    launch
-    {SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
-    make new document
-    set targetWindow to front window
-    set windowId to id of targetWindow
-    {SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
-    set URL of current tab of targetWindow to "{escape_applescript_text(likes_url)}"
-    delay 8
-    set linksJson to "[]"
-    repeat with roundIndex from 1 to {rounds}
-        set targetWindow to first window whose id is windowId
-        set linksJson to do JavaScript "{escape_applescript_text(collect_links_js)}" in current tab of targetWindow
-        do JavaScript "{escape_applescript_text(scroll_js)}" in current tab of targetWindow
-        delay {pause_seconds}
-    end repeat
-    set targetWindow to first window whose id is windowId
-    set finalUrl to URL of current tab of targetWindow
-    close targetWindow
-    return finalUrl & linefeed & linksJson
-end tell
-"""
-    state.append_event(f"Launching an offscreen Safari window for X likes collection at {likes_url}.")
-    with safari_window_creation_guard():
-        process = subprocess.run(
-            ["osascript"],
-            input=applescript,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    if process.returncode != 0:
-        stderr = (process.stderr or process.stdout or "").strip()
-        raise RuntimeError(stderr or "Safari likes collection failed.")
+    state.append_event(f"Launching a background Safari window for X likes collection at {likes_url}.")
+    with SafariContext(likes_url) as context:
+        page = context.primary_page
+        page.wait_for_timeout(8_000)
+        raw_links_json = "[]"
+        for _round_index in range(rounds):
+            links_json = page.evaluate(collect_links_js)
+            if isinstance(links_json, str):
+                raw_links_json = links_json
+            page.evaluate(scroll_js)
+            page.wait_for_timeout(int(pause_seconds * 1_000))
+        final_url = page.url
 
-    final_url, _separator, raw_links_json = process.stdout.partition("\n")
     discovered_links = []
     with contextlib.suppress(json.JSONDecodeError):
         payload = json.loads(raw_links_json.strip() or "[]")

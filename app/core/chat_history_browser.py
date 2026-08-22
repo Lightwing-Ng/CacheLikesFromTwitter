@@ -1,13 +1,13 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.9.0-codex.1
+# Code version: v1.10.0-codex.1
 
 from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
 from .local_media_browser import LocalMediaItem, LocalMediaPaginationItem, build_local_store_pagination
@@ -46,6 +46,9 @@ class ChatHistoryMediaReference:
     stable_id: str
     label: str
     href: str
+    media_url: str
+    media_kind: str
+    alt_text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -529,9 +532,10 @@ def build_chat_history_markdown(page: ChatHistoryPage, *, message_count: int | N
 def attach_media_references(
     page: ChatHistoryPage,
     media_items: Iterable[LocalMediaItem],
-    media_href_factory,
+    media_href_factory: Callable[[str], str],
+    media_url_factory: Callable[[LocalMediaItem], str],
 ) -> ChatHistoryPage:
-    """Attach lightweight browser pointers to related media without copying files."""
+    """Attach browser pointers and local preview URLs without copying files."""
     media_by_link: dict[str, list[LocalMediaItem]] = {}
     for item in media_items:
         for link in (item.source_url, item.resource_key):
@@ -549,6 +553,9 @@ def attach_media_references(
                 stable_id=item.stable_id,
                 label=item.filename,
                 href=media_href_factory(item.stable_id),
+                media_url=media_url_factory(item),
+                media_kind=item.media_kind,
+                alt_text=item.alt_text or item.title or item.filename or "Cached media",
             )
             for item in related.values()
         )

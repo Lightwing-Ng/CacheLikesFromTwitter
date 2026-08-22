@@ -1,4 +1,4 @@
-{# Code version: v1.14.9-codex.1 #}
+{# Code version: v1.17.0-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.14-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.47') }}">
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -17,7 +17,7 @@
     <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.8.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.7.7-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.8.0-codex.1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -190,7 +190,7 @@
                 </form>
                 {% if cache_source.show_shared_settings_link %}
                 <a
-                    class="ghost-link cache-settings-link"
+                    class="ghost-link ghost-link--compact cache-settings-link"
                     href="{{ url_for('settings') }}#settings-downloads"
                 >Open shared cache settings</a>
                 {% endif %}
@@ -289,7 +289,18 @@
                                         spellcheck="false"
                                         autocomplete="off"
                                     >
+                                    <button
+                                        type="button"
+                                        class="secondary-button settings-directory-choose-button output-directory-open-button"
+                                        data-output-directory-open
+                                        aria-describedby="output_dir_status"
+                                        aria-label="Open output directory in {{ file_manager_label }}"
+                                        title="Open output directory in {{ file_manager_label }}"
+                                    >
+                                        <span class="icon settings-directory-choose-icon" aria-hidden="true"></span>
+                                    </button>
                                 </span>
+                                <span class="settings-directory-status output-directory-status" id="output_dir_status" data-output-directory-status aria-live="polite" hidden></span>
                             </dd>
                         </div>
                         <div class="summary-row">

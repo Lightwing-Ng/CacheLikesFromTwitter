@@ -1,6 +1,6 @@
 """Minimal Safari automation primitives backed by Apple Events."""
 
-# Code version: v2.1.1-codex.1
+# Code version: v2.2.0-codex.1
 
 from __future__ import annotations
 
@@ -36,6 +36,12 @@ SAFARI_WINDOW_CREATION_LOCK = RLock()
 SAFARI_WINDOW_CREATION_LOCK_PATH = Path(tempfile.gettempdir()) / "cachelikes-safari-window-creation.lock"
 SAFARI_CONTEXT_LOCK_PATH = Path(tempfile.gettempdir()) / "cachelikes-safari-context.lock"
 SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT = """
+set previousFrontmostProcessName to ""
+tell application "System Events"
+    try
+        set previousFrontmostProcessName to name of first application process whose frontmost is true
+    end try
+end tell
 set previousWindowId to 0
 set previousWindowWasVisible to false
 set previousWindowWasMiniaturized to false
@@ -62,6 +68,13 @@ if previousWindowId is not 0 and previousWindowWasVisible and not previousWindow
     try
         set index of (first window whose id is previousWindowId) to 1
     end try
+end if
+if previousFrontmostProcessName is not "" and previousFrontmostProcessName is not "Safari" then
+    tell application "System Events"
+        try
+            set frontmost of process previousFrontmostProcessName to true
+        end try
+    end tell
 end if
 """.strip()
 SAFARI_BACKGROUND_WINDOW_APPLESCRIPT = (
@@ -611,6 +624,13 @@ return pageUrlValue & linefeed & pageStateValue
         """Return the current document title."""
         return str(self.evaluate("() => document.title"))
 
+    def content(self, limit: int | None = None) -> str:
+        """Return the current tab's rendered source, optionally clipped in Python."""
+        source = self._run_in_window("return source of current tab of targetWindow")
+        if limit is None:
+            return source
+        return source[: max(0, int(limit))]
+
     def locator(self, selector: str) -> SafariLocator:
         """Return a minimal locator bound to this page."""
         return SafariLocator(self, selector)
@@ -652,16 +672,8 @@ return pageUrlValue & linefeed & pageStateValue
         """Keep a standard Safari window rendered without replacing the front window."""
         self._run_in_window(
             f"""
-set previousWindowId to 0
-try
-    set previousWindowId to id of front window
-end try
-{SAFARI_KEEP_WINDOW_AVAILABLE_APPLESCRIPT}
-if previousWindowId is not 0 and previousWindowId is not id of targetWindow then
-    try
-        set index of (first window whose id is previousWindowId) to 1
-    end try
-end if
+{SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
+{SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
 """.strip()
         )
         self._rendering_active = True
@@ -677,6 +689,7 @@ end if
     def close(self) -> None:
         """Close the Safari window owned by this page."""
         if self._closed:
+            self._context._forget_page(self)
             return
         with safari_window_creation_guard():
             last_error = self._close_owned_window()
@@ -698,26 +711,27 @@ end if
             try:
                 close_state = self._run_in_window(
                     f"""
-set previousWindowId to 0
-try
-    set previousWindowId to id of front window
-end try
+{SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
 set index of targetWindow to 1
-tell application "System Events"
-    tell process "Safari"
-        click button 1 of front window
+try
+    tell application "System Events"
+        tell process "Safari"
+            click button 1 of front window
+        end tell
     end tell
-end tell
+on error errorMessage number errorNumber
+    {SAFARI_RESTORE_FRONT_WINDOW_APPLESCRIPT}
+    error errorMessage number errorNumber
+end try
 repeat with closePollIndex from 1 to 20
     if not (exists (first window whose id is {self.window_id})) then exit repeat
     delay 0.1
 end repeat
-if exists (first window whose id is {self.window_id}) then return "still-open"
-if previousWindowId is not 0 then
-    try
-        set index of (first window whose id is previousWindowId) to 1
-    end try
+if exists (first window whose id is {self.window_id}) then
+    {SAFARI_RESTORE_FRONT_WINDOW_APPLESCRIPT}
+    return "still-open"
 end if
+{SAFARI_RESTORE_FRONT_WINDOW_APPLESCRIPT}
 return "closed"
 """.strip(),
                     recover_missing=False,
@@ -957,7 +971,15 @@ class SafariContext:
         return self
 
     def __exit__(self, exc_type, exc, traceback) -> bool:
-        self.close()
+        try:
+            self.close()
+        except Exception as cleanup_error:
+            if exc_type is None:
+                raise
+            logger.error(
+                "Safari housekeeping failed while another error was already unwinding: %s",
+                cleanup_error,
+            )
         return False
 
     def new_page(self) -> SafariPage:
@@ -998,11 +1020,19 @@ class SafariContext:
     def housekeep(self) -> int:
         """Close every tracked Safari window and return the number released."""
         closed_count = 0
+        cleanup_errors: list[BaseException] = []
         for page in list(reversed(self.pages)):
             was_tracked = page in self.pages
-            page.close()
+            try:
+                page.close()
+            except Exception as exc:
+                cleanup_errors.append(exc)
             if was_tracked and page not in self.pages:
                 closed_count += 1
+        if cleanup_errors:
+            raise RuntimeError(
+                f"Safari housekeeping failed for {len(cleanup_errors)} window(s)."
+            ) from cleanup_errors[0]
         return closed_count
 
     def _create_page(self, url: str) -> SafariPage:
@@ -1014,40 +1044,55 @@ class SafariContext:
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=60_000)
         except Exception:
-            page.close()
+            with contextlib.suppress(Exception):
+                page.close()
             raise
         return page
 
     def _create_window(self, url: str) -> str:
         source = f"""
 tell application "Safari"
-    launch
-    {SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
-    set existingWindowIds to id of every window
-    set emptyWindowIds to {{}}
-    repeat with candidateWindow in every window
-        if (count of tabs of candidateWindow) is 0 then set end of emptyWindowIds to id of candidateWindow
-    end repeat
-    make new document
     set targetWindow to missing value
-    repeat with candidateWindow in every window
-        if existingWindowIds does not contain (id of candidateWindow) then
-            set targetWindow to candidateWindow
-            exit repeat
-        end if
-    end repeat
-    if targetWindow is missing value then
+    set previousFrontmostProcessName to ""
+    set previousWindowId to 0
+    set previousWindowWasVisible to false
+    set previousWindowWasMiniaturized to false
+    {SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
+    try
+        launch
+        set existingWindowIds to id of every window
+        set emptyWindowIds to {{}}
         repeat with candidateWindow in every window
-            if emptyWindowIds contains (id of candidateWindow) and (count of tabs of candidateWindow) > 0 then
+            if (count of tabs of candidateWindow) is 0 then set end of emptyWindowIds to id of candidateWindow
+        end repeat
+        make new document
+        repeat with candidateWindow in every window
+            if existingWindowIds does not contain (id of candidateWindow) then
                 set targetWindow to candidateWindow
                 exit repeat
             end if
         end repeat
-    end if
-    if targetWindow is missing value then error "Safari did not create an owned window." number -1719
-    set URL of current tab of targetWindow to "{escape_applescript_text(url)}"
-    {SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
-    return id of targetWindow
+        if targetWindow is missing value then
+            repeat with candidateWindow in every window
+                if emptyWindowIds contains (id of candidateWindow) and (count of tabs of candidateWindow) > 0 then
+                    set targetWindow to candidateWindow
+                    exit repeat
+                end if
+            end repeat
+        end if
+        if targetWindow is missing value then error "Safari did not create an owned window." number -1719
+        set URL of current tab of targetWindow to "{escape_applescript_text(url)}"
+        {SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
+        return id of targetWindow
+    on error errorMessage number errorNumber
+        if targetWindow is not missing value then
+            try
+                close targetWindow
+            end try
+        end if
+        {SAFARI_RESTORE_FRONT_WINDOW_APPLESCRIPT}
+        error errorMessage number errorNumber
+    end try
 end tell
 """
         with safari_window_creation_guard():

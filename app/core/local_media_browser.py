@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.20.0-codex.1
+# Code version: v1.21.0-codex.1
 
 from __future__ import annotations
 
@@ -262,8 +262,27 @@ def file_manager_reveal_command(
     return ["xdg-open", str(resolved_path.parent)]
 
 
-def reveal_media_path(media_path: Path | str) -> None:
-    """Open a trusted media path in the host operating system's file manager."""
+def file_manager_open_directory_command(
+    directory_path: Path | str,
+    *,
+    platform_name: str | None = None,
+    os_name: str | None = None,
+) -> list[str]:
+    """Build the platform-native command that opens one trusted directory."""
+    resolved_path = Path(directory_path).expanduser().resolve(strict=True)
+    if not resolved_path.is_dir():
+        raise NotADirectoryError(str(resolved_path))
+    resolved_platform = sys.platform if platform_name is None else platform_name
+    resolved_os_name = os.name if os_name is None else os_name
+    if resolved_platform == "darwin":
+        return ["open", str(resolved_path)]
+    if resolved_os_name == "nt":
+        return ["explorer.exe", str(resolved_path)]
+    return ["xdg-open", str(resolved_path)]
+
+
+def _launch_file_manager(command: list[str]) -> None:
+    """Launch a native file-manager command without binding it to the web process."""
     process_options: dict[str, object] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
@@ -279,10 +298,17 @@ def reveal_media_path(media_path: Path | str) -> None:
             process_options["creationflags"] = creation_flags
     else:
         process_options["start_new_session"] = True
-    subprocess.Popen(
-        file_manager_reveal_command(media_path),
-        **process_options,
-    )
+    subprocess.Popen(command, **process_options)
+
+
+def reveal_media_path(media_path: Path | str) -> None:
+    """Open a trusted media path in the host operating system's file manager."""
+    _launch_file_manager(file_manager_reveal_command(media_path))
+
+
+def open_directory_path(directory_path: Path | str) -> None:
+    """Open a trusted local directory in the host operating system's file manager."""
+    _launch_file_manager(file_manager_open_directory_command(directory_path))
 
 
 DELETED_MEDIA_DIRNAME = ".browser-trash"

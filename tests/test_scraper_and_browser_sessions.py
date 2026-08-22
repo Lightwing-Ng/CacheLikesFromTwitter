@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.3-codex.1
+Code version: v1.6.4-codex.1
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ import os
 import time
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -370,49 +370,55 @@ def test_clone_browser_profile_reports_macos_profile_permission_error(
 
 
 def test_safari_profile_link_detection_uses_the_rendered_navigation() -> None:
-    process = SimpleNamespace(returncode=0, stdout="demo_user\n")
+    page = MagicMock()
+    page.evaluate.return_value = "demo_user"
+    context = MagicMock()
+    context.primary_page = page
+    context.__enter__.return_value = context
 
-    with patch("app.core.browser_sessions.subprocess.run", return_value=process) as run:
+    with patch("app.core.browser_sessions.SafariContext", return_value=context) as safari_context:
         assert detect_safari_x_account_handle(wait_seconds=1) == "demo_user"
 
-    assert "AppTabBar_Profile_Link" in run.call_args.kwargs["input"]
-    assert "current tab of targetWindow" in run.call_args.kwargs["input"]
-    assert "set miniaturized of targetWindow to false" in run.call_args.kwargs["input"]
-    assert "set visible of targetWindow to true" in run.call_args.kwargs["input"]
-    assert "set bounds of targetWindow" not in run.call_args.kwargs["input"]
+    safari_context.assert_called_once_with("https://x.com/home")
+    page.wait_for_timeout.assert_called_once_with(1_000)
+    page.evaluate.assert_called_once()
+    context.__exit__.assert_called_once()
 
 
 def test_safari_page_snapshot_uses_a_rendered_background_window() -> None:
-    process = SimpleNamespace(
-        returncode=0,
-        stdout="https://grok.com/files\n<html>Grok</html>",
-        stderr="",
-    )
+    page = MagicMock()
+    page.url = "https://grok.com/files"
+    page.content.return_value = "<html>Grok</html>"
+    context = MagicMock()
+    context.primary_page = page
+    context.__enter__.return_value = context
 
-    with patch("app.core.browser_sessions.subprocess.run", return_value=process) as run:
+    with patch("app.core.browser_sessions.SafariContext", return_value=context) as safari_context:
         snapshot = fetch_safari_page_snapshot("https://grok.com/files", wait_seconds=1)
 
-    script = run.call_args.kwargs["input"]
     assert snapshot == {"url": "https://grok.com/files", "source": "<html>Grok</html>"}
-    assert "set previousWindowId to 0" in script
-    assert "set miniaturized of targetWindow to false" in script
-    assert "set visible of targetWindow to true" in script
-    assert "set bounds of targetWindow" not in script
-    assert "set index of (first window whose id is previousWindowId) to 1" in script
+    safari_context.assert_called_once_with("https://grok.com/files")
+    page.wait_for_timeout.assert_called_once_with(1_000)
+    page.content.assert_called_once_with(limit=500_000)
+    context.__exit__.assert_called_once()
 
 
 def test_safari_likes_collection_uses_window_id_targeting() -> None:
-    process = SimpleNamespace(
-        returncode=0,
-        stdout=(
-            "https://x.com/demo_user/likes\n"
-            '["https://twitter.com/demo_user/status/123?ref=copy","https://x.com/demo_user/status/456"]'
-        ),
-    )
+    page = MagicMock()
+    page.evaluate.side_effect = [
+        '["https://twitter.com/demo_user/status/123?ref=copy"]',
+        "1",
+        '["https://twitter.com/demo_user/status/123?ref=copy","https://x.com/demo_user/status/456"]',
+        "2",
+    ]
+    page.url = "https://x.com/demo_user/likes"
+    context = MagicMock()
+    context.primary_page = page
+    context.__enter__.return_value = context
     config = CrawlConfig(x_browser="safari", max_scroll_rounds=2, scroll_pause_seconds=0.2)
     state = TaskState("test")
 
-    with patch("app.core.scraper.subprocess.run", return_value=process) as run:
+    with patch("app.core.scraper.SafariContext", return_value=context) as safari_context:
         urls = collect_liked_tweet_urls_via_safari(
             "demo_user",
             "https://x.com/demo_user/likes",
@@ -420,13 +426,10 @@ def test_safari_likes_collection_uses_window_id_targeting() -> None:
             state,
         )
 
-    script = run.call_args.kwargs["input"]
-    assert "set windowId to id of targetWindow" in script
-    assert "current tab of targetWindow" in script
-    assert "front document" not in script
-    assert "set miniaturized of targetWindow to false" in script
-    assert "set visible of targetWindow to true" in script
-    assert "set bounds of targetWindow" not in script
+    safari_context.assert_called_once_with("https://x.com/demo_user/likes")
+    assert page.wait_for_timeout.call_args_list[0].args == (8_000,)
+    assert page.evaluate.call_count == 4
+    context.__exit__.assert_called_once()
     assert urls == [
         "https://x.com/demo_user/status/123",
         "https://x.com/demo_user/status/456",

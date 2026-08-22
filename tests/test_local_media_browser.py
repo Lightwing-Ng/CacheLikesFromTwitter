@@ -19,12 +19,14 @@ from app.core.local_media_browser import (
     LocalMediaItem,
     build_local_store_pagination,
     file_manager_reveal_command,
+    file_manager_open_directory_command,
     format_captured_at_label,
     format_captured_at_timestamp_label,
     local_file_manager_label,
     paginate_chatgpt_sessions,
     paginate_media_items,
     reveal_media_path,
+    open_directory_path,
     resolve_local_media_path,
     sort_media_items,
     sort_media_items_absolute,
@@ -238,6 +240,33 @@ def test_file_manager_reveal_uses_platform_native_commands(tmp_path: Path, monke
         assert popen_calls[0][1]["creationflags"]
     else:
         assert popen_calls[0][1]["start_new_session"] is True
+
+
+def test_file_manager_open_directory_uses_platform_native_commands(tmp_path: Path, monkeypatch) -> None:
+    assert file_manager_open_directory_command(
+        tmp_path,
+        platform_name="darwin",
+        os_name="posix",
+    ) == ["open", str(tmp_path.resolve())]
+    assert file_manager_open_directory_command(
+        tmp_path,
+        platform_name="win32",
+        os_name="nt",
+    ) == ["explorer.exe", str(tmp_path.resolve())]
+    assert file_manager_open_directory_command(
+        tmp_path,
+        platform_name="linux",
+        os_name="posix",
+    ) == ["xdg-open", str(tmp_path.resolve())]
+
+    popen_calls = []
+    monkeypatch.setattr(
+        "app.core.local_media_browser.subprocess.Popen",
+        lambda command, **kwargs: popen_calls.append((command, kwargs)),
+    )
+    open_directory_path(tmp_path)
+
+    assert popen_calls[0][0] == file_manager_open_directory_command(tmp_path)
 
 
 def test_browser_deletion_catalog_normalizes_source_keys(tmp_path: Path) -> None:

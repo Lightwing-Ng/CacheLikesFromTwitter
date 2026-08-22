@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.18.0-codex.1
+# Code version: v1.18.1-codex.1
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ import json
 import logging
 import re
 import shutil
-import subprocess
 import tempfile
 import time
 from dataclasses import dataclass
@@ -18,12 +17,7 @@ from typing import Any
 
 from .browser.x_session import X_READY_SELECTORS, detect_account_handle
 from .config import CrawlConfig, default_edge_user_data_dir, is_macos_host, is_windows_host
-from .safari_automation import (
-    SAFARI_BACKGROUND_WINDOW_APPLESCRIPT,
-    SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT,
-    SafariContext,
-    safari_window_creation_guard,
-)
+from .safari_automation import SafariContext
 
 
 LOGGER = logging.getLogger(__name__)
@@ -898,7 +892,7 @@ def extract_x_account_from_source(source: str) -> str:
 def detect_safari_x_account_handle(wait_seconds: int = 10) -> str:
     """Read Safari's signed-in X profile link before falling back to page source."""
     extract_handle_js = """
-(() => {
+() => {
     const profileLinks = [
         document.querySelector('a[data-testid="AppTabBar_Profile_Link"]'),
         ...document.querySelectorAll('a[href$="/likes"], a[href*="/likes?"]'),
@@ -912,36 +906,14 @@ def detect_safari_x_account_handle(wait_seconds: int = 10) -> str:
         }
     }
     return '';
-})()
+}
 """.strip()
-    applescript = f"""
-tell application "Safari"
-    launch
-    {SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
-    make new document
-    set targetWindow to front window
-    set windowId to id of targetWindow
-    {SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
-    set URL of current tab of targetWindow to "{escape_applescript_text(X_HOME_URL)}"
-    delay {wait_seconds}
-    set targetWindow to first window whose id is windowId
-    set accountHandle to do JavaScript "{escape_applescript_text(extract_handle_js)}" in current tab of targetWindow
-    close targetWindow
-    return accountHandle
-end tell
-"""
-    with safari_window_creation_guard():
-        process = subprocess.run(
-            ["osascript"],
-            input=applescript,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    if process.returncode != 0:
-        return ""
+    with SafariContext(X_HOME_URL) as context:
+        page = context.primary_page
+        page.wait_for_timeout(max(0, int(wait_seconds)) * 1_000)
+        handle = page.evaluate(extract_handle_js)
 
-    handle = (process.stdout or "").strip().lstrip("@")
+    handle = str(handle or "").strip().lstrip("@")
     if re.fullmatch(r"[A-Za-z0-9_]{1,15}", handle) and handle.lower() not in {"home", "i", "settings"}:
         return handle
     return ""
@@ -949,45 +921,10 @@ end tell
 
 def fetch_safari_page_snapshot(url: str, wait_seconds: int = 8) -> dict[str, str]:
     """Open one URL in Safari, capture the page source, and close the temporary tab."""
-    applescript = f"""
-tell application "Safari"
-    launch
-    {SAFARI_CAPTURE_FRONT_WINDOW_APPLESCRIPT}
-    make new document
-    set targetWindow to front window
-    set windowId to id of targetWindow
-    {SAFARI_BACKGROUND_WINDOW_APPLESCRIPT}
-    set URL of current tab of targetWindow to "{escape_applescript_text(url)}"
-    delay {wait_seconds}
-    set targetWindow to first window whose id is windowId
-    set currentUrl to URL of current tab of targetWindow
-    set docSource to source of current tab of targetWindow
-    set sourceLength to length of docSource
-    if sourceLength > {SAFARI_APPLESCRIPT_SOURCE_LIMIT} then
-        set clippedSource to text 1 thru {SAFARI_APPLESCRIPT_SOURCE_LIMIT} of docSource
-    else
-        set clippedSource to docSource
-    end if
-    close targetWindow
-    return currentUrl & linefeed & clippedSource
-end tell
-"""
-    with safari_window_creation_guard():
-        process = subprocess.run(
-            ["osascript"],
-            input=applescript,
-            text=True,
-            capture_output=True,
-            check=False,
-        )
-    if process.returncode != 0:
-        stderr = (process.stderr or process.stdout or "").strip()
-        raise RuntimeError(stderr or "Safari session probe failed.")
-
-    current_url, _separator, source = process.stdout.partition("\n")
-    return {"url": current_url.strip(), "source": source}
-
-
-def escape_applescript_text(value: str) -> str:
-    """Escape a Python string for insertion into AppleScript string literals."""
-    return value.replace("\\", "\\\\").replace('"', '\\"')
+    with SafariContext(url) as context:
+        page = context.primary_page
+        page.wait_for_timeout(max(0, int(wait_seconds)) * 1_000)
+        return {
+            "url": page.url,
+            "source": page.content(limit=SAFARI_APPLESCRIPT_SOURCE_LIMIT),
+        }

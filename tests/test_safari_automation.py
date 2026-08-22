@@ -1,6 +1,6 @@
 """Unit tests for the Safari-backed browser automation surface."""
 
-# Code version: v2.1.1-codex.1
+# Code version: v2.2.0-codex.1
 
 from __future__ import annotations
 
@@ -260,7 +260,8 @@ def test_safari_page_can_remain_render_active_in_background_without_stealing_foc
     assert "set miniaturized of targetWindow to false" in script
     assert "set visible of targetWindow to true" in script
     assert "set bounds of targetWindow" not in script
-    assert "previousWindowId is not id of targetWindow" in script
+    assert "previousFrontmostProcessName" in script
+    assert "frontmost of process previousFrontmostProcessName" in script
     assert "set index of (first window whose id is previousWindowId) to 1" in script
 
 
@@ -403,6 +404,25 @@ def test_safari_context_housekeeping_closes_all_owned_windows() -> None:
     assert second_page._closed is True
 
 
+def test_safari_context_housekeeping_continues_after_one_close_failure() -> None:
+    context = SafariContext("https://grok.com/files")
+    first_page = SafariPage(context, window_id=123)
+    second_page = SafariPage(context, window_id=456)
+    context.pages.extend([first_page, second_page])
+
+    with patch.object(first_page, "_close_owned_window", return_value=RuntimeError("still-open")), patch.object(
+        second_page,
+        "_run_in_window",
+        return_value="closed",
+    ):
+        with pytest.raises(RuntimeError, match="housekeeping failed"):
+            context.housekeep()
+
+    assert context.pages == []
+    assert first_page._closed is True
+    assert second_page._closed is True
+
+
 def test_safari_context_creates_a_standard_visible_background_window() -> None:
     context = SafariContext("https://grok.com/files")
 
@@ -420,8 +440,10 @@ def test_safari_context_creates_a_standard_visible_background_window() -> None:
         timeout=60_000,
     )
     assert "set previousWindowId to 0" in script
+    assert "previousFrontmostProcessName" in script
     assert "set previousWindowWasVisible to visible of front window" in script
     assert "set previousWindowWasMiniaturized to miniaturized of front window" in script
+    assert script.index("set previousFrontmostProcessName") < script.index("launch")
     assert "existingWindowIds" in script
     assert "set targetWindow to candidateWindow" in script
     assert "emptyWindowIds" in script
@@ -436,6 +458,16 @@ def test_safari_context_creates_a_standard_visible_background_window() -> None:
     assert script.index("set URL of current tab of targetWindow") < script.index(
         "set miniaturized of targetWindow to false"
     )
+
+
+def test_safari_page_content_clips_source_after_reading_the_owned_tab() -> None:
+    context = SafariContext("https://grok.com/files")
+    page = SafariPage(context, window_id=123)
+
+    with patch.object(page, "_run_in_window", return_value="0123456789") as run:
+        assert page.content(limit=4) == "0123"
+
+    assert run.call_args.args[0] == "return source of current tab of targetWindow"
 
 
 def test_safari_page_navigation_retries_a_start_page_and_verifies_the_target_url() -> None:

@@ -1,6 +1,6 @@
 """Pointer-backed prompt bookmarks for the local resource browser."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.1.0-codex.1
 
 from __future__ import annotations
 
@@ -19,6 +19,9 @@ from .chat_history_browser import (
 from .local_media_browser import LocalMediaPaginationItem, build_local_store_pagination
 from .resource_persistence import (
     PROMPT_FILENAME,
+    PROMPT_REMARKS_FILENAME,
+    PROMPT_REMARKS_SCHEMA,
+    PROMPT_REMARKS_SCHEMA_VERSION,
     PROMPT_SCHEMA,
     PROMPT_SCHEMA_VERSION,
     read_parquet_rows,
@@ -28,6 +31,7 @@ from .resource_persistence import (
 
 PROMPT_STORE_DIRNAME = "prompt"
 PROMPT_PAGE_SIZE = 24
+PROMPT_REMARK_MAX_LENGTH = 48
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +48,7 @@ class SavedPrompt:
     content_text: str
     captured_at: str
     added_at: str
+    remarks: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,8 +111,10 @@ class PromptStore:
         self.local_store_root = Path(local_store_root).expanduser().resolve(strict=False)
         self.store_root = self.local_store_root / PROMPT_STORE_DIRNAME
         self.catalog_path = self.store_root / PROMPT_FILENAME
+        self.remarks_path = self.store_root / PROMPT_REMARKS_FILENAME
         self._lock = RLock()
         self._entries = self._load_entries()
+        self._remarks = self._load_remarks()
 
     def _load_entries(self) -> dict[str, dict[str, Any]]:
         entries: dict[str, dict[str, Any]] = {}
@@ -125,6 +132,52 @@ class PromptStore:
                 "added_at": str(row.get("added_at") or ""),
             }
         return entries
+
+    def _load_remarks(self) -> dict[str, list[str]]:
+        remarks: dict[str, list[str]] = {}
+        for row in read_parquet_rows(self.remarks_path) or []:
+            prompt_id = str(row.get("prompt_id") or "").strip()
+            remark = self._normalize_remark(row.get("remark"))
+            if not prompt_id or not remark:
+                continue
+            values = remarks.setdefault(prompt_id, [])
+            if remark.casefold() not in {value.casefold() for value in values}:
+                values.append(remark)
+        return remarks
+
+    @staticmethod
+    def _normalize_remark(value: object) -> str:
+        return " ".join(str(value or "").split())[:PROMPT_REMARK_MAX_LENGTH]
+
+    def remark_options(self) -> tuple[str, ...]:
+        """Return stored remarks for the shared prompt selector."""
+        with self._lock:
+            values = {
+                remark
+                for prompt_remarks in self._remarks.values()
+                for remark in prompt_remarks
+                if remark
+            }
+        return tuple(sorted(values, key=lambda value: (value.casefold(), value)))
+
+    def _find_entry_for_stable_id(self, stable_id: str) -> tuple[str, dict[str, Any]]:
+        normalized_id = str(stable_id or "").strip()
+        for pointer, entry in self._entries.items():
+            if _prompt_stable_id(pointer) == normalized_id:
+                return pointer, entry
+        raise LookupError("The saved prompt was not found.")
+
+    def _resolve_stable_id(self, stable_id: str) -> tuple[str, dict[str, Any], ChatHistoryMessage]:
+        pointer, entry = self._find_entry_for_stable_id(stable_id)
+        message = find_chat_history_message(
+            self.local_store_root,
+            source=str(entry["source"]),
+            conversation_id=str(entry["conversation_id"]),
+            message_key=str(entry["message_key"]),
+        )
+        if message is None or message.role != "user":
+            raise LookupError("The saved prompt is no longer available.")
+        return pointer, entry, message
 
     def has_any(self) -> bool:
         """Return whether at least one pointer is saved, even if history is unavailable."""
@@ -162,6 +215,8 @@ class PromptStore:
         )
         if message is None:
             raise LookupError("The cached message is no longer available.")
+        if message.role != "user":
+            raise ValueError("Only user messages can be saved as prompts.")
 
         pointer = prompt_pointer_key(
             normalized_source,
@@ -181,6 +236,40 @@ class PromptStore:
                 self._entries[pointer] = entry
                 self._save_entries()
             return self._build_item(entry, message), created
+
+    def add_remark(self, stable_id: str, remark: object) -> tuple[SavedPrompt, bool]:
+        """Add one normalized remark to a saved prompt."""
+        normalized_remark = self._normalize_remark(remark)
+        if not normalized_remark:
+            raise ValueError("A remark is required.")
+        with self._lock:
+            pointer, entry, message = self._resolve_stable_id(stable_id)
+            prompt_id = _prompt_stable_id(pointer)
+            values = self._remarks.setdefault(prompt_id, [])
+            created = not any(value.casefold() == normalized_remark.casefold() for value in values)
+            if created:
+                values.append(normalized_remark)
+                self._save_remarks()
+            return self._build_item(entry, message), created
+
+    def remove_remark(self, stable_id: str, remark: object) -> SavedPrompt:
+        """Remove one remark from a saved prompt."""
+        normalized_remark = self._normalize_remark(remark)
+        if not normalized_remark:
+            raise ValueError("A remark is required.")
+        with self._lock:
+            pointer, entry, message = self._resolve_stable_id(stable_id)
+            prompt_id = _prompt_stable_id(pointer)
+            values = self._remarks.get(prompt_id, [])
+            self._remarks[prompt_id] = [
+                value for value in values if value.casefold() != normalized_remark.casefold()
+            ]
+            if self._remarks[prompt_id]:
+                self._remarks = {key: value for key, value in self._remarks.items() if value}
+            else:
+                self._remarks.pop(prompt_id, None)
+            self._save_remarks()
+            return self._build_item(entry, message)
 
     def query(
         self,
@@ -204,7 +293,7 @@ class PromptStore:
             if normalized_source != "all" and entry["source"] != normalized_source:
                 continue
             message = messages.get(pointer)
-            if message is None:
+            if message is None or message.role != "user":
                 continue
             searchable = " ".join(
                 (
@@ -240,8 +329,7 @@ class PromptStore:
             total_pages=total_pages,
         )
 
-    @staticmethod
-    def _build_item(entry: dict[str, Any], message: ChatHistoryMessage) -> SavedPrompt:
+    def _build_item(self, entry: dict[str, Any], message: ChatHistoryMessage) -> SavedPrompt:
         pointer = prompt_pointer_key(
             str(entry["source"]),
             str(entry["conversation_id"]),
@@ -258,6 +346,7 @@ class PromptStore:
             content_text=message.content_text,
             captured_at=message.last_seen_at,
             added_at=str(entry.get("added_at") or ""),
+            remarks=tuple(self._remarks.get(_prompt_stable_id(pointer), ())),
         )
 
     def _save_entries(self) -> None:
@@ -272,3 +361,15 @@ class PromptStore:
             for _, entry in sorted(self._entries.items())
         )
         write_parquet_rows_atomic(self.catalog_path, rows, PROMPT_SCHEMA)
+
+    def _save_remarks(self) -> None:
+        rows: Iterable[dict[str, Any]] = (
+            {
+                "schema_version": PROMPT_REMARKS_SCHEMA_VERSION,
+                "prompt_id": prompt_id,
+                "remark": remark,
+            }
+            for prompt_id, values in sorted(self._remarks.items())
+            for remark in sorted(values, key=lambda value: (value.casefold(), value))
+        )
+        write_parquet_rows_atomic(self.remarks_path, rows, PROMPT_REMARKS_SCHEMA)

@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.5.0-codex.2`
+Documentation version: `v1.6.0-codex.1`
 
 ## Launch
 
@@ -30,9 +30,10 @@ to override it. A successful unlock is stored in the signed Flask session for th
 
 - X caching begins from the currently signed-in Likes page in a supported host browser.
 - Grok and ChatGPT syncing use their existing authenticated browser sessions.
-- A Safari-backed Cache task owns one standard, visible background window with native
-  window controls. It closes and verifies that exact window at task end; it must not
-  hide, minimize, move offscreen, reuse, or accumulate Safari windows.
+- A Safari-backed Cache task is opt-in and owns one standard, visible background window
+  with native window controls. It restores the user's previous frontmost application after
+  every window-affecting operation, then closes and verifies that exact window at task end;
+  it must not hide, minimize, move offscreen, reuse, or accumulate Safari windows.
 - Chrome, Edge, and Safari support differs by source and automation engine; use the session probe
   in the console before a long sync.
 - Edge tasks clone the selected profile into one headless temporary context; Chrome tasks use
@@ -123,10 +124,11 @@ you intend to discard that cache. Do not use reset operations as a routine troub
 - Grok Text cache: use the `Cache text history` action on `/cache/grok`. It follows all Grok
   conversation pages and response trees; do not replace it with a visible-sidebar scroll. See
   [CACHE_HANDOFF.md](CACHE_HANDOFF.md) for status routes, verified counts, and recovery commands.
-- Gemini Text cache: preserve the saved Safari navigation interval. If Safari reaches
-  `Failed to open page`, stop that run, close its single task window, and restart after
-  confirming the window count returned to baseline. Never accelerate the run by
-  reducing the saved interval and never open parallel Safari task windows.
+- Gemini Text cache defaults to Edge on macOS and Windows. If Safari is explicitly selected,
+  preserve the saved Safari navigation interval. If Safari reaches `Failed to open page`, stop
+  that run, close its single task window, and restart after confirming the window count returned
+  to baseline. Never accelerate the run by reducing the saved interval and never open parallel
+  Safari task windows.
 - Gemini Text on Edge: use the headless Chromium history-RPC path. It follows the authenticated
   `MaZiqc` cursor, stores a 24-hour discovery checkpoint, and resumes by skipping cached session
   IDs. The current verified run exposed `740` sessions and cached `736` text-bearing sessions

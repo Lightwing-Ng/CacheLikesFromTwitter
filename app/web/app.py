@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.45.0-codex.1
+# Code version: v1.48.0-codex.1
 
 from __future__ import annotations
 
@@ -88,6 +88,7 @@ from app.core.storage import (
     build_chat_history_markdown,
     choose_settings_directory,
     choose_shadow_backup_destination,
+    open_directory_path,
     format_captured_at_timestamp_label,
     format_chat_message_timestamp_label,
     local_file_manager_label,
@@ -573,6 +574,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             "content_text": item.content_text,
             "captured_at": item.captured_at,
             "added_at": item.added_at,
+            "remarks": list(item.remarks),
         }
 
     def build_reconciled_cache_snapshot(source_key: str) -> dict[str, Any]:
@@ -760,6 +762,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             saved_config=saved_config,
             browser_options=browser_options,
             selected_browser_label=selected_browser_label,
+            file_manager_label=local_file_manager_label(),
             version=APP_VERSION,
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,
@@ -1252,6 +1255,14 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                     q="",
                     sort="newest",
                 ),
+                lambda item: (
+                    url_for("browser_deleted_preview", stable_id=item.stable_id)
+                    if item.is_deleted
+                    else url_for(
+                        "browser_media",
+                        relative_path=media_route_relative_path(item.relative_path),
+                    )
+                ),
             )
             all_items = ()
             media_page = None
@@ -1299,6 +1310,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             has_any_text=bool(text_page and text_page.total_count),
             has_any_prompts=prompt_store.has_any(),
             saved_prompt_keys=saved_prompt_keys,
+            prompt_remark_options=prompt_store.remark_options(),
             prompt_pointer_key=prompt_pointer_key,
             format_captured_at_timestamp_label=format_captured_at_timestamp_label,
             format_chat_message_timestamp_label=format_chat_message_timestamp_label,
@@ -1379,6 +1391,39 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             return jsonify({"error": str(exc)}), 404
         return jsonify({"created": created, "item": serialize_prompt_item(item)})
 
+    @app.post("/api/browser/prompts/<stable_id>/remarks")
+    def add_browser_prompt_remark(stable_id: str):
+        payload = request.get_json(silent=True) or {}
+        try:
+            item, created = prompt_store.add_remark(stable_id, payload.get("remark"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except LookupError as exc:
+            return jsonify({"error": str(exc)}), 404
+        return jsonify(
+            {
+                "created": created,
+                "item": serialize_prompt_item(item),
+                "remark_options": prompt_store.remark_options(),
+            }
+        )
+
+    @app.delete("/api/browser/prompts/<stable_id>/remarks")
+    def remove_browser_prompt_remark(stable_id: str):
+        payload = request.get_json(silent=True) or {}
+        try:
+            item = prompt_store.remove_remark(stable_id, payload.get("remark"))
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except LookupError as exc:
+            return jsonify({"error": str(exc)}), 404
+        return jsonify(
+            {
+                "item": serialize_prompt_item(item),
+                "remark_options": prompt_store.remark_options(),
+            }
+        )
+
     @app.get("/browser/deleted-preview/<stable_id>")
     def browser_deleted_preview(stable_id: str):
         resolved_path = media_catalog.deleted_preview_path(stable_id)
@@ -1394,7 +1439,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             return jsonify({"error": "Cached media was not found."}), 404
         except FileNotFoundError:
             return jsonify({"error": "Cached media is no longer available."}), 404
-        except (OSError, ValueError) as exc:
+        except (OSError, RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
         return jsonify({"item": serialize_media_item(item)})
 
@@ -1423,6 +1468,22 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         except OSError as exc:
             return jsonify({"error": f"Unable to open {local_file_manager_label()}: {exc}"}), 500
         return jsonify({"revealed": True, "file_manager": local_file_manager_label()})
+
+    @app.post("/api/cache/<source_key>/output-directory/open")
+    def open_cache_output_directory(source_key: str):
+        if not is_loopback_address(request.remote_addr):
+            return jsonify({"error": "Local folders can only be opened from this computer."}), 403
+        if get_cache_source_view(source_key) is None or source_key not in cache_runtimes:
+            abort(404)
+
+        output_directory = str(build_reconciled_cache_snapshot(source_key).get("output_dir") or "").strip()
+        if not output_directory or output_directory == "-":
+            return jsonify({"error": "The output directory is not available yet."}), 409
+        try:
+            open_directory_path(output_directory)
+        except (OSError, ValueError) as exc:
+            return jsonify({"error": f"Unable to open {local_file_manager_label()}: {exc}"}), 409
+        return jsonify({"opened": True, "file_manager": local_file_manager_label()})
 
     @app.post("/api/browser/chatgpt/session/refresh")
     def refresh_browser_chatgpt_session():

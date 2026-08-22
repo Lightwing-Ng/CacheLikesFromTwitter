@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.81.3-codex.1
+# Code version: v1.81.3-codex.5
 
 from __future__ import annotations
 
@@ -55,6 +55,7 @@ NUMERIC_INPUT_FORMAT_SCRIPT_PATH = (
 )
 LOCAL_MEDIA_BROWSER_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/local-media-browser.js"
 BROWSER_SEARCH_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/browser-search.js"
+BROWSER_FILTER_SELECT_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/browser-filter-select.js"
 BROWSER_SEARCH_STYLE_PATH = Path(__file__).resolve().parents[1] / "app/web/static/browser-search.css"
 BROWSER_SESSION_MESSAGES_SCRIPT_PATH = (
     Path(__file__).resolve().parents[1] / "app/web/static/browser-session-messages.js"
@@ -335,6 +336,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="output_dir"', chatgpt_body)
         self.assertIn('data-status-field="output_dir"', chatgpt_body)
         self.assertIn('aria-label="Output directory"', chatgpt_body)
+        self.assertIn('data-output-directory-open', chatgpt_body)
+        self.assertIn('class="icon settings-directory-choose-icon"', chatgpt_body)
+        self.assertIn('output-directory-status', chatgpt_body)
         self.assertNotIn('name="chatgpt_project_name"', chatgpt_body)
         self.assertIn('data-platform="chatgpt"', chatgpt_body)
         self.assertIn('action="/cache/chatgpt/start"', chatgpt_body)
@@ -342,7 +346,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="status_progress_value"', chatgpt_body)
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
-        self.assertIn('cache-page.js?v=cache-page-v1.7.7-codex.1', chatgpt_body)
+        self.assertIn('cache-page.js?v=cache-page-v1.8.0-codex.1', chatgpt_body)
         self.assertIn('segmented-control.js?v=segmented-control-v1.0.2-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
@@ -468,9 +472,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.19.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = (
-                    "style-v2.82.14-codex.1"
-                )
+                expected_style_version = "style-v2.82.17-codex.47"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -1821,10 +1823,11 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="browser_filter_form"', body)
         self.assertIn('form="browser_filter_form"', body)
         self.assertGreater(body.index("data-browser-search"), body.index("</aside>"))
-        self.assertIn("browser-search.css?v=browser-search-v1.3.0-codex.1", body)
+        self.assertIn("browser-search.css?v=browser-search-v1.3.2-codex.7", body)
         self.assertIn('type="module"', body)
         self.assertIn("browser-search.js?v=browser-search-v2.0.1-codex.1", body)
         self.assertIn("browser-session-messages.js?v=browser-session-messages-v1.0.1-codex.1", body)
+        self.assertIn("browser-filter-select.js?v=browser-filter-select-v1.0.0-codex.1", body)
         self.assertIn("data-browser-local-resources-header-actions", body)
         self.assertIn('class="icon browser-search-icon"', body)
         self.assertIn('placeholder="Search cached text"', body)
@@ -1853,14 +1856,37 @@ class WebAppTests(unittest.TestCase):
             search_script,
         )
 
+        filter_select_script = BROWSER_FILTER_SELECT_SCRIPT_PATH.read_text(encoding="utf-8")
+        for fragment in (
+            'document.querySelectorAll(".browser-filter-form select.form-select")',
+            'aria-haspopup", "listbox"',
+            'className = "trade-strategy-dropdown browser-filter-select-dropdown"',
+            'select.dispatchEvent(new Event("change", {bubbles: true}))',
+            'event.key === "ArrowDown"',
+            'event.key === "Escape"',
+        ):
+            with self.subTest(filter_select_script_fragment=fragment):
+                self.assertIn(fragment, filter_select_script)
+
         search_style = BROWSER_SEARCH_STYLE_PATH.read_text(encoding="utf-8")
         self.assertIn(".browser-heading-tools {", search_style)
         for fragment in (
             "display: flex;",
+            "flex: 0 1 322px;",
+            "width: min(322px, 34vw);",
             "border: 1px solid var(--theme-glass-border);",
             "background: var(--liquid-glass-background);",
             ".browser-search-control:focus-within {",
             "box-shadow: var(--glass-chip-shadow-hover);",
+            "min-height: 32px;",
+            "padding-block: 2px;",
+            ".browser-summary-card .browser-heading-tools .browser-session-actions {",
+            "transform: translateX(2px);",
+            "@media (min-width: 901px)",
+            ".browser-session-detail-actions--session {",
+            "flex-wrap: nowrap;",
+            ".browser-session-detail-actions--session > .browser-search-field {",
+            "flex: 1 1 auto;",
             ".browser-search-input::placeholder {",
         ):
             with self.subTest(search_style_fragment=fragment):
@@ -1925,10 +1951,10 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.82.14-codex.1", body)
+            self.assertIn("style-v2.82.17-codex.47", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
-            self.assertIn('local-media-browser.js?v=local-media-browser-v1.28.0-codex.1', body)
+            self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.0-codex.1', body)
             self.assertIn('data-media-source-link', body)
             self.assertIn('data-media-copy-source-url', body)
             self.assertIn('data-media-reveal', body)
@@ -1976,7 +2002,26 @@ class WebAppTests(unittest.TestCase):
                         "model_label": "",
                         "first_seen_at": "2026-08-12T05:00:00Z",
                         "last_seen_at": "2026-08-12T05:00:00Z",
-                    }
+                    },
+                    {
+                        "schema_version": 1,
+                        "platform": "gemini",
+                        "conversation_id": "demo",
+                        "conversation_url": conversation_url,
+                        "conversation_title": "Demo conversation",
+                        "message_key": "demo:0:assistant",
+                        "turn_index": 0,
+                        "message_index": 1,
+                        "role": "assistant",
+                        "author_label": "Gemini",
+                        "content_text": '{"size":"1024x1792","n":1}',
+                        "content_html": "",
+                        "content_sha256": "hash-image",
+                        "source_links": [],
+                        "model_label": "",
+                        "first_seen_at": "2026-08-12T05:00:01Z",
+                        "last_seen_at": "2026-08-12T05:00:01Z",
+                    },
                 ],
                 GEMINI_HISTORY_SCHEMA,
             )
@@ -2030,7 +2075,12 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("Cached text browser", text_body)
         self.assertIn('browser-session-table', text_body)
         self.assertIn('browser-text-summary-card', text_body)
+        self.assertNotIn("browser-session-detail-actions--session", text_body)
+        self.assertIn("browser-session-detail-actions--session", detail_body)
         browser_template = BROWSER_TEMPLATE_PATH.read_text(encoding="utf-8")
+        self.assertIn('class="workspace-header browser-workspace-header workspace-mobile-summary-shell" data-mobile-summary-fixed', browser_template)
+        self.assertIn('class="report-card workspace-content-card browser-content-card', browser_template)
+        self.assertIn('class="browser-content-toolbar"', browser_template)
         self.assertIn('class="browser-session-table-number"', browser_template)
         self.assertIn('class="browser-chat-role-mark"', browser_template)
         self.assertIn('aria-label="Cached Gemini sessions"', text_body)
@@ -2065,6 +2115,8 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("<strong>Rich</strong> cached text message", empty_detail_body)
         self.assertIn("browser-session-message-toggle", detail_body)
         self.assertIn("browser-session-actions", detail_body)
+        self.assertNotIn('<p class="workspace-kicker">Session</p>', detail_body)
+        self.assertNotIn('class="browser-session-detail-summary"', detail_body)
         self.assertIn("browser-session-actions-trigger", detail_body)
         self.assertIn("browser.safari.png", detail_body)
         self.assertIn("Open original in Safari", detail_body)
@@ -2082,7 +2134,12 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(page_export_response.status_code, 200)
         self.assertEqual(page_export_response.mimetype, "text/markdown")
         self.assertIn('attachment; filename="Demo_conversation_page_1.md"', page_export_response.headers["Content-Disposition"])
-        self.assertIn("- Messages: 1", page_export_response.get_data(as_text=True))
+        self.assertIn("- Messages: 2", page_export_response.get_data(as_text=True))
+        self.assertIn('class="browser-media-preview"', detail_body)
+        self.assertIn('target="_blank"', detail_body)
+        self.assertIn('/browser/media/chatgpt/Demo/image.png', detail_body)
+        self.assertNotIn("Related media:", detail_body)
+        self.assertNotIn('{"size":"1024x1792","n":1}', detail_body)
         self.assertNotIn("Open conversation", text_body)
         self.assertNotIn("Cached text conversations", text_body)
         self.assertNotIn("view=media&amp;media_id=media-", text_body)
@@ -2157,10 +2214,8 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("browser-media-type", body)
         self.assertIn('class="browser-media-card-title" title="img_file.png">img_file.png</span>', body)
         self.assertNotIn("browser-media-card-description", body)
-        self.assertIn(
-            'Session name:</dt><dd lang="zh-CN" title="A regular session">A regular session</dd>',
-            body,
-        )
+        self.assertNotIn("Session name:</dt>", body)
+        self.assertIn("browser-media-primary-metric", body)
         self.assertIn("Created on:</dt><dd>9 Aug 2026 07:09</dd>", body)
         self.assertIn("Size:</dt><dd>1.72 MiB</dd>", body)
         self.assertIn('class="browser-media-prompt"', body)
@@ -2420,6 +2475,26 @@ class WebAppTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)
 
+    def test_browser_prompt_remarks_script_supports_persisted_tags(self) -> None:
+        script = LOCAL_MEDIA_BROWSER_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        for fragment in (
+            'const promptRemarkRemoveButtons = Array.from(document.querySelectorAll("[data-prompt-remark-remove]"));',
+            'const datalist = document.querySelector("[data-prompt-remark-options]");',
+            'function updatePromptRemarkOptions(options)',
+            'function renderPromptRemarks(root, remarks)',
+            'method: "POST"',
+            'method: "DELETE"',
+            'encodeURIComponent(promptId)',
+            'if (event.key !== "Enter" || event.isComposing) return;',
+            'const root = input.closest("[data-prompt-remarks]");',
+            'addPromptRemark(root, input.value.trim());',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, script)
+
+        self.assertNotIn("[data-prompt-remark-add]", script)
+
     def test_browser_reveal_control_posts_only_the_media_identifier(self) -> None:
         script = LOCAL_MEDIA_BROWSER_SCRIPT_PATH.read_text(encoding="utf-8")
 
@@ -2461,8 +2536,14 @@ class WebAppTests(unittest.TestCase):
             'const checkedContentMode = contentModeInputs.find((input) => input.checked)?.value || "text";',
             'rememberContentMode(event.target.value);',
             'function navigateToContentMode(mode) {',
+            'const contentModeNavigationTitles = Object.freeze({',
+            'function renderOptimisticContentModeNavigation(mode) {',
             'const formData = new FormData(filterForm);',
             'formData.set("view", mode);',
+            'workspace.dataset.browserNavigationSkeleton = "1";',
+            'document.documentElement.setAttribute("aria-busy", "true");',
+            'const fallbackTimer = window.setTimeout(commitNavigation, 120);',
+            'window.requestAnimationFrame(() => {',
             'window.location.assign(targetUrl.toString());',
         ):
             with self.subTest(fragment=fragment):
@@ -2627,6 +2708,23 @@ class WebAppTests(unittest.TestCase):
         reveal.assert_called_once_with(image_path.resolve())
         self.assertEqual(remote_response.status_code, 403)
         self.assertEqual(missing_response.status_code, 404)
+
+    def test_cache_output_directory_route_opens_only_for_local_clients(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            root = Path(raw_root) / "local_store"
+            app = create_app(root)
+            with patch("app.web.app.open_directory_path") as open_directory:
+                with app.test_client() as client:
+                    local_response = client.post("/api/cache/chatgpt/output-directory/open")
+                    remote_response = client.post(
+                        "/api/cache/chatgpt/output-directory/open",
+                        environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
+                    )
+
+        self.assertEqual(local_response.status_code, 200)
+        self.assertEqual(local_response.get_json()["file_manager"], local_file_manager_label())
+        open_directory.assert_called_once()
+        self.assertEqual(remote_response.status_code, 403)
 
     def test_browser_delete_and_restore_routes_keep_a_preview(self) -> None:
         with TemporaryDirectory() as raw_root:

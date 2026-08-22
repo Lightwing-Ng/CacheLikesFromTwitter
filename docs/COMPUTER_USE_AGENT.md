@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.18.0-codex.1`
+Documentation version: `v3.18.1-codex.1`
 
 ## Purpose
 
@@ -149,8 +149,10 @@ contexts, with first-run, crash, notification, and repost prompts disabled, so t
 visible Stage Manager window, take focus, or interrupt normal macOS use. The user's original profile
 is never opened for writing. A normal task exit closes the isolated context and removes its
 temporary profile; the next Chromium launch removes only abandoned `cachelikes-edge-*` or
-`cachelikes-chrome-*` directories older than 24 hours. Safari uses Apple Events and remains available
-only for ChatGPT's existing session flows. Claude requires Edge or Chrome. If Claude renders an
+`cachelikes-chrome-*` directories older than 24 hours. Safari uses one shared Apple Events context,
+restores the previous frontmost application after window operations, and closes every task-owned
+window on success, stop, failure, or exception. Safari remains available only for ChatGPT's existing
+session flows. Claude requires Edge or Chrome. If Claude renders an
 account suspension, ban, deactivation, or other restricted-state message, the readiness card reports
 that state and does not attempt a login bypass.
 

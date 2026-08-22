@@ -1,4 +1,4 @@
-/* Code version: v1.3.0-codex.1 */
+/* Code version: v1.3.2-codex.7 */
 
 .browser-heading-copy {
     min-width: 0;
@@ -16,17 +16,31 @@
 
 .browser-local-resources-header-actions {
     width: 100%;
-    margin-top: 10px;
+    margin-top: 0;
 }
 
 .browser-local-resources-header-actions .browser-search-field {
     position: relative;
     z-index: var(--layer-global-popover);
-    flex: 0 1 360px;
-    width: min(360px, 34vw);
+    flex: 0 1 322px;
+    width: min(322px, 34vw);
     min-width: 220px;
     margin: 0 0 0 auto;
     gap: 6px;
+}
+
+@media (min-width: 901px) {
+    .browser-session-detail-actions--session {
+        flex-wrap: nowrap;
+        min-width: 0;
+    }
+
+    .browser-session-detail-actions--session > .browser-search-field {
+        flex: 1 1 auto;
+        width: auto;
+        min-width: 0;
+        margin-left: auto;
+    }
 }
 
 .browser-search-control {
@@ -34,7 +48,7 @@
     display: flex;
     align-items: center;
     width: 100%;
-    min-height: 42px;
+    min-height: 32px;
     position: relative;
     border: 1px solid var(--theme-glass-border);
     border-radius: var(--radius-control);
@@ -72,7 +86,8 @@
     box-sizing: border-box;
     width: 100%;
     min-width: 0;
-    min-height: 42px;
+    min-height: 32px;
+    padding-block: 2px;
     padding-inline: 42px 14px;
     border: 0;
     background: transparent;
@@ -184,6 +199,10 @@
     order: 1;
 }
 
+.browser-summary-card .browser-heading-tools .browser-session-actions {
+    transform: translateX(2px);
+}
+
 @keyframes browserSearchMenuIn {
     from {
         opacity: 0;
@@ -211,6 +230,20 @@
         flex-wrap: wrap;
     }
 
+    .browser-summary-card .browser-heading-row {
+        flex-wrap: nowrap;
+    }
+
+    .browser-summary-card .browser-heading-copy,
+    .browser-summary-card .browser-heading-tools {
+        flex-basis: auto;
+        width: auto;
+    }
+
+    .browser-summary-card .browser-heading-tools {
+        flex-wrap: nowrap;
+    }
+
     .browser-local-resources-header-actions {
         align-items: stretch;
         width: 100%;
@@ -232,6 +265,12 @@
         right: 0;
         width: 100%;
         max-width: none;
+    }
+}
+
+@media (max-width: 560px) {
+    .browser-summary-card .browser-heading-tools .browser-session-actions {
+        transform: none;
     }
 }
 

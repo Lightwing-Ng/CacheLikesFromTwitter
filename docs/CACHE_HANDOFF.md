@@ -1,6 +1,6 @@
 # Cache handoff and operating runbook
 
-Documentation version: `v1.2.2-codex.1`
+Documentation version: `v1.3.0-codex.1`
 
 This is the authoritative handoff document for the second Dock item, `Cache`.
 Read it before changing Cache routes, source switching, Text/Media behavior, local
@@ -131,10 +131,12 @@ expectation: Grok history changes whenever new conversations are created or remo
 
 ## 6. Safari cache-window contract
 
-Safari-backed Cache tasks may own exactly one temporary Safari window at a time. The
-window must remain a standard visible window with its native close, minimize, and full
-screen controls. It may stay behind the user's foreground window, but must never be
-hidden, minimized, moved offscreen, or converted into a reusable blank window shell.
+Safari-backed Cache tasks may own exactly one temporary Safari window at a time, and Safari
+is never the default browser for a new Gemini task. The window must remain a standard visible
+window with its native close, minimize, and full screen controls. It may stay behind the user's
+foreground window, but must never be hidden, minimized, moved offscreen, or converted into a
+reusable blank window shell. The shared Safari context captures and restores the user's
+frontmost application whenever it changes Safari window state.
 
 The lifecycle is strict:
 
@@ -145,6 +147,10 @@ The lifecycle is strict:
 5. On success, failure, stop, or exception, close the exact owned window through its
    native close button and verify that its Safari window ID disappeared.
 6. The final Safari window count must equal the starting count.
+
+Session probes, debugging helpers, and Cache collectors use this same lifecycle. They must not
+embed a second raw `osascript` launch path or rely on a successful AppleScript return as their
+only cleanup signal.
 
 Do not treat an AppleScript `close` return as proof of cleanup. Safari may retain
 script-visible empty windows after returning success. A verified ID disappearance is

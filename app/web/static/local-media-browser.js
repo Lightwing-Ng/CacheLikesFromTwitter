@@ -1,4 +1,4 @@
-/* Code version: v1.28.0-codex.1 */
+/* Code version: v1.31.0-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -33,6 +33,79 @@
         }
     }
 
+    const contentModeNavigationTitles = Object.freeze({
+        text: "Cached text browser",
+        media: "Cached media browser",
+        prompts: "Saved prompts",
+    });
+
+    const navigationSkeletonLine = (width = "100%", className = "") => `
+        <span class="navigation-skeleton-line${className ? ` ${className}` : ""}"
+              style="--navigation-skeleton-width: ${width};"></span>
+    `;
+
+    function renderOptimisticContentModeNavigation(mode) {
+        const workspace = document.getElementById("browser_workspace");
+        const title = contentModeNavigationTitles[mode];
+        if (!(workspace instanceof HTMLElement) || !title) return false;
+
+        const metricWidths = mode === "media"
+            ? ["34%", "22%", "46%"]
+            : mode === "prompts"
+                ? ["42%", "18%", "24%"]
+                : ["32%", "21%", "39%"];
+        const resultWidths = mode === "media"
+            ? ["92%", "68%", "76%", "54%"]
+            : mode === "prompts"
+                ? ["80%", "94%", "66%", "88%"]
+                : ["88%", "74%", "96%", "62%"];
+        const metricCards = metricWidths.map((width) => `
+            <div class="navigation-skeleton-card browser-navigation-skeleton-metric">
+                ${navigationSkeletonLine(width)}
+                ${navigationSkeletonLine("42%", "browser-navigation-skeleton-value")}
+            </div>
+        `).join("");
+        const resultRows = Array.from({length: mode === "media" ? 6 : 8}, (_, index) => `
+            <div class="browser-navigation-skeleton-row">
+                ${navigationSkeletonLine(resultWidths[index % resultWidths.length])}
+                ${navigationSkeletonLine(`${Math.max(42, 88 - index * 5)}%`)}
+            </div>
+        `).join("");
+
+        workspace.innerHTML = `
+            <div class="navigation-skeleton-status sr-only" role="status" aria-live="polite">
+                Loading ${title}
+            </div>
+            <div class="navigation-skeleton-root browser-navigation-skeleton-root" data-browser-navigation-skeleton aria-hidden="true">
+                <div class="browser-navigation-skeleton-heading">
+                    <div class="browser-navigation-skeleton-title">
+                        ${navigationSkeletonLine("28%", "browser-navigation-skeleton-kicker")}
+                        ${navigationSkeletonLine("58%", "browser-navigation-skeleton-heading-line")}
+                    </div>
+                    <span class="navigation-skeleton-card browser-navigation-skeleton-search"></span>
+                </div>
+                <div class="browser-navigation-skeleton-metrics">
+                    ${metricCards}
+                </div>
+                <div class="navigation-skeleton-card browser-navigation-skeleton-results">
+                    <div class="browser-navigation-skeleton-toolbar">
+                        ${navigationSkeletonLine("28%")}
+                        ${navigationSkeletonLine("16%")}
+                    </div>
+                    <div class="browser-navigation-skeleton-result-list">
+                        ${resultRows}
+                    </div>
+                </div>
+            </div>
+        `;
+        workspace.dataset.browserNavigationSkeleton = "1";
+        workspace.setAttribute("aria-busy", "true");
+        document.documentElement.dataset.navigationTarget = `browser-${mode}`;
+        document.documentElement.setAttribute("aria-busy", "true");
+        document.body.classList.add("is-page-navigating");
+        return true;
+    }
+
     function navigateToContentMode(mode) {
         if (!filterForm || !["media", "text", "prompts"].includes(mode)) return;
         const targetUrl = new URL(filterForm.action || window.location.href, window.location.origin);
@@ -41,7 +114,20 @@
         targetUrl.search = new URLSearchParams(formData).toString();
         ["page", "media_id", "session"].forEach((name) => targetUrl.searchParams.delete(name));
         if (mode !== "media") targetUrl.searchParams.delete("kind");
-        window.location.assign(targetUrl.toString());
+        renderOptimisticContentModeNavigation(mode);
+        let navigationCommitted = false;
+        const commitNavigation = () => {
+            if (navigationCommitted) return;
+            navigationCommitted = true;
+            window.location.assign(targetUrl.toString());
+        };
+        const fallbackTimer = window.setTimeout(commitNavigation, 120);
+        window.requestAnimationFrame(() => {
+            window.setTimeout(() => {
+                window.clearTimeout(fallbackTimer);
+                commitNavigation();
+            }, 0);
+        });
     }
 
     const currentUrl = new URL(window.location.href);
@@ -107,6 +193,7 @@
     const promptToggleButtons = Array.from(document.querySelectorAll("[data-media-prompt-toggle]"));
     const promptAddButtons = Array.from(document.querySelectorAll("[data-prompt-add]"));
     const promptCopyButtons = Array.from(document.querySelectorAll("[data-prompt-copy]"));
+    const promptRemarkRemoveButtons = Array.from(document.querySelectorAll("[data-prompt-remark-remove]"));
     const mediaViewStorageKey = "cachelikes.browser.mediaView";
     const paginationMotion = window.CACHELIKES_PAGINATION_MOTION;
 
@@ -373,6 +460,155 @@
         button.addEventListener("click", async () => {
             const didCopy = await copyText(button.dataset.promptText || "");
             setPromptCopyFeedback(button, didCopy);
+        });
+    });
+
+    function promptRemarksRoot(element) {
+        return element.closest("[data-prompt-remarks]");
+    }
+
+    function setPromptRemarksFeedback(root, message) {
+        const feedback = root?.querySelector("[data-prompt-remarks-feedback]");
+        if (!feedback) return;
+        feedback.textContent = message;
+        window.setTimeout(() => {
+            if (feedback.textContent === message) feedback.textContent = "";
+        }, 1_600);
+    }
+
+    function updatePromptRemarkOptions(options) {
+        const uniqueOptions = new Map();
+        (Array.isArray(options) ? options : []).forEach((value) => {
+            const remark = String(value || "").trim();
+            if (!remark) return;
+            const key = remark.toLocaleLowerCase();
+            if (!uniqueOptions.has(key)) uniqueOptions.set(key, remark);
+        });
+
+        const datalist = document.querySelector("[data-prompt-remark-options]");
+        if (!datalist) return;
+        datalist.replaceChildren();
+        Array.from(uniqueOptions.values())
+            .sort((left, right) => left.localeCompare(right))
+            .forEach((remark) => {
+                const option = document.createElement("option");
+                option.value = remark;
+                option.textContent = remark;
+                datalist.append(option);
+            });
+    }
+
+    function bindPromptRemarkRemoveButton(button) {
+        button.addEventListener("click", () => {
+            const root = promptRemarksRoot(button);
+            removePromptRemark(root, button.dataset.promptRemark || "", button);
+        });
+    }
+
+    function renderPromptRemarks(root, remarks) {
+        const tags = root?.querySelector("[data-prompt-tags]");
+        if (!tags) return;
+        tags.replaceChildren();
+        (Array.isArray(remarks) ? remarks : []).forEach((value) => {
+            const remark = String(value || "").trim();
+            if (!remark) return;
+
+            const tag = document.createElement("span");
+            tag.className = "browser-prompt-tag";
+            tag.dataset.promptTag = "";
+            tag.dataset.promptRemark = remark;
+
+            const label = document.createElement("span");
+            label.className = "browser-prompt-tag-label";
+            label.textContent = remark;
+
+            const removeButton = document.createElement("button");
+            removeButton.type = "button";
+            removeButton.className = "browser-prompt-tag-remove";
+            removeButton.dataset.promptRemarkRemove = "";
+            removeButton.dataset.promptRemark = remark;
+            removeButton.setAttribute("aria-label", `Remove remark ${remark}`);
+            removeButton.title = "Remove remark";
+            removeButton.textContent = "×";
+            bindPromptRemarkRemoveButton(removeButton);
+
+            tag.append(label, removeButton);
+            tags.append(tag);
+        });
+    }
+
+    function applyPromptRemarkPayload(root, payload) {
+        renderPromptRemarks(root, payload?.item?.remarks || []);
+        updatePromptRemarkOptions(payload?.remark_options || []);
+    }
+
+    async function addPromptRemark(root, remark) {
+        const promptId = root?.dataset.promptId || "";
+        const normalizedRemark = String(remark || "").trim();
+        if (!promptId) return;
+        if (!normalizedRemark) {
+            setPromptRemarksFeedback(root, "Enter or choose a remark.");
+            return;
+        }
+
+        const input = root.querySelector("[data-prompt-remark-input]");
+        if (input?.disabled) return;
+        if (input) input.disabled = true;
+        try {
+            const response = await fetch(`/api/browser/prompts/${encodeURIComponent(promptId)}/remarks`, {
+                method: "POST",
+                cache: "no-store",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ remark: normalizedRemark }),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || "Unable to add this remark.");
+            applyPromptRemarkPayload(root, payload);
+            root.querySelector("[data-prompt-remark-input]").value = "";
+            setPromptRemarksFeedback(root, payload.created ? "Remark added." : "Remark already added.");
+        } catch (error) {
+            setPromptRemarksFeedback(root, error instanceof Error ? error.message : "Unable to add this remark.");
+        } finally {
+            if (input) input.disabled = false;
+        }
+    }
+
+    async function removePromptRemark(root, remark, button = null) {
+        const promptId = root?.dataset.promptId || "";
+        const normalizedRemark = String(remark || "").trim();
+        if (!promptId || !normalizedRemark) return;
+        if (button) button.disabled = true;
+        try {
+            const response = await fetch(`/api/browser/prompts/${encodeURIComponent(promptId)}/remarks`, {
+                method: "DELETE",
+                cache: "no-store",
+                headers: {
+                    Accept: "application/json",
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ remark: normalizedRemark }),
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || "Unable to remove this remark.");
+            applyPromptRemarkPayload(root, payload);
+            setPromptRemarksFeedback(root, "Remark removed.");
+        } catch (error) {
+            if (button) button.disabled = false;
+            setPromptRemarksFeedback(root, error instanceof Error ? error.message : "Unable to remove this remark.");
+        }
+    }
+
+    promptRemarkRemoveButtons.forEach(bindPromptRemarkRemoveButton);
+
+    document.querySelectorAll("[data-prompt-remark-input]").forEach((input) => {
+        input.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" || event.isComposing) return;
+            event.preventDefault();
+            const root = input.closest("[data-prompt-remarks]");
+            addPromptRemark(root, input.value.trim());
         });
     });
 

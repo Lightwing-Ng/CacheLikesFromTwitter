@@ -302,8 +302,11 @@ def test_chat_history_points_to_existing_media_without_copying_payload(tmp_path:
         query_chat_history(tmp_path),
         [media_item],
         lambda stable_id: f"/browser?view=media&media_id={stable_id}",
+        lambda item: f"/browser/media/{item.relative_path}",
     )
 
     assert page.items[0].media_refs[0].stable_id == "media-demo"
     assert page.items[0].media_refs[0].href == "/browser?view=media&media_id=media-demo"
+    assert page.items[0].media_refs[0].media_url == "/browser/media/chatgpt/demo/image.png"
+    assert page.items[0].media_refs[0].media_kind == "image"
     assert not hasattr(page.items[0], "media_payload")

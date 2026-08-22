@@ -1,6 +1,6 @@
 """Focused regression tests for persisted crawler settings.
 
-Code version: v1.3.0-codex.1
+Code version: v1.3.1-codex.1
 """
 
 from __future__ import annotations
@@ -14,6 +14,9 @@ from app.core.config import CrawlConfig, load_saved_config, save_config
 
 class ConfigPersistenceTests(unittest.TestCase):
     """Validate saved settings survive app restarts."""
+
+    def test_new_configuration_uses_non_disruptive_gemini_default(self) -> None:
+        self.assertEqual(CrawlConfig().gemini_browser, "edge")
 
     def test_save_and_load_config_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

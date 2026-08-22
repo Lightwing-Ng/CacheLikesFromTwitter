@@ -29,6 +29,7 @@ GEMINI_HISTORY_FILENAME = "history.parquet"
 CHATGPT_HISTORY_FILENAME = "history.parquet"
 GROK_HISTORY_FILENAME = "history.parquet"
 PROMPT_FILENAME = "prompts.parquet"
+PROMPT_REMARKS_FILENAME = "remarks.parquet"
 
 CHATGPT_CATALOG_SCHEMA_VERSION = 2
 GROK_CATALOG_SCHEMA_VERSION = 2
@@ -40,6 +41,7 @@ GEMINI_HISTORY_SCHEMA_VERSION = 1
 CHATGPT_HISTORY_SCHEMA_VERSION = 1
 GROK_HISTORY_SCHEMA_VERSION = 1
 PROMPT_SCHEMA_VERSION = 1
+PROMPT_REMARKS_SCHEMA_VERSION = 1
 
 
 CHATGPT_CATALOG_SCHEMA = pa.schema(
@@ -153,6 +155,14 @@ PROMPT_SCHEMA = pa.schema(
         pa.field("conversation_id", pa.string(), nullable=False),
         pa.field("message_key", pa.string(), nullable=False),
         pa.field("added_at", pa.string(), nullable=False),
+    ]
+)
+
+PROMPT_REMARKS_SCHEMA = pa.schema(
+    [
+        pa.field("schema_version", pa.int16(), nullable=False),
+        pa.field("prompt_id", pa.string(), nullable=False),
+        pa.field("remark", pa.string(), nullable=False),
     ]
 )
 

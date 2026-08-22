@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.17.0-codex.1
+# Code version: v1.17.1-codex.1
 
 from __future__ import annotations
 
@@ -3512,6 +3512,3 @@ def sync_grok_media(
         for candidate in details_pages:
             with contextlib.suppress(Exception):
                 candidate.close()
-        if descriptor.engine == "safari" and isinstance(context, SafariContext):
-            with contextlib.suppress(Exception):
-                context.housekeep()

@@ -1,4 +1,4 @@
-/* Code version: v1.7.7-codex.1 */
+/* Code version: v1.8.0-codex.1 */
 
 (() => {
     "use strict";
@@ -37,6 +37,8 @@
     const cacheSourceSwitcher = document.querySelector("[data-cache-source-switcher]");
     const sectionLinks = Array.from(document.querySelectorAll("[data-section-link]"));
     const statusFields = Array.from(document.querySelectorAll("[data-status-field]"));
+    const outputDirectoryOpenButton = document.querySelector("[data-output-directory-open]");
+    const outputDirectoryStatus = document.querySelector("[data-output-directory-status]");
     const initialStateNode = document.getElementById("cache_page_initial_state");
     const cacheContentModeControl = document.querySelector("[data-cache-content-mode]");
     const cacheContentModeStorageKey = "cachelikes:browser-content-mode:v1";
@@ -48,6 +50,35 @@
     let statusPollTimer = 0;
     let statusRefreshInFlight = false;
     let statusRefreshFailed = false;
+
+    function renderOutputDirectoryStatus(message = "") {
+        if (!outputDirectoryStatus) return;
+        outputDirectoryStatus.textContent = message;
+        outputDirectoryStatus.hidden = !message;
+    }
+
+    async function openOutputDirectory() {
+        if (!outputDirectoryOpenButton) return;
+        outputDirectoryOpenButton.disabled = true;
+        outputDirectoryOpenButton.setAttribute("aria-busy", "true");
+        renderOutputDirectoryStatus();
+        try {
+            const response = await fetch(`/api/cache/${encodeURIComponent(sourceKey)}/output-directory/open`, {
+                method: "POST",
+                cache: "no-store",
+                headers: { Accept: "application/json" },
+            });
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || "Could not open the output directory.");
+        } catch (error) {
+            renderOutputDirectoryStatus(error.message || "Could not open the output directory.");
+        } finally {
+            outputDirectoryOpenButton.removeAttribute("aria-busy");
+            outputDirectoryOpenButton.disabled = false;
+        }
+    }
+
+    outputDirectoryOpenButton?.addEventListener("click", openOutputDirectory);
 
     function readRememberedContentMode() {
         try {

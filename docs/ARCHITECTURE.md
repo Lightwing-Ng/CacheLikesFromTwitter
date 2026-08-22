@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.7.0-codex.1`
+Documentation version: `v1.7.1-codex.1`
 
 ## Runtime flow
 
@@ -177,7 +177,7 @@ retained. The project name is sanitized before it becomes a cache path.
 ### Gemini Text cache
 
 ```text
-authenticated Safari session
+selected authenticated Safari session
   -> one standard task-owned background window
   -> Gemini virtualized conversation navigation
   -> rendered user-query and model-response extraction
@@ -187,9 +187,12 @@ authenticated Safari session
 
 Safari contexts are serialized across processes. The worker never reuses the user's
 current window, never creates a replacement after the user closes the owned window,
-and never leaves a hidden or blank reusable shell. JavaScript execution is bounded by
-an AppleScript timeout. Conversation rows are replaced atomically per session, so a
-stopped run preserves every previously verified session without duplicating messages.
+and never leaves a hidden or blank reusable shell. Window creation, session probes, and
+X likes collection share this context so failure paths still run exact-window cleanup.
+The context restores the user's previous frontmost application after Safari window work,
+and JavaScript execution is bounded by an AppleScript timeout. Conversation rows are
+replaced atomically per session, so a stopped run preserves every previously verified
+session without duplicating messages.
 
 ### Local-media browser
 

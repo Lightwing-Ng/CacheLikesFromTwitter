@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.13.0-codex.1
+# Code version: v1.13.1-codex.1
 
 from __future__ import annotations
 
@@ -78,7 +78,9 @@ LEGACY_SETTINGS_PATH = RUNTIME_ROOT / ".cachelikes-settings.json"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8666
 DEFAULT_CHROME_USER_DATA_DIR = default_chrome_user_data_dir()
-DEFAULT_GEMINI_BROWSER = "edge" if is_windows_host() else "safari"
+# Safari is opt-in: its authenticated Apple Events path owns a real Safari
+# window, while Edge provides the non-disruptive default on macOS and Windows.
+DEFAULT_GEMINI_BROWSER = "edge"
 DEFAULT_CHROME_PROFILE_DIRECTORY = "Default"
 DEFAULT_SHADOW_BACKUP_DESTINATION = (
     Path.home() / "AICaches"

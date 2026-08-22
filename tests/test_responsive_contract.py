@@ -84,6 +84,10 @@ def test_sidebar_overlay_and_compact_content_are_independent() -> None:
     ):
         assert fragment in overlay_block
 
+    assert "--sidebar-toggle-x: calc(" in overlay_block
+    assert "--sidebar-overlay-toggle-inset" in overlay_block
+    assert "top: calc(var(--sidebar-overlay-inset-top) + var(--sidebar-overlay-toggle-inset));" in overlay_block
+
     for mobile_content_fragment in (
         ".workspace-grid {",
         ".log-card {",
