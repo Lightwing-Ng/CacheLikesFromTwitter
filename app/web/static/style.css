@@ -1,4 +1,4 @@
-/* Code version: v2.82.17-codex.48 */
+/* Code version: v2.82.17-codex.51 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -296,6 +296,7 @@
     --layer-surface-content: 1;
     --layer-control-affordance: 2;
     --layer-inline-ornament: 3;
+    --layer-inline-overlay: 30;
     --layer-hover-card: 10;
     --layer-global-popover: 130;
     --layer-fixed-dock: 120;
@@ -4516,7 +4517,8 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     min-width: 0;
 }
 
-.segmented-control {
+.segmented-control,
+.range-mode-shell {
     --segmented-option-count: 2;
     --segmented-option-min-width: 0px;
     --segmented-thumb-duration: 325ms;
@@ -4542,15 +4544,18 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     transition: background 220ms var(--motion-standard), box-shadow 220ms var(--motion-standard);
 }
 
-.segmented-control::-webkit-scrollbar {
+.segmented-control::-webkit-scrollbar,
+.range-mode-shell::-webkit-scrollbar {
     display: none;
 }
 
-.segmented-control:hover {
+.segmented-control:hover,
+.range-mode-shell:hover {
     background: var(--control-glass-background-hover);
 }
 
-.segmented-control::before {
+.segmented-control::before,
+.range-mode-shell::before {
     position: absolute;
     top: var(--mode-switch-thumb-inset);
     bottom: var(--mode-switch-thumb-inset);
@@ -4568,12 +4573,14 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     z-index: 0;
 }
 
-.segmented-control[data-option-count]::before {
+.segmented-control[data-option-count]::before,
+.range-mode-shell[data-option-count]::before {
     width: calc((100% - (var(--mode-switch-thumb-inset) * 2) - (var(--mode-switch-gap) * (var(--segmented-option-count, 2) - 1))) / var(--segmented-option-count, 2));
     transform: translateX(calc((100% + var(--mode-switch-gap)) * var(--segmented-active-index, 0)));
 }
 
-.segmented-control-option {
+.segmented-control-option,
+.range-mode-option {
     position: relative;
     z-index: 1;
     display: flex;
@@ -4583,7 +4590,8 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     text-decoration: none;
 }
 
-.segmented-control-option input {
+.segmented-control-option input,
+.range-mode-option input {
     position: absolute;
     inset: 0;
     opacity: 0;
@@ -4614,14 +4622,41 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     text-wrap: balance;
 }
 
+.range-mode-option span {
+    position: relative;
+    z-index: 1;
+    box-sizing: border-box;
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--mode-switch-label-min-height);
+    height: 100%;
+    padding: 0 var(--mode-switch-label-pad-inline);
+    border-radius: var(--mode-switch-radius);
+    color: var(--theme-muted);
+    font-size: var(--font-form-label);
+    font-weight: var(--font-weight-regular);
+    line-height: 1.15;
+    text-align: center;
+    transition: color 220ms var(--motion-standard);
+    overflow-wrap: anywhere;
+    text-wrap: balance;
+}
+
 .segmented-control-option input:checked + span,
+.range-mode-option input:checked + span,
 .segmented-control-option[aria-checked="true"] span,
 .segmented-control-option.is-active span {
     font-weight: var(--font-weight-bold);
     color: var(--accent-contrast);
+    letter-spacing: 0;
 }
 
-.segmented-control-option:has(input:focus-visible) span {
+.segmented-control-option:has(input:focus-visible) span,
+.range-mode-option:has(input:focus-visible) span {
     outline: 2px solid var(--accent-focus-ring);
     outline-offset: 2px;
 }
@@ -8950,6 +8985,30 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     min-height: 36px;
 }
 
+/* Code version: v1.2.0-codex.1
+ * Keep Style token visual effects open while the token list owns scrolling.
+ */
+.settings-workspace-header.settings-shell-style-tokens {
+    overflow: visible;
+}
+
+.settings-shell-style-tokens > .style-token-shell {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    overflow: visible;
+}
+
+.settings-shell-style-tokens > .style-token-shell > .style-token-list {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin: -24px -48px;
+    padding: 24px 48px;
+    overflow: auto;
+    overscroll-behavior: contain;
+}
+
 .settings-nav {
     position: relative;
     display: flex;
@@ -9239,6 +9298,116 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 .style-token-value { width: 32%; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; word-break: break-word; }
 .style-token-value-text { display: inline-block; max-width: 100%; }
 
+/* Code version: v1.2.0-codex.1
+ * Reuse the sibling project's glass resizer primitive for the Style tokens split.
+ */
+.surface-resizer {
+    --surface-resizer-line-size: 2px;
+    --surface-resizer-handle-short: 12px;
+    --surface-resizer-handle-long: 48px;
+    position: relative;
+    box-sizing: border-box;
+    padding: 0;
+    border: 0;
+    border-radius: var(--radius-pill);
+    background: transparent;
+    color: var(--text);
+    font-weight: var(--font-weight-bold);
+    min-height: 36px;
+    box-shadow: none;
+    z-index: var(--layer-inline-overlay);
+    touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 180ms var(--motion-press), background 180ms var(--motion-standard);
+}
+
+.surface-resizer::before,
+.surface-resizer::after {
+    content: "";
+    position: absolute;
+    border-radius: var(--radius-pill);
+    pointer-events: none;
+    transition:
+        opacity 160ms var(--motion-standard),
+        background 160ms var(--motion-standard),
+        border-color 160ms var(--motion-standard),
+        box-shadow 160ms var(--motion-standard);
+}
+
+.surface-resizer--handle-only::before { display: none; }
+
+.surface-resizer::before { background: var(--theme-glass-border); }
+
+.surface-resizer::after {
+    background: var(--frosted-glass-background);
+    border: var(--frosted-glass-border);
+    box-shadow: var(--frosted-glass-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
+}
+
+.surface-resizer--inline { cursor: col-resize; }
+
+.surface-resizer--inline::before {
+    top: 4px;
+    bottom: 4px;
+    left: 50%;
+    width: var(--surface-resizer-line-size);
+    transform: translateX(-50%);
+}
+
+.surface-resizer--inline::after {
+    top: var(--surface-resizer-handle-position, 50%);
+    left: 50%;
+    width: var(--surface-resizer-handle-short);
+    height: var(--surface-resizer-handle-long);
+    transform: translate(-50%, -50%);
+}
+
+.surface-resizer--block { cursor: row-resize; }
+
+.surface-resizer--block::before {
+    top: 50%;
+    left: 4px;
+    right: 4px;
+    height: var(--surface-resizer-line-size);
+    transform: translateY(-50%);
+}
+
+.surface-resizer--block::after {
+    top: 50%;
+    left: 50%;
+    width: var(--surface-resizer-handle-long);
+    height: var(--surface-resizer-handle-short);
+    transform: translate(-50%, -50%);
+}
+
+.surface-resizer:hover::after,
+.surface-resizer:focus-visible::after,
+.surface-resizer.is-resizing::after,
+.is-surface-resizing .surface-resizer::after {
+    background: var(--frosted-glass-background-hover);
+    border-color: var(--accent-border-medium);
+    box-shadow: var(--frosted-glass-shadow-hover);
+}
+
+.surface-resizer--reveal::before,
+.surface-resizer--reveal::after { opacity: 0; }
+
+.surface-resizer--reveal:hover::before,
+.surface-resizer--reveal:hover::after,
+.surface-resizer--reveal:focus-visible::before,
+.surface-resizer--reveal:focus-visible::after,
+.surface-resizer--reveal.is-resizing::before,
+.surface-resizer--reveal.is-resizing::after,
+.is-surface-resizing .surface-resizer--reveal::before,
+.is-surface-resizing .surface-resizer--reveal::after { opacity: 1; }
+
+@media (prefers-reduced-motion: reduce) {
+    .surface-resizer::before,
+    .surface-resizer::after { transition: none; }
+}
+
 .style-token-resizer {
     position: absolute;
     top: 0;
@@ -9271,6 +9440,28 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 .style-token-demo .metric-card strong {
     font-size: var(--font-metric-md);
     text-align: left;
+}
+
+#style-token-foundation .style-token-demo > .metric-card.metric-card-accent {
+    width: 192px;
+    min-width: 0;
+    padding: 8px 8px 6px;
+    border: 0;
+    border-radius: 0;
+    background: var(--workspace-article-background);
+    box-shadow: none;
+    backdrop-filter: saturate(180%) blur(24px);
+    -webkit-backdrop-filter: saturate(180%) blur(24px);
+}
+
+#style-token-foundation .style-token-demo > .metric-card.metric-card-accent strong {
+    font-size: var(--font-metric-lg);
+    font-weight: 300;
+    text-align: center;
+    background: none;
+    -webkit-background-clip: initial;
+    background-clip: initial;
+    color: var(--accent-text);
 }
 
 .style-token-status-demo,
@@ -9533,11 +9724,13 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     .style-token-resizer { display: none; }
 }
 
-/* Code version: v1.1.0-codex.3
+/* Code version: v1.1.0-codex.7
  * Reference shell copied from the sibling Style tokens surface.  Demo bodies
  * remain local, while every surrounding surface uses the shared contract.
+ * The reference shell follows the application theme override so this page
+ * remains switchable between Light and Dark modes.
  */
-:root[data-style-token-reference-skin] {
+:root[data-style-token-reference-skin]:not([data-theme-override="light"]) {
     color-scheme: dark;
     --color-scheme: dark;
     --theme-background: #0b0c0c;
@@ -9678,9 +9871,41 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     -webkit-mask-size: contain;
 }
 
-.style-token-page .global-theme-toggle .icon {
+.style-token-page .global-theme-toggle[data-effective-theme="dark"] .icon {
     mask-image: url("/static/images/sun.max.fill.svg");
     -webkit-mask-image: url("/static/images/sun.max.fill.svg");
+}
+
+.style-token-page .global-theme-toggle[data-effective-theme="light"] .icon {
+    mask-image: url("/static/images/moon.fill.svg");
+    -webkit-mask-image: url("/static/images/moon.fill.svg");
+}
+
+.style-token-page .style-token-range-mode-demo {
+    display: contents;
+}
+
+.style-token-page .range-mode-shell {
+    width: 100%;
+    max-width: 100%;
+    margin-inline: auto;
+    box-shadow: inset 0 1px 0 var(--theme-glass-highlight), inset 0 -1px 0 var(--theme-glass-border), 0 10px 28px var(--theme-shadow-ambient);
+}
+
+.style-token-page .range-mode-option {
+    flex: 1 1 0;
+}
+
+.style-token-page .range-mode-shell::after {
+    display: none;
+}
+
+.style-token-page .range-mode-shell:has(> .range-mode-option:first-child input:checked)::before {
+    box-shadow: var(--mode-switch-thumb-shadow-start-edge);
+}
+
+.style-token-page .range-mode-shell:has(> .range-mode-option:last-child input:checked)::before {
+    box-shadow: var(--mode-switch-thumb-shadow-end-edge);
 }
 
 #workspace_panel .settings-workspace-header.settings-shell-style-tokens:first-child > .settings-summary-card {

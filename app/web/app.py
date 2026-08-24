@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.48.0-codex.1
+# Code version: v1.48.0-codex.2
 
 from __future__ import annotations
 
@@ -828,12 +828,21 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def settings_style_tokens():
         style_token_rows = build_reused_style_token_rows(minimum_references=2)
         style_token_count = sum(len(row["tokens"]) for row in style_token_rows)
+        style_token_text_page = query_chat_history(
+            media_catalog.local_store_root,
+            source="all",
+            query="",
+            sort="newest",
+            page=1,
+            session_view=True,
+        )
         return render_template(
             "settings_style_tokens.html",
             version=APP_VERSION,
             style_token_rows=style_token_rows,
             style_token_count=style_token_count,
             minimum_references=2,
+            style_token_message_count=style_token_text_page.total_count,
         )
 
     def is_agent_access_unlocked() -> bool:

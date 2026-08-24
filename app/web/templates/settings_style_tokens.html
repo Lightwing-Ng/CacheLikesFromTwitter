@@ -1,4 +1,4 @@
-<!-- Code version: v1.1.0-codex.3 -->
+<!-- Code version: v1.1.0-codex.10 -->
 <!doctype html>
 <html lang="en-US" data-style-token-reference-skin>
 <head>
@@ -8,9 +8,10 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.53') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.61') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.0.0-codex.4') }}"></script>
+    <script defer src="{{ url_for('static', filename='resizer.js', v='resizer-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.0.0-codex.6') }}"></script>
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
@@ -58,15 +59,28 @@
                     <div class="style-token-list">
                     {% for row in style_token_rows %}
                     <section id="{{ row.id }}" class="style-token-card" data-style-token-card="{{ row.id }}">
-                        <div class="style-token-demo">
+                        <div class="style-token-demo"{% if row.sample_kind == "control-playground" %} data-style-token-density="regular"{% endif %}>
                             {% if row.sample_kind == "metric-summary" %}
-                            <section class="style-token-demo-metric-grid metric-grid" data-style-token-demo="metric-summary" aria-label="Foundation metric card demo">
-                                {% for metric in row.sample_metrics %}
-                                <article class="metric-card{% if loop.index == 2 %} metric-card-accent{% endif %}">
-                                    <span class="metric-label">{{ metric.label }}</span>
-                                    <strong>{{ metric.value }}</strong>
-                                </article>
-                                {% endfor %}
+                            <div class="metric-card metric-card-accent">
+                                <span class="metric-label">Messages</span>
+                                <strong>{{ "{:,}".format(style_token_message_count) }}</strong>
+                            </div>
+                            {% elif row.sample_kind == "range-mode" %}
+                            <section class="style-token-range-mode-demo" data-style-token-demo="range-mode" aria-label="Segmented control">
+                                <div class="range-mode-shell" data-active="overview" data-option-count="3" data-segmented-active-index="0" style="--segmented-option-count: 3; --segmented-active-index: 0;" role="radiogroup" aria-label="Style token range mode">
+                                    <label class="range-mode-option" for="style_token_range_overview">
+                                        <input id="style_token_range_overview" name="style_token_range_mode" type="radio" value="overview" checked>
+                                        <span>Overview</span>
+                                    </label>
+                                    <label class="range-mode-option" for="style_token_range_details">
+                                        <input id="style_token_range_details" name="style_token_range_mode" type="radio" value="details">
+                                        <span>Details</span>
+                                    </label>
+                                    <label class="range-mode-option" for="style_token_range_metrics">
+                                        <input id="style_token_range_metrics" name="style_token_range_mode" type="radio" value="metrics">
+                                        <span>Metrics</span>
+                                    </label>
+                                </div>
                             </section>
                             {% elif row.sample_kind == "status-states" %}
                             <section class="style-token-status-demo" data-style-token-demo="status-states" data-style-token-state-demo aria-label="Status chip demo">

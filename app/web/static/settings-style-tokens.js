@@ -1,4 +1,4 @@
-/* Code version: v1.0.0-codex.4 */
+/* Code version: v1.0.0-codex.6 */
 
 (() => {
     "use strict";
@@ -90,6 +90,98 @@
         });
     };
 
+    const bindRangeModeDemos = () => {
+        document.querySelectorAll(".style-token-demo .range-mode-shell").forEach((shell) => {
+            if (!(shell instanceof HTMLElement) || shell.dataset.bound === "1") {
+                return;
+            }
+            shell.dataset.bound = "1";
+
+            const syncActiveValue = () => {
+                const checkedInput = shell.querySelector('input[type="radio"]:checked');
+                const options = Array.from(shell.querySelectorAll(".range-mode-option"));
+                const activeIndex = Math.max(
+                    0,
+                    options.findIndex((option) => option.querySelector('input[type="radio"]') === checkedInput),
+                );
+                const optionCount = Math.max(options.length, 1);
+                const nextValue = checkedInput instanceof HTMLInputElement ? checkedInput.value : "overview";
+                shell.dataset.active = nextValue;
+                shell.dataset.optionCount = String(optionCount);
+                shell.dataset.segmentedActiveIndex = String(activeIndex);
+                shell.style.setProperty("--segmented-option-count", String(optionCount));
+                shell.style.setProperty("--segmented-active-index", String(activeIndex));
+            };
+
+            shell.querySelectorAll('input[type="radio"]').forEach((input) => {
+                input.addEventListener("change", syncActiveValue);
+            });
+            syncActiveValue();
+        });
+    };
+
+    const bindStyleTokenResizer = () => {
+        const shell = document.querySelector("[data-style-token-shell]");
+        const handle = shell?.querySelector("[data-style-token-resizer]");
+        if (!(shell instanceof HTMLElement) || !(handle instanceof HTMLElement) || handle.dataset.bound === "1") {
+            return;
+        }
+        const minWidth = 220;
+        const getWidthRange = () => {
+            const rect = shell.getBoundingClientRect();
+            const computed = getComputedStyle(shell);
+            const columnGap = Number.parseFloat(computed.getPropertyValue("--style-token-column-gap")) || 24;
+            const maximum = Math.max(minWidth, rect.width - columnGap - 280);
+            return {minimum: minWidth, maximum};
+        };
+        const widthFromPointer = (clientX) => {
+            const rect = shell.getBoundingClientRect();
+            const computed = getComputedStyle(shell);
+            const columnGap = Number.parseFloat(computed.getPropertyValue("--style-token-column-gap")) || 24;
+            return clientX - rect.left - (columnGap / 2);
+        };
+        const getCurrentWidth = () => {
+            const demo = shell.querySelector(".style-token-demo");
+            return demo instanceof HTMLElement ? demo.getBoundingClientRect().width : minWidth;
+        };
+        const setCurrentWidth = (nextWidth) => {
+            shell.style.setProperty("--style-token-demo-width-current", `${nextWidth}px`);
+        };
+        const syncHandleY = () => {
+            const rect = shell.getBoundingClientRect();
+            if (!rect.height) {
+                return;
+            }
+            const visibleTop = Math.max(0, rect.top);
+            const visibleBottom = Math.min(window.innerHeight, rect.bottom);
+            const visibleHeight = visibleBottom - visibleTop;
+            if (visibleHeight <= 0) {
+                return;
+            }
+            const visibleCenterY = visibleTop + (visibleHeight / 2);
+            const targetY = Math.min(Math.max(16, visibleCenterY - rect.top), rect.height - 16);
+            shell.style.setProperty("--style-token-resizer-y", `${targetY}px`);
+        };
+        const unbind = window.CACHE_LIKES_RESIZER?.bind(handle, {
+            axis: "inline",
+            root: shell,
+            getRange: getWidthRange,
+            getValue: getCurrentWidth,
+            setValue: setCurrentWidth,
+            valueFromPointer: widthFromPointer,
+        });
+        handle.dataset.bound = "1";
+        syncHandleY();
+        window.addEventListener("resize", syncHandleY, {passive: true});
+        window.addEventListener("scroll", syncHandleY, {passive: true});
+        handle._cacheLikesResizerCleanup = () => {
+            unbind?.();
+            window.removeEventListener("resize", syncHandleY);
+            window.removeEventListener("scroll", syncHandleY);
+            delete handle.dataset.bound;
+        };
+    };
+
     const bindWorkflowDemos = () => {
         document.querySelectorAll("[data-style-token-workflow-action]").forEach((button) => {
             button.addEventListener("click", () => {
@@ -119,6 +211,8 @@
     };
 
     bindSegmentedDemos();
+    bindRangeModeDemos();
+    bindStyleTokenResizer();
     bindToggleDemos();
     bindWorkflowDemos();
     bindProductDemos();

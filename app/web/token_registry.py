@@ -1,6 +1,6 @@
 """Read the local CSS foundation token registry for the Style tokens page.
 
-Code version: v0.2.0-codex.1
+Code version: v0.2.0-codex.3
 """
 
 from __future__ import annotations
@@ -154,10 +154,13 @@ def build_reused_style_token_rows(
 ) -> list[dict[str, object]]:
     """Adapt the live registry to cards with working project-component demos."""
     rows: list[dict[str, object]] = []
+    excluded_groups = {"Color and status", "Layout and motion", "Product components"}
     for group in build_reused_style_token_groups(
         minimum_references=minimum_references,
     ):
         group_name = str(group["name"])
+        if group_name in excluded_groups:
+            continue
         tokens = list(group["tokens"])
         slug = re.sub(r"[^a-z0-9]+", "-", group_name.lower()).strip("-")
         total_references = sum(int(token["reference_count"]) for token in tokens)
@@ -216,7 +219,7 @@ def _build_style_token_demo(
         }
     if group_name == "Controls":
         return {
-            "sample_kind": "control-playground",
+            "sample_kind": "range-mode",
             "sample_title": "Interactive controls",
             "sample_copy": "Type, select, and switch state are all live in this preview.",
         }

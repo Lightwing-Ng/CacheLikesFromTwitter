@@ -201,6 +201,27 @@ def test_settings_action_packages_reuse_the_sibling_composite_card() -> None:
         assert fragment in stylesheet
 
 
+def test_style_token_resizer_reuses_the_sibling_surface_resizer_contract() -> None:
+    """Keep the Style tokens split control glassy, keyboard-reachable, and bounded."""
+    stylesheet = _stylesheet()
+
+    expected_fragments = (
+        ".surface-resizer {",
+        "touch-action: none;",
+        ".surface-resizer--inline {",
+        "cursor: col-resize;",
+        ".surface-resizer--inline::after {",
+        "width: var(--surface-resizer-handle-short);",
+        "height: var(--surface-resizer-handle-long);",
+        ".settings-shell-style-tokens > .style-token-shell {",
+        "display: flex;",
+        ".settings-shell-style-tokens > .style-token-shell > .style-token-list {",
+        "overflow: auto;",
+    )
+    for fragment in expected_fragments:
+        assert fragment in stylesheet
+
+
 def test_light_color_tokens_match_the_sibling_theme() -> None:
     """Keep the light palette aligned with antigravity/config.toml."""
     stylesheet = _stylesheet()
@@ -1042,15 +1063,15 @@ def test_segmented_control_uses_the_sibling_generic_pill_contract() -> None:
     selected_rule = stylesheet[selected_start:stylesheet.index("\n}", selected_start)]
 
     for token in (
-        ".segmented-control {",
+        ".segmented-control,\n.range-mode-shell {",
         "--segmented-option-count: 2;",
         "grid-template-columns: repeat(var(--segmented-option-count), minmax(var(--segmented-option-min-width), 1fr));",
         "--mode-switch-radius: var(--radius-pill);",
         "--mode-switch-gap: 4px;",
         "border: 0;",
-        ".segmented-control[data-option-count]::before {",
+        ".segmented-control[data-option-count]::before,\n.range-mode-shell[data-option-count]::before {",
         "transform: translateX(calc((100% + var(--mode-switch-gap)) * var(--segmented-active-index, 0)));",
-        ".segmented-control-option {",
+        ".segmented-control-option,\n.range-mode-option {",
         "text-decoration: none;",
         ".segmented-control-option input:checked + span,",
         "font-weight: var(--font-weight-regular);",
@@ -1434,7 +1455,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.82.17-codex.48 */",
+            "/* Code version: v2.82.17-codex.51 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
