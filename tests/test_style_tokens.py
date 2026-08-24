@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.12-codex.6
+Code version: v1.47.12-codex.7
 """
 
 from pathlib import Path
@@ -11,6 +11,45 @@ STYLE_PATH = Path(__file__).resolve().parents[1] / "app/web/static/style.css"
 
 def _stylesheet() -> str:
     return STYLE_PATH.read_text(encoding="utf-8")
+
+
+def test_cache_metrics_reuse_the_foundation_surface_and_type_contract() -> None:
+    """Keep Cache summary cards on the same Foundation surface as the live specimen."""
+    stylesheet = _stylesheet()
+
+    card_start = stylesheet.index(".foundation-metric-card.metric-card,")
+    card_rule = stylesheet[card_start:stylesheet.index("\n}", card_start)]
+    accent_start = stylesheet.index(".foundation-metric-card.metric-card-accent strong {")
+    accent_rule = stylesheet[accent_start:stylesheet.index("\n}", accent_start)]
+    regular_start = stylesheet.index(".foundation-metric-card:not(.metric-card-accent) strong {")
+    regular_rule = stylesheet[regular_start:stylesheet.index("\n}", regular_start)]
+    progress_label_start = stylesheet.index(".foundation-metric-card .progress-metric-label {")
+    progress_label_rule = stylesheet[
+        progress_label_start:stylesheet.index("\n}", progress_label_start)
+    ]
+
+    for token in (
+        "padding: 8px 8px 6px;",
+        "border: 0;",
+        "border-radius: 0;",
+        "background: var(--workspace-article-background);",
+        "box-shadow: none;",
+        "backdrop-filter: saturate(180%) blur(24px);",
+    ):
+        assert token in card_rule
+    for token in (
+        "font-size: var(--font-metric-lg);",
+        "font-weight: 300;",
+        "text-align: center;",
+        "background: none;",
+        "color: var(--accent-text);",
+    ):
+        assert token in accent_rule
+    assert "background: none;" in regular_rule
+    assert "color: var(--text);" in regular_rule
+    assert "font-size: var(--font-ui-md);" in progress_label_rule
+    assert "line-height: 1.1;" in progress_label_rule
+    assert "font-weight: var(--font-weight-regular);" in progress_label_rule
 
 
 def test_typography_matches_the_sibling_font_contract() -> None:
@@ -143,9 +182,27 @@ def test_cache_status_message_hangs_under_the_account_label() -> None:
     selector_start = stylesheet.index('.browser-session-status-message[data-role="browser-session-message"] {')
     selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
 
-    assert "--browser-session-status-indent: calc(18px + 8px);" in selector_rule
+    assert "--browser-session-status-indent: calc(" in selector_rule
+    assert "var(--browser-session-status-checkmark-size)" in selector_rule
+    assert "var(--browser-session-status-item-gap)" in selector_rule
     assert "padding-inline-start: var(--browser-session-status-indent);" in selector_rule
     assert "text-indent: calc(-1 * var(--browser-session-status-indent));" in selector_rule
+
+    copy_start = stylesheet.index(".browser-session-status-copy {")
+    copy_rule = stylesheet[copy_start:stylesheet.index("\n}", copy_start)]
+    assert "--browser-session-status-checkmark-size: 18px;" in copy_rule
+    assert "--browser-session-status-item-gap: 8px;" in copy_rule
+
+    item_start = stylesheet.index(".browser-session-status-item {")
+    item_rule = stylesheet[item_start:stylesheet.index("\n}", item_start)]
+    assert "gap: var(--browser-session-status-item-gap);" in item_rule
+
+    checkmark_start = stylesheet.index(
+        ".browser-session-status-item .browser-session-status-checkmark {"
+    )
+    checkmark_rule = stylesheet[checkmark_start:stylesheet.index("\n}", checkmark_start)]
+    assert "width: var(--browser-session-status-checkmark-size);" in checkmark_rule
+    assert "height: var(--browser-session-status-checkmark-size);" in checkmark_rule
 
 
 def test_cache_output_directory_reuses_the_standard_folder_button() -> None:
@@ -803,6 +860,29 @@ def test_browser_compact_actions_reuse_one_local_resources_pattern() -> None:
         assert markup in browser_template
     assert 'class="secondary-button browser-refresh-button"' in browser_template
 
+
+def test_prompt_tag_specimen_reuses_the_saved_prompt_tag_contract() -> None:
+    """Keep the Style tokens tag specimen on the live prompt-tag classes."""
+    stylesheet = _stylesheet()
+    prompt_tag_start = stylesheet.index(".browser-prompt-tag {")
+    prompt_tag_rule = stylesheet[prompt_tag_start:stylesheet.index("\n}", prompt_tag_start)]
+
+    for token in (
+        "border-radius: var(--radius-pill);",
+        "color: var(--accent-text);",
+        "font-size: var(--font-ui-xs);",
+    ):
+        assert token in prompt_tag_rule
+
+    template = (
+        STYLE_PATH.parents[1] / "templates/settings_style_tokens.html"
+    ).read_text(encoding="utf-8")
+    assert 'data-style-token-demo="prompt-tag"' in template
+    assert 'class="browser-prompt-tag"' in template
+    assert 'class="browser-prompt-tag-remove"' in template
+    assert 'data-style-token-demo="type-specimen"' not in template
+    assert 'data-style-token-demo="glass-surface"' not in template
+
     cache_template = (
         STYLE_PATH.parents[1] / "templates/_cache_page.html"
     ).read_text(encoding="utf-8")
@@ -1455,7 +1535,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.82.17-codex.51 */",
+            "/* Code version: v2.82.17-codex.53 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',

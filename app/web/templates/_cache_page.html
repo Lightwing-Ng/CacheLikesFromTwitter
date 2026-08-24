@@ -1,4 +1,4 @@
-{# Code version: v1.17.0-codex.1 #}
+{# Code version: v1.17.0-codex.2 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.48') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.53') }}">
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -228,9 +228,9 @@
                             <h2>{{ cache_source.overview_title }}</h2>
                         </div>
                     </div>
-                    <div class="metric-grid">
+                    <div class="metric-grid foundation-metric-grid">
                         {% block primary_metrics %}{% endblock %}
-                        <div class="metric-card">
+                        <div class="metric-card foundation-metric-card">
                             <span class="metric-label">Phase</span>
                             <strong id="phase_value">{{ current_phase }}</strong>
                         </div>
@@ -260,7 +260,7 @@
                     {% endif %}
                     <p class="status-copy" id="message" data-status-field="message">{{ snapshot.message }}</p>
                     {% block source_notice %}{% endblock %}
-                    <div class="progress-metric-grid" aria-label="Cached {{ cache_source.label }} resource progress">
+                    <div class="progress-metric-grid foundation-metric-grid" aria-label="Cached {{ cache_source.label }} resource progress">
                         {% block progress_metrics %}{% endblock %}
                     </div>
                     <dl class="summary-list">

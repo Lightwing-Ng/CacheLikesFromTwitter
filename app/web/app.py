@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.48.0-codex.2
+# Code version: v1.48.0-codex.3
 
 from __future__ import annotations
 
@@ -109,7 +109,10 @@ from app.web.cache_sources import (
     get_cache_source_view,
 )
 from app.web.navigation import build_agent_path, is_supported_agent_selection
-from app.web.token_registry import build_reused_style_token_rows
+from app.web.token_registry import (
+    build_reused_style_token_rows,
+    build_style_token_component_rows,
+)
 
 
 CACHE_RECONCILE_PHASES = {"idle", "finished", "completed", "success", "stopped"}
@@ -827,6 +830,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     @app.get("/settings/style-tokens")
     def settings_style_tokens():
         style_token_rows = build_reused_style_token_rows(minimum_references=2)
+        style_token_component_rows = build_style_token_component_rows()
         style_token_count = sum(len(row["tokens"]) for row in style_token_rows)
         style_token_text_page = query_chat_history(
             media_catalog.local_store_root,
@@ -840,6 +844,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             "settings_style_tokens.html",
             version=APP_VERSION,
             style_token_rows=style_token_rows,
+            style_token_component_rows=style_token_component_rows,
             style_token_count=style_token_count,
             minimum_references=2,
             style_token_message_count=style_token_text_page.total_count,

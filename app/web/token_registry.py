@@ -1,6 +1,6 @@
 """Read the local CSS foundation token registry for the Style tokens page.
 
-Code version: v0.2.0-codex.3
+Code version: v0.3.0-codex.4
 """
 
 from __future__ import annotations
@@ -154,7 +154,13 @@ def build_reused_style_token_rows(
 ) -> list[dict[str, object]]:
     """Adapt the live registry to cards with working project-component demos."""
     rows: list[dict[str, object]] = []
-    excluded_groups = {"Color and status", "Layout and motion", "Product components"}
+    excluded_groups = {
+        "Color and status",
+        "Layout and motion",
+        "Product components",
+        "Surfaces and effects",
+        "Typography",
+    }
     for group in build_reused_style_token_groups(
         minimum_references=minimum_references,
     ):
@@ -181,6 +187,229 @@ def build_reused_style_token_rows(
     return rows
 
 
+def build_style_token_component_rows() -> list[dict[str, object]]:
+    """Return explicit browser and table specimens for the Style tokens page."""
+    registry = load_css_token_registry()
+
+    def token_rows(names: tuple[str, ...]) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for name in names:
+            definition = registry.get(name)
+            if definition is None:
+                continue
+            rows.append(
+                {
+                    "name": definition.name,
+                    "value": definition.value,
+                    "line": definition.line,
+                    "reference_count": definition.reference_count,
+                }
+            )
+        return rows
+
+    def component_row(
+        *,
+        row_id: str,
+        name: str,
+        sample_kind: str,
+        token_names: tuple[str, ...],
+        sample_title: str = "",
+        sample_copy: str = "",
+    ) -> dict[str, object]:
+        return {
+            "id": row_id,
+            "name": name,
+            "sample_kind": sample_kind,
+            "sample_title": sample_title,
+            "sample_copy": sample_copy,
+            "tokens": token_rows(token_names),
+            "related_styles": [],
+        }
+
+    return [
+        component_row(
+            row_id="secondary-button",
+            name="Secondary button",
+            sample_kind="secondary-button",
+            sample_title="Refresh cache",
+            sample_copy="The Local resources action keeps the shared secondary-button surface and states.",
+            token_names=(
+                "--glass-chip-background-strong",
+                "--glass-chip-background-hover",
+                "--glass-chip-border",
+                "--glass-chip-shadow",
+                "--glass-chip-shadow-hover",
+                "--radius-pill",
+                "--font-tooltip",
+                "--font-weight-semibold",
+            ),
+        ),
+        component_row(
+            row_id="primary-button",
+            name="Primary button",
+            sample_kind="primary-button",
+            sample_title="Start",
+            sample_copy="The primary cache action uses a blue surface, white text, and explicit disabled-state tokens.",
+            token_names=(
+                "--sidebar-action-button-radius",
+                "--sidebar-action-button-min-height",
+                "--sidebar-action-button-padding-inline",
+                "--sidebar-action-primary-background",
+                "--sidebar-action-primary-background-hover",
+                "--sidebar-action-primary-background-disabled",
+                "--sidebar-action-primary-color",
+                "--sidebar-action-primary-color-disabled",
+                "--accent-focus-ring",
+                "--font-form-control",
+                "--font-weight-bold",
+            ),
+        ),
+        component_row(
+            row_id="global-theme-toggle",
+            name="Global theme toggle",
+            sample_kind="global-theme-toggle",
+            sample_title="Appearance",
+            sample_copy="The circular theme control keeps the current appearance visible and reverses its action label.",
+            token_names=(
+                "--settings-round-icon-button-size",
+                "--settings-round-icon-button-icon-size",
+                "--settings-round-icon-button-radius",
+                "--settings-round-icon-button-border",
+                "--settings-round-icon-button-background",
+                "--settings-round-icon-button-background-hover",
+                "--settings-round-icon-button-shadow",
+                "--settings-round-icon-button-shadow-hover",
+                "--settings-round-icon-button-shadow-active",
+                "--settings-round-icon-button-color",
+                "--settings-round-icon-button-color-hover",
+                "--frosted-glass-blur",
+                "--motion-standard",
+                "--motion-press",
+            ),
+        ),
+        component_row(
+            row_id="shared-cache-settings-link",
+            name="Shared cache settings link",
+            sample_kind="shared-cache-settings-link",
+            sample_title="Open shared cache settings",
+            sample_copy="A compact utility link uses a white glass surface and blue text for shared settings navigation.",
+            token_names=(
+                "--glass-chip-background-strong",
+                "--glass-chip-background-hover",
+                "--glass-chip-border",
+                "--glass-chip-shadow",
+                "--glass-chip-shadow-hover",
+                "--accent-text",
+                "--accent-text-hover",
+                "--control-compact-height",
+                "--radius-pill",
+                "--font-size-3",
+                "--font-weight-semibold",
+                "--motion-standard",
+                "--motion-press",
+            ),
+        ),
+        component_row(
+            row_id="prompt-tag",
+            name="Prompt tag",
+            sample_kind="prompt-tag",
+            sample_title="PS",
+            sample_copy="Saved prompt remarks use a compact blue pill with a clear remove affordance.",
+            token_names=(
+                "--accent-border-strong",
+                "--accent-surface-soft",
+                "--accent-text",
+                "--radius-pill",
+                "--font-ui-xs",
+            ),
+        ),
+        component_row(
+            row_id="local-store-pagination",
+            name="Local store pagination",
+            sample_kind="local-store-pagination",
+            sample_title="Sessions",
+            sample_copy="The floating pager keeps the active page in a blue spatial indicator.",
+            token_names=(
+                "--radius-pill",
+                "--accent-fill",
+                "--accent-shadow-strong",
+                "--theme-glass-highlight",
+                "--frosted-glass-background",
+                "--frosted-glass-border",
+                "--frosted-glass-shadow",
+                "--frosted-glass-blur",
+                "--font-table-body",
+                "--font-weight-medium",
+                "--font-weight-bold",
+                "--motion-duration-spatial",
+                "--motion-bouncy",
+            ),
+        ),
+        component_row(
+            row_id="shared-select-filter",
+            name="Shared select filter",
+            sample_kind="shared-select-filter",
+            sample_title="Sort cached text",
+            sample_copy="The browser sort trigger uses the same accessible menu pattern as shared table filters.",
+            token_names=(
+                "--control-liquid-background",
+                "--control-liquid-background-hover",
+                "--control-liquid-border",
+                "--control-liquid-shadow",
+                "--control-liquid-shadow-focus",
+                "--control-liquid-blur",
+                "--browser-picker-chevron-image",
+                "--radius-pill",
+                "--control-form-height",
+            ),
+        ),
+        component_row(
+            row_id="agent-browser-selector",
+            name="Agent browser selector",
+            sample_kind="agent-browser-selector",
+            sample_title="Browser",
+            sample_copy="The Agent browser selector keeps the active Edge choice visible in a shared frosted menu.",
+            token_names=(
+                "--control-liquid-background",
+                "--control-liquid-background-hover",
+                "--control-liquid-border",
+                "--control-liquid-shadow",
+                "--control-liquid-shadow-focus",
+                "--control-liquid-blur",
+                "--browser-picker-chevron-image",
+                "--theme-success-strong",
+                "--theme-glass-highlight",
+                "--radius-pill",
+                "--font-table-body",
+                "--font-weight-regular",
+            ),
+        ),
+        component_row(
+            row_id="scrollable-data-table",
+            name="Scrollable data table",
+            sample_kind="scrollable-data-table",
+            sample_title="Transaction history",
+            sample_copy="A sticky header, internally scrolling body, Type filter, and in-shell pagination stay synchronized.",
+            token_names=(
+                "--scrollable-data-table-header-padding",
+                "--scrollable-data-table-cell-padding",
+                "--scrollable-data-table-summary-line-height",
+                "--scrollable-data-table-summary-padding",
+                "--scrollable-data-table-header-height",
+                "--scrollable-data-table-min-width",
+                "--scrollable-data-table-header-color",
+                "--scrollable-data-table-scrollbar-gutter",
+                "--scrollable-data-table-row-background",
+                "--scrollable-data-table-row-background-alt",
+                "--scrollable-data-table-summary-background",
+                "--scrollable-data-table-summary-border",
+                "--scrollable-data-table-summary-shadow",
+                "--scrollable-data-table-summary-blur",
+            ),
+        ),
+    ]
+
+
 def _build_style_token_demo(
     *,
     group_name: str,
@@ -204,18 +433,6 @@ def _build_style_token_demo(
             "sample_kind": "status-states",
             "sample_title": "Status feedback",
             "sample_copy": "Select a state to preview the status-chip language.",
-        }
-    if group_name == "Typography":
-        return {
-            "sample_kind": "type-specimen",
-            "sample_title": "Readable hierarchy",
-            "sample_copy": "UI, metadata, and code text share one type system.",
-        }
-    if group_name == "Surfaces and effects":
-        return {
-            "sample_kind": "glass-surface",
-            "sample_title": "Layered surface",
-            "sample_copy": "The frosted surface keeps content distinct without a hard edge.",
         }
     if group_name == "Controls":
         return {

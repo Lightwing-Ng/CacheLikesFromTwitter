@@ -1,6 +1,9 @@
-/* Code version: v1.3.2-codex.7 */
+/* Code version: v1.3.2-codex.10 */
 
 .browser-heading-copy {
+    display: flex;
+    align-items: center;
+    min-height: var(--workspace-title-rail-control-height);
     min-width: 0;
     flex: 1 1 auto;
 }
@@ -12,6 +15,14 @@
     justify-content: flex-end;
     gap: 12px;
     min-width: 0;
+}
+
+.browser-content-card {
+    min-width: 0;
+}
+
+.browser-filter-select-dropdown .trade-strategy-dropdown-option {
+    grid-template-columns: 16px minmax(0, 1fr);
 }
 
 .browser-local-resources-header-actions {

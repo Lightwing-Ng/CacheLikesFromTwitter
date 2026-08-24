@@ -1,4 +1,4 @@
-<!-- Code version: v1.1.0-codex.10 -->
+<!-- Code version: v1.2.7-codex.3 -->
 <!doctype html>
 <html lang="en-US" data-style-token-reference-skin>
 <head>
@@ -8,10 +8,11 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.61') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.74') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='resizer.js', v='resizer-v1.0.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.0.0-codex.6') }}"></script>
+    <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.1.0-codex.5') }}"></script>
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
@@ -61,7 +62,7 @@
                     <section id="{{ row.id }}" class="style-token-card" data-style-token-card="{{ row.id }}">
                         <div class="style-token-demo"{% if row.sample_kind == "control-playground" %} data-style-token-density="regular"{% endif %}>
                             {% if row.sample_kind == "metric-summary" %}
-                            <div class="metric-card metric-card-accent">
+                            <div class="metric-card metric-card-accent foundation-metric-card">
                                 <span class="metric-label">Messages</span>
                                 <strong>{{ "{:,}".format(style_token_message_count) }}</strong>
                             </div>
@@ -94,23 +95,6 @@
                                     <button type="button" data-style-token-state="blocked" aria-pressed="false">Blocked</button>
                                 </div>
                                 <p class="style-token-demo-note" data-style-token-state-copy>{{ row.sample_copy }}</p>
-                            </section>
-                            {% elif row.sample_kind == "type-specimen" %}
-                            <section class="style-token-type-demo" data-style-token-demo="type-specimen" aria-label="Typography demo">
-                                <p class="style-token-type-kicker">Settings / Style tokens</p>
-                                <p class="style-token-type-title">{{ row.sample_title }}</p>
-                                <p class="style-token-type-copy">{{ row.sample_copy }}</p>
-                                <code>--font-ui-lg · --font-table-body</code>
-                            </section>
-                            {% elif row.sample_kind == "glass-surface" %}
-                            <section class="style-token-glass-demo" data-style-token-demo="glass-surface" aria-label="Frosted surface demo">
-                                <div class="style-token-glass-orb style-token-glass-orb-primary"></div>
-                                <div class="style-token-glass-orb style-token-glass-orb-secondary"></div>
-                                <article class="report-card workspace-article-card style-token-glass-card">
-                                    <p class="report-heading">{{ row.sample_title }}</p>
-                                    <p>{{ row.sample_copy }}</p>
-                                    <span class="status-chip is-ready">Visible</span>
-                                </article>
                             </section>
                             {% elif row.sample_kind == "control-playground" %}
                             <form class="style-token-control-demo" data-style-token-demo="control-playground" aria-label="Interactive control demo">
@@ -191,6 +175,267 @@
                         </div>
                     </section>
                     {% endfor %}
+                    {% for row in style_token_component_rows %}
+                    <section id="{{ row.id }}" class="style-token-card" data-style-token-card="{{ row.id }}">
+                        <div class="style-token-demo">
+                            {% if row.sample_kind == "secondary-button" %}
+                            <section class="style-token-component-demo style-token-secondary-button-demo" data-style-token-demo="secondary-button" aria-label="Secondary button demo">
+                                <div class="browser-filter-actions style-token-component-action-row">
+                                    <button type="button" name="refresh" value="1" class="secondary-button browser-refresh-button" data-style-token-secondary-button data-source-xpath="/html/body/main/div[3]/aside/section[2]/form/div[2]/button">Refresh cache</button>
+                                </div>
+                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                            </section>
+                            {% elif row.sample_kind == "primary-button" %}
+                            <section class="style-token-component-demo style-token-primary-button-demo" data-style-token-demo="primary-button" aria-label="Primary button demo">
+                                <div class="style-token-primary-button-preview">
+                                    <button
+                                        type="button"
+                                        class="primary-button sidebar-action-button style-token-primary-button"
+                                        data-style-token-primary-button
+                                        data-source-route="/cache/chatgpt"
+                                        data-source-selector="button#start_button"
+                                        aria-label="Start"
+                                    >{{ row.sample_title }}</button>
+                                </div>
+                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                            </section>
+                            {% elif row.sample_kind == "global-theme-toggle" %}
+                            <section class="style-token-component-demo style-token-theme-toggle-demo" data-style-token-demo="global-theme-toggle" aria-label="Global theme toggle demo">
+                                <div class="style-token-theme-toggle-preview">
+                                    <button
+                                        type="button"
+                                        class="global-quick-action-button global-theme-toggle style-token-theme-toggle"
+                                        data-style-token-theme-toggle
+                                        data-effective-theme="light"
+                                        aria-label="Switch to Dark mode"
+                                        title="Switch to Dark mode"
+                                        aria-pressed="false"
+                                    >
+                                        <span class="icon" data-style-token-theme-toggle-icon aria-hidden="true"></span>
+                                    </button>
+                                    <span class="style-token-theme-toggle-label" data-style-token-theme-toggle-label>Switch to Dark mode</span>
+                                </div>
+                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                            </section>
+                            {% elif row.sample_kind == "shared-cache-settings-link" %}
+                            <section class="style-token-component-demo style-token-shared-cache-settings-link-demo" data-style-token-demo="shared-cache-settings-link" aria-label="Shared cache settings link demo">
+                                <div class="style-token-shared-cache-settings-link-preview">
+                                    <a
+                                        class="ghost-link ghost-link--compact cache-settings-link style-token-shared-cache-settings-link"
+                                        href="{{ url_for('settings') }}#settings-downloads"
+                                        data-style-token-shared-cache-settings-link
+                                        data-source-route="/cache/chatgpt"
+                                        data-source-selector="aside#app_sidebar > section.sidebar-section:nth-of-type(3) > a.ghost-link.ghost-link--compact"
+                                    >{{ row.sample_title }}</a>
+                                </div>
+                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                            </section>
+                            {% elif row.sample_kind == "prompt-tag" %}
+                            <section class="style-token-component-demo style-token-prompt-tag-demo" data-style-token-demo="prompt-tag" aria-label="Prompt tag demo">
+                                <div class="style-token-prompt-tag-preview">
+                                    <div class="browser-prompt-tags" data-style-token-prompt-tags>
+                                        <span
+                                            class="browser-prompt-tag"
+                                            data-style-token-prompt-tag
+                                            data-source-route="/browser"
+                                            data-source-selector="td.browser-prompt-table-remarks:nth-of-type(4) > div.browser-prompt-remarks > div.browser-prompt-tags:nth-of-type(1) > span.browser-prompt-tag"
+                                        >
+                                            <span class="browser-prompt-tag-label">{{ row.sample_title }}</span>
+                                            <button
+                                                type="button"
+                                                class="browser-prompt-tag-remove"
+                                                data-style-token-prompt-tag-remove
+                                                aria-label="Remove remark {{ row.sample_title }}"
+                                                title="Remove remark"
+                                            >×</button>
+                                        </span>
+                                    </div>
+                                </div>
+                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                            </section>
+                            {% elif row.sample_kind == "local-store-pagination" %}
+                            <section class="style-token-component-demo style-token-pagination-demo" data-style-token-demo="local-store-pagination" aria-label="Local store pagination demo">
+                                <p class="style-token-component-kicker">{{ row.sample_title }}</p>
+                                <nav class="browser-pagination local-store-pagination local-store-pagination--floating style-token-pagination-demo-nav" aria-label="Sessions" data-style-token-pagination data-pagination-page-count="16" data-pagination-current-page="1" data-source-xpath="/html/body/main/div[3]/section/div/div[2]/nav">
+                                    <span class="local-store-pagination-indicator" aria-hidden="true"></span>
+                                    <button type="button" class="local-store-page-button is-active" data-pagination-target="1" data-pagination-current="1" aria-label="Session page 1" aria-current="page">1</button>
+                                    <button type="button" class="local-store-page-button" data-pagination-target="2" data-pagination-current="0" aria-label="Session page 2">2</button>
+                                    <button type="button" class="local-store-page-button" data-pagination-target="3" data-pagination-current="0" aria-label="Session page 3">3</button>
+                                    <button type="button" class="local-store-page-button" data-pagination-target="4" data-pagination-current="0" aria-label="Session page 4">4</button>
+                                    <button type="button" class="local-store-page-button" data-pagination-target="5" data-pagination-current="0" aria-label="Session page 5">5</button>
+                                    <span class="local-store-page-ellipsis browser-pagination-range-picker" data-style-token-pagination-range>
+                                        <button type="button" class="browser-pagination-range-trigger" aria-label="Show later sessions" aria-haspopup="menu" aria-expanded="false" aria-controls="style_token_pagination_ranges" data-style-token-pagination-range-trigger>
+                                            <span class="local-store-page-ellipsis-dots" aria-hidden="true"></span>
+                                        </button>
+                                        <span id="style_token_pagination_ranges" class="browser-pagination-range-menu" role="menu" aria-label="Later sessions" aria-hidden="true" data-style-token-pagination-range-menu hidden>
+                                            <span class="browser-pagination-range-grid">
+                                                <button type="button" class="browser-pagination-range-option" data-pagination-target="6" role="menuitem" aria-label="Sessions 6 through 10">6-10</button>
+                                                <button type="button" class="browser-pagination-range-option" data-pagination-target="11" role="menuitem" aria-label="Sessions 11 through 16">11-16</button>
+                                            </span>
+                                        </span>
+                                    </span>
+                                    <button type="button" class="local-store-page-button" data-pagination-target="16" data-pagination-current="0" aria-label="Session page 16">16</button>
+                                    <button type="button" class="local-store-page-button local-store-page-nav" data-pagination-target="2" aria-label="Next session page"><span class="icon icon-page-next" aria-hidden="true"></span></button>
+                                </nav>
+                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                            </section>
+                            {% elif row.sample_kind == "shared-select-filter" %}
+                            <section class="style-token-component-demo style-token-shared-filter-demo" data-style-token-demo="shared-select-filter" aria-label="Shared select filter demo">
+                                <div class="trade-strategy-combobox browser-filter-select" data-style-token-shared-filter>
+                                    <select class="form-select browser-filter-native-select" aria-label="Sort cached text" hidden aria-hidden="true" tabindex="-1">
+                                        <option value="newest" selected>Newest first</option>
+                                        <option value="oldest">Oldest first</option>
+                                        <option value="name">Session title</option>
+                                    </select>
+                                    <button type="button" class="trade-strategy-select form-select trade-strategy-trigger browser-filter-select-trigger" data-style-token-shared-filter-trigger data-source-xpath="/html/body/main/div[3]/aside/section[2]/form/label[2]/div/button" aria-haspopup="listbox" aria-expanded="false" aria-controls="style_token_sort_options" aria-label="Sort cached text: Newest first" title="Newest first">
+                                        <span class="trade-strategy-trigger-label browser-session-trigger-label" data-style-token-shared-filter-label>Newest first</span>
+                                        <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                                    </button>
+                                    <div id="style_token_sort_options" class="trade-strategy-dropdown browser-filter-select-dropdown" data-style-token-shared-filter-menu role="listbox" aria-label="Sort cached text" hidden>
+                                        <button type="button" class="trade-strategy-dropdown-option browser-filter-select-option is-selected is-active" data-style-token-shared-filter-option="newest" role="option" aria-selected="true"><span class="trade-strategy-dropdown-check" aria-hidden="true"></span><span class="trade-strategy-dropdown-text">Newest first</span></button>
+                                        <button type="button" class="trade-strategy-dropdown-option browser-filter-select-option" data-style-token-shared-filter-option="oldest" role="option" aria-selected="false"><span class="trade-strategy-dropdown-check" aria-hidden="true"></span><span class="trade-strategy-dropdown-text">Oldest first</span></button>
+                                        <button type="button" class="trade-strategy-dropdown-option browser-filter-select-option" data-style-token-shared-filter-option="name" role="option" aria-selected="false"><span class="trade-strategy-dropdown-check" aria-hidden="true"></span><span class="trade-strategy-dropdown-text">Session title</span></button>
+                                    </div>
+                                </div>
+                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                            </section>
+                            {% elif row.sample_kind == "agent-browser-selector" %}
+                            <section class="style-token-component-demo style-token-agent-browser-demo" data-style-token-demo="agent-browser-selector" aria-label="Agent browser selector demo">
+                                <p class="style-token-component-kicker">{{ row.sample_title }}</p>
+                                <div
+                                    class="trade-strategy-combobox agent-combobox agent-browser-combobox style-token-agent-browser-combobox is-agent-combobox-open"
+                                    data-style-token-agent-browser
+                                    data-source-route="/agent/edge/claude"
+                                    data-source-selector="label.field:nth-of-type(2) > div.agent-browser-session-field.is-browser-status-loading > div.trade-strategy-combobox.agent-combobox:nth-of-type(1) > button.trade-strategy-select.form-select"
+                                >
+                                    <input type="hidden" value="edge" data-style-token-agent-browser-input>
+                                    <button
+                                        type="button"
+                                        class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger"
+                                        data-style-token-agent-browser-trigger
+                                        aria-haspopup="listbox"
+                                        aria-expanded="true"
+                                        aria-controls="style_token_agent_browser_options"
+                                        aria-label="Browser: Edge"
+                                    >
+                                        <span class="browser-session-trigger-leading">
+                                            <span class="browser-picker-selected-icon-shell">
+                                                <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/browser.edge.png') }}" alt="" data-style-token-agent-browser-selected-icon aria-hidden="true">
+                                            </span>
+                                            <span class="trade-strategy-trigger-label browser-session-trigger-label" data-style-token-agent-browser-selected-label>Edge</span>
+                                        </span>
+                                        <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                                    </button>
+                                    <div
+                                        id="style_token_agent_browser_options"
+                                        class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown"
+                                        data-style-token-agent-browser-menu
+                                        role="listbox"
+                                        aria-label="Choose browser"
+                                        aria-hidden="false"
+                                    >
+                                        {% for browser in (
+                                            {"key": "safari", "label": "Safari", "icon": "images/browser.safari.png"},
+                                            {"key": "edge", "label": "Edge", "icon": "images/browser.edge.png"},
+                                            {"key": "chrome", "label": "Chrome", "icon": "images/browser.chrome.png"}
+                                        ) %}
+                                        <button
+                                            type="button"
+                                            class="trade-strategy-dropdown-option agent-combobox-option{% if browser.key == 'edge' %} is-selected is-active{% endif %}"
+                                            data-style-token-agent-browser-option="{{ browser.key }}"
+                                            data-style-token-agent-browser-label="{{ browser.label }}"
+                                            data-style-token-agent-browser-icon="{{ url_for('static', filename=browser.icon) }}"
+                                            role="option"
+                                            aria-selected="{{ 'true' if browser.key == 'edge' else 'false' }}"
+                                            tabindex="-1"
+                                        >
+                                            <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                            <img class="browser-picker-option-icon" src="{{ url_for('static', filename=browser.icon) }}" alt="" aria-hidden="true">
+                                            <span class="trade-strategy-dropdown-text">{{ browser.label }}</span>
+                                        </button>
+                                        {% endfor %}
+                                    </div>
+                                </div>
+                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                            </section>
+                            {% elif row.sample_kind == "scrollable-data-table" %}
+                            <section class="style-token-component-demo style-token-table-demo-shell" data-style-token-demo="scrollable-data-table" data-style-token-table-demo data-style-token-table-page-size="6" aria-label="Scrollable data table demo">
+                                <div class="style-token-table-demo-summary-row">
+                                    <p class="style-token-component-kicker">{{ row.sample_title }}</p>
+                                    <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                                </div>
+                                <div class="events-table-shell style-token-table-demo-surface">
+                                    <div class="events-table-scroll style-token-table-demo-scroll" data-style-token-table-scroll>
+                                        <table class="events-table style-token-scrollable-table" data-style-token-table-body aria-label="Transaction history">
+                                            <thead>
+                                                <tr>
+                                                    <th>No.</th>
+                                                    <th>Time</th>
+                                                    <th class="style-token-table-filter-header" data-style-token-table-filter-header>
+                                                        <span class="style-token-table-filter-default-label" aria-hidden="true">Type</span>
+                                                        <div class="trade-strategy-combobox browser-filter-select style-token-table-filter-field" data-style-token-table-filter>
+                                                            <button type="button" class="trade-strategy-select form-select trade-strategy-trigger browser-filter-select-trigger" data-style-token-table-filter-trigger aria-haspopup="listbox" aria-expanded="false" aria-controls="style_token_table_type_options" aria-label="Type filter: All">
+                                                                <span class="trade-strategy-trigger-label" data-style-token-table-filter-label>All</span>
+                                                                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                                                            </button>
+                                                            <div id="style_token_table_type_options" class="trade-strategy-dropdown browser-filter-select-dropdown" data-style-token-table-filter-menu role="listbox" aria-label="Type filter" hidden>
+                                                                <button type="button" class="trade-strategy-dropdown-option browser-filter-select-option is-selected is-active" data-style-token-table-filter-option="all" role="option" aria-selected="true"><span class="trade-strategy-dropdown-check" aria-hidden="true"></span><span class="trade-strategy-dropdown-text">All</span></button>
+                                                                <button type="button" class="trade-strategy-dropdown-option browser-filter-select-option" data-style-token-table-filter-option="buy" role="option" aria-selected="false"><span class="trade-strategy-dropdown-check" aria-hidden="true"></span><span class="trade-strategy-dropdown-text">Buy</span></button>
+                                                                <button type="button" class="trade-strategy-dropdown-option browser-filter-select-option" data-style-token-table-filter-option="sell" role="option" aria-selected="false"><span class="trade-strategy-dropdown-check" aria-hidden="true"></span><span class="trade-strategy-dropdown-text">Sell</span></button>
+                                                            </div>
+                                                        </div>
+                                                    </th>
+                                                    <th>Description</th>
+                                                    <th>Amount</th>
+                                                </tr>
+                                                <tr data-style-token-table-summary-row>
+                                                    <td colspan="3"><span data-style-token-table-filter-summary>6 filtered of 12 total</span></td>
+                                                    <td colspan="2">Net <span>$7,089.68</span></td>
+                                                </tr>
+                                            </thead>
+                                            <tbody id="style_token_table_body">
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="buy"><td>12</td><td>2 Apr 2026</td><td>Buy</td><td>NVDA @ 123.45 x 10</td><td>$1,234.50</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="deposit"><td>11</td><td>1 Apr 2026</td><td>Deposit</td><td>--</td><td>$5,000.00</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="dividend"><td>10</td><td>31 Mar 2026</td><td>Dividend</td><td>AAPL</td><td>$42.18</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="sell"><td>9</td><td>28 Mar 2026</td><td>Sell</td><td>TSLA @ 271.00 x 3</td><td>$813.00</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="buy"><td>8</td><td>27 Mar 2026</td><td>Buy</td><td>MSFT @ 410.00 x 2</td><td>$820.00</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="buy"><td>7</td><td>26 Mar 2026</td><td>Buy</td><td>AAPL @ 172.00 x 3</td><td>$516.00</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="sell"><td>6</td><td>25 Mar 2026</td><td>Sell</td><td>GOOGL @ 150.00 x 4</td><td>$600.00</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="deposit"><td>5</td><td>24 Mar 2026</td><td>Deposit</td><td>--</td><td>$2,500.00</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="dividend"><td>4</td><td>23 Mar 2026</td><td>Dividend</td><td>NVDA</td><td>$18.40</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="buy"><td>3</td><td>22 Mar 2026</td><td>Buy</td><td>AMD @ 180.00 x 2</td><td>$360.00</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="sell"><td>2</td><td>21 Mar 2026</td><td>Sell</td><td>AMZN @ 175.00 x 1</td><td>$175.00</td></tr>
+                                                <tr data-style-token-table-row data-style-token-table-filter-value="buy"><td>1</td><td>20 Mar 2026</td><td>Buy</td><td>META @ 490.00 x 1</td><td>$490.00</td></tr>
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <nav class="browser-pagination local-store-pagination local-store-pagination--floating style-token-table-demo-pagination" aria-label="Scrollable data table pages" aria-controls="style_token_table_body" data-style-token-table-pagination hidden></nav>
+                                </div>
+                            </section>
+                            {% endif %}
+                        </div>
+                        <div class="style-token-meta">
+                            <div class="style-token-title-row">
+                                <p class="style-token-title">{{ row.name }}</p>
+                                <button type="button" class="settings-round-icon-button style-token-copy-button" data-style-token-copy="{{ row.name }}" aria-label="Copy style name" title="Copy style name">
+                                    <span class="icon icon-style-token-copy" aria-hidden="true"></span>
+                                </button>
+                            </div>
+                            <div class="style-token-table-wrap">
+                                <table class="style-token-table" aria-label="{{ row.name }} tokens">
+                                    <tbody>
+                                        {% for token in row.tokens %}
+                                        <tr data-style-token-row="{{ token.name }}" title="{{ token.reference_count }} stylesheet references · style.css:{{ token.line }}">
+                                            <td class="style-token-name">{{ token.name }}</td>
+                                            <td class="style-token-value"><span class="style-token-value-text">{{ token.value }}</span></td>
+                                        </tr>
+                                        {% endfor %}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+                    {% endfor %}
                     </div>
                 </section>
             </section>
@@ -200,5 +445,6 @@
     {% set dock_section = "settings" %}
     {% include "_sidebar_dock.html" %}
 </main>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.19.0-codex.1') }}"></script>
 </body>
 </html>

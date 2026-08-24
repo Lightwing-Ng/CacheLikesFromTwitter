@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.81.3-codex.5
+# Code version: v1.81.3-codex.6
 
 from __future__ import annotations
 
@@ -472,7 +472,11 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.19.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.82.17-codex.48"
+                expected_style_version = (
+                    "style-v2.82.17-codex.53"
+                    if page_source in {"x", "grok", "chatgpt", "gemini"}
+                    else "style-v2.82.17-codex.48"
+                )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -1823,7 +1827,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="browser_filter_form"', body)
         self.assertIn('form="browser_filter_form"', body)
         self.assertGreater(body.index("data-browser-search"), body.index("</aside>"))
-        self.assertIn("browser-search.css?v=browser-search-v1.3.2-codex.7", body)
+        self.assertIn("browser-search.css?v=browser-search-v1.3.2-codex.10", body)
         self.assertIn('type="module"', body)
         self.assertIn("browser-search.js?v=browser-search-v2.0.1-codex.1", body)
         self.assertIn("browser-session-messages.js?v=browser-session-messages-v1.0.1-codex.1", body)
@@ -1869,6 +1873,18 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn(fragment, filter_select_script)
 
         search_style = BROWSER_SEARCH_STYLE_PATH.read_text(encoding="utf-8")
+        self.assertIn(".browser-content-card {", search_style)
+        self.assertIn("min-width: 0;", search_style)
+        self.assertIn(".browser-filter-select-dropdown .trade-strategy-dropdown-option {", search_style)
+        self.assertIn("grid-template-columns: 16px minmax(0, 1fr);", search_style)
+        self.assertIn(".browser-heading-copy {", search_style)
+        for fragment in (
+            "display: flex;",
+            "align-items: center;",
+            "min-height: var(--workspace-title-rail-control-height);",
+        ):
+            with self.subTest(heading_copy_fragment=fragment):
+                self.assertIn(fragment, search_style)
         self.assertIn(".browser-heading-tools {", search_style)
         for fragment in (
             "display: flex;",

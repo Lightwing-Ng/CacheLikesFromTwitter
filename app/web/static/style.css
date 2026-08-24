@@ -1,4 +1,4 @@
-/* Code version: v2.82.17-codex.51 */
+/* Code version: v2.82.17-codex.53 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -1200,7 +1200,10 @@ h2 {
 }
 
 .browser-session-status-message[data-role="browser-session-message"] {
-    --browser-session-status-indent: calc(18px + 8px);
+    --browser-session-status-indent: calc(
+        var(--browser-session-status-checkmark-size)
+        + var(--browser-session-status-item-gap)
+    );
     padding-inline-start: var(--browser-session-status-indent);
     text-indent: calc(-1 * var(--browser-session-status-indent));
 }
@@ -1213,6 +1216,8 @@ h2 {
 }
 
 .browser-session-status-copy {
+    --browser-session-status-checkmark-size: 18px;
+    --browser-session-status-item-gap: 8px;
     min-width: 0;
     display: grid;
     gap: 4px;
@@ -1222,13 +1227,13 @@ h2 {
     min-width: 0;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--browser-session-status-item-gap);
 }
 
 .browser-session-status-item .browser-session-status-checkmark {
-    width: 18px;
-    height: 18px;
-    flex: 0 0 18px;
+    width: var(--browser-session-status-checkmark-size);
+    height: var(--browser-session-status-checkmark-size);
+    flex: 0 0 var(--browser-session-status-checkmark-size);
 }
 
 .browser-session-status-checkmark[hidden] {
@@ -9417,7 +9422,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     --surface-resizer-handle-position: var(--style-token-resizer-y, 50%);
 }
 
-/* Code version: v1.0.0-codex.3 */
+/* Code version: v1.0.0-codex.7 */
 .style-token-demo-metric-grid {
     min-height: 168px;
     margin: 0;
@@ -9442,8 +9447,9 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     text-align: left;
 }
 
-#style-token-foundation .style-token-demo > .metric-card.metric-card-accent {
-    width: 192px;
+/* Foundation metric surface contract shared by Style tokens and Cache summaries. */
+.foundation-metric-card.metric-card,
+.foundation-metric-card.progress-metric-card {
     min-width: 0;
     padding: 8px 8px 6px;
     border: 0;
@@ -9452,9 +9458,32 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     box-shadow: none;
     backdrop-filter: saturate(180%) blur(24px);
     -webkit-backdrop-filter: saturate(180%) blur(24px);
+    overflow: hidden;
+    display: grid;
+    gap: 2px;
 }
 
-#style-token-foundation .style-token-demo > .metric-card.metric-card-accent strong {
+.foundation-metric-card .progress-metric-label {
+    display: block;
+    margin-bottom: 2px;
+    font-size: var(--font-ui-md);
+    line-height: 1.1;
+    color: var(--muted);
+    font-weight: var(--font-weight-regular);
+}
+
+.foundation-metric-card strong {
+    display: block;
+    min-width: 0;
+    font-size: var(--workspace-metric-value-font-size);
+    line-height: var(--workspace-metric-value-line-height);
+    letter-spacing: var(--workspace-metric-value-letter-spacing);
+    font-weight: var(--workspace-metric-value-font-weight);
+    color: var(--text);
+    word-break: break-word;
+}
+
+.foundation-metric-card.metric-card-accent strong {
     font-size: var(--font-metric-lg);
     font-weight: 300;
     text-align: center;
@@ -9464,8 +9493,18 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     color: var(--accent-text);
 }
 
+.foundation-metric-card:not(.metric-card-accent) strong {
+    background: none;
+    -webkit-background-clip: initial;
+    background-clip: initial;
+    color: var(--text);
+}
+
+#style-token-foundation .foundation-metric-card {
+    width: 192px;
+}
+
 .style-token-status-demo,
-.style-token-type-demo,
 .style-token-product-demo,
 .style-token-control-demo {
     min-height: 168px;
@@ -9551,94 +9590,6 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     line-height: 1.4;
 }
 
-.style-token-type-demo {
-    display: grid;
-    align-content: center;
-    gap: 4px;
-}
-
-.style-token-type-demo p { margin: 0; }
-
-.style-token-type-kicker {
-    color: var(--accent-text);
-    font-size: var(--font-tooltip);
-    font-weight: var(--font-weight-bold);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-}
-
-.style-token-type-title {
-    color: var(--text);
-    font-size: var(--font-title-md);
-    font-weight: var(--font-weight-regular);
-    letter-spacing: -0.035em;
-    line-height: 1.08;
-}
-
-.style-token-type-copy {
-    color: var(--muted);
-    font-size: var(--font-form-label);
-    line-height: 1.4;
-}
-
-.style-token-type-demo code {
-    margin-top: 8px;
-    color: var(--accent-text);
-    font-size: var(--font-tooltip);
-    overflow-wrap: anywhere;
-}
-
-.style-token-glass-demo {
-    position: relative;
-    min-height: 168px;
-    overflow: hidden;
-    border: 1px solid var(--theme-glass-border);
-    border-radius: var(--radius-panel);
-    background: color-mix(in srgb, var(--panel-strong) 72%, transparent);
-    isolation: isolate;
-}
-
-.style-token-glass-orb {
-    position: absolute;
-    z-index: -1;
-    width: 124px;
-    height: 124px;
-    border-radius: 50%;
-    filter: blur(2px);
-    opacity: 0.86;
-}
-
-.style-token-glass-orb-primary {
-    top: -52px;
-    left: -34px;
-    background: color-mix(in srgb, var(--accent) 62%, transparent);
-}
-
-.style-token-glass-orb-secondary {
-    right: -42px;
-    bottom: -62px;
-    background: color-mix(in srgb, var(--accent-secondary) 62%, transparent);
-}
-
-.style-token-glass-card {
-    position: absolute;
-    inset: 20px;
-    display: grid;
-    align-content: center;
-    gap: 8px;
-    min-width: 0;
-    padding: 16px;
-    border: var(--frosted-glass-border);
-    background: color-mix(in srgb, var(--frosted-glass-background) 84%, transparent);
-    box-shadow: var(--frosted-glass-shadow);
-    backdrop-filter: var(--frosted-glass-blur);
-    -webkit-backdrop-filter: var(--frosted-glass-blur);
-}
-
-.style-token-glass-card p { margin: 0; }
-.style-token-glass-card > p:not(.report-heading) { color: var(--muted); font-size: var(--font-form-label); line-height: 1.35; }
-.style-token-glass-card .status-chip { justify-self: start; }
-
 .style-token-control-demo {
     display: grid;
     gap: 9px;
@@ -9709,6 +9660,322 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 .style-token-product-demo .browser-result-summary { margin: 12px 0 0; }
 .style-token-product-demo .browser-result-summary p { min-width: 0; line-height: 1.35; }
 .style-token-product-demo .ghost-link { min-height: 30px; padding: 4px 9px; border-radius: var(--radius-pill); cursor: pointer; }
+
+/* Code version: v1.0.0-codex.1
+ * Browser component specimens reuse the live Local resources contracts.
+ */
+.style-token-component-demo {
+    box-sizing: border-box;
+    min-height: 168px;
+    padding: 16px;
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-panel);
+    background: var(--frosted-glass-background);
+    box-shadow: var(--frosted-glass-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
+}
+
+.style-token-component-action-row {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    min-height: 31px;
+    margin: 0;
+}
+
+.style-token-component-kicker {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--font-form-control);
+    font-weight: var(--font-weight-bold);
+    line-height: 1.25;
+}
+
+.style-token-pagination-demo,
+.style-token-shared-filter-demo {
+    overflow: visible;
+}
+
+.style-token-pagination-demo-nav {
+    margin-top: 18px;
+}
+
+.style-token-shared-filter-demo {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+}
+
+.style-token-shared-filter-demo > .browser-filter-select {
+    width: 100%;
+    max-width: 286px;
+    margin-top: 18px;
+}
+
+.style-token-shared-filter-demo .browser-filter-select-dropdown {
+    z-index: var(--layer-global-popover);
+}
+
+/* Code version: v1.0.0-codex.2 */
+.style-token-agent-browser-demo {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    overflow: visible;
+}
+
+.style-token-agent-browser-combobox {
+    width: min(274px, 100%);
+}
+
+.style-token-agent-browser-demo .style-token-demo-note {
+    margin: 0;
+}
+
+/* Code version: v1.0.0-codex.3 */
+.style-token-theme-toggle-demo {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    overflow: visible;
+}
+
+.style-token-theme-toggle-preview {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: var(--settings-round-icon-button-size);
+}
+
+.style-token-theme-toggle-label {
+    color: var(--muted);
+    font-size: var(--font-form-label);
+    line-height: 1.25;
+}
+
+/* Code version: v1.0.0-codex.5 */
+.style-token-primary-button-demo {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    overflow: visible;
+}
+
+.style-token-primary-button-preview {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    min-height: var(--sidebar-action-button-min-height);
+}
+
+.style-token-primary-button-preview .sidebar-action-button {
+    margin-left: 0;
+    margin-right: 0;
+}
+
+/* Code version: v1.0.0-codex.4 */
+.style-token-shared-cache-settings-link-demo {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    overflow: visible;
+}
+
+.style-token-shared-cache-settings-link-preview {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-height: var(--control-compact-height);
+}
+
+.style-token-shared-cache-settings-link {
+    flex: 0 0 auto;
+}
+
+/* Code version: v1.0.0-codex.6 */
+.style-token-prompt-tag-demo {
+    display: grid;
+    align-content: start;
+    gap: 12px;
+    overflow: visible;
+}
+
+.style-token-prompt-tag-preview {
+    display: flex;
+    align-items: center;
+    min-height: 28px;
+}
+
+.style-token-prompt-tag-preview .browser-prompt-tags {
+    min-height: 24px;
+}
+
+.style-token-table-demo-shell {
+    min-height: 252px;
+    padding: 12px;
+}
+
+.style-token-table-demo-summary-row {
+    display: grid;
+    gap: 4px;
+    margin-bottom: 10px;
+}
+
+.style-token-table-demo-summary-row .style-token-demo-note {
+    margin: 0;
+}
+
+.style-token-table-demo-surface {
+    height: auto;
+    min-height: 0;
+    overflow: visible;
+}
+
+.style-token-table-demo-scroll {
+    flex: 0 0 156px;
+    height: 156px;
+    max-height: 156px;
+    overflow: auto;
+    scrollbar-gutter: var(--scrollable-data-table-scrollbar-gutter);
+}
+
+.style-token-scrollable-table {
+    width: 100%;
+    min-width: var(--scrollable-data-table-min-width);
+    table-layout: fixed;
+}
+
+.style-token-scrollable-table th,
+.style-token-scrollable-table td {
+    width: auto;
+    min-width: 0;
+}
+
+.style-token-scrollable-table th:nth-child(1),
+.style-token-scrollable-table td:nth-child(1) {
+    width: 12%;
+    text-align: center;
+}
+
+.style-token-scrollable-table th:nth-child(2),
+.style-token-scrollable-table td:nth-child(2) {
+    width: 24%;
+    text-align: right;
+}
+
+.style-token-scrollable-table th:nth-child(3),
+.style-token-scrollable-table td:nth-child(3) {
+    width: 16%;
+    text-align: center;
+}
+
+.style-token-scrollable-table th:nth-child(4),
+.style-token-scrollable-table td:nth-child(4) {
+    width: 28%;
+    text-align: left;
+}
+
+.style-token-scrollable-table th:nth-child(5),
+.style-token-scrollable-table td:nth-child(5) {
+    width: 20%;
+    text-align: right;
+}
+
+.style-token-table-filter-header {
+    position: relative;
+    padding: var(--scrollable-data-table-header-padding);
+    vertical-align: top;
+    pointer-events: auto;
+}
+
+.style-token-table-filter-default-label {
+    display: block;
+    width: 100%;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 160ms var(--motion-standard);
+}
+
+.style-token-table-filter-field {
+    position: absolute;
+    inset: 2px 1px;
+    width: auto;
+    margin: 0;
+    opacity: 0;
+    transition: opacity 160ms var(--motion-standard);
+}
+
+.style-token-table-filter-header:hover .style-token-table-filter-field,
+.style-token-table-filter-header:focus-within .style-token-table-filter-field,
+.style-token-table-filter-header:has(.style-token-table-filter-field.is-open) .style-token-table-filter-field {
+    opacity: 1;
+}
+
+.style-token-table-filter-header:hover .style-token-table-filter-default-label,
+.style-token-table-filter-header:focus-within .style-token-table-filter-default-label,
+.style-token-table-filter-header:has(.style-token-table-filter-field.is-open) .style-token-table-filter-default-label {
+    opacity: 0;
+}
+
+.style-token-table-filter-trigger {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    min-height: 22px;
+    height: 22px;
+    padding: 0 14px 0 4px;
+    border: var(--frosted-glass-border) !important;
+    border-radius: var(--radius-soft);
+    background: var(--frosted-glass-background);
+    box-shadow: var(--frosted-glass-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
+    font: inherit;
+    color: inherit;
+}
+
+.style-token-table-filter-trigger .trade-strategy-trigger-label {
+    display: block;
+    width: 100%;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.style-token-table-filter-trigger .browser-picker-trigger-chevron {
+    position: absolute;
+    right: 3px;
+    width: 7px;
+    height: 5px;
+}
+
+.style-token-table-demo-surface thead tr[data-style-token-table-summary-row] td {
+    padding: var(--scrollable-data-table-summary-padding);
+    border-top: 1px solid var(--theme-glass-border);
+    background: var(--scrollable-data-table-summary-background);
+    box-shadow: var(--scrollable-data-table-summary-shadow);
+    backdrop-filter: var(--scrollable-data-table-summary-blur);
+    -webkit-backdrop-filter: var(--scrollable-data-table-summary-blur);
+    color: var(--muted);
+    font-size: var(--font-tooltip);
+    line-height: var(--scrollable-data-table-summary-line-height);
+}
+
+.style-token-table-demo-pagination {
+    margin-top: 10px;
+}
+
+@container (max-width: 360px) {
+    .style-token-table-demo-shell {
+        padding: 10px;
+    }
+
+    .style-token-table-demo-scroll {
+        max-width: 100%;
+    }
+}
 
 @container (max-width: 300px) {
     .style-token-demo-metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
