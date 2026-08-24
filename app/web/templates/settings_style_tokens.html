@@ -1,20 +1,20 @@
-<!-- Code version: v1.0.0-codex.1 -->
+<!-- Code version: v1.1.0-codex.3 -->
 <!doctype html>
-<html lang="en-US">
+<html lang="en-US" data-style-token-reference-skin>
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>CacheLikesFromTwitter Style tokens</title>
+    <title>Settings</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.48') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.53') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.0.0-codex.4') }}"></script>
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
-<main class="page">
+<main class="page style-token-page">
     <button
         type="button"
         class="sidebar-toggle"
@@ -37,140 +37,149 @@
             hidden
         ></button>
 
-        <aside class="panel sidebar settings-category-sidebar" id="settings_sidebar">
+        <aside class="panel sidebar" id="app_sidebar">
             <section class="hero">
                 <h1>Settings</h1>
             </section>
-            <section class="sidebar-section anchor-section" id="settings">
-                <div class="section-heading">
-                    <p class="section-kicker">Control plane</p>
-                    <span class="status-chip status-idle">idle</span>
-                </div>
-            </section>
-            {% set current_category = 'style-tokens' %}
-            {% include "_settings_category_nav.html" %}
+            {% include "_style_tokens_settings_nav.html" %}
         </aside>
 
-        <section class="panel chart-panel workspace style-token-workspace" id="settings_workspace">
-            <div class="workspace-header">
-                <div class="report-card workspace-summary-card workspace-article-card style-token-summary-card">
+        <section class="panel chart-panel workspace" id="workspace_panel">
+            <section class="workspace-header settings-workspace-header settings-shell-style-tokens" id="settings_workspace_shell">
+                <article class="report-card workspace-article-card workspace-summary-card settings-summary-card">
                     <div class="report-heading-row">
-                        <div>
-                            <p class="workspace-kicker">Settings</p>
-                            <h2>Style tokens</h2>
-                        </div>
-                        <span class="status-chip status-success">{{ style_token_count }} reused tokens</span>
+                        <p class="report-heading">Style tokens</p>
                     </div>
-                    <p class="status-copy settings-intro-copy">
-                        One source of truth for CSS custom properties that are reused at least {{ minimum_references }} times. Each row is read from the live stylesheet, so new shared styles appear here automatically.
-                    </p>
+                </article>
 
-                    <section class="style-token-demo-grid" aria-label="Shared style previews">
-                        <article class="style-token-demo-card style-token-demo-card--surface">
-                            <div class="style-token-demo-heading">
-                                <div>
-                                    <p class="style-token-demo-kicker">Surface</p>
-                                    <h3>Frosted glass</h3>
+                <section class="style-token-shell" data-style-token-shell>
+                    <p class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-style-token-copy-status></p>
+                    <button type="button" class="surface-resizer surface-resizer--inline style-token-resizer" data-style-token-resizer role="separator" aria-orientation="vertical" aria-label="Resize style token demos"></button>
+                    <div class="style-token-list">
+                    {% for row in style_token_rows %}
+                    <section id="{{ row.id }}" class="style-token-card" data-style-token-card="{{ row.id }}">
+                        <div class="style-token-demo">
+                            {% if row.sample_kind == "metric-summary" %}
+                            <section class="style-token-demo-metric-grid metric-grid" data-style-token-demo="metric-summary" aria-label="Foundation metric card demo">
+                                {% for metric in row.sample_metrics %}
+                                <article class="metric-card{% if loop.index == 2 %} metric-card-accent{% endif %}">
+                                    <span class="metric-label">{{ metric.label }}</span>
+                                    <strong>{{ metric.value }}</strong>
+                                </article>
+                                {% endfor %}
+                            </section>
+                            {% elif row.sample_kind == "status-states" %}
+                            <section class="style-token-status-demo" data-style-token-demo="status-states" data-style-token-state-demo aria-label="Status chip demo">
+                                <div class="style-token-demo-heading">
+                                    <p>{{ row.sample_title }}</p>
+                                    <span class="status-chip is-ready" data-style-token-state-indicator>Ready</span>
                                 </div>
-                                <code>--frosted-glass-*</code>
-                            </div>
-                            <div class="style-token-demo-surface">
-                                <span>Shared surface</span>
-                                <button type="button" class="secondary-button style-token-demo-button">Preview</button>
-                            </div>
-                        </article>
-                        <article class="style-token-demo-card">
-                            <div class="style-token-demo-heading">
-                                <div>
-                                    <p class="style-token-demo-kicker">Control</p>
-                                    <h3>Form control</h3>
+                                <div class="style-token-segmented-control" data-style-token-segmented>
+                                    <button type="button" class="is-active" data-style-token-state="ready" aria-pressed="true">Ready</button>
+                                    <button type="button" data-style-token-state="working" aria-pressed="false">Working</button>
+                                    <button type="button" data-style-token-state="blocked" aria-pressed="false">Blocked</button>
                                 </div>
-                                <code>--control-form-height</code>
-                            </div>
-                            <label class="style-token-demo-field">
-                                <span>Project folder</span>
-                                <input type="text" value="/local/cache" readonly aria-label="Project folder preview">
-                            </label>
-                        </article>
-                        <article class="style-token-demo-card">
-                            <div class="style-token-demo-heading">
-                                <div>
-                                    <p class="style-token-demo-kicker">Interaction</p>
-                                    <h3>Segmented control</h3>
+                                <p class="style-token-demo-note" data-style-token-state-copy>{{ row.sample_copy }}</p>
+                            </section>
+                            {% elif row.sample_kind == "type-specimen" %}
+                            <section class="style-token-type-demo" data-style-token-demo="type-specimen" aria-label="Typography demo">
+                                <p class="style-token-type-kicker">Settings / Style tokens</p>
+                                <p class="style-token-type-title">{{ row.sample_title }}</p>
+                                <p class="style-token-type-copy">{{ row.sample_copy }}</p>
+                                <code>--font-ui-lg · --font-table-body</code>
+                            </section>
+                            {% elif row.sample_kind == "glass-surface" %}
+                            <section class="style-token-glass-demo" data-style-token-demo="glass-surface" aria-label="Frosted surface demo">
+                                <div class="style-token-glass-orb style-token-glass-orb-primary"></div>
+                                <div class="style-token-glass-orb style-token-glass-orb-secondary"></div>
+                                <article class="report-card workspace-article-card style-token-glass-card">
+                                    <p class="report-heading">{{ row.sample_title }}</p>
+                                    <p>{{ row.sample_copy }}</p>
+                                    <span class="status-chip is-ready">Visible</span>
+                                </article>
+                            </section>
+                            {% elif row.sample_kind == "control-playground" %}
+                            <form class="style-token-control-demo" data-style-token-demo="control-playground" aria-label="Interactive control demo">
+                                <label class="field">
+                                    <span>Preview label</span>
+                                    <input class="text-input-control" type="text" value="Style token" aria-label="Preview label">
+                                </label>
+                                <div class="style-token-segmented-control" data-style-token-segmented aria-label="Preview density">
+                                    <button type="button" class="is-active" data-style-token-control-state="compact" aria-pressed="true">Compact</button>
+                                    <button type="button" data-style-token-control-state="comfortable" aria-pressed="false">Comfortable</button>
                                 </div>
-                                <code>--mode-switch-*</code>
-                            </div>
-                            <div class="style-token-demo-segmented" role="group" aria-label="Segmented control preview">
-                                <button type="button" class="is-active">Text</button>
-                                <button type="button">Media</button>
-                                <button type="button">Prompts</button>
-                            </div>
-                        </article>
-                        <article class="style-token-demo-card style-token-demo-card--status">
-                            <div class="style-token-demo-heading">
-                                <div>
-                                    <p class="style-token-demo-kicker">Status</p>
-                                    <h3>Shared semantic colors</h3>
+                                <label class="switch-row style-token-switch-row">
+                                    <span>Accent feedback</span>
+                                    <span class="ios-switch-shell">
+                                        <input type="checkbox" checked data-style-token-toggle aria-label="Toggle accent feedback">
+                                        <span class="ios-switch-slider" aria-hidden="true"></span>
+                                    </span>
+                                </label>
+                                <p class="style-token-demo-note" data-style-token-toggle-copy>Accent feedback is enabled.</p>
+                            </form>
+                            {% elif row.sample_kind == "workflow-card" %}
+                            <article class="report-card workspace-article-card style-token-workflow-demo" data-style-token-demo="workflow-card" data-style-token-workflow-demo>
+                                <div class="style-token-demo-heading">
+                                    <div>
+                                        <p class="report-heading">{{ row.sample_title }}</p>
+                                        <p>{{ row.sample_copy }}</p>
+                                    </div>
+                                    <span class="status-chip is-ready" data-style-token-workflow-state>Ready</span>
                                 </div>
-                                <code>--theme-*</code>
-                            </div>
-                            <div class="style-token-demo-status-row">
-                                <span class="status-chip status-success">Ready</span>
-                                <span class="status-chip status-running">Running</span>
-                                <span class="status-chip status-error">Error</span>
-                            </div>
-                        </article>
-                    </section>
-
-                    <section class="style-token-inventory" aria-labelledby="style-token-inventory-heading">
-                        <div class="style-token-inventory-heading">
-                            <div>
-                                <p class="workspace-kicker">Registry</p>
-                                <h3 id="style-token-inventory-heading">Reused style inventory</h3>
-                            </div>
-                            <p class="style-token-copy-status" data-style-token-copy-status aria-live="polite"></p>
+                                <div class="style-token-workflow-footer">
+                                    <span>Layout adapts without breaking the reading path.</span>
+                                    <button type="button" class="secondary-button" data-style-token-workflow-action>Refresh preview</button>
+                                </div>
+                            </article>
+                            {% else %}
+                            <section class="style-token-product-demo" data-style-token-demo="product-summary" aria-label="Product component demo">
+                                <div class="style-token-demo-heading">
+                                    <p>{{ row.sample_title }}</p>
+                                    <span class="status-chip is-ready">Indexed</span>
+                                </div>
+                                <div class="style-token-segmented-control" data-style-token-segmented aria-label="Local resource filter">
+                                    <button type="button" class="is-active" data-style-token-product-filter="all" aria-pressed="true">All</button>
+                                    <button type="button" data-style-token-product-filter="pages" aria-pressed="false">Pages</button>
+                                    <button type="button" data-style-token-product-filter="media" aria-pressed="false">Media</button>
+                                </div>
+                                <div class="browser-result-summary">
+                                    <p data-style-token-product-copy>{{ row.sample_copy }}</p>
+                                    <button type="button" class="ghost-link" data-style-token-product-action>Open</button>
+                                </div>
+                            </section>
+                            {% endif %}
                         </div>
-                        {% for group in style_token_groups %}
-                        <article class="style-token-group" data-style-token-group="{{ group.name|lower|replace(' ', '-') }}">
-                            <div class="style-token-group-heading">
-                                <h4>{{ group.name }}</h4>
-                                <span>{{ group.tokens|length }} tokens</span>
+                        <div class="style-token-meta">
+                            <div class="style-token-title-row">
+                                <p class="style-token-title">{{ row.name }}</p>
+                                <button
+                                    type="button"
+                                    class="settings-round-icon-button style-token-copy-button"
+                                    data-style-token-copy="{{ row.name }}"
+                                    aria-label="Copy style name"
+                                    title="Copy style name"
+                                >
+                                    <span class="icon icon-style-token-copy" aria-hidden="true"></span>
+                                </button>
                             </div>
-                            <div class="style-token-table-shell">
-                                <table class="style-token-table" aria-label="{{ group.name }} style tokens">
-                                    <thead>
-                                    <tr>
-                                        <th scope="col">Token</th>
-                                        <th scope="col">Value</th>
-                                        <th scope="col">References</th>
-                                        <th scope="col">Source</th>
-                                        <th scope="col"><span class="visually-hidden">Action</span></th>
-                                    </tr>
-                                    </thead>
+                            <div class="style-token-table-wrap">
+                                <table class="style-token-table" aria-label="{{ row.name }} tokens">
                                     <tbody>
-                                    {% for token in group.tokens %}
-                                    <tr data-style-token-row="{{ token.name }}">
-                                        <td><code class="style-token-name">{{ token.name }}</code></td>
-                                        <td><code class="style-token-value">{{ token.value }}</code></td>
-                                        <td>{{ token.reference_count }}</td>
-                                        <td><code>style.css:{{ token.line }}</code></td>
-                                        <td>
-                                            <button
-                                                type="button"
-                                                class="ghost-link ghost-link--compact style-token-copy-button"
-                                                data-style-token-copy="{{ token.name }}"
-                                            >Copy</button>
-                                        </td>
-                                    </tr>
-                                    {% endfor %}
+                                        {% for token in row.tokens %}
+                                        <tr data-style-token-row="{{ token.name }}" title="{{ token.reference_count }} stylesheet references · style.css:{{ token.line }}">
+                                            <td class="style-token-name">{{ token.name }}</td>
+                                            <td class="style-token-value"><span class="style-token-value-text">{{ token.value }}</span></td>
+                                        </tr>
+                                        {% endfor %}
                                     </tbody>
                                 </table>
                             </div>
-                        </article>
-                        {% endfor %}
+                        </div>
                     </section>
-                </div>
-            </div>
+                    {% endfor %}
+                    </div>
+                </section>
+            </section>
         </section>
     </div>
 

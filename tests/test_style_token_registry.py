@@ -1,10 +1,11 @@
 """Regression tests for the Settings → Style tokens registry.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from app.web.token_registry import (
     build_reused_style_token_groups,
+    build_reused_style_token_rows,
     load_css_token_registry,
 )
 
@@ -30,15 +31,35 @@ def test_style_token_groups_only_expose_reused_tokens() -> None:
     )
 
 
-def test_style_tokens_route_renders_inventory_and_settings_navigation(client) -> None:
+def test_style_token_rows_pair_every_category_with_a_live_component_demo() -> None:
+    rows = build_reused_style_token_rows(minimum_references=2)
+
+    assert {row["sample_kind"] for row in rows} == {
+        "metric-summary",
+        "status-states",
+        "type-specimen",
+        "glass-surface",
+        "control-playground",
+        "workflow-card",
+        "product-summary",
+    }
+    assert all(row["sample_kind"] != "token-inventory" for row in rows)
+
+
+def test_style_tokens_route_renders_live_demos_and_settings_navigation(client) -> None:
     response = client.get("/settings/style-tokens")
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
+    assert "data-style-token-reference-skin" in html
     assert 'aria-current="page"' in html
-    assert 'data-style-token-group="surfaces-and-effects"' in html
+    assert 'data-style-token-card="style-token-surfaces-and-effects"' in html
     assert 'data-style-token-row="--frosted-glass-background"' in html
-    assert 'data-style-token-copy="--frosted-glass-background"' in html
+    assert 'data-style-token-copy="Surfaces and effects"' in html
+    assert 'data-style-token-demo="metric-summary"' in html
+    assert 'data-style-token-demo="control-playground"' in html
+    assert 'data-style-token-demo="product-summary"' in html
+    assert 'data-style-token-inventory-demo' not in html
     assert 'href="/settings/style-tokens"' in html
 
 

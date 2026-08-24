@@ -1,6 +1,6 @@
 """Read the local CSS foundation token registry for the Style tokens page.
 
-Code version: v0.1.0-codex.1
+Code version: v0.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -146,3 +146,88 @@ def build_reused_style_token_groups(
             }
         )
     return groups
+
+
+def build_reused_style_token_rows(
+    *,
+    minimum_references: int = 2,
+) -> list[dict[str, object]]:
+    """Adapt the live registry to cards with working project-component demos."""
+    rows: list[dict[str, object]] = []
+    for group in build_reused_style_token_groups(
+        minimum_references=minimum_references,
+    ):
+        group_name = str(group["name"])
+        tokens = list(group["tokens"])
+        slug = re.sub(r"[^a-z0-9]+", "-", group_name.lower()).strip("-")
+        total_references = sum(int(token["reference_count"]) for token in tokens)
+        demo = _build_style_token_demo(
+            group_name=group_name,
+            token_count=len(tokens),
+            total_references=total_references,
+        )
+        rows.append(
+            {
+                "id": f"style-token-{slug}",
+                "name": group_name,
+                **demo,
+                "tokens": tokens,
+                "related_styles": [],
+            }
+        )
+    return rows
+
+
+def _build_style_token_demo(
+    *,
+    group_name: str,
+    token_count: int,
+    total_references: int,
+) -> dict[str, object]:
+    """Return an interactive, representative component for one token category."""
+    if group_name == "Foundation":
+        return {
+            "sample_kind": "metric-summary",
+            "sample_title": "Foundation metrics",
+            "sample_copy": "A live metric-card composition using the shared baseline.",
+            "sample_metrics": [
+                {"label": "Tokens", "value": f"{token_count:,}"},
+                {"label": "References", "value": f"{total_references:,}"},
+                {"label": "Scope", "value": "Root"},
+            ],
+        }
+    if group_name == "Color and status":
+        return {
+            "sample_kind": "status-states",
+            "sample_title": "Status feedback",
+            "sample_copy": "Select a state to preview the status-chip language.",
+        }
+    if group_name == "Typography":
+        return {
+            "sample_kind": "type-specimen",
+            "sample_title": "Readable hierarchy",
+            "sample_copy": "UI, metadata, and code text share one type system.",
+        }
+    if group_name == "Surfaces and effects":
+        return {
+            "sample_kind": "glass-surface",
+            "sample_title": "Layered surface",
+            "sample_copy": "The frosted surface keeps content distinct without a hard edge.",
+        }
+    if group_name == "Controls":
+        return {
+            "sample_kind": "control-playground",
+            "sample_title": "Interactive controls",
+            "sample_copy": "Type, select, and switch state are all live in this preview.",
+        }
+    if group_name == "Layout and motion":
+        return {
+            "sample_kind": "workflow-card",
+            "sample_title": "Responsive workspace",
+            "sample_copy": "Refresh the preview to see shared action feedback.",
+        }
+    return {
+        "sample_kind": "product-summary",
+        "sample_title": "Local resources",
+        "sample_copy": "A compact result summary uses shared product components.",
+    }

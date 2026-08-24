@@ -109,7 +109,7 @@ from app.web.cache_sources import (
     get_cache_source_view,
 )
 from app.web.navigation import build_agent_path, is_supported_agent_selection
-from app.web.token_registry import build_reused_style_token_groups
+from app.web.token_registry import build_reused_style_token_rows
 
 
 CACHE_RECONCILE_PHASES = {"idle", "finished", "completed", "success", "stopped"}
@@ -826,12 +826,12 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.get("/settings/style-tokens")
     def settings_style_tokens():
-        style_token_groups = build_reused_style_token_groups(minimum_references=2)
-        style_token_count = sum(len(group["tokens"]) for group in style_token_groups)
+        style_token_rows = build_reused_style_token_rows(minimum_references=2)
+        style_token_count = sum(len(row["tokens"]) for row in style_token_rows)
         return render_template(
             "settings_style_tokens.html",
             version=APP_VERSION,
-            style_token_groups=style_token_groups,
+            style_token_rows=style_token_rows,
             style_token_count=style_token_count,
             minimum_references=2,
         )
