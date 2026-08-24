@@ -251,7 +251,7 @@ ChatGPT page local filesystem authority.
 | Location | Owner and purpose | Git policy |
 | --- | --- | --- |
 | `local_store/` | User media, source catalogs, queues, manifests, and deletion previews | Ignored except `.gitkeep` |
-| `local_store/prompt/` | Pointer-backed saved prompts resolved from typed chat history | Ignored except `.gitkeep` |
+| `local_store/prompt/` | Snapshot-backed saved prompts retaining source pointers for traceability | Ignored except `.gitkeep` |
 | `logs/` | Local structured JSON-line logs | Ignored except `.gitkeep` |
 | Platform-native CacheLikesFromTwitter settings path (`~/Library/Application Support/...` on macOS; `%APPDATA%\CacheLikesFromTwitter\...` on Windows) | Device-local configuration | Outside the repository |
 | `app/`, `tests/`, `docs/`, `scripts/` | Versioned source, contracts, and checks | Committed |

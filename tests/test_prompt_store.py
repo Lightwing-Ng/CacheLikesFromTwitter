@@ -1,13 +1,18 @@
-"""Tests for pointer-backed prompt bookmarks and browser controls."""
+"""Tests for snapshot-backed prompt bookmarks and browser controls."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.1.0-codex.1
 
 from pathlib import Path
 
 import pytest
 
 from app.core.prompt_store import PromptStore
-from app.core.resource_persistence import GEMINI_HISTORY_SCHEMA, PROMPT_SCHEMA, write_parquet_rows_atomic
+from app.core.resource_persistence import (
+    GEMINI_HISTORY_SCHEMA,
+    PROMPT_LEGACY_SCHEMA,
+    PROMPT_SCHEMA,
+    write_parquet_rows_atomic,
+)
 from app.web.app import create_app
 
 
@@ -48,7 +53,7 @@ def _write_history(root: Path, content_text: str) -> None:
     )
 
 
-def test_prompt_store_deduplicates_pointers_and_resolves_updated_text(tmp_path: Path) -> None:
+def test_prompt_store_captures_a_snapshot_and_survives_history_deletion(tmp_path: Path) -> None:
     _write_history(tmp_path, "First prompt")
     store = PromptStore(tmp_path)
 
@@ -74,11 +79,49 @@ def test_prompt_store_deduplicates_pointers_and_resolves_updated_text(tmp_path: 
 
     table = parquet.read_table(store.catalog_path)
     assert table.num_rows == 1
-    assert "content_text" not in table.column_names
+    assert "content_text" in table.column_names
+    assert table.column("content_text").to_pylist() == ["First prompt"]
 
     _write_history(tmp_path, "Updated prompt")
     refreshed = PromptStore(tmp_path).query().items[0]
-    assert refreshed.content_text == "Updated prompt"
+    assert refreshed.content_text == "First prompt"
+
+    (tmp_path / "llm" / "chatgpt" / "history.parquet").unlink()
+    offline_store = PromptStore(tmp_path)
+    deleted_remote_history = offline_store.query().items[0]
+    assert deleted_remote_history.content_text == "First prompt"
+    assert deleted_remote_history.conversation_url == "https://chatgpt.com/c/demo"
+    remarked, created = offline_store.add_remark(deleted_remote_history.stable_id, "offline")
+    assert created is True
+    assert remarked.remarks == ("offline",)
+    assert PromptStore(tmp_path).query().items[0].remarks == ("offline",)
+
+
+def test_legacy_pointer_rows_are_upgraded_before_history_disappears(tmp_path: Path) -> None:
+    _write_history(tmp_path, "Legacy prompt")
+    write_parquet_rows_atomic(
+        tmp_path / "prompt" / "prompts.parquet",
+        [
+            {
+                "schema_version": 1,
+                "source": "chatgpt",
+                "conversation_id": "demo",
+                "message_key": "demo:user:0",
+                "added_at": "2026-08-20T06:00:00Z",
+            }
+        ],
+        PROMPT_LEGACY_SCHEMA,
+    )
+
+    upgraded = PromptStore(tmp_path)
+    assert upgraded.query().items[0].content_text == "Legacy prompt"
+
+    import pyarrow.parquet as parquet
+
+    table = parquet.read_table(upgraded.catalog_path)
+    assert table.column("content_text").to_pylist() == ["Legacy prompt"]
+    (tmp_path / "llm" / "chatgpt" / "history.parquet").unlink()
+    assert PromptStore(tmp_path).query().items[0].content_text == "Legacy prompt"
 
 
 def test_prompts_mode_renders_add_and_copy_controls(tmp_path: Path) -> None:
@@ -219,6 +262,11 @@ def test_prompt_collection_is_limited_to_user_messages(tmp_path: Path) -> None:
                 "source": "chatgpt",
                 "conversation_id": "demo",
                 "message_key": "demo:assistant:1",
+                "content_text": "",
+                "conversation_title": "",
+                "conversation_url": "",
+                "author_label": "",
+                "captured_at": "",
                 "added_at": "2026-08-20T06:00:00Z",
             }
         ],

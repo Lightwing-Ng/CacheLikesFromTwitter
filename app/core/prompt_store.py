@@ -1,6 +1,6 @@
-"""Pointer-backed prompt bookmarks for the local resource browser."""
+"""Snapshot-backed prompt bookmarks for the local resource browser."""
 
-# Code version: v1.1.0-codex.1
+# Code version: v1.2.0-codex.1
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ PROMPT_REMARK_MAX_LENGTH = 48
 
 @dataclass(frozen=True, slots=True)
 class SavedPrompt:
-    """Describe one prompt resolved from its cached message pointer."""
+    """Describe one locally saved prompt and its source pointer."""
 
     stable_id: str
     source: str
@@ -105,7 +105,7 @@ def _timestamp_value(value: str) -> float:
 
 
 class PromptStore:
-    """Persist only message pointers and resolve prompt text from typed history."""
+    """Persist prompt snapshots with source pointers for local durability."""
 
     def __init__(self, local_store_root: Path | str) -> None:
         self.local_store_root = Path(local_store_root).expanduser().resolve(strict=False)
@@ -115,6 +115,7 @@ class PromptStore:
         self._lock = RLock()
         self._entries = self._load_entries()
         self._remarks = self._load_remarks()
+        self._backfill_legacy_snapshots()
 
     def _load_entries(self) -> dict[str, dict[str, Any]]:
         entries: dict[str, dict[str, Any]] = {}
@@ -129,9 +130,59 @@ class PromptStore:
                 "source": source,
                 "conversation_id": conversation_id,
                 "message_key": message_key,
+                "content_text": str(row.get("content_text") or "").replace("\x00", "").strip(),
+                "conversation_title": str(row.get("conversation_title") or "").strip(),
+                "conversation_url": str(row.get("conversation_url") or "").strip(),
+                "author_label": str(row.get("author_label") or "").strip(),
+                "captured_at": str(row.get("captured_at") or "").strip(),
                 "added_at": str(row.get("added_at") or ""),
             }
         return entries
+
+    @staticmethod
+    def _has_snapshot(entry: dict[str, Any]) -> bool:
+        return bool(str(entry.get("content_text") or "").strip())
+
+    @staticmethod
+    def _capture_snapshot(entry: dict[str, Any], message: ChatHistoryMessage) -> None:
+        """Copy the user message fields needed after its remote history disappears."""
+        entry.update(
+            {
+                "content_text": message.content_text,
+                "conversation_title": message.conversation_title,
+                "conversation_url": message.conversation_url,
+                "author_label": message.author_label,
+                "captured_at": message.last_seen_at,
+            }
+        )
+
+    def _backfill_legacy_snapshots(self) -> None:
+        """Upgrade pointer-only rows while their source history is still available."""
+        with self._lock:
+            pending = tuple(
+                (pointer, entry)
+                for pointer, entry in self._entries.items()
+                if not self._has_snapshot(entry)
+            )
+            if not pending:
+                return
+
+            messages_by_pointer: dict[str, ChatHistoryMessage] = {}
+            for source in {str(entry["source"]) for _, entry in pending}:
+                for message in load_chat_history_messages(self.local_store_root, source):
+                    messages_by_pointer[
+                        prompt_pointer_key(message.source, message.conversation_id, message.message_key)
+                    ] = message
+
+            changed = False
+            for pointer, entry in pending:
+                message = messages_by_pointer.get(pointer)
+                if message is None or message.role != "user":
+                    continue
+                self._capture_snapshot(entry, message)
+                changed = True
+            if changed:
+                self._save_entries()
 
     def _load_remarks(self) -> dict[str, list[str]]:
         remarks: dict[str, list[str]] = {}
@@ -167,7 +218,10 @@ class PromptStore:
                 return pointer, entry
         raise LookupError("The saved prompt was not found.")
 
-    def _resolve_stable_id(self, stable_id: str) -> tuple[str, dict[str, Any], ChatHistoryMessage]:
+    def _resolve_stable_id(
+        self,
+        stable_id: str,
+    ) -> tuple[str, dict[str, Any], ChatHistoryMessage | None]:
         pointer, entry = self._find_entry_for_stable_id(stable_id)
         message = find_chat_history_message(
             self.local_store_root,
@@ -175,7 +229,9 @@ class PromptStore:
             conversation_id=str(entry["conversation_id"]),
             message_key=str(entry["message_key"]),
         )
-        if message is None or message.role != "user":
+        if message is not None and message.role != "user":
+            message = None
+        if message is None and not self._has_snapshot(entry):
             raise LookupError("The saved prompt is no longer available.")
         return pointer, entry, message
 
@@ -196,7 +252,7 @@ class PromptStore:
         conversation_id: str,
         message_key: str,
     ) -> tuple[SavedPrompt, bool]:
-        """Save one message pointer once and return its current resolved content."""
+        """Save one message pointer once with a durable prompt-content snapshot."""
         normalized_source = normalize_chat_history_source(source)
         normalized_conversation_id = str(conversation_id or "").strip()[:160]
         normalized_message_key = str(message_key or "").strip()[:240]
@@ -233,9 +289,13 @@ class PromptStore:
                     "message_key": normalized_message_key,
                     "added_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
                 }
+                self._capture_snapshot(entry, message)
                 self._entries[pointer] = entry
                 self._save_entries()
-            return self._build_item(entry, message), created
+            elif not self._has_snapshot(entry):
+                self._capture_snapshot(entry, message)
+                self._save_entries()
+            return self._build_item(entry), created
 
     def add_remark(self, stable_id: str, remark: object) -> tuple[SavedPrompt, bool]:
         """Add one normalized remark to a saved prompt."""
@@ -279,7 +339,7 @@ class PromptStore:
         sort: str = "newest",
         page: object = 1,
     ) -> PromptPage:
-        """Resolve saved pointers against current history and return one page."""
+        """Return saved prompt snapshots, using history only for legacy rows."""
         normalized_source = normalize_chat_history_source(source)
         query_terms = tuple(str(query or "").strip()[:120].casefold().split())
         with self._lock:
@@ -293,19 +353,21 @@ class PromptStore:
             if normalized_source != "all" and entry["source"] != normalized_source:
                 continue
             message = messages.get(pointer)
-            if message is None or message.role != "user":
+            if message is not None and message.role != "user":
+                message = None
+            if message is None and not self._has_snapshot(entry):
                 continue
+            item = self._build_item(entry, message)
             searchable = " ".join(
                 (
-                    message.conversation_title,
-                    message.author_label,
-                    message.content_text,
-                    message.content_html,
+                    item.conversation_title,
+                    item.author_label,
+                    item.content_text,
                 )
             ).casefold()
             if query_terms and not all(term in searchable for term in query_terms):
                 continue
-            items.append(self._build_item(entry, message))
+            items.append(item)
 
         normalized_sort = str(sort or "").strip().lower()
         if normalized_sort == "name":
@@ -329,22 +391,39 @@ class PromptStore:
             total_pages=total_pages,
         )
 
-    def _build_item(self, entry: dict[str, Any], message: ChatHistoryMessage) -> SavedPrompt:
+    def _build_item(
+        self,
+        entry: dict[str, Any],
+        message: ChatHistoryMessage | None = None,
+    ) -> SavedPrompt:
         pointer = prompt_pointer_key(
             str(entry["source"]),
             str(entry["conversation_id"]),
             str(entry["message_key"]),
         )
+        if not self._has_snapshot(entry) and message is None:
+            raise LookupError("The saved prompt is no longer available.")
+
+        message_content = str(message.content_text) if message is not None else ""
+        message_title = str(message.conversation_title) if message is not None else ""
+        message_url = str(message.conversation_url) if message is not None else ""
+        message_author = str(message.author_label) if message is not None else ""
+        message_captured_at = str(message.last_seen_at) if message is not None else ""
+        content_text = str(entry.get("content_text") or "").strip() or message_content
+        conversation_title = str(entry.get("conversation_title") or "").strip() or message_title
+        conversation_url = str(entry.get("conversation_url") or "").strip() or message_url
+        author_label = str(entry.get("author_label") or "").strip() or message_author
+        captured_at = str(entry.get("captured_at") or "").strip() or message_captured_at
         return SavedPrompt(
             stable_id=_prompt_stable_id(pointer),
-            source=message.source,
-            conversation_id=message.conversation_id,
-            message_key=message.message_key,
-            conversation_title=message.conversation_title,
-            conversation_url=message.conversation_url,
-            author_label=message.author_label,
-            content_text=message.content_text,
-            captured_at=message.last_seen_at,
+            source=str(entry["source"]),
+            conversation_id=str(entry["conversation_id"]),
+            message_key=str(entry["message_key"]),
+            conversation_title=conversation_title,
+            conversation_url=conversation_url,
+            author_label=author_label,
+            content_text=content_text,
+            captured_at=captured_at,
             added_at=str(entry.get("added_at") or ""),
             remarks=tuple(self._remarks.get(_prompt_stable_id(pointer), ())),
         )
@@ -356,6 +435,11 @@ class PromptStore:
                 "source": entry["source"],
                 "conversation_id": entry["conversation_id"],
                 "message_key": entry["message_key"],
+                "content_text": entry.get("content_text", ""),
+                "conversation_title": entry.get("conversation_title", ""),
+                "conversation_url": entry.get("conversation_url", ""),
+                "author_label": entry.get("author_label", ""),
+                "captured_at": entry.get("captured_at", ""),
                 "added_at": entry["added_at"],
             }
             for _, entry in sorted(self._entries.items())
