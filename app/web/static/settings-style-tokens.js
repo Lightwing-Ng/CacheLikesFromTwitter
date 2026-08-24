@@ -1,4 +1,4 @@
-/* Code version: v1.1.0-codex.5 */
+/* Code version: v1.1.0-codex.7 */
 
 (() => {
     "use strict";
@@ -32,64 +32,6 @@
         helper.remove();
     };
 
-    const setPressedButton = (container, selectedButton) => {
-        container.querySelectorAll("button").forEach((button) => {
-            const isSelected = button === selectedButton;
-            button.classList.toggle("is-active", isSelected);
-            button.setAttribute("aria-pressed", String(isSelected));
-        });
-    };
-
-    const bindSegmentedDemos = () => {
-        document.querySelectorAll("[data-style-token-segmented]").forEach((container) => {
-            container.addEventListener("click", (event) => {
-                const button = event.target.closest("button");
-                if (!button || !container.contains(button)) {
-                    return;
-                }
-                setPressedButton(container, button);
-
-                const stateDemo = container.closest("[data-style-token-state-demo]");
-                if (stateDemo && button.dataset.styleTokenState) {
-                    const state = button.dataset.styleTokenState;
-                    const indicator = stateDemo.querySelector("[data-style-token-state-indicator]");
-                    const copy = stateDemo.querySelector("[data-style-token-state-copy]");
-                    stateDemo.dataset.state = state;
-                    if (indicator) {
-                        indicator.textContent = state[0].toUpperCase() + state.slice(1);
-                        indicator.className = `status-chip is-${state}`;
-                    }
-                    if (copy) {
-                        copy.textContent = `${indicator?.textContent || "Status"} feedback is now visible in the preview.`;
-                    }
-                }
-
-                const productDemo = container.closest("[data-style-token-demo='product-summary']");
-                if (productDemo && button.dataset.styleTokenProductFilter) {
-                    const copy = productDemo.querySelector("[data-style-token-product-copy]");
-                    const filter = button.dataset.styleTokenProductFilter;
-                    if (copy) {
-                        copy.textContent = `Showing ${filter} through the shared result summary.`;
-                    }
-                }
-            });
-        });
-    };
-
-    const bindToggleDemos = () => {
-        document.querySelectorAll("[data-style-token-toggle]").forEach((toggle) => {
-            toggle.addEventListener("change", () => {
-                const demo = toggle.closest("[data-style-token-demo='control-playground']");
-                const copy = demo?.querySelector("[data-style-token-toggle-copy]");
-                if (copy) {
-                    copy.textContent = toggle.checked
-                        ? "Accent feedback is enabled."
-                        : "Accent feedback is paused.";
-                }
-            });
-        });
-    };
-
     const bindRangeModeDemos = () => {
         document.querySelectorAll(".style-token-demo .range-mode-shell").forEach((shell) => {
             if (!(shell instanceof HTMLElement) || shell.dataset.bound === "1") {
@@ -111,6 +53,7 @@
                 shell.dataset.segmentedActiveIndex = String(activeIndex);
                 shell.style.setProperty("--segmented-option-count", String(optionCount));
                 shell.style.setProperty("--segmented-active-index", String(activeIndex));
+                window.CACHELIKES_SEGMENTED_CONTROLS?.sync?.(shell);
             };
 
             shell.querySelectorAll('input[type="radio"]').forEach((input) => {
@@ -180,34 +123,6 @@
             window.removeEventListener("scroll", syncHandleY);
             delete handle.dataset.bound;
         };
-    };
-
-    const bindWorkflowDemos = () => {
-        document.querySelectorAll("[data-style-token-workflow-action]").forEach((button) => {
-            button.addEventListener("click", () => {
-                const demo = button.closest("[data-style-token-workflow-demo]");
-                const state = demo?.querySelector("[data-style-token-workflow-state]");
-                if (!state) {
-                    return;
-                }
-                state.textContent = "Updated";
-                state.className = "status-chip is-ready";
-                showStatus("Preview refreshed");
-            });
-        });
-    };
-
-    const bindProductDemos = () => {
-        document.querySelectorAll("[data-style-token-product-action]").forEach((button) => {
-            button.addEventListener("click", () => {
-                const demo = button.closest("[data-style-token-demo='product-summary']");
-                const copy = demo?.querySelector("[data-style-token-product-copy]");
-                if (copy) {
-                    copy.textContent = "Local resources preview opened in place.";
-                }
-                showStatus("Local resources preview opened");
-            });
-        });
     };
 
     const setStyleTokenMenuOpen = (container, trigger, menu, isOpen) => {
@@ -589,12 +504,8 @@
         });
     };
 
-    bindSegmentedDemos();
     bindRangeModeDemos();
     bindStyleTokenResizer();
-    bindToggleDemos();
-    bindWorkflowDemos();
-    bindProductDemos();
     bindStyleTokenTableDemos();
     bindStyleTokenFilterMenus();
     bindStyleTokenAgentBrowserDemo();

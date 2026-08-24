@@ -1,4 +1,4 @@
-<!-- Code version: v1.2.7-codex.3 -->
+<!-- Code version: v1.2.7-codex.8 -->
 <!doctype html>
 <html lang="en-US" data-style-token-reference-skin>
 <head>
@@ -8,11 +8,12 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.74') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.79') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.3-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='resizer.js', v='resizer-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.1.0-codex.5') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.1.0-codex.7') }}"></script>
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
@@ -60,7 +61,7 @@
                     <div class="style-token-list">
                     {% for row in style_token_rows %}
                     <section id="{{ row.id }}" class="style-token-card" data-style-token-card="{{ row.id }}">
-                        <div class="style-token-demo"{% if row.sample_kind == "control-playground" %} data-style-token-density="regular"{% endif %}>
+                        <div class="style-token-demo">
                             {% if row.sample_kind == "metric-summary" %}
                             <div class="metric-card metric-card-accent foundation-metric-card">
                                 <span class="metric-label">Messages</span>
@@ -68,7 +69,7 @@
                             </div>
                             {% elif row.sample_kind == "range-mode" %}
                             <section class="style-token-range-mode-demo" data-style-token-demo="range-mode" aria-label="Segmented control">
-                                <div class="range-mode-shell" data-active="overview" data-option-count="3" data-segmented-active-index="0" style="--segmented-option-count: 3; --segmented-active-index: 0;" role="radiogroup" aria-label="Style token range mode">
+                                <div class="range-mode-shell" data-active="overview" data-option-count="3" data-segmented-pill="measured" data-segmented-active-index="0" style="--segmented-option-count: 3; --segmented-active-index: 0;" role="radiogroup" aria-label="Style token range mode">
                                     <label class="range-mode-option" for="style_token_range_overview">
                                         <input id="style_token_range_overview" name="style_token_range_mode" type="radio" value="overview" checked>
                                         <span>Overview</span>
@@ -81,68 +82,6 @@
                                         <input id="style_token_range_metrics" name="style_token_range_mode" type="radio" value="metrics">
                                         <span>Metrics</span>
                                     </label>
-                                </div>
-                            </section>
-                            {% elif row.sample_kind == "status-states" %}
-                            <section class="style-token-status-demo" data-style-token-demo="status-states" data-style-token-state-demo aria-label="Status chip demo">
-                                <div class="style-token-demo-heading">
-                                    <p>{{ row.sample_title }}</p>
-                                    <span class="status-chip is-ready" data-style-token-state-indicator>Ready</span>
-                                </div>
-                                <div class="style-token-segmented-control" data-style-token-segmented>
-                                    <button type="button" class="is-active" data-style-token-state="ready" aria-pressed="true">Ready</button>
-                                    <button type="button" data-style-token-state="working" aria-pressed="false">Working</button>
-                                    <button type="button" data-style-token-state="blocked" aria-pressed="false">Blocked</button>
-                                </div>
-                                <p class="style-token-demo-note" data-style-token-state-copy>{{ row.sample_copy }}</p>
-                            </section>
-                            {% elif row.sample_kind == "control-playground" %}
-                            <form class="style-token-control-demo" data-style-token-demo="control-playground" aria-label="Interactive control demo">
-                                <label class="field">
-                                    <span>Preview label</span>
-                                    <input class="text-input-control" type="text" value="Style token" aria-label="Preview label">
-                                </label>
-                                <div class="style-token-segmented-control" data-style-token-segmented aria-label="Preview density">
-                                    <button type="button" class="is-active" data-style-token-control-state="compact" aria-pressed="true">Compact</button>
-                                    <button type="button" data-style-token-control-state="comfortable" aria-pressed="false">Comfortable</button>
-                                </div>
-                                <label class="switch-row style-token-switch-row">
-                                    <span>Accent feedback</span>
-                                    <span class="ios-switch-shell">
-                                        <input type="checkbox" checked data-style-token-toggle aria-label="Toggle accent feedback">
-                                        <span class="ios-switch-slider" aria-hidden="true"></span>
-                                    </span>
-                                </label>
-                                <p class="style-token-demo-note" data-style-token-toggle-copy>Accent feedback is enabled.</p>
-                            </form>
-                            {% elif row.sample_kind == "workflow-card" %}
-                            <article class="report-card workspace-article-card style-token-workflow-demo" data-style-token-demo="workflow-card" data-style-token-workflow-demo>
-                                <div class="style-token-demo-heading">
-                                    <div>
-                                        <p class="report-heading">{{ row.sample_title }}</p>
-                                        <p>{{ row.sample_copy }}</p>
-                                    </div>
-                                    <span class="status-chip is-ready" data-style-token-workflow-state>Ready</span>
-                                </div>
-                                <div class="style-token-workflow-footer">
-                                    <span>Layout adapts without breaking the reading path.</span>
-                                    <button type="button" class="secondary-button" data-style-token-workflow-action>Refresh preview</button>
-                                </div>
-                            </article>
-                            {% else %}
-                            <section class="style-token-product-demo" data-style-token-demo="product-summary" aria-label="Product component demo">
-                                <div class="style-token-demo-heading">
-                                    <p>{{ row.sample_title }}</p>
-                                    <span class="status-chip is-ready">Indexed</span>
-                                </div>
-                                <div class="style-token-segmented-control" data-style-token-segmented aria-label="Local resource filter">
-                                    <button type="button" class="is-active" data-style-token-product-filter="all" aria-pressed="true">All</button>
-                                    <button type="button" data-style-token-product-filter="pages" aria-pressed="false">Pages</button>
-                                    <button type="button" data-style-token-product-filter="media" aria-pressed="false">Media</button>
-                                </div>
-                                <div class="browser-result-summary">
-                                    <p data-style-token-product-copy>{{ row.sample_copy }}</p>
-                                    <button type="button" class="ghost-link" data-style-token-product-action>Open</button>
                                 </div>
                             </section>
                             {% endif %}

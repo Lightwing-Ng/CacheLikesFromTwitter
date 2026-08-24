@@ -1,6 +1,6 @@
 """Regression tests for the Settings → Style tokens registry.
 
-Code version: v1.1.0-codex.14
+Code version: v1.1.0-codex.15
 """
 
 from pathlib import Path
@@ -18,7 +18,7 @@ def test_registry_reads_shared_tokens_from_all_root_layers() -> None:
 
     assert registry["--frosted-glass-background"].reference_count >= 2
     assert registry["--frosted-glass-background"].line > 0
-    assert registry["--style-token-card-gap"].value == "12px"
+    assert registry["--style-token-column-gap"].value == "24px"
 
 
 def test_style_token_groups_only_expose_reused_tokens() -> None:
@@ -105,8 +105,15 @@ def test_style_tokens_route_renders_live_demos_and_settings_navigation(client) -
     assert 'data-style-token-demo="glass-surface"' not in html
     assert 'class="metric-card metric-card-accent foundation-metric-card"' in html
     assert ">Messages</span>" in html
-    assert 'data-style-token-demo="control-playground"' not in html
+    for dead_demo in (
+        "status-states",
+        "control-playground",
+        "workflow-card",
+        "product-summary",
+    ):
+        assert f'data-style-token-demo="{dead_demo}"' not in html
     assert 'class="range-mode-shell"' in html
+    assert 'data-segmented-pill="measured"' in html
     assert 'class="range-mode-option"' in html
     assert 'data-style-token-card="style-token-color-and-status"' not in html
     assert 'data-style-token-card="style-token-layout-and-motion"' not in html
@@ -116,6 +123,7 @@ def test_style_tokens_route_renders_live_demos_and_settings_navigation(client) -
     assert 'data-style-token-inventory-demo' not in html
     assert 'href="/settings/style-tokens"' in html
     assert 'sidebar.js?v=sidebar-v1.19.0-codex.1' in html
+    assert 'segmented-control.js?v=segmented-control-v1.0.3-codex.1' in html
 
 
 def test_cache_summary_metrics_reuse_the_foundation_metric_contract(client) -> None:
@@ -184,6 +192,25 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
         "__styleTokenOnSelect",
     ):
         assert fragment in script
+    for fragment in (
+        "bindSegmentedDemos",
+        "bindToggleDemos",
+        "bindWorkflowDemos",
+        "bindProductDemos",
+        "data-style-token-workflow-action",
+        "data-style-token-product-action",
+    ):
+        assert fragment not in script
+
+    segmented_script = (Path(__file__).parents[1] / "app/web/static/segmented-control.js").read_text()
+    for fragment in (
+        '.range-mode-shell[data-option-count]',
+        'segmentedPill !== "measured"',
+        'ResizeObserver',
+        '--segmented-pill-left',
+        '--segmented-pill-width',
+    ):
+        assert fragment in segmented_script
 
 
 def test_style_token_reference_skin_respects_light_theme_override() -> None:

@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.48.0-codex.3
+# Code version: v1.48.0-codex.4
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ from app.core.agent import (
     ComputerUseAgentService,
     ComputerUseSettingsStore,
     browser_options_for_host,
+    default_model_for_platform,
     is_allowed_agent_network_request,
     is_loopback_address,
     launch_terminal_authorization,
@@ -455,7 +456,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         selected_models = AGENT_MODEL_OPTIONS_BY_PLATFORM[platform]
         selected_model = next(
             (option["key"] for option in selected_models if option["key"] == current.model),
-            selected_models[0]["key"],
+            default_model_for_platform(platform),
         )
         target_url = (
             current.target_url

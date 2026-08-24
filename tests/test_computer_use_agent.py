@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.12.0-codex.1
+Code version: v3.12.0-codex.3
 """
 
 from __future__ import annotations
@@ -21,6 +21,8 @@ from app.core.computer_use_agent import (
     ComputerUseSettings,
     ComputerUseSettingsStore,
     WorkspaceController,
+    default_model_for_platform,
+    strongest_model_option,
     _chatgpt_target_is_open,
     _web_target_is_open,
     _initial_web_agent_message,
@@ -175,6 +177,30 @@ def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None
                     "target_url": "https://example.com/",
                 }
             )
+
+
+def test_default_model_selection_chooses_the_strongest_current_option() -> None:
+    options = (
+        {"key": "fast", "strength": 10},
+        {"key": "flagship", "strength": 20},
+    )
+
+    assert strongest_model_option(options)["key"] == "flagship"
+
+
+def test_default_model_for_platform_reads_the_current_catalog_strength(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(
+        AGENT_MODEL_OPTIONS_BY_PLATFORM,
+        "chatgpt",
+        (
+            {"key": "fast", "strength": 10},
+            {"key": "flagship", "strength": 20},
+        ),
+    )
+
+    assert default_model_for_platform("chatgpt") == "flagship"
 
 
 def test_model_selection_keeps_the_remote_default_when_the_menu_is_not_exposed() -> None:

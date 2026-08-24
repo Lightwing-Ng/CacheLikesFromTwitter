@@ -1,4 +1,4 @@
-{# Code version: v1.2.1-codex.1 #}
+{# Code version: v1.2.1-codex.2 #}
 
 {% macro render_browser_session_status(empty_message="No signed-in account detected", ready_label="Ready", terminal_execution=none, account_label="", compact=false) -%}
 <div
@@ -11,6 +11,7 @@
         <div class="browser-session-status-copy">
             <div class="browser-session-status-item">
                 <span class="browser-session-status-checkmark" data-role="browser-session-checkmark" aria-label="{{ ready_label }}" hidden></span>
+                <span class="suggestion-loading-spinner browser-session-status-spinner" data-role="browser-session-spinner" aria-hidden="true" hidden></span>
                 <strong class="browser-session-status-account" data-role="browser-session-account">{{ account_label ~ " account" if account_label else empty_message }}</strong>
             </div>
             {% if not compact %}
@@ -36,7 +37,6 @@
             </p>
             {% endif %}
         </div>
-        <span class="suggestion-loading-spinner browser-session-status-spinner" data-role="browser-session-spinner" aria-hidden="true" hidden></span>
     </div>
 </div>
 {%- endmacro %}

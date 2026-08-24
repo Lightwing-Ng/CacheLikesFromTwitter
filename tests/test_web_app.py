@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.81.3-codex.6
+# Code version: v1.81.3-codex.11
 
 from __future__ import annotations
 
@@ -472,11 +472,12 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.19.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = (
-                    "style-v2.82.17-codex.53"
-                    if page_source in {"x", "grok", "chatgpt", "gemini"}
-                    else "style-v2.82.17-codex.48"
-                )
+                if page_source in {"x", "grok", "chatgpt", "gemini"}:
+                    expected_style_version = "style-v2.82.17-codex.53"
+                elif page_source == "agent":
+                    expected_style_version = "style-v2.82.17-codex.63"
+                else:
+                    expected_style_version = "style-v2.82.17-codex.48"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -798,9 +799,9 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.1.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.2', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.17.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.17.0-codex.2', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -825,6 +826,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-prompt-os', local_body)
         self.assertIn('data-agent-model-input', local_body)
         self.assertIn('data-agent-combobox-option="gpt-5.6-sol"', local_body)
+        self.assertIn('data-agent-model-strength="100"', local_body)
         self.assertIn('GPT-5.6 Sol', local_body)
         self.assertIn('id="agent_activity_panel"', local_body)
 
@@ -884,6 +886,15 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('<span class="agent-terminal-execution-label">Terminal permission</span>', body)
         self.assertIn('data-agent-terminal-execution-checkmark', body)
         self.assertNotIn('Terminal execution permission:', body)
+        status_item_start = body.index('<div class="browser-session-status-item">')
+        status_item_end = body.index('</div>', status_item_start) + len('</div>')
+        status_item = body[status_item_start:status_item_end]
+        self.assertIn('data-role="browser-session-spinner"', status_item)
+        self.assertIn('data-role="browser-session-account"', status_item)
+        self.assertLess(
+            status_item.index('data-role="browser-session-spinner"'),
+            status_item.index('data-role="browser-session-account"'),
+        )
 
     def test_agent_status_renders_safe_markdown_for_live_updates(self) -> None:
         app = create_app()
@@ -1046,7 +1057,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('syncModelOptionsForPlatform()', script)
         self.assertIn('browserStatusController?.setPlatform?.(platform)', script)
         self.assertIn('platform: selectedPlatform()', script)
-        self.assertIn('selectedValue(".agent-model-combobox", "gpt-5.6-sol")', script)
+        self.assertIn('selectedValue(".agent-model-combobox", "")', script)
+        self.assertIn('option.dataset.agentModelStrength', script)
+        self.assertIn('syncPlatformState();', script)
         self.assertIn('selectedValue(".agent-browser-combobox", "edge")', script)
         self.assertIn('elements.ask.classList.toggle("is-stop", running)', script)
         self.assertIn('mutate("/api/agent/stop")', script)
@@ -1102,7 +1115,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.17.0-codex.1',
+            'computer-use-agent-v3.17.0-codex.2',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
@@ -1769,6 +1782,9 @@ class WebAppTests(unittest.TestCase):
             'setRefreshingState(activeBrowser);',
             'if (statusRequests.has(requestKey)) return statusRequests.get(requestKey);',
             'statusCard.setAttribute("aria-busy", "true");',
+            'showStatusCheckmark(isReady ? "ready" : "error");',
+            'function hideStatusCheckmark()',
+            'if (statusSpinner) statusSpinner.hidden = false;',
             'if (activeBrowser !== browserId) return;',
         ):
             with self.subTest(fragment=fragment):

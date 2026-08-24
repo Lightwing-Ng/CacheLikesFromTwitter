@@ -1,4 +1,4 @@
-/* Code version: v1.4.0-codex.1 */
+/* Code version: v1.4.0-codex.2 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v5:";
@@ -99,20 +99,31 @@
             startButton.disabled = !isReady;
         }
 
+        function hideStatusCheckmark() {
+            statusCheckmark.hidden = true;
+            statusCheckmark.removeAttribute("data-status-state");
+        }
+
+        function showStatusCheckmark(state) {
+            statusCheckmark.dataset.statusState = state;
+            statusCheckmark.hidden = false;
+        }
+
         function setStatus(payload, browserId) {
             lastPayload = payload;
             statusCard.hidden = false;
             statusCard.removeAttribute("aria-busy");
             root.classList.remove("is-browser-status-loading", "is-browser-status-refreshing");
-            root.classList.toggle("is-browser-ready", Boolean(payload.can_download));
+            const isReady = Boolean(payload.can_download);
+            root.classList.toggle("is-browser-ready", isReady);
             statusAccount.textContent = accountLabel(payload);
             if (statusMessage) {
                 statusMessage.textContent = payload.message || "";
                 statusMessage.hidden = !payload.message;
             }
             if (statusSpinner) statusSpinner.hidden = true;
-            statusCheckmark.hidden = !Boolean(payload.can_download);
-            setStartButtonReady(Boolean(payload.can_download));
+            showStatusCheckmark(isReady ? "ready" : "error");
+            setStartButtonReady(isReady);
             notify(payload, browserId, "ready");
         }
 
@@ -127,7 +138,7 @@
                 statusMessage.hidden = true;
             }
             if (statusSpinner) statusSpinner.hidden = false;
-            statusCheckmark.hidden = true;
+            hideStatusCheckmark();
             setStartButtonReady(false);
             notify({can_download: false, account_name: "", message: "Checking signed-in account..."}, browserId, "loading");
         }
@@ -137,7 +148,7 @@
             root.classList.remove("is-browser-status-loading");
             root.classList.add("is-browser-status-refreshing");
             if (statusSpinner) statusSpinner.hidden = false;
-            statusCheckmark.hidden = true;
+            hideStatusCheckmark();
             notify(lastPayload || {can_download: false, account_name: "", message: "Refreshing signed-in account status..."}, browserId, "refreshing");
         }
 
@@ -150,7 +161,7 @@
                 statusMessage.hidden = true;
             }
             if (statusSpinner) statusSpinner.hidden = true;
-            statusCheckmark.hidden = true;
+            hideStatusCheckmark();
             setStartButtonReady(false);
             notify(null, "", "cleared");
         }

@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.18.0-codex.1
+Code version: v3.18.0-codex.2
 """
 
 from __future__ import annotations
@@ -88,22 +88,22 @@ SUPPORTED_OPERATING_SYSTEMS = frozenset({"macos", "windows"})
 SUPPORTED_AGENT_SESSION_MODES = frozenset({"new", "recent", "project_new", "project_session"})
 SUPPORTED_AGENT_PLATFORMS = frozenset({"chatgpt", "gemini", "grok", "claude"})
 DEFAULT_AGENT_PLATFORM = "chatgpt"
-DEFAULT_CHATGPT_MODEL = "gpt-5.6-sol"
 CHATGPT_MODEL_OPTIONS = (
     {
-        "key": DEFAULT_CHATGPT_MODEL,
+        "key": "gpt-5.6-sol",
         "label": "GPT-5.6 Sol",
         "ui_label": "5.6 Sol",
         "remote_label": "GPT-5.6 Sol",
+        "strength": 100,
     },
 )
-SUPPORTED_CHATGPT_MODELS = frozenset(option["key"] for option in CHATGPT_MODEL_OPTIONS)
 GEMINI_MODEL_OPTIONS = (
     {
         "key": "gemini-3.1-pro",
         "label": "Gemini 3.1 Pro",
         "ui_label": "3.1 Pro",
         "remote_labels": ("Gemini 3.1 Pro", "3.1 Pro"),
+        "strength": 100,
     },
 )
 GROK_MODEL_OPTIONS = (
@@ -112,6 +112,7 @@ GROK_MODEL_OPTIONS = (
         "label": "Auto",
         "ui_label": "Auto",
         "remote_labels": ("Auto", "自動", "自动"),
+        "strength": 100,
     },
 )
 CLAUDE_MODEL_OPTIONS = (
@@ -120,6 +121,7 @@ CLAUDE_MODEL_OPTIONS = (
         "label": "Auto",
         "ui_label": "Auto",
         "remote_labels": ("Auto", "Default", "Claude"),
+        "strength": 100,
     },
 )
 AGENT_MODEL_OPTIONS_BY_PLATFORM = {
@@ -128,6 +130,29 @@ AGENT_MODEL_OPTIONS_BY_PLATFORM = {
     "grok": GROK_MODEL_OPTIONS,
     "claude": CLAUDE_MODEL_OPTIONS,
 }
+
+
+def strongest_model_option(options: tuple[dict[str, Any], ...]) -> dict[str, Any]:
+    """Return the strongest model from one provider's current option catalog."""
+    return max(
+        options,
+        key=lambda option: (
+            int(option.get("strength", 0)),
+            str(option.get("key", "")),
+        ),
+    )
+
+
+def default_model_for_platform(platform: str) -> str:
+    """Return the strongest supported model for one Web Agent platform."""
+    options = tuple(AGENT_MODEL_OPTIONS_BY_PLATFORM.get(platform, ()))
+    if not options:
+        raise ValueError(f"No Web Agent models are configured for {platform}.")
+    return str(strongest_model_option(options)["key"])
+
+
+DEFAULT_CHATGPT_MODEL = default_model_for_platform("chatgpt")
+SUPPORTED_CHATGPT_MODELS = frozenset(option["key"] for option in CHATGPT_MODEL_OPTIONS)
 AGENT_PLATFORM_OPTIONS = (
     {
         "key": "chatgpt",
@@ -718,7 +743,7 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
     if platform != "chatgpt" and browser == "safari":
         raise ValueError("Gemini, Grok, and Claude Agent sessions require Edge or Chrome.")
 
-    default_model = _platform_model_options(platform)[0]["key"]
+    default_model = default_model_for_platform(platform)
     model = str(payload.get("model", default_model)).strip().lower()
     supported_models = frozenset(option["key"] for option in _platform_model_options(platform))
     if model not in supported_models:

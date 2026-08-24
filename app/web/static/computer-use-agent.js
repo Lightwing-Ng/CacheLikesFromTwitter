@@ -1,4 +1,4 @@
-/* Code version: v3.17.0-codex.1 */
+/* Code version: v3.17.0-codex.2 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -134,7 +134,7 @@
     }
 
     function selectedModel() {
-        return selectedValue(".agent-model-combobox", "gpt-5.6-sol");
+        return selectedValue(".agent-model-combobox", "");
     }
 
     function selectedPlatformLabel() {
@@ -250,7 +250,20 @@
             option.hidden = option.dataset.agentPlatform !== platform;
         });
         let selectedOption = visibleOptions.find((option) => option.dataset.agentComboboxOption === input.value);
-        if (!selectedOption) selectedOption = visibleOptions[0];
+        if (!selectedOption) {
+            selectedOption = visibleOptions.reduce((strongest, option) => {
+                if (!strongest) return option;
+                const optionStrength = Number(option.dataset.agentModelStrength || 0);
+                const strongestStrength = Number(strongest.dataset.agentModelStrength || 0);
+                if (optionStrength !== strongestStrength) {
+                    return optionStrength > strongestStrength ? option : strongest;
+                }
+                return String(option.dataset.agentComboboxOption || "")
+                    > String(strongest.dataset.agentComboboxOption || "")
+                    ? option
+                    : strongest;
+            }, null);
+        }
         if (!selectedOption) return;
         input.value = selectedOption.dataset.agentComboboxOption || "";
         const label = combobox.querySelector("[data-agent-combobox-selected-label]");
@@ -703,7 +716,6 @@
                 syncExecutionChoices();
                 const isRouteSelection = combobox.classList.contains("agent-platform-combobox")
                     || combobox.classList.contains("agent-browser-combobox");
-                schedulePreferenceSave();
                 if (combobox.classList.contains("agent-platform-combobox")) {
                     sessionTitleOverride = "";
                     resetRemoteSessionHistory();
@@ -788,6 +800,7 @@
                     if (input.value === "new") resetRemoteSessionHistory();
                     else loadSelectedSessionHistory(input.value);
                 }
+                schedulePreferenceSave();
                 render(lastPayload);
             };
             menu.addEventListener("click", (event) => {

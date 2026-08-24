@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.12-codex.7
+Code version: v1.47.12-codex.14
 """
 
 from pathlib import Path
@@ -39,7 +39,7 @@ def test_cache_metrics_reuse_the_foundation_surface_and_type_contract() -> None:
         assert token in card_rule
     for token in (
         "font-size: var(--font-metric-lg);",
-        "font-weight: 300;",
+        "font-weight: var(--font-weight-regular);",
         "text-align: center;",
         "background: none;",
         "color: var(--accent-text);",
@@ -1151,12 +1151,14 @@ def test_segmented_control_uses_the_sibling_generic_pill_contract() -> None:
         "border: 0;",
         ".segmented-control[data-option-count]::before,\n.range-mode-shell[data-option-count]::before {",
         "transform: translateX(calc((100% + var(--mode-switch-gap)) * var(--segmented-active-index, 0)));",
+        ".segmented-control[data-segmented-pill=\"measured\"][data-option-count]::before,",
+        "transform: translateX(var(--segmented-pill-left, calc((100% + var(--mode-switch-gap)) * var(--segmented-active-index, 0))));",
         ".segmented-control-option,\n.range-mode-option {",
         "text-decoration: none;",
         ".segmented-control-option input:checked + span,",
         "font-weight: var(--font-weight-regular);",
         "font-weight: var(--font-weight-bold);",
-        "color: var(--accent-contrast);",
+        "color: var(--color-white-adaptive);",
         ".browser-chat-list {",
         ".browser-chat-message {",
         ".browser-chat-message-link {",
@@ -1267,7 +1269,7 @@ def test_browser_prompts_primary_metric_uses_light_large_blue_value_type() -> No
     metric_rule = stylesheet[metric_start:stylesheet.index("\n}", metric_start)]
 
     assert "font-size: var(--font-metric-lg);" in metric_rule
-    assert "font-weight: 300;" in metric_rule
+    assert "font-weight: var(--font-weight-regular);" in metric_rule
     assert "text-align: center;" in metric_rule
     assert "background: none;" in metric_rule
     assert "-webkit-background-clip: initial;" in metric_rule
@@ -1535,10 +1537,16 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.82.17-codex.53 */",
+            "/* Code version: v2.82.17-codex.63 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
+        '.settings-category-nav-item-browser {\n    --settings-category-icon-url: url("/static/images/safari.svg");',
+        '.settings-nav-item-browser { --settings-category-icon-url: url("/static/images/safari.svg"); }',
+        '.settings-category-nav-item-chatgpt {\n    --settings-category-icon-url: url("/static/images/ChatGPT-Logo.svg");',
+        '.settings-nav-item-chatgpt { --settings-category-icon-url: url("/static/images/ChatGPT-Logo.svg"); }',
+        '.settings-category-nav-item-agent {\n    --settings-category-icon-url: url("/static/images/arrow.uturn.up.circle.svg");',
+        '.settings-nav-item-agent { --settings-category-icon-url: url("/static/images/arrow.uturn.up.circle.svg"); }',
         "width: 22px;",
         "height: 22px;",
         "/* Browser-mediated Computer Use Agent. */",
@@ -1630,6 +1638,21 @@ def test_agent_combobox_trigger_labels_share_typography_contract() -> None:
     ):
         assert token in selector_rule
 
+    model_selector = ".agent-model-trigger,\n.agent-model-trigger .trade-strategy-trigger-label {"
+    model_start = stylesheet.index(model_selector)
+    model_rule = stylesheet[model_start:stylesheet.index("\n}", model_start)]
+    assert "font-weight: var(--font-weight-medium);" in model_rule
+
+
+def test_agent_prompt_uses_the_dedicated_sixteen_pixel_type_token() -> None:
+    """Keep the Agent question field at the requested 16px size."""
+    stylesheet = _stylesheet()
+
+    assert "--font-agent-prompt: 16px;" in stylesheet
+    prompt_start = stylesheet.index(".agent-prompt-input {")
+    prompt_rule = stylesheet[prompt_start:stylesheet.index("\n}", prompt_start)]
+    assert "font-size: var(--font-agent-prompt);" in prompt_rule
+
 
 def test_agent_session_lists_open_above_the_sidebar_trigger() -> None:
     """Keep long session menus inside the sidebar viewport near its bottom edge."""
@@ -1657,6 +1680,47 @@ def test_browser_session_status_labels_share_nonbold_left_typography() -> None:
         "text-align: left;",
     ):
         assert token in selector_rule
+
+
+def test_browser_session_status_uses_the_same_leading_slot_for_loading_and_failure() -> None:
+    """Keep loading and failure indicators aligned with the terminal permission label."""
+    stylesheet = _stylesheet()
+
+    spinner_start = stylesheet.index(".browser-session-status-spinner {")
+    spinner_rule = stylesheet[spinner_start:stylesheet.index("\n}", spinner_start)]
+    assert "--loading-spinner-size: var(--browser-session-status-checkmark-size);" in spinner_rule
+
+    error_start = stylesheet.index('.browser-session-status-checkmark[data-status-state="error"] {')
+    error_rule = stylesheet[error_start:stylesheet.index("\n}", error_start)]
+    assert "background-color: var(--theme-error);" in error_rule
+    assert 'mask: url("/static/images/xmark.svg") center/contain no-repeat;' in error_rule
+    assert '-webkit-mask: url("/static/images/xmark.svg") center/contain no-repeat;' in error_rule
+
+
+def test_agent_compact_status_card_has_no_border() -> None:
+    """Keep the compact Agent status card borderless while preserving its surface."""
+    stylesheet = _stylesheet()
+
+    card_start = stylesheet.index(".browser-session-status-card-compact {")
+    card_rule = stylesheet[card_start:stylesheet.index("\n}", card_start)]
+    assert "border-width: 0;" in card_rule
+
+
+def test_agent_runtime_labels_use_the_sidebar_label_type_contract() -> None:
+    """Keep Agent runtime labels at 15px with medium emphasis only where requested."""
+    stylesheet = _stylesheet()
+
+    label_start = stylesheet.index(".agent-runtime-form .field > .field-label {")
+    label_rule = stylesheet[label_start:stylesheet.index("\n}", label_start)]
+    assert "font-size: var(--font-ui-lg);" in label_rule
+
+    emphasis_selector = (
+        ".agent-runtime-form > label.field > .field-label,\n"
+        ".agent-runtime-form .agent-connect-fields > .field:nth-child(2) > .field-label {"
+    )
+    emphasis_start = stylesheet.index(emphasis_selector)
+    emphasis_rule = stylesheet[emphasis_start:stylesheet.index("\n}", emphasis_start)]
+    assert "font-weight: var(--font-weight-medium);" in emphasis_rule
 
 
 def test_agent_response_pagination_keeps_spatial_effects_unclipped() -> None:

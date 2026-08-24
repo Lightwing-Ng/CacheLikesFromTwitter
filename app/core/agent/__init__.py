@@ -1,6 +1,6 @@
 """Computer-use Agent boundary for access, source discovery, and execution."""
 
-# Code version: v1.1.0-codex.1
+# Code version: v1.1.0-codex.2
 
 from ..agent_access_security import (
     AGENT_ACCESS_SESSION_KEY,
@@ -21,6 +21,7 @@ from ..computer_use_agent import (
     ComputerUseAgentService,
     ComputerUseSettingsStore,
     browser_options_for_host,
+    default_model_for_platform,
     is_loopback_address,
     launch_terminal_authorization,
     open_agent_in_browser,
@@ -36,6 +37,7 @@ __all__ = [
     "ComputerUseSettingsStore",
     "OPERATING_SYSTEM_OPTIONS",
     "browser_options_for_host",
+    "default_model_for_platform",
     "is_allowed_agent_network_request",
     "is_loopback_address",
     "launch_terminal_authorization",
