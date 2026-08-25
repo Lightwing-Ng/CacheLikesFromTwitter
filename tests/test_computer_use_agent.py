@@ -1,13 +1,15 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.12.0-codex.3
+Code version: v3.16.0-codex.2
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from threading import Event
 import time
 
 import pytest
@@ -21,6 +23,7 @@ from app.core.computer_use_agent import (
     ComputerUseSettings,
     ComputerUseSettingsStore,
     WorkspaceController,
+    _attach_context_file,
     default_model_for_platform,
     strongest_model_option,
     _chatgpt_target_is_open,
@@ -215,12 +218,266 @@ def test_model_selection_keeps_the_remote_default_when_the_menu_is_not_exposed()
     assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is False
 
 
+def test_chatgpt_extra_high_control_reads_back_gpt_5_6_sol() -> None:
+    calls: list[dict[str, object]] = []
+
+    class _Page:
+        def evaluate(
+            self, expression: str, argument: dict[str, object]
+        ) -> dict[str, object]:
+            calls.append(argument)
+            assert "'extra high'" in expression
+            assert argument["labels"] == ["GPT-5.6 Sol", "5.6 Sol"]
+            return {
+                "ok": True,
+                "selected": "gpt-5.6 sol",
+                "available": ["gpt-5.6 sol"],
+            }
+
+    assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is True
+    assert calls == [
+        {
+            "labels": ["GPT-5.6 Sol", "5.6 Sol"],
+            "phase": "inspect",
+        }
+    ]
+
+
+def test_chromium_model_selector_uses_trusted_locator_clicks_and_read_only_evaluate() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.click_count = 0
+            self.expanded = False
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> _PowerLocator:
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str) -> str:
+            assert name == "aria-expanded"
+            return "true" if self.expanded else "false"
+
+        def click(self) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _Page:
+        def __init__(self) -> None:
+            self.power = _PowerLocator()
+            self.evaluate_scripts: list[str] = []
+            self.role_calls: list[tuple[str, str | None, bool | None]] = []
+            self.locator_calls: list[str] = []
+            self.waits: list[int] = []
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            self.role_calls.append((role, name, exact))
+            if role == "button" and name == "Extra High" and exact is True:
+                return self.power
+            return _EmptyLocator()
+
+        def locator(self, selector: str) -> _EmptyLocator:
+            self.locator_calls.append(selector)
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str) -> dict[str, object]:
+            self.evaluate_scripts.append(expression)
+            return {"ok": True, "current": "GPT-5.6 Sol"}
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+
+    page = _Page()
+
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
+    assert page.power.click_count == 2
+    assert not page.power.expanded
+    assert ("button", "Extra High", True) in page.role_calls
+    assert page.locator_calls == []
+    assert page.waits == [200]
+    assert len(page.evaluate_scripts) == 1
+    assert all(".click(" not in expression for expression in page.evaluate_scripts)
+    assert "current:" in page.evaluate_scripts[0]
+
+
+def test_chromium_model_selector_returns_false_without_a_visible_power_control() -> None:
+    class _InvisibleLocator:
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> _InvisibleLocator:
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return False
+
+        def click(self) -> None:
+            raise AssertionError("An invisible power control must not be clicked.")
+
+    class _Page:
+        def __init__(self) -> None:
+            self.power = _InvisibleLocator()
+            self.locator_calls: list[str] = []
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _InvisibleLocator:
+            assert role == "button"
+            assert name
+            assert exact is True
+            return self.power
+
+        def locator(self, selector: str) -> _InvisibleLocator:
+            self.locator_calls.append(selector)
+            return self.power
+
+        def evaluate(self, _expression: str) -> dict[str, object]:
+            raise AssertionError("Model readback must not run without a visible power control.")
+
+    page = _Page()
+
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is False
+    assert page.locator_calls == []
+
+
 def test_non_chatgpt_model_selection_uses_the_provider_menu_when_exposed() -> None:
     class _Page:
         def evaluate(self, _expression: str, _argument: dict[str, object]) -> dict[str, object]:
             return {"ok": True, "selected": "gemini 3.1 pro", "available": ["Gemini 3.1 Pro"]}
 
     assert _select_web_model(_Page(), "chromium", "gemini", "gemini-3.1-pro") is True
+
+
+@pytest.mark.parametrize(
+    ("visible_chip", "expected"),
+    (
+        ("context.md", True),
+        ("context.md.backup", False),
+    ),
+)
+def test_context_attachment_accepts_only_an_exact_visible_filename_chip(
+    tmp_path: Path,
+    visible_chip: str,
+    expected: bool,
+) -> None:
+    context_path = tmp_path / "context.md"
+    context_path.write_text("# Context\n", encoding="utf-8")
+
+    class _FileInput:
+        first = None
+
+        def __init__(self) -> None:
+            self.first = self
+            self.uploaded = ""
+
+        def count(self) -> int:
+            return 1
+
+        def set_input_files(self, path: str) -> None:
+            self.uploaded = path
+
+    class _Page:
+        def __init__(self) -> None:
+            self.file_input = _FileInput()
+            self.expressions: list[str] = []
+            self.waits = 0
+
+        def locator(self, selector: str) -> _FileInput:
+            assert selector == 'input[type="file"]'
+            return self.file_input
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: dict[str, str],
+        ) -> dict[str, bool]:
+            assert argument == {"expectedName": "context.md"}
+            self.expressions.append(expression)
+            return {
+                "accepted": visible_chip.casefold()
+                == argument["expectedName"].casefold(),
+                "failed": False,
+            }
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            assert milliseconds == 250
+            self.waits += 1
+
+    page = _Page()
+
+    assert _attach_context_file(page, "chromium", context_path) is expected
+    assert page.file_input.uploaded == str(context_path)
+    assert page.waits == (0 if expected else 40)
+    assert page.expressions
+    assert all(
+        "scopeText.includes(expected)" not in expression
+        and "labels.some((label) => label.includes(expected))" not in expression
+        for expression in page.expressions
+    )
+
+
+@pytest.mark.parametrize("state", ("timeout", "failed", "exception"))
+def test_context_attachment_timeout_and_failure_return_false(
+    tmp_path: Path,
+    state: str,
+) -> None:
+    context_path = tmp_path / "context.md"
+    context_path.write_text("# Context\n", encoding="utf-8")
+
+    class _FileInput:
+        first = None
+
+        def __init__(self) -> None:
+            self.first = self
+
+        def count(self) -> int:
+            return 1
+
+        def set_input_files(self, _path: str) -> None:
+            if state == "exception":
+                raise RuntimeError("upload failed")
+
+    class _Page:
+        def __init__(self) -> None:
+            self.file_input = _FileInput()
+            self.waits = 0
+
+        def locator(self, _selector: str) -> _FileInput:
+            return self.file_input
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, bool]:
+            return {"accepted": False, "failed": state == "failed"}
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            assert milliseconds == 250
+            self.waits += 1
+
+    page = _Page()
+
+    assert _attach_context_file(page, "chromium", context_path) is False
+    assert page.waits == (40 if state == "timeout" else 0)
 
 
 def test_all_web_agent_platforms_support_new_recent_and_project_targets() -> None:
@@ -761,6 +1018,194 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
     assert {"conversation_url": "https://chatgpt.com/c/example"} in updates
 
 
+def test_chatgpt_action_loop_fails_closed_before_context_or_prompt_when_model_is_unverified(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://chatgpt.com/c/model-check"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    calls = {"attach": 0, "submit": 0}
+
+    def attach(*_args: object, **_kwargs: object) -> bool:
+        calls["attach"] += 1
+        return True
+
+    def submit(*_args: object, **_kwargs: object) -> str:
+        calls["submit"] += 1
+        return '{"action":"bodycheck"}'
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: False)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", attach)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    with pytest.raises(RuntimeError, match="could not verify GPT-5.6 Sol"):
+        _run_web_action_loop(
+            page=_Page(),
+            browser_kind="chromium",
+            initial_message="Inspect the project.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=ComputerUseSettings(workspace_path=str(workspace)),
+            session_mode="recent",
+            selected_target_url="https://chatgpt.com/c/model-check",
+            should_stop=lambda: False,
+            update=lambda **_changes: None,
+        )
+
+    assert calls == {"attach": 0, "submit": 0}
+
+
+@pytest.mark.parametrize("context_attached", (True, False))
+def test_completed_action_loop_reports_attachment_and_normalizes_conversation_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    context_attached: bool,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://www.chatgpt.com/c/url-stable/?messageId=turn-2#response"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    responses = iter(
+        (
+            '{"action":"bodycheck"}',
+            '{"action":"final","summary":"Done."}',
+        )
+    )
+    updates: list[dict[str, object]] = []
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_attach_context_file",
+        lambda *_args: context_attached,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_and_wait",
+        lambda *_args, **_kwargs: next(responses),
+    )
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Inspect the project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=ComputerUseSettings(workspace_path=str(workspace)),
+        session_mode="recent",
+        selected_target_url="https://chatgpt.com/c/url-stable",
+        should_stop=lambda: False,
+        update=lambda **changes: updates.append(changes),
+    )
+
+    assert result == ("Done.", "https://chatgpt.com/c/url-stable", 2, True)
+    assert {"context_attached": context_attached} in updates
+    assert all(
+        "?" not in str(update.get("conversation_url", ""))
+        and "#" not in str(update.get("conversation_url", ""))
+        for update in updates
+    )
+
+
+def test_final_requires_a_successful_run_and_then_current_bodycheck_after_an_edit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://chatgpt.com/c/verification-gate"
+
+    class _SuccessfulProcess:
+        returncode = 0
+
+        def communicate(self, *, timeout: int) -> tuple[str, None]:
+            assert timeout == 120
+            return "1 passed\n", None
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(workspace_path=str(workspace), max_turns=8)
+    controller = WorkspaceController(workspace, settings, lambda: False)
+    verification_command = "python3 -m pytest tests/test_example.py -q"
+    responses = iter(
+        (
+            '{"action":"write","path":"created.txt","content":"created\\n"}',
+            '{"action":"final","summary":"Before verification."}',
+            json.dumps({"action": "run", "command": verification_command}),
+            '{"action":"final","summary":"Before bodycheck."}',
+            '{"action":"bodycheck"}',
+            '{"action":"final","summary":"Done."}',
+        )
+    )
+    submitted: list[str] = []
+
+    def submit(
+        _page: object,
+        _browser: str,
+        message: str,
+        _should_stop: object,
+        **_kwargs: object,
+    ) -> str:
+        submitted.append(message)
+        return next(responses)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+    monkeypatch.setattr(
+        computer_use_agent, "_attach_context_file", lambda *_args: False
+    )
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: _SuccessfulProcess(),
+    )
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Change and verify the project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=settings,
+        session_mode="recent",
+        selected_target_url="https://chatgpt.com/c/verification-gate",
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+    )
+
+    assert result == ("Done.", "https://chatgpt.com/c/verification-gate", 6, True)
+    assert any("verification command succeeds" in message for message in submitted)
+    assert any("bodycheck succeeds" in message for message in submitted)
+    assert controller.state.successful_checks == [verification_command]
+    assert controller.state.verification_current
+    assert controller.state.bodycheck_current
+
+
 @pytest.mark.parametrize(
     ("platform", "target_url", "model"),
     (
@@ -852,6 +1297,100 @@ def test_workspace_controller_stays_inside_project_and_requires_current_bodychec
         assert bodycheck_result["bodycheck_current"]
 
 
+def test_workspace_search_uses_python_fallback_when_rg_is_unavailable(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "notes.txt").write_text("fallback-search-marker\n", encoding="utf-8")
+    (workspace / ".env").write_text(
+        "fallback-search-marker=must-not-leak\n",
+        encoding="utf-8",
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    def missing_rg(*_args: object, **_kwargs: object) -> object:
+        raise FileNotFoundError("rg")
+
+    monkeypatch.setattr(computer_use_agent.subprocess, "run", missing_rg)
+
+    result = controller.execute(
+        {
+            "action": "search",
+            "query": "fallback-search-marker",
+            "path": ".",
+        }
+    )
+
+    assert result["ok"]
+    assert result["engine"] == "python-fallback"
+    assert result["matches"] == ["notes.txt:1:fallback-search-marker"]
+    assert "must-not-leak" not in str(result)
+
+
+def test_workspace_controller_never_exposes_env_or_private_key_files(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / ".env").write_text(
+        "SHARED_MARKER=env-secret-value\n", encoding="utf-8"
+    )
+    key_path = workspace / "keys" / "deploy.pem"
+    key_path.parent.mkdir()
+    key_path.write_text("SHARED_MARKER private-key-value\n", encoding="utf-8")
+    (workspace / "safe.txt").write_text(
+        "SHARED_MARKER public-value\n", encoding="utf-8"
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    class _SearchResult:
+        returncode = 0
+        stdout = (
+            ".env:1:SHARED_MARKER=env-secret-value\n"
+            "keys/deploy.pem:1:SHARED_MARKER private-key-value\n"
+            "safe.txt:1:SHARED_MARKER public-value\n"
+        )
+        stderr = ""
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "run",
+        lambda *_args, **_kwargs: _SearchResult(),
+    )
+
+    observations = {
+        "env_read": controller.execute({"action": "read", "path": ".env"}),
+        "key_read": controller.execute({"action": "read", "path": "keys/deploy.pem"}),
+        "list": controller.execute({"action": "list", "path": ".", "depth": 3}),
+        "search": controller.execute({"action": "search", "query": "SHARED_MARKER"}),
+    }
+
+    assert not observations["env_read"]["ok"]
+    assert not observations["key_read"]["ok"]
+    assert observations["list"]["entries"] == ["keys/", "safe.txt"]
+    assert observations["search"]["matches"] == [
+        "safe.txt:1:SHARED_MARKER public-value"
+    ]
+    web_visible = str(observations)
+    assert "env-secret-value" not in web_visible
+    assert "private-key-value" not in web_visible
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -881,6 +1420,68 @@ def test_command_policy_allows_focused_checks() -> None:
         "run",
         "test",
     ]
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "rg root /etc/passwd",
+        "ruff check --fix .",
+        "rg --pre cat root .",
+    ),
+)
+def test_command_policy_rejects_external_rg_and_mutating_flags(
+    command: str,
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError):
+        inspection_command_parts(command, workspace=tmp_path)
+
+
+def test_allowed_run_that_changes_project_files_makes_bodycheck_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    test_path = workspace / "tests" / "test_mutator.py"
+    test_path.parent.mkdir()
+    test_path.write_text("def test_placeholder():\n    assert True\n", encoding="utf-8")
+    changed_path = workspace / "changed.txt"
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    class _MutatingProcess:
+        returncode = 0
+
+        def communicate(self, *, timeout: int) -> tuple[str, None]:
+            assert timeout == controller.settings.command_timeout_seconds
+            changed_path.write_text("changed by verification\n", encoding="utf-8")
+            return "1 passed\n", None
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: _MutatingProcess(),
+    )
+
+    assert controller.execute({"action": "bodycheck"})["bodycheck_current"]
+    result = controller.execute(
+        {
+            "action": "run",
+            "command": "python3 -m pytest tests/test_mutator.py -q",
+        }
+    )
+
+    assert not result["ok"]
+    assert result["mutated_workspace"]
+    assert "prior bodycheck is stale" in result["error"]
+    assert not controller.state.bodycheck_current
 
 
 def test_agent_service_reports_browser_result_without_api_credentials(
@@ -1141,6 +1742,167 @@ def test_agent_service_keeps_one_question_answer_page_per_conversation() -> None
             "Answer 1",
             "Answer 2",
         ]
+
+
+def test_concurrent_start_rejection_does_not_change_persisted_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    second_workspace = tmp_path / "second-project"
+    second_workspace.mkdir()
+    settings_path = tmp_path / "settings.json"
+    store = ComputerUseSettingsStore(settings_path)
+    started = Event()
+    release = Event()
+
+    def runner(**_kwargs: object) -> tuple[str, str, int, bool]:
+        started.set()
+        assert release.wait(timeout=3)
+        return "Done.", "https://chatgpt.com/c/concurrent", 1, True
+
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+        lambda _process: None,
+    )
+    service = ComputerUseAgentService(
+        store,
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+
+    service.start("First request", str(workspace), CrawlConfig(), browser="edge")
+    assert started.wait(timeout=2)
+    persisted_before = settings_path.read_text(encoding="utf-8")
+    settings_before = asdict(store.settings)
+    try:
+        with pytest.raises(RuntimeError, match="already running"):
+            service.start(
+                "Rejected request",
+                str(second_workspace),
+                CrawlConfig(),
+                browser="chrome",
+            )
+
+        assert settings_path.read_text(encoding="utf-8") == persisted_before
+        assert asdict(store.settings) == settings_before
+    finally:
+        release.set()
+
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not service.snapshot()["running"]
+
+
+@pytest.mark.parametrize("context_attached", (True, False))
+def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interrupted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    context_attached: bool,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    source_secret = "SOURCE-CONTENT-MUST-NOT-PERSIST"
+    (workspace / "source.txt").write_text(source_secret + "\n", encoding="utf-8")
+    prompt_secret = "PROMPT-CONTENT-MUST-NOT-PERSIST"
+    response_secret = "RESPONSE-CONTENT-MUST-NOT-PERSIST"
+    history_secret = "HISTORY-CONTENT-MUST-NOT-PERSIST"
+    runtime_root = tmp_path / "runtime"
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    started = Event()
+    release = Event()
+
+    def runner(**kwargs: object) -> tuple[str, str, int, bool]:
+        update = kwargs["update"]
+        assert callable(update)
+        update(
+            phase="running",
+            message="Controller active.",
+            response=response_secret,
+            history=[{"prompt": history_secret, "response": response_secret}],
+            activity=[{"detail": source_secret}],
+            last_error=source_secret,
+            context_attached=context_attached,
+        )
+        started.set()
+        assert release.wait(timeout=3)
+        return response_secret, "https://chatgpt.com/c/recovery", 3, True
+
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+        lambda _process: None,
+    )
+    service = ComputerUseAgentService(store, runner=runner, runtime_root=runtime_root)
+    service.start(
+        prompt_secret,
+        str(workspace),
+        CrawlConfig(),
+        session_title="Recovery metadata",
+    )
+    assert started.wait(timeout=2)
+
+    snapshot_path = runtime_root / "last-run.json"
+    payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert set(payload) == {
+        "actual_model",
+        "bodycheck_passed",
+        "browser",
+        "conversation_url",
+        "context_attached",
+        "finished_at",
+        "message",
+        "model",
+        "model_verified",
+        "phase",
+        "platform",
+        "project_url",
+        "running",
+        "session_mode",
+        "session_title",
+        "started_at",
+        "turn_count",
+    }
+    assert payload["context_attached"] is context_attached
+    assert snapshot_path.stat().st_mode & 0o777 == 0o600
+    serialized = snapshot_path.read_text(encoding="utf-8")
+    assert "prompt" not in payload
+    assert "response" not in payload
+    assert "history" not in payload
+    assert "source" not in payload
+    for secret in (prompt_secret, response_secret, history_secret, source_secret):
+        assert secret not in serialized
+
+    recovered = ComputerUseAgentService(store, runtime_root=runtime_root)
+    recovered_snapshot = recovered.snapshot()
+    assert not recovered_snapshot["running"]
+    assert recovered_snapshot["phase"] == "interrupted"
+    assert not recovered_snapshot["bodycheck_passed"]
+    assert recovered_snapshot["prompt"] == ""
+    assert recovered_snapshot["response"] == ""
+    assert recovered_snapshot["history"] == []
+    assert recovered_snapshot["activity"] == []
+    assert recovered_snapshot["context_attached"] is context_attached
+    recovered_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    assert recovered_payload["running"] is False
+    assert recovered_payload["phase"] == "interrupted"
+    assert recovered_payload["context_attached"] is context_attached
+    assert snapshot_path.stat().st_mode & 0o777 == 0o600
+
+    release.set()
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert not service.snapshot()["running"]
 
 
 def test_macos_idle_sleep_assertion_uses_caffeinate_without_waking_display(

@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.48.0-codex.4
+# Code version: v1.48.1-codex.1
 
 from __future__ import annotations
 
@@ -1862,6 +1862,20 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         platform_name = request.args.get("platform", "").strip().lower()
         browser_name = request.args.get("browser", "").strip().lower()
         scope = request.args.get("scope", "").strip().lower()
+        if scope == "agent":
+            require_local_agent_request()
+
+        def browser_session_response(payload: dict[str, Any], status_code: int = 200):
+            response = jsonify(payload)
+            response.status_code = status_code
+            if scope == "agent":
+                response.headers["Cache-Control"] = (
+                    "no-store, no-cache, max-age=0, must-revalidate"
+                )
+                response.headers["Pragma"] = "no-cache"
+                response.headers["Expires"] = "0"
+            return response
+
         if scope == "agent" and platform_name == "chatgpt":
             try:
                 payload, source_payload = probe_and_collect_chatgpt_sources(
@@ -1870,7 +1884,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                     silent=True,
                 )
             except ValueError as exc:
-                return jsonify({"error": str(exc)}), 400
+                return browser_session_response({"error": str(exc)}, 400)
             if source_payload is not None:
                 agent_source_cache.store(
                     platform="chatgpt",
@@ -1883,7 +1897,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 payload["agent_sources_error"] = (
                     "ChatGPT is signed in, but Recent sessions could not be loaded from this browser."
                 )
-            return jsonify(payload)
+            return browser_session_response(payload)
         if scope == "agent" and platform_name == "claude":
             try:
                 payload, source_payload = probe_and_collect_claude_sources(
@@ -1892,7 +1906,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                     silent=True,
                 )
             except ValueError as exc:
-                return jsonify({"error": str(exc)}), 400
+                return browser_session_response({"error": str(exc)}, 400)
             if source_payload is not None:
                 agent_source_cache.store(
                     platform="claude",
@@ -1905,7 +1919,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 payload["agent_sources_error"] = (
                     "Claude is signed in, but Recent sessions could not be loaded from this browser."
                 )
-            return jsonify(payload)
+            return browser_session_response(payload)
         try:
             payload = probe_browser_session(
                 platform_name,
@@ -1914,8 +1928,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 silent=scope == "agent",
             )
         except ValueError as exc:
-            return jsonify({"error": str(exc)}), 400
-        return jsonify(payload)
+            return browser_session_response({"error": str(exc)}, 400)
+        return browser_session_response(payload)
 
     return app
 

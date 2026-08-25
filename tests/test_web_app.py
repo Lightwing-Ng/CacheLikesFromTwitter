@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.81.3-codex.11
+# Code version: v1.81.3-codex.13
 
 from __future__ import annotations
 
@@ -473,11 +473,11 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.19.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 if page_source in {"x", "grok", "chatgpt", "gemini"}:
-                    expected_style_version = "style-v2.82.17-codex.53"
+                    expected_style_version = "style-v2.82.17-codex.54"
                 elif page_source == "agent":
-                    expected_style_version = "style-v2.82.17-codex.63"
+                    expected_style_version = "style-v2.82.17-codex.64"
                 else:
-                    expected_style_version = "style-v2.82.17-codex.48"
+                    expected_style_version = "style-v2.82.17-codex.49"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -872,6 +872,56 @@ class WebAppTests(unittest.TestCase):
             '                    <article class="agent-response-card"',
             local_body,
         )
+
+    def test_agent_browser_session_scope_uses_control_plane_gate_and_no_store(
+        self,
+    ) -> None:
+        status_payload = {
+            "platform": "chatgpt",
+            "browser": "edge",
+            "browser_label": "Edge",
+            "logged_in": True,
+            "can_download": False,
+            "account_name": "ChatGPT account",
+            "message": "Ready",
+        }
+        lan_environ = {"REMOTE_ADDR": "192.168.124.20"}
+        lan_headers = {"Host": "192.168.124.10:8666"}
+
+        with TemporaryDirectory() as raw_root:
+            app = create_app(Path(raw_root) / "local_store")
+            with patch(
+                "app.web.app.probe_and_collect_chatgpt_sources",
+                return_value=(status_payload, None),
+            ) as probe:
+                with app.test_client() as client:
+                    locked_lan_response = client.get(
+                        "/api/browser-session?platform=chatgpt&browser=edge&scope=agent",
+                        headers=lan_headers,
+                        environ_overrides=lan_environ,
+                    )
+                    disallowed_network_response = client.get(
+                        "/api/browser-session?platform=chatgpt&browser=edge&scope=agent",
+                        environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
+                    )
+                    disallowed_host_response = client.get(
+                        "/api/browser-session?platform=chatgpt&browser=edge&scope=agent",
+                        headers={"Host": "malicious.example"},
+                    )
+                    probe.assert_not_called()
+
+                    loopback_response = client.get(
+                        "/api/browser-session?platform=chatgpt&browser=edge&scope=agent"
+                    )
+
+        self.assertEqual(locked_lan_response.status_code, 401)
+        self.assertEqual(disallowed_network_response.status_code, 403)
+        self.assertEqual(disallowed_host_response.status_code, 403)
+        self.assertEqual(loopback_response.status_code, 200)
+        self.assertIn("no-store", loopback_response.headers["Cache-Control"])
+        self.assertEqual(loopback_response.headers["Pragma"], "no-cache")
+        self.assertEqual(loopback_response.headers["Expires"], "0")
+        probe.assert_called_once()
 
     def test_agent_browser_status_card_uses_compact_provider_and_terminal_rows(self) -> None:
         app = create_app()
@@ -1983,7 +2033,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.82.17-codex.48", body)
+            self.assertIn("style-v2.82.17-codex.49", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.0-codex.1', body)
@@ -2600,7 +2650,7 @@ class WebAppTests(unittest.TestCase):
         script = SEGMENTED_CONTROL_SCRIPT_PATH.read_text(encoding="utf-8")
 
         for fragment in (
-            'const selector = ".segmented-control[data-option-count]";',
+            'const selector = ".segmented-control[data-option-count], .range-mode-shell[data-option-count]";',
             'setAttributeIfChanged(shell, "data-option-count", String(optionCount));',
             'setAttributeIfChanged(shell, "data-segmented-active-index", String(activeIndex));',
             'setStylePropertyIfChanged(shell, "--segmented-option-count", String(optionCount));',

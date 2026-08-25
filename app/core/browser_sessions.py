@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.18.1-codex.1
+# Code version: v1.18.2-codex.1
 
 from __future__ import annotations
 
@@ -50,6 +50,14 @@ TRANSIENT_BROWSER_ERROR_MARKERS = (
     "ERR_NETWORK_CHANGED",
     "ERR_TIMED_OUT",
     "ERR_CONNECTION_RESET",
+)
+IDEMPOTENT_CHROMIUM_CONTEXT_CLOSE_ERROR_MARKERS = (
+    "browsercontext.close: connection closed",
+    "browsercontext.close: target page, context or browser has been closed",
+    "browsercontext.close: browser has been closed",
+    "browsercontext.close: browser was closed",
+    "browsercontext.close: driver disconnected",
+    "browsercontext.close: driver was disconnected",
 )
 GROK_SECURITY_CHALLENGE_TITLE_MARKERS = ("just a moment", "attention required")
 GROK_SECURITY_CHALLENGE_BODY_MARKERS = (
@@ -665,6 +673,15 @@ def _cleanup_cloned_browser_profile(temp_profile_dir: tempfile.TemporaryDirector
     temp_profile_dir.cleanup()
 
 
+def _is_idempotent_chromium_context_close_error(error: Exception) -> bool:
+    """Return whether Playwright reports that the managed context is already closed."""
+    normalized_error = " ".join(str(error or "").casefold().split())
+    return any(
+        marker in normalized_error
+        for marker in IDEMPOTENT_CHROMIUM_CONTEXT_CLOSE_ERROR_MARKERS
+    )
+
+
 def launch_chromium_context(
     playwright,
     descriptor: BrowserDescriptor,
@@ -738,7 +755,12 @@ def launch_chromium_context(
 
         def __exit__(self_nonlocal, exc_type, exc, tb):
             try:
-                context.close()
+                try:
+                    context.close()
+                except Exception as close_error:
+                    if not _is_idempotent_chromium_context_close_error(close_error):
+                        raise
+                    LOGGER.info("Chromium context was already closed during cleanup.")
             finally:
                 _cleanup_cloned_browser_profile(temp_profile_dir)
             return False

@@ -1,6 +1,6 @@
 # Test Suite
 
-Test-suite version: `v1.2.2-codex.1`
+Test-suite version: `v1.3.0-codex.1`
 
 The authoritative test workflow, coverage baseline, isolation contract, and CI behavior are
 documented in [TESTING.md](TESTING.md). Use `./scripts/test.sh` for the normal
@@ -21,7 +21,8 @@ offline suite and `./scripts/check.sh` for the full quality gate.
   transitions.
 - `test_service.py` and `test_services_and_web.py`: concurrent download orchestration,
   emergency-stop semantics, status summaries, Flask pages, APIs, settings, and reset routes.
-- `test_logging_setup.py`: structured logging setup and JSON line output.
+- `test_logging_setup.py`: structured logging setup, JSON line output, file permissions,
+  and credential redaction across messages, fields, exceptions, and stack traces.
 - `test_runtime_isolation.py`: process-wide pytest runtime redirection and the Grok
   snapshot default-path regression.
 - `test_responsive_contract.py`: shared CSS and JavaScript breakpoints, independent compact-content
@@ -29,6 +30,13 @@ offline suite and `./scripts/check.sh` for the full quality gate.
 - `test_sidebar_e2e.py`: disposable Chromium coverage for target iPhone, iPad, and desktop
   viewports, touch dismissal, viewport transitions, horizontal overflow, toggle hit testing,
   and the runtime Chinese language-boundary contract that preserves source text.
+- `test_computer_use_agent.py`: Web Computer Use Agent routing, provider/model contracts,
+  context attachment, fenced JSON controller actions, project confinement, stop recovery,
+  bodycheck gating, and managed browser-session lifecycle regressions.
+- `test_agent_access_security.py` and `test_agent_source_cache.py`: Agent access authorization,
+  source discovery isolation, cache freshness behavior, and protected Web session metadata flows.
+- `test_scraper_and_browser_sessions.py`: managed browser-session creation, cleanup, isolation,
+  and browser automation boundary regressions.
 
 ## Isolation Rules
 

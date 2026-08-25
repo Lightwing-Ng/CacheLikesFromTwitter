@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.9.1-codex.1
+Code version: v1.9.1-codex.2
 """
 
 from __future__ import annotations
@@ -29,6 +29,7 @@ from werkzeug.serving import BaseWSGIServer, make_server
 OVERLAY_VIEWPORTS = (
     ("iPhone SE", 375, 667),
     ("iPhone 15 Pro", 393, 852),
+    ("Narrow layout breakpoint", 560, 844),
     ("iPad mini portrait", 744, 1_133),
     ("iPad portrait", 768, 1_024),
     ("iPad Air portrait", 820, 1_180),
@@ -408,11 +409,11 @@ def test_agent_response_pagination_keeps_spatial_effects_visible(
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_agent_model_and_sidebar_service_triggers_share_typography(
+def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
-    """Verify the exact Agent model and sidebar service controls render matching label typography."""
+    """Verify shared label metrics while preserving the model trigger's intended emphasis."""
     page, context = _open_page(
         disposable_browser,
         f"{sidebar_server_url}/agent",
@@ -447,8 +448,13 @@ def test_agent_model_and_sidebar_service_triggers_share_typography(
             }""",
             [main_button.element_handle(), sidebar_button.element_handle()],
         )
-        assert typography[0] is not None
-        assert typography[0] == typography[1]
+        main_typography, sidebar_typography = typography
+        assert main_typography is not None
+        assert sidebar_typography is not None
+        for property_name in ("fontFamily", "fontSize", "lineHeight"):
+            assert main_typography[property_name] == sidebar_typography[property_name]
+        assert main_typography["fontWeight"] == "500"
+        assert sidebar_typography["fontWeight"] == "400"
     finally:
         context.close()
 

@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.4-codex.1
+Code version: v1.6.5-codex.1
 """
 
 from __future__ import annotations
@@ -281,6 +281,82 @@ def test_silent_edge_chromium_context_is_backgrounded_without_stealing_focus(
     assert "--profile-directory=Default" in launch_kwargs["args"]
     assert "--window-position=-32000,-32000" in launch_kwargs["args"]
     assert "--start-minimized" in launch_kwargs["args"]
+
+
+@pytest.mark.parametrize(
+    "close_error_message",
+    (
+        "BrowserContext.close: Connection closed while reading from the driver",
+        "BrowserContext.close: Target page, context or browser has been closed",
+        "BrowserContext.close: Driver was disconnected",
+    ),
+)
+def test_managed_chromium_context_ignores_idempotent_close_disconnects(
+    tmp_path: Path,
+    close_error_message: str,
+) -> None:
+    source_user_data_dir = tmp_path / "Edge"
+    source_profile_dir = source_user_data_dir / "Default"
+    source_profile_dir.mkdir(parents=True)
+    (source_profile_dir / "Preferences").write_text("{}", encoding="utf-8")
+    descriptor = BrowserDescriptor(
+        browser_id="edge",
+        label="Edge",
+        icon_filename="images/browser.edge.png",
+        engine="chromium",
+        user_data_dir=source_user_data_dir,
+        profile_directory="Default",
+        channel="msedge",
+    )
+    context = MagicMock()
+    context.close.side_effect = Exception(close_error_message)
+    launch = MagicMock(return_value=context)
+    playwright = SimpleNamespace(
+        chromium=SimpleNamespace(launch_persistent_context=launch)
+    )
+
+    managed_context = launch_chromium_context(playwright, descriptor, headless=False)
+    temporary_profile_root = Path(str(launch.call_args.kwargs["user_data_dir"])).parent
+    with managed_context as launched_context:
+        assert launched_context is context
+
+    context.close.assert_called_once_with()
+    assert not temporary_profile_root.exists()
+
+
+def test_managed_chromium_context_propagates_unexpected_close_errors(
+    tmp_path: Path,
+) -> None:
+    source_user_data_dir = tmp_path / "Edge"
+    source_profile_dir = source_user_data_dir / "Default"
+    source_profile_dir.mkdir(parents=True)
+    (source_profile_dir / "Preferences").write_text("{}", encoding="utf-8")
+    descriptor = BrowserDescriptor(
+        browser_id="edge",
+        label="Edge",
+        icon_filename="images/browser.edge.png",
+        engine="chromium",
+        user_data_dir=source_user_data_dir,
+        profile_directory="Default",
+        channel="msedge",
+    )
+    close_error = RuntimeError("BrowserContext.close: Failed to save browser state")
+    context = MagicMock()
+    context.close.side_effect = close_error
+    launch = MagicMock(return_value=context)
+    playwright = SimpleNamespace(
+        chromium=SimpleNamespace(launch_persistent_context=launch)
+    )
+
+    managed_context = launch_chromium_context(playwright, descriptor, headless=False)
+    temporary_profile_root = Path(str(launch.call_args.kwargs["user_data_dir"])).parent
+    with pytest.raises(RuntimeError) as exc_info:
+        with managed_context:
+            pass
+
+    assert exc_info.value is close_error
+    context.close.assert_called_once_with()
+    assert not temporary_profile_root.exists()
 
 
 def test_stale_chromium_profiles_are_removed_without_touching_other_temp_paths(

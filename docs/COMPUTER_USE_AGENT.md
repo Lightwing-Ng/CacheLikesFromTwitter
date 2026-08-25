@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.18.1-codex.1`
+Documentation version: `v3.19.0-codex.2`
 
 ## Purpose
 
@@ -63,33 +63,46 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
    selected browser profile. When a request switches away from the persisted provider, the service
    resets a stale previous-provider target URL to the new provider's official home before
    validation.
-4. The service builds one owner-readable Markdown context package containing the request,
+4. Before attaching project data or submitting a prompt, ChatGPT must expose its visible Model
+   submenu and read back `GPT-5.6 Sol` or `5.6 Sol`. If that verification fails, the run stops
+   without attaching the context or sending the prompt. Gemini, Grok, and Claude retain their
+   best-effort boundary: when their compatible model control is not exposed, the controller keeps
+   the selected session's current remote model and reports that limitation.
+5. The service builds one owner-readable Markdown context package containing the request,
    repository instruction files, a bounded file index, dirty-worktree status, and project entry
-   files.
-5. Chromium browsers attach the package directly when the selected provider exposes a file input,
-   wait for the attachment to enable Send, click the semantic send control, and confirm that the
-   provider accepted the prompt. Grok uses its live `textarea` and `chat-submit`/`Submit` contract;
-   if that control is briefly absent after a follow-up observation, the controller falls back to
-   pressing Enter and still verifies prompt acceptance. If direct attachment is unavailable, the
-   controller requests only the bounded files needed for the next action.
-6. The selected Web provider returns exactly one JSON action at a time inside a fenced `json` code block so
+   files. Credential locations, environment files, cookie stores, and private-key formats are
+   excluded from the file index and controller access.
+6. Chromium browsers attach the package directly when the selected provider exposes a file input.
+   The controller treats the upload as accepted only after the composer visibly reads back the
+   exact context filename; a populated hidden file input alone is insufficient. If the filename
+   never becomes visible or the page reports an upload failure, the run continues without claiming
+   an attachment and requests only the bounded files needed for subsequent actions. After a
+   confirmed attachment or that on-demand fallback, the controller clicks the semantic send
+   control and confirms that the provider accepted the prompt. Grok uses its live `textarea` and
+   `chat-submit`/`Submit` contract; if that control is briefly absent after a follow-up observation,
+   the controller falls back to pressing Enter and still verifies prompt acceptance.
+7. The selected Web provider returns exactly one JSON action at a time inside a fenced `json` code block so
    rendered Markdown cannot consume action quotes, backslashes, asterisks, or source-code delimiters. The
    controller prefers that code block's literal text and supports `list`, `read`, `search`, `replace`, `write`,
    `run`, `bodycheck`, and `final`. If a provider emits multiple complete
    candidates with the same action name in one response, the controller uses the final candidate in textual
    response order; mixed action types remain rejected as ambiguous.
-7. A malformed non-JSON reply receives up to three strict-format corrections that repeat the fenced JSON and
+   `search` uses project-confined `rg` when available. If the service cannot launch `rg`, a bounded
+   Python regular-expression fallback skips ignored, symlinked, sensitive, and oversized files and
+   still enforces the requested path, glob, and result limit.
+8. A malformed non-JSON reply receives up to three strict-format corrections that repeat the fenced JSON and
    escaping contract without spending the
    configured controller-action budget. This keeps a recoverable web-model formatting lapse from
    prematurely ending a valid task, while still bounding retries.
-8. The controller rejects a final answer until `bodycheck` succeeds after the latest edit. If an
+9. After an edit, the controller rejects a final answer until at least one approved verification
+   command and `bodycheck` both succeed for the current edit generation. If an
    Edge and ChatGPT run still fails after an exact conversation URL exists, the service preserves the
    failed state and opens that same conversation in the user's traditional Edge browser with macOS
    background activation. The local page exposes a `Continue in Edge` handoff instead of claiming
    completion. A traditional ChatGPT window can continue the conversation, but it cannot perform or
    verify local file actions through this controller; local edits and bodycheck therefore remain
    unfinished.
-9. The local page renders the final Markdown and links to the selected Web conversation in the
+10. The local page renders the final Markdown and links to the selected Web conversation in the
    browser encoded by the task, rather than the system default browser. When a
    ChatGPT recent session or project session is selected, the page fetches that conversation's
    read-only mapping through the selected signed-in browser and loads its user/assistant history
@@ -103,20 +116,38 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
 
 ## Safety boundary
 
-- Every controller path resolves below the selected project. `.git` internals are inaccessible.
+- Every controller path resolves below the selected project. `.git` and Agent runtime internals are
+  inaccessible. Environment files, credential stores, cookies, and private keys are excluded from
+  context indexes and from `list`, `read`, and `search` observations.
 - Existing files change only through an exact, single-match replacement. New files use an
   explicit write action.
 - Shell commands are restricted to bounded inspection, build, lint, and test work. The command
-  layer rejects file-writing redirection, deletion, moving, installation, downloads, publishing,
-  environment enumeration, and Git-history mutation.
+  layer rejects direct `rg` execution in favor of `search`, paths or network targets outside the
+  selected project, mutating or unbounded flags, file-writing redirection, deletion, moving,
+  installation, downloads, publishing, environment enumeration, and Git-history mutation. A
+  bounded before-and-after project metadata fingerprint detects writes made by an otherwise allowed
+  verification command; such a run is reported as failed and invalidates the prior bodycheck.
 - Stop ends Web-provider generation and terminates the current local process group.
 - The Flask control routes accept host-loopback traffic directly. Private-network requests must
   first unlock `/agent` with the six-digit password gate; the successful signed session also
   authorizes same-origin `/api/agent/*` requests. Public and host-rebinding requests are rejected.
   The default password is `195135`, and `CACHELIKES_AGENT_PASSWORD` overrides it before launch.
+- `/api/browser-session?...&scope=agent` uses that same network, Host, Origin, and password gate.
+  Responses produced after admission carry `Cache-Control: no-store`, `Pragma: no-cache`, and an
+  expired `Expires` value so Agent account-readiness data is not retained by browser caches.
 - Project context and requested source files are transmitted to the selected Web account only
   when a task is sent. Selecting a ChatGPT session reads its existing conversation history for
   display and does not write those remote messages to the local cache.
+- The service atomically persists only bounded run metadata, including phase, provider, model
+  verification, attachment confirmation, timestamps, conversation target, and bodycheck state. It does not persist prompt
+  bodies, responses, conversation history, source text, or error stacks in that snapshot. The
+  runtime directory is owner-only, and the snapshot file uses mode `0600`. If a persisted run was
+  still marked active when the service exited, the next process restores it as `interrupted`
+  instead of claiming that it is still running or completed.
+- The generated context package is task-scoped and is deleted after success, stop, or failure,
+  including a task that opened a new Web session. Structured log formatters redact recognized
+  browser credentials from messages, structured fields, exceptions, and stack traces. Active and
+  rotated JSON-line logs use owner-only mode `0600`.
 
 The question-and-answer pages are bounded to the latest 100 completed Agent exchanges per Web
 conversation and live only for the current local service process. Selected ChatGPT history is
@@ -136,8 +167,8 @@ Settings → Agent stores:
 The selected provider's file-upload limit remains authoritative. ChatGPT documents a 512 MB hard
 file limit and a 2 million-token limit for text and document files; the application uses the lower
 applicable boundary and keeps the local byte ceiling configurable. Gemini, Grok, and Claude may impose
-different limits or attachment behavior, so the controller treats a missing attachment control
-as a signal to fall back to bounded controller observations.
+different limits or attachment behavior, so the controller requires a visible exact-filename
+readback before claiming an attachment and otherwise falls back to bounded controller observations.
 
 Windows uses the same project-confined controller with native Windows paths, PowerShell process
 groups, and Edge or Chrome Chromium sessions. Safari remains macOS-only. The selected operating
@@ -156,6 +187,10 @@ session flows. Claude requires Edge or Chrome. If Claude renders an
 account suspension, ban, deactivation, or other restricted-state message, the readiness card reports
 that state and does not attempt a login bypass.
 
+Chromium cleanup treats only the known Playwright already-closed and driver-disconnected close
+errors as an idempotent second close, while still removing the temporary profile. Unexpected
+context-close failures continue to propagate instead of being hidden.
+
 The traditional Edge handoff is intentionally separate from the isolated Agent context. On a failed
 Edge and ChatGPT run with a verified conversation URL, macOS asks the normal `Microsoft Edge`
 application to create a new window and set its active tab URL through Edge's AppleScript window model.
@@ -164,9 +199,12 @@ Stage Manager places the Edge window in the background. Clicking the handoff pil
 URL in Edge normally.
 
 The model selector is provider-specific: ChatGPT exposes `5.6 Sol`, Gemini exposes `3.1 Pro`, and
-Grok and Claude expose `Auto`. The controller selects the requested model only when the provider exposes a
-matching visible menu option. If the remote UI is localized or exposes a different model set, it
-leaves the current remote model unchanged and reports that limitation rather than claiming success.
+Grok and Claude expose `Auto`. ChatGPT is fail-closed: the controller must select or observe and
+then visibly read back GPT-5.6 Sol before any attachment or send. A localized or changed ChatGPT
+menu that cannot prove that selection stops the run without transferring project context. Gemini,
+Grok, and Claude remain best-effort: if their remote UI does not expose a matching model option,
+the controller leaves that selected session's current remote model unchanged and reports the
+limitation rather than claiming model-selection success.
 
 While an Agent task is running on macOS, the service holds an idle-sleep assertion and releases it
 as soon as the task finishes or fails. On Windows, the controller isolates the active process in a

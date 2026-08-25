@@ -1,6 +1,32 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.1.5-codex.1`
+Documentation version: `v1.2.0-codex.2`
+
+## Agent Web execution safety contract established on 24 Aug 2026
+
+- ChatGPT now fails closed before project-data transfer: its visible Model submenu must read back
+  `GPT-5.6 Sol` or `5.6 Sol` before the controller attaches context or sends a prompt. Gemini, Grok,
+  and Claude retain their best-effort model-selection behavior; a missing compatible selector keeps
+  the selected session's current remote model and reports the limitation.
+- A Chromium attachment is accepted only when the composer visibly exposes the exact context
+  filename. A missing filename or reported upload failure falls back to bounded on-demand reads
+  instead of claiming that the package was attached.
+- Controller discovery now excludes recognized credential, environment, cookie, and private-key
+  paths. `search` uses a project-confined, size- and result-bounded Python regular-expression
+  fallback when `rg` is unavailable. `run` rejects direct `rg`, network or out-of-project targets,
+  and mutating or unbounded flags; a bounded project fingerprint also detects command-side writes,
+  fails that verification, and makes the prior bodycheck stale.
+- Agent-scoped `/api/browser-session` requests now pass through the same network, Host, Origin, and
+  password gate as the rest of the control plane. Admitted responses carry `no-store`, `Pragma`,
+  and expired `Expires` headers.
+- The service atomically persists only bounded run metadata in an owner-only directory and `0600`
+  snapshot, and restores an abandoned active run as `interrupted`. Prompt bodies, responses,
+  conversation history, source text, and error stacks are not stored in that snapshot. Task context
+  files, including new-session contexts, are removed on every exit path.
+- Structured console and JSON-line logging redact recognized browser credentials across messages,
+  fields, exceptions, and stack traces. Active and rotated log files use mode `0600`. Chromium
+  context cleanup ignores only known already-closed or driver-disconnected second-close errors,
+  still removes the cloned profile, and propagates unexpected close failures.
 
 ## Agentic failure handoff to traditional Edge on 20 Aug 2026
 

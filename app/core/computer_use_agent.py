@@ -1,11 +1,13 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.18.0-codex.2
+Code version: v3.19.0-codex.2
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from fnmatch import fnmatch
+import hashlib
 import ipaddress
 import json
 import logging
@@ -72,6 +74,7 @@ MAX_FILE_READ_CHARS = 120_000
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
 MAX_AGENT_SESSION_HISTORY = 100
+PERSISTED_AGENT_SNAPSHOT_FILENAME = "last-run.json"
 WEB_RESPONSE_MINIMUM_SECONDS = 1.5
 WEB_RESPONSE_STABLE_SECONDS = 1.0
 WEB_TURN_TIMEOUT_SECONDS = 1_800
@@ -94,6 +97,7 @@ CHATGPT_MODEL_OPTIONS = (
         "label": "GPT-5.6 Sol",
         "ui_label": "5.6 Sol",
         "remote_label": "GPT-5.6 Sol",
+        "remote_labels": ("GPT-5.6 Sol", "5.6 Sol"),
         "strength": 100,
     },
 )
@@ -212,12 +216,15 @@ JSON_ACTION_RESPONSE_INSTRUCTION = (
     "and newlines as \\n."
 )
 
-DEFAULT_MACOS_SYSTEM_PROMPT = """You are the reasoning component of a local Computer Use coding agent.
+DEFAULT_MACOS_SYSTEM_PROMPT = (
+    """You are the reasoning component of a local Computer Use coding agent.
 The controller runs on macOS and owns one selected project. It can read and change only that project and can run bounded local checks. Treat controller results as authoritative. Never claim a file changed or a check passed until the controller reports it.
 
 Work autonomously from the user's request. Read the repository instruction files before editing. Make the smallest correct change, preserve unrelated work, use existing project patterns, and verify material changes. Keep context economical: request only the files or ranges needed, keep command output bounded, and do not repeat controller results.
 
-""" + JSON_ACTION_RESPONSE_INSTRUCTION + """
+"""
+    + JSON_ACTION_RESPONSE_INSTRUCTION
+    + """
 
 Use one of these actions:
 {"action":"list","path":".","depth":2}
@@ -229,14 +236,19 @@ Use one of these actions:
 {"action":"bodycheck"}
 {"action":"final","summary":"concise Markdown outcome","verification":["check and result"],"limitations":["remaining limitation"]}
 
-Use read/search/list before editing. Use replace for existing files and write mainly for new files. Do not use shell commands to write, delete, move, install, download, change Git history, publish, or access secrets. Ask the controller to run bodycheck after all edits and checks. A final action is invalid until bodycheck succeeds after the latest edit. The final summary must be concise and must not restate the full transcript."""
+Use read/search/list before editing. Use replace for existing files and write mainly for new files. Do not use shell commands to write, delete, move, install, download, change Git history, publish, or access secrets. After edits, run at least one approved focused verification command, then ask the controller to run bodycheck. A final action is invalid until both verification and bodycheck succeed after the latest edit. The final summary must be concise and must not restate the full transcript."""
+)
 
-DEFAULT_WINDOWS_SYSTEM_PROMPT = """You are the reasoning component of a local Computer Use coding agent targeting Windows.
+DEFAULT_WINDOWS_SYSTEM_PROMPT = (
+    """You are the reasoning component of a local Computer Use coding agent targeting Windows.
 The controller runs on Windows, uses PowerShell-compatible Windows paths, and owns the selected project as its only writable root. Follow repository instruction files, preserve unrelated work, make focused changes, and verify them. Keep context economical.
 
-""" + JSON_ACTION_RESPONSE_INSTRUCTION + """
+"""
+    + JSON_ACTION_RESPONSE_INSTRUCTION
+    + """
 
-Use the controller actions list, read, search, replace, write, run, bodycheck, or final. Never claim an operation succeeded before the controller reports it. Run bodycheck after the latest edit and before final. Do not use commands to write, delete, move, install, download, change Git history, publish, or access secrets."""
+Use the controller actions list, read, search, replace, write, run, bodycheck, or final. Never claim an operation succeeded before the controller reports it. After edits, run one approved verification command and then bodycheck before final. Do not use commands to write, delete, move, install, download, change Git history, publish, or access secrets."""
+)
 
 _IGNORED_DIRECTORY_NAMES = frozenset(
     {
@@ -292,6 +304,47 @@ _SAFE_SCRIPT_NAME = re.compile(
 _UNSAFE_WRAPPER_EXECUTABLES = frozenset(
     {"bash", "cmd", "dash", "fish", "powershell", "pwsh", "sh", "zsh"}
 )
+_MUTATING_OR_UNBOUNDED_RUN_FLAGS = frozenset(
+    {
+        "--apply",
+        "--exec",
+        "--fix",
+        "--force",
+        "--in-place",
+        "--output",
+        "--output-file",
+        "--pre",
+        "--pre-glob",
+        "--replace",
+        "--update-snapshots",
+        "--write",
+        "-i",
+    }
+)
+_SENSITIVE_PATH_NAMES = frozenset(
+    {
+        ".aws",
+        ".env",
+        ".git-credentials",
+        ".netrc",
+        ".npmrc",
+        ".pypirc",
+        ".ssh",
+        "cookies",
+        "cookies.json",
+        "credential",
+        "credentials",
+        "credentials.json",
+        "id_dsa",
+        "id_ed25519",
+        "id_ecdsa",
+        "id_rsa",
+        "secret",
+        "secrets",
+        "secrets.json",
+    }
+)
+_SENSITIVE_PATH_SUFFIXES = (".key", ".p12", ".pem", ".pfx")
 
 
 DEFAULT_OPERATING_SYSTEM = "windows" if is_windows_host() else "macos"
@@ -344,12 +397,15 @@ class AgentRunSnapshot:
     last_error: str = ""
     context_file: str = ""
     context_bytes: int = 0
+    context_attached: bool = False
     turn_count: int = 0
     bodycheck_passed: bool = False
     session_mode: str = "new"
     platform: str = DEFAULT_AGENT_PLATFORM
     browser: str = "edge"
     model: str = DEFAULT_CHATGPT_MODEL
+    model_verified: bool = False
+    actual_model: str = ""
     traditional_handoff_available: bool = False
     traditional_handoff_opened: bool = False
     traditional_handoff_message: str = ""
@@ -361,10 +417,16 @@ class ActionState:
 
     edit_generation: int = 0
     bodycheck_generation: int = -1
+    verification_generation: int = -1
+    successful_checks: list[str] = field(default_factory=list)
 
     @property
     def bodycheck_current(self) -> bool:
         return self.bodycheck_generation == self.edit_generation
+
+    @property
+    def verification_current(self) -> bool:
+        return self.verification_generation == self.edit_generation
 
 
 def is_loopback_address(value: str | None) -> bool:
@@ -1080,12 +1142,21 @@ def _project_file_index(workspace: Path) -> list[str]:
     ]
     try:
         output = _run_capture(command, workspace, timeout=15)
-        return output.splitlines()[:12_000]
+        return [
+            value
+            for value in output.splitlines()
+            if value and not _path_has_sensitive_part(Path(value))
+        ][:12_000]
     except (OSError, RuntimeError):
         paths: list[str] = []
         for path in workspace.rglob("*"):
             relative = path.relative_to(workspace)
-            if path.is_file() and not _path_has_ignored_part(relative):
+            if (
+                path.is_file()
+                and not path.is_symlink()
+                and not _path_has_ignored_part(relative)
+                and not _path_has_sensitive_part(relative)
+            ):
                 paths.append(relative.as_posix())
             if len(paths) >= 12_000:
                 break
@@ -1114,6 +1185,79 @@ def _markdown_file_section(workspace: Path, path: Path, maximum_chars: int) -> s
 
 def _path_has_ignored_part(relative: Path) -> bool:
     return any(part in _IGNORED_DIRECTORY_NAMES for part in relative.parts)
+
+
+def _path_has_sensitive_part(relative: Path) -> bool:
+    """Keep credentials and private keys outside Web-visible controller context."""
+    for part in relative.parts:
+        normalized = part.casefold()
+        if (
+            normalized in _SENSITIVE_PATH_NAMES
+            or normalized.startswith(".env.")
+            or normalized.endswith(_SENSITIVE_PATH_SUFFIXES)
+        ):
+            return True
+    return False
+
+
+def _fallback_search_matches(
+    *,
+    workspace: Path,
+    root: Path,
+    query: str,
+    glob: str,
+    max_results: int,
+) -> list[str]:
+    """Search text files in Python when ripgrep is unavailable to the service."""
+    try:
+        pattern = re.compile(query)
+    except re.error as exc:
+        raise ValueError(
+            f"The search query is not a valid regular expression: {exc}"
+        ) from exc
+
+    matches: list[str] = []
+    inspected_files = 0
+    try:
+        candidates = root.rglob("*")
+        for path in candidates:
+            if inspected_files >= 12_000 or len(matches) >= max_results:
+                break
+            try:
+                relative_to_workspace = path.relative_to(workspace)
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or _path_has_ignored_part(relative_to_workspace)
+                    or _path_has_sensitive_part(relative_to_workspace)
+                    or path.stat().st_size > 2 * 1_024 * 1_024
+                ):
+                    continue
+                path.resolve(strict=True).relative_to(workspace)
+            except (OSError, ValueError):
+                continue
+
+            relative_to_root = path.relative_to(root).as_posix()
+            if glob and not (
+                fnmatch(relative_to_root, glob) or fnmatch(path.name, glob)
+            ):
+                continue
+
+            inspected_files += 1
+            try:
+                lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+            except OSError:
+                continue
+            for line_number, line in enumerate(lines, start=1):
+                if not pattern.search(line):
+                    continue
+                relative = path.relative_to(workspace).as_posix()
+                matches.append(f"{relative}:{line_number}:{line}")
+                if len(matches) >= max_results:
+                    break
+    except OSError:
+        return matches
+    return matches
 
 
 def parse_agent_action(response: str) -> dict[str, Any]:
@@ -1220,8 +1364,13 @@ class WorkspaceController:
             resolved.relative_to(self.workspace)
         except ValueError as exc:
             raise ValueError("Controller paths must stay inside the selected project.") from exc
-        if any(part in {".git", ".computer-use-agent"} for part in resolved.relative_to(self.workspace).parts):
+        relative = resolved.relative_to(self.workspace)
+        if any(part in {".git", ".computer-use-agent"} for part in relative.parts):
             raise ValueError("Controller access to internal metadata is not allowed.")
+        if _path_has_sensitive_part(relative):
+            raise ValueError(
+                "Controller access to credentials and private-key files is not allowed."
+            )
         return resolved
 
     def _list(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1230,9 +1379,16 @@ class WorkspaceController:
             raise ValueError("The list action requires a directory.")
         depth = max(1, min(6, int(payload.get("depth", 2))))
         rows: list[str] = []
-        for path in sorted(root.rglob("*"), key=lambda item: item.as_posix().casefold()):
+        for path in sorted(
+            root.rglob("*"), key=lambda item: item.as_posix().casefold()
+        ):
             relative_to_root = path.relative_to(root)
-            if len(relative_to_root.parts) > depth or _path_has_ignored_part(relative_to_root):
+            relative_to_workspace = path.relative_to(self.workspace)
+            if (
+                len(relative_to_root.parts) > depth
+                or _path_has_ignored_part(relative_to_workspace)
+                or _path_has_sensitive_part(relative_to_workspace)
+            ):
                 continue
             suffix = "/" if path.is_dir() else ""
             rows.append(path.relative_to(self.workspace).as_posix() + suffix)
@@ -1268,22 +1424,64 @@ class WorkspaceController:
         root = self._resolve_path(payload.get("path", "."))
         max_results = max(1, min(300, int(payload.get("max_results", 80))))
         command = ["rg", "--line-number", "--color", "never", "--max-count", str(max_results)]
+        for excluded_glob in (
+            "!.env",
+            "!.env.*",
+            "!*.key",
+            "!*.p12",
+            "!*.pem",
+            "!*.pfx",
+            "!.aws/**",
+            "!.ssh/**",
+            "!credentials.json",
+            "!secrets.json",
+        ):
+            command.extend(["--glob", excluded_glob])
         glob = str(payload.get("glob") or "").strip()
         if glob:
             command.extend(["--glob", glob])
         command.extend([query, str(root.relative_to(self.workspace) or ".")])
-        process = subprocess.run(
-            command,
-            cwd=self.workspace,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=30,
-        )
+        try:
+            process = subprocess.run(
+                command,
+                cwd=self.workspace,
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=30,
+            )
+        except FileNotFoundError:
+            matches = _fallback_search_matches(
+                workspace=self.workspace,
+                root=root,
+                query=query,
+                glob=glob,
+                max_results=max_results,
+            )
+            return {
+                "ok": True,
+                "action": "search",
+                "matches": matches,
+                "truncated": len(matches) >= max_results,
+                "engine": "python-fallback",
+            }
         if process.returncode not in {0, 1}:
             raise RuntimeError((process.stderr or process.stdout or "Search failed.").strip())
-        matches = (process.stdout or "").splitlines()[:max_results]
-        return {"ok": True, "action": "search", "matches": matches, "truncated": len(matches) >= max_results}
+        matches = []
+        for value in (process.stdout or "").splitlines():
+            relative_text = value.split(":", 1)[0]
+            if _path_has_sensitive_part(Path(relative_text)):
+                continue
+            matches.append(value)
+            if len(matches) >= max_results:
+                break
+        return {
+            "ok": True,
+            "action": "search",
+            "matches": matches,
+            "truncated": len(matches) >= max_results,
+            "engine": "rg",
+        }
 
     def _replace(self, payload: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve_path(payload.get("path"))
@@ -1325,9 +1523,9 @@ class WorkspaceController:
 
     def _run(self, payload: dict[str, Any]) -> dict[str, Any]:
         command = str(payload.get("command") or "").strip()
-        validate_inspection_command(command)
+        command_parts = inspection_command_parts(command, workspace=self.workspace)
+        before_fingerprint = _workspace_mutation_fingerprint(self.workspace)
         started = time.monotonic()
-        command_parts = inspection_command_parts(command)
         process = subprocess.Popen(
             command_parts,
             cwd=self.workspace,
@@ -1348,12 +1546,26 @@ class WorkspaceController:
             )
         finally:
             self.process_changed(None)
+        after_fingerprint = _workspace_mutation_fingerprint(self.workspace)
+        mutated_workspace = after_fingerprint != before_fingerprint
+        if mutated_workspace:
+            self.state.edit_generation += 1
+        elif process.returncode == 0:
+            self.state.verification_generation = self.state.edit_generation
+            self.state.successful_checks.append(command)
         return {
-            "ok": process.returncode == 0,
+            "ok": process.returncode == 0 and not mutated_workspace,
             "action": "run",
             "exit_code": process.returncode,
             "duration_seconds": round(time.monotonic() - started, 2),
             "output": _truncate_text(output or "", MAX_ACTION_OUTPUT_CHARS),
+            "mutated_workspace": mutated_workspace,
+            "error": (
+                "The verification command changed project files; the prior bodycheck is stale. "
+                "Inspect those changes before continuing."
+                if mutated_workspace
+                else ""
+            ),
         }
 
     def _bodycheck(self, _payload: dict[str, Any]) -> dict[str, Any]:
@@ -1384,9 +1596,84 @@ class WorkspaceController:
             "ok": passed,
             "action": "bodycheck",
             "bodycheck_current": self.state.bodycheck_current,
+            "verification_current": self.state.verification_current,
+            "successful_checks": self.state.successful_checks[-20:],
             "instruction_files": instructions,
             "checks": checks,
         }
+
+
+def _workspace_mutation_fingerprint(workspace: Path) -> str:
+    """Return a metadata fingerprint that detects command-side project writes."""
+    digest = hashlib.sha256()
+    inspected = 0
+    try:
+        candidates = sorted(workspace.rglob("*"), key=lambda path: path.as_posix())
+    except OSError:
+        candidates = []
+    for path in candidates:
+        if inspected >= 12_000:
+            break
+        try:
+            relative = path.relative_to(workspace)
+            if (
+                path.is_symlink()
+                or not path.is_file()
+                or _path_has_ignored_part(relative)
+            ):
+                continue
+            stat = path.stat()
+        except OSError:
+            continue
+        digest.update(relative.as_posix().encode("utf-8", errors="replace"))
+        digest.update(f"\0{stat.st_size}\0{stat.st_mtime_ns}\0".encode())
+        inspected += 1
+    digest.update(f"files:{inspected}".encode())
+    return digest.hexdigest()
+
+
+def _inspection_argument_path_value(argument: str) -> str:
+    value = str(argument or "").strip()
+    if value.startswith("-") and "=" in value:
+        value = value.split("=", 1)[1].strip()
+    return value.split("::", 1)[0]
+
+
+def _validate_inspection_arguments(
+    parts: list[str],
+    workspace: Path | None = None,
+) -> None:
+    """Reject mutating flags, network targets, and paths outside the workspace."""
+    for argument in parts[1:]:
+        normalized = argument.casefold()
+        flag = normalized.split("=", 1)[0]
+        if flag in _MUTATING_OR_UNBOUNDED_RUN_FLAGS:
+            raise ValueError(
+                f"Run does not allow the mutating or unbounded flag {flag}."
+            )
+
+        path_value = _inspection_argument_path_value(argument)
+        if not path_value or path_value.startswith("-"):
+            continue
+        portable_value = path_value.replace("\\", "/")
+        if "://" in portable_value:
+            raise ValueError("Run cannot access network targets.")
+        if (
+            portable_value.startswith(("/", "//"))
+            or re.match(r"^[a-zA-Z]:/", portable_value)
+            or ".." in Path(portable_value).parts
+        ):
+            raise ValueError("Run arguments must stay inside the selected project.")
+        if workspace is None:
+            continue
+        candidate = workspace / portable_value
+        try:
+            if candidate.exists():
+                candidate.resolve(strict=True).relative_to(workspace)
+        except (OSError, ValueError) as exc:
+            raise ValueError(
+                "Run arguments must stay inside the selected project."
+            ) from exc
 
 
 def validate_inspection_command(command: str) -> None:
@@ -1405,9 +1692,18 @@ def validate_inspection_command(command: str) -> None:
         raise ValueError("Run accepts one direct command without shell operators.")
     if re.search(r"\b(?:env|printenv|set)\b", command, flags=re.IGNORECASE):
         raise ValueError("Commands that enumerate the environment are not allowed.")
+    try:
+        parts = shlex.split(command, posix=not is_windows_host())
+    except ValueError as exc:
+        raise ValueError("Run contains invalid shell quoting.") from exc
+    _validate_inspection_arguments(parts)
 
 
-def inspection_command_parts(command: str) -> list[str]:
+def inspection_command_parts(
+    command: str,
+    *,
+    workspace: Path | None = None,
+) -> list[str]:
     """Parse one direct command and enforce the controller executable allowlist."""
     validate_inspection_command(command)
     try:
@@ -1416,6 +1712,7 @@ def inspection_command_parts(command: str) -> list[str]:
         raise ValueError("Run contains invalid shell quoting.") from exc
     if not parts:
         raise ValueError("Run requires a command.")
+    _validate_inspection_arguments(parts, workspace)
 
     executable_name = Path(parts[0]).name
     executable = Path(executable_name).stem.casefold() if executable_name.casefold().endswith(".exe") else executable_name.casefold()
@@ -1427,7 +1724,9 @@ def inspection_command_parts(command: str) -> list[str]:
             raise ValueError("Git run actions are limited to read-only inspection subcommands.")
         return parts
     if executable == "rg":
-        return parts
+        raise ValueError(
+            "Use the project-confined search action instead of running ripgrep directly."
+        )
     if executable in {"pytest", "ruff", "mypy", "pyright", "eslint", "tsc"}:
         return parts
     if re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable) or executable == "py":
@@ -1533,9 +1832,15 @@ def _stop_macos_idle_sleep_assertion(process: subprocess.Popen[Any] | None) -> N
         return
 
 
-def _agent_history_key(conversation_url: str) -> str:
+def _agent_history_key(
+    conversation_url: str,
+    platform: str = DEFAULT_AGENT_PLATFORM,
+) -> str:
     """Return a stable in-memory key for one Web AI conversation."""
-    return str(conversation_url or "").strip().rstrip("/")
+    candidate = str(conversation_url or "").strip()
+    return normalize_agent_conversation_url(platform, candidate) or candidate.rstrip(
+        "/"
+    )
 
 
 def _clean_agent_session_title(value: str, fallback: str) -> str:
@@ -1567,13 +1872,81 @@ class ComputerUseAgentService:
         self._runtime_root = runtime_root
         self._browser_opener = browser_opener or open_agent_in_browser
         self._lock = RLock()
-        self._snapshot = AgentRunSnapshot()
+        self._snapshot = self._load_persisted_snapshot()
         self._stop_requested = Event()
         self._worker: Thread | None = None
         self._active_process: subprocess.Popen[str] | None = None
         self._sleep_assertion: subprocess.Popen[Any] | None = None
         self._conversation_histories: dict[str, list[dict[str, str]]] = {}
         self._conversation_titles: dict[str, str] = {}
+        if self._snapshot.phase == "interrupted":
+            with self._lock:
+                self._persist_snapshot_locked()
+
+    def _load_persisted_snapshot(self) -> AgentRunSnapshot:
+        """Restore non-content run metadata and mark abandoned work as interrupted."""
+        path = self._runtime_root / PERSISTED_AGENT_SNAPSHOT_FILENAME
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError, TypeError):
+            return AgentRunSnapshot()
+        if not isinstance(payload, dict):
+            return AgentRunSnapshot()
+        allowed = {
+            key: payload[key]
+            for key in AgentRunSnapshot.__dataclass_fields__
+            if key in payload
+        }
+        snapshot = AgentRunSnapshot(**allowed)
+        if snapshot.running:
+            snapshot.running = False
+            snapshot.phase = "interrupted"
+            snapshot.message = (
+                "The previous Agent process ended before recording a final result. "
+                "Continue the same Web session or start a new task."
+            )
+            snapshot.finished_at = utc_now()
+            snapshot.bodycheck_passed = False
+        return snapshot
+
+    def _persist_snapshot_locked(self) -> None:
+        """Atomically persist bounded run metadata without prompts, responses, or source text."""
+        fields = (
+            "running",
+            "phase",
+            "message",
+            "conversation_url",
+            "project_url",
+            "session_title",
+            "started_at",
+            "finished_at",
+            "turn_count",
+            "bodycheck_passed",
+            "session_mode",
+            "platform",
+            "browser",
+            "model",
+            "model_verified",
+            "actual_model",
+            "context_attached",
+        )
+        payload = {
+            field_name: getattr(self._snapshot, field_name) for field_name in fields
+        }
+        path = self._runtime_root / PERSISTED_AGENT_SNAPSHOT_FILENAME
+        temporary = path.with_suffix(".tmp")
+        try:
+            self._runtime_root.mkdir(parents=True, exist_ok=True)
+            self._runtime_root.chmod(0o700)
+            temporary.write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            temporary.chmod(0o600)
+            os.replace(temporary, path)
+            path.chmod(0o600)
+        except OSError as exc:
+            LOGGER.warning("Could not persist bounded Agent run metadata: %s", exc)
 
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -1628,13 +2001,13 @@ class ComputerUseAgentService:
             settings.platform,
         )
         clean_session_title = _clean_agent_session_title(session_title, "")
-        self._settings_store.update(settings)
 
         with self._lock:
             if self._snapshot.running:
                 raise RuntimeError("An Agent request is already running.")
+            self._settings_store.update(settings)
             self._stop_requested.clear()
-            history_key = _agent_history_key(target_url)
+            history_key = _agent_history_key(target_url, settings.platform)
             existing_history = (
                 []
                 if normalized_session_mode in {"new", "project_new"}
@@ -1665,6 +2038,7 @@ class ComputerUseAgentService:
                 browser=settings.browser,
                 model=settings.model,
             )
+            self._persist_snapshot_locked()
             self._worker = Thread(
                 target=self._run,
                 args=(
@@ -1688,6 +2062,7 @@ class ComputerUseAgentService:
             self._stop_requested.set()
             self._snapshot.phase = "stopping"
             self._snapshot.message = "Stop requested. Ending the browser turn and active local command."
+            self._persist_snapshot_locked()
             process = self._active_process
             sleep_assertion = self._sleep_assertion
         if process is not None and process.poll() is None:
@@ -1723,6 +2098,7 @@ class ComputerUseAgentService:
     ) -> None:
         sleep_assertion = _start_macos_idle_sleep_assertion()
         self._set_sleep_assertion(sleep_assertion)
+        context_path: Path | None = None
         try:
             run_directory = self._runtime_root / time.strftime("%Y%m%d-%H%M%S")
             context_path, context_bytes = build_context_markdown(
@@ -1737,24 +2113,35 @@ class ComputerUseAgentService:
                 context_file=str(context_path),
                 context_bytes=context_bytes,
             )
-            response, conversation_url, turn_count, bodycheck_passed = self._runner(
-                prompt=prompt,
-                workspace=workspace,
-                context_path=context_path,
-                config=config,
-                settings=settings,
-                target_url=target_url,
-                session_mode=session_mode,
-                session_title=session_title,
-                read_only=read_only,
-                should_stop=self._stop_requested.is_set,
-                update=self._update,
-                process_changed=self._set_active_process,
-            )
+            if self._stop_requested.is_set():
+                response, conversation_url, turn_count, bodycheck_passed = (
+                    "",
+                    target_url,
+                    0,
+                    False,
+                )
+            else:
+                response, conversation_url, turn_count, bodycheck_passed = self._runner(
+                    prompt=prompt,
+                    workspace=workspace,
+                    context_path=context_path,
+                    config=config,
+                    settings=settings,
+                    target_url=target_url,
+                    session_mode=session_mode,
+                    session_title=session_title,
+                    read_only=read_only,
+                    should_stop=self._stop_requested.is_set,
+                    update=self._update,
+                    process_changed=self._set_active_process,
+                )
             with self._lock:
                 stopped = self._stop_requested.is_set()
                 finished_at = utc_now()
-                final_history_key = _agent_history_key(conversation_url or target_url)
+                final_history_key = _agent_history_key(
+                    conversation_url or target_url,
+                    settings.platform,
+                )
                 history = [
                     dict(item)
                     for item in self._conversation_histories.get(
@@ -1779,7 +2166,10 @@ class ComputerUseAgentService:
                 self._snapshot.message = (
                     "Agent request stopped."
                     if stopped
-                    else f"{AGENT_PLATFORM_BY_KEY[settings.platform]['label']} Web completed the project task after local bodycheck."
+                    else (
+                        f"{self._snapshot.actual_model or AGENT_PLATFORM_BY_KEY[settings.platform]['label']} "
+                        "completed the project task after local bodycheck."
+                    )
                 )
                 self._snapshot.response = response
                 self._snapshot.conversation_url = conversation_url
@@ -1787,6 +2177,7 @@ class ComputerUseAgentService:
                 self._snapshot.turn_count = turn_count
                 self._snapshot.bodycheck_passed = bodycheck_passed
                 self._snapshot.finished_at = finished_at
+                self._persist_snapshot_locked()
         except Exception as exc:
             LOGGER.exception("Computer Use web-agent request failed.")
             with self._lock:
@@ -1837,16 +2228,25 @@ class ComputerUseAgentService:
                 self._snapshot.traditional_handoff_opened = handoff_opened
                 self._snapshot.traditional_handoff_message = handoff_message
                 self._snapshot.finished_at = utc_now()
+                self._persist_snapshot_locked()
         finally:
             self._set_active_process(None)
             _stop_macos_idle_sleep_assertion(sleep_assertion)
             self._set_sleep_assertion(None)
+            if context_path is not None:
+                try:
+                    context_path.unlink(missing_ok=True)
+                    context_path.parent.rmdir()
+                except OSError:
+                    pass
+                self._update(context_file="", context_bytes=0)
 
     def _update(self, **changes: Any) -> None:
         with self._lock:
             for key, value in changes.items():
                 if hasattr(self._snapshot, key):
                     setattr(self._snapshot, key, value)
+            self._persist_snapshot_locked()
 
 
 def run_web_computer_use(
@@ -1997,6 +2397,18 @@ def run_chatgpt_web_computer_use(
     return run_web_computer_use(**kwargs)
 
 
+def _current_agent_conversation_url(
+    page: Any, platform: str, fallback: str = ""
+) -> str:
+    """Return the provider-canonical conversation URL without query or fragment drift."""
+    current = str(getattr(page, "url", "") or "").strip()
+    normalized = normalize_agent_conversation_url(platform, current)
+    if normalized:
+        return normalized
+    normalized_fallback = normalize_agent_conversation_url(platform, fallback)
+    return normalized_fallback or current or str(fallback or "").strip()
+
+
 def _run_web_action_loop(
     *,
     page: Any,
@@ -2016,7 +2428,27 @@ def _run_web_action_loop(
     if platform == "chatgpt":
         _select_chat_mode(page, browser_kind)
     model_selected = _select_web_model(page, browser_kind, platform, settings.model)
-    if not model_selected:
+    selected_option = next(
+        (
+            option
+            for option in _platform_model_options(platform)
+            if option["key"] == settings.model
+        ),
+        None,
+    )
+    if model_selected:
+        actual_model = str((selected_option or {}).get("label") or settings.model)
+        update(
+            phase="preparing",
+            message=f"Verified {actual_model} in {AGENT_PLATFORM_BY_KEY[platform]['label']} Web.",
+            model_verified=True,
+            actual_model=actual_model,
+        )
+    elif platform == "chatgpt":
+        raise RuntimeError(
+            "ChatGPT Web could not verify GPT-5.6 Sol. No project context or prompt was sent."
+        )
+    else:
         update(
             phase="preparing",
             message=(
@@ -2025,6 +2457,7 @@ def _run_web_action_loop(
             ),
         )
     attached = _attach_context_file(page, browser_kind, context_path)
+    update(context_attached=attached)
     update(
         phase="submitting",
         message=(
@@ -2047,10 +2480,10 @@ def _run_web_action_loop(
             message=f"Prompt sent to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web; waiting for the first controller action.",
         ),
     )
-    conversation_url = str(page.url or "")
-    normalized_conversation_url = normalize_agent_conversation_url(platform, conversation_url)
-    if normalized_conversation_url:
-        conversation_url = normalized_conversation_url
+    conversation_url = _current_agent_conversation_url(
+        page, platform, selected_target_url
+    )
+    if conversation_url:
         update(conversation_url=conversation_url)
     activity: list[dict[str, str]] = []
 
@@ -2059,17 +2492,26 @@ def _run_web_action_loop(
     while turn_index < settings.max_turns:
         if should_stop():
             _stop_web_generation(page, browser_kind)
-            return "", str(page.url or conversation_url), turn_index, controller.state.bodycheck_current
+            return (
+                "",
+                _current_agent_conversation_url(page, platform, conversation_url),
+                turn_index,
+                controller.state.bodycheck_current,
+            )
 
         try:
             action = parse_agent_action(response)
         except ValueError as exc:
             invalid_action_retries += 1
             LOGGER.warning(
-                "%s returned an invalid controller response on retry %s: %s",
+                "%s returned an invalid controller response on retry %s "
+                "(characters=%s, sha256=%s).",
                 AGENT_PLATFORM_BY_KEY[platform]["label"],
                 invalid_action_retries,
-                _truncate_text(str(response or ""), 600),
+                len(str(response or "")),
+                hashlib.sha256(
+                    str(response or "").encode("utf-8", errors="replace")
+                ).hexdigest()[:16],
             )
             if invalid_action_retries > MAX_INVALID_ACTION_RETRIES:
                 raise RuntimeError(
@@ -2097,7 +2539,20 @@ def _run_web_action_loop(
         turn_index += 1
         action_name = str(action.get("action") or "").strip().lower()
         if action_name == "final":
-            if not controller.state.bodycheck_current:
+            final_blocker = ""
+            if (
+                controller.state.edit_generation > 0
+                and not controller.state.verification_current
+            ):
+                final_blocker = (
+                    "Final is blocked until one approved verification command succeeds "
+                    "after the latest edit."
+                )
+            elif not controller.state.bodycheck_current:
+                final_blocker = (
+                    "Final is blocked until bodycheck succeeds after the latest edit."
+                )
+            if final_blocker:
                 response = _submit_and_wait(
                     page,
                     browser_kind,
@@ -2105,7 +2560,7 @@ def _run_web_action_loop(
                         turn_index,
                         {
                             "ok": False,
-                            "error": "Final is blocked until bodycheck succeeds after the latest edit.",
+                            "error": final_blocker,
                         },
                     ),
                     should_stop,
@@ -2117,15 +2572,18 @@ def _run_web_action_loop(
                 )
                 continue
             final_response = _render_final_action(action)
+            conversation_url = _current_agent_conversation_url(
+                page, platform, conversation_url
+            )
             update(
                 phase="finalizing",
                 message=f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned a final result after the current bodycheck.",
                 response=final_response,
-                conversation_url=str(page.url or conversation_url),
+                conversation_url=conversation_url,
                 turn_count=turn_index,
                 bodycheck_passed=True,
             )
-            return final_response, str(page.url or conversation_url), turn_index, True
+            return final_response, conversation_url, turn_index, True
 
         detail = _activity_detail(action)
         activity.append(
@@ -2136,11 +2594,14 @@ def _run_web_action_loop(
                 "status": "running",
             }
         )
+        conversation_url = _current_agent_conversation_url(
+            page, platform, conversation_url
+        )
         update(
             phase="running",
             message=f"{AGENT_PLATFORM_BY_KEY[platform]['label']} requested local {action_name or 'controller'} action.",
             activity=activity,
-            conversation_url=str(page.url or conversation_url),
+            conversation_url=conversation_url,
             turn_count=turn_index,
         )
         observation = controller.execute(action)
@@ -2155,7 +2616,7 @@ def _run_web_action_loop(
             bodycheck_passed=controller.state.bodycheck_current,
         )
         if observation.get("stopped"):
-            return "", str(page.url or conversation_url), turn_index, controller.state.bodycheck_current
+            return "", conversation_url, turn_index, controller.state.bodycheck_current
         response = _submit_and_wait(
             page,
             browser_kind,
@@ -2398,14 +2859,168 @@ def _select_chat_mode(page: Any, browser_kind: str) -> None:
         chat_mode.first.click()
 
 
-def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
-    """Select a remote model when ChatGPT exposes a compatible menu.
+def _chatgpt_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
+    normalized = " ".join(str(value or "").split()).casefold()
+    return any(
+        normalized == " ".join(label.split()).casefold()
+        or normalized.endswith(f" {' '.join(label.split()).casefold()}")
+        for label in labels
+    )
 
-    ChatGPT does not expose the model-control menu for every account, conversation,
-    or product surface. In that case, preserve the already-selected remote model and
-    continue the local controller run instead of claiming that a model was changed.
-    """
-    del browser_kind
+
+def _first_visible_role_control(
+    page: Any, role: str, names: tuple[str, ...]
+) -> Any | None:
+    """Return the first visible exact-name Playwright role control."""
+    for name in names:
+        locator = page.get_by_role(role, name=name, exact=True)
+        for index in range(locator.count()):
+            candidate = locator.nth(index)
+            if candidate.is_visible():
+                return candidate
+    return None
+
+
+def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
+    """Read the visible ChatGPT power menu without generating synthetic click events."""
+    result = page.evaluate(
+        r"""() => {
+            const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const visible = (element) => {
+                if (!element) return false;
+                const style = getComputedStyle(element);
+                return element.getClientRects().length > 0
+                    && style.display !== 'none'
+                    && style.visibility !== 'hidden';
+            };
+            const menus = Array.from(document.querySelectorAll('[role="menu"]')).filter(visible);
+            const menu = menus.find((candidate) =>
+                Array.from(candidate.querySelectorAll('[role="menuitem"]')).some((item) =>
+                    normalize(item.innerText || item.textContent).toLowerCase().startsWith('model')
+                )
+            );
+            const modelItem = Array.from(menu?.querySelectorAll('[role="menuitem"]') || [])
+                .find((item) => normalize(item.innerText || item.textContent).toLowerCase().startsWith('model'));
+            if (!modelItem) {
+                const menuText = normalize(menu?.innerText || menu?.textContent || '');
+                return {
+                    ok: false,
+                    diagnostic: {
+                        visibleMenuCount: menus.length,
+                        menuItemCount: menu?.querySelectorAll('[role="menuitem"]').length || 0,
+                        menuTextHasModel: /(^|\s)model(\s|$)/i.test(menuText),
+                        menuTextHasSol: /5\.6 sol/i.test(menuText),
+                    },
+                };
+            }
+            const lines = String(modelItem.innerText || modelItem.textContent || '')
+                .split(/\n+/)
+                .map((value) => value.trim())
+                .filter(Boolean);
+            const descendants = Array.from(modelItem.querySelectorAll('span'))
+                .map((element) => String(element.innerText || element.textContent || '').trim())
+                .filter(Boolean);
+            return {
+                ok: true,
+                current: lines.length > 1
+                    ? lines.slice(1).join(' ')
+                    : (descendants.at(-1) || lines.at(-1) || ''),
+            };
+        }"""
+    )
+    return result if isinstance(result, dict) else {"ok": False, "diagnostic": {}}
+
+
+def _select_chatgpt_model_chromium(
+    page: Any,
+    option: dict[str, Any],
+    remote_labels: tuple[str, ...],
+) -> bool:
+    """Use trusted Playwright clicks, then read back the remote Chromium model."""
+    power_labels = (
+        "Instant",
+        "Extra High",
+        "High",
+        "Medium",
+        "Low",
+        "Auto",
+        "Max",
+        "Pro",
+        "Advanced",
+        "Faster",
+        "Smarter",
+    )
+    power_button = _first_visible_role_control(page, "button", power_labels)
+    if power_button is None:
+        LOGGER.warning(
+            "ChatGPT Web could not find the visible power control for %s.",
+            option["label"],
+        )
+        return False
+
+    if power_button.get_attribute("aria-expanded") != "true":
+        power_button.click()
+    result: dict[str, Any] = {"ok": False, "diagnostic": {}}
+    for _attempt in range(10):
+        page.wait_for_timeout(200)
+        result = _read_chatgpt_model_menu(page)
+        if result.get("ok"):
+            break
+    current = str(result.get("current") or "")
+    if result.get("ok") and _chatgpt_model_text_matches(current, remote_labels):
+        if power_button.get_attribute("aria-expanded") == "true":
+            power_button.click()
+        return True
+
+    model_item = None
+    role_items = page.get_by_role("menuitem")
+    for index in range(role_items.count()):
+        candidate = role_items.nth(index)
+        if candidate.is_visible() and " ".join(
+            candidate.inner_text().split()
+        ).casefold().startswith("model"):
+            model_item = candidate
+            break
+    if model_item is not None:
+        model_item.click()
+        page.wait_for_timeout(350)
+        for role in ("menuitem", "option"):
+            choices = page.get_by_role(role)
+            for index in range(choices.count()):
+                choice = choices.nth(index)
+                if not choice.is_visible():
+                    continue
+                if _chatgpt_model_text_matches(choice.inner_text(), remote_labels):
+                    choice.click()
+                    page.wait_for_timeout(500)
+                    if power_button.get_attribute("aria-expanded") != "true":
+                        power_button.click()
+                    for _attempt in range(10):
+                        page.wait_for_timeout(200)
+                        result = _read_chatgpt_model_menu(page)
+                        if result.get("ok"):
+                            break
+                    current = str(result.get("current") or "")
+                    if power_button.get_attribute("aria-expanded") == "true":
+                        power_button.click()
+                    return bool(
+                        result.get("ok")
+                        and _chatgpt_model_text_matches(current, remote_labels)
+                    )
+
+    if power_button.get_attribute("aria-expanded") == "true":
+        power_button.click()
+    LOGGER.warning(
+        "ChatGPT Web could not verify model %s through the Chromium power menu (current=%s; diagnostic=%s).",
+        option["label"],
+        current or "none",
+        result.get("diagnostic", {}),
+    )
+    return False
+
+
+def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
+    """Select and read back the requested ChatGPT model before any project upload."""
     selected_model = str(model or DEFAULT_CHATGPT_MODEL).strip().lower()
     option = next(
         (candidate for candidate in CHATGPT_MODEL_OPTIONS if candidate["key"] == selected_model),
@@ -2414,8 +3029,11 @@ def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
     if option is None:
         raise ValueError("Choose a supported ChatGPT model.")
 
-    result = page.evaluate(
-        r"""({label}) => {
+    remote_labels = tuple(option.get("remote_labels") or (option.get("label", ""),))
+    if browser_kind != "safari" and hasattr(page, "get_by_role"):
+        return _select_chatgpt_model_chromium(page, option, remote_labels)
+    wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
+    model_control_script = r"""({labels, phase}) => {
             const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
             const isVisible = (element) => {
                 const style = window.getComputedStyle(element);
@@ -2424,62 +3042,137 @@ def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
                     && style.display !== 'none';
             };
             const visibleMenus = () => Array.from(document.querySelectorAll('[role="menu"]')).filter(isVisible);
-            const powerLabels = new Set(['auto', 'low', 'medium', 'high', 'max', 'advanced', 'faster', 'smarter']);
+            const matches = (value) => {
+                const current = normalize(value);
+                return labels.some((label) => {
+                    const target = normalize(label);
+                    return current === target || current.endsWith(` ${target}`);
+                });
+            };
+            const powerLabels = new Set([
+                'auto', 'instant', 'low', 'medium', 'high', 'extra high', 'max', 'pro',
+                'advanced', 'faster', 'smarter'
+            ]);
             const powerButton = Array.from(document.querySelectorAll('button')).find((button) =>
                 isVisible(button)
                 && powerLabels.has(normalize(button.innerText || button.textContent))
                 && !button.closest('[role="menu"]')
             );
             if (!powerButton) return {ok: false, reason: 'power-control-not-found', available: []};
-            powerButton.click();
-
-            const menu = visibleMenus().at(-1);
-            const modelItem = Array.from(menu?.querySelectorAll('[role="menuitem"][aria-haspopup="menu"]') || [])
-                .find((item) => normalize(item.innerText || item.textContent).startsWith('model'));
-            if (!modelItem) {
-                powerButton.click();
-                return {ok: false, reason: 'model-control-not-found', available: []};
+            if (phase === 'choose') {
+                const submenu = visibleMenus().at(-1);
+                const candidates = Array.from(
+                    submenu?.querySelectorAll('[role="menuitem"], [role="option"]') || []
+                ).filter(isVisible);
+                const choice = candidates.find((item) => matches(item.innerText || item.textContent));
+                if (choice) {
+                    choice.click();
+                    return {
+                        ok: true,
+                        clicked: true,
+                        available: candidates.map((item) => normalize(item.innerText || item.textContent)),
+                    };
+                }
+                return {
+                    ok: false,
+                    reason: 'model-not-exposed',
+                    available: candidates.map((item) => normalize(item.innerText || item.textContent)),
+                };
             }
 
-            const current = normalize(
-                modelItem.querySelector('[data-trailing-style], .trailing')?.innerText
-                || (modelItem.innerText || '').replace(/^model\s*/i, '')
+            let menu = visibleMenus().find((candidate) =>
+                Array.from(candidate.querySelectorAll('[role="menuitem"]'))
+                    .some((item) => normalize(item.innerText || item.textContent).startsWith('model'))
             );
-            if (current === normalize(label)) {
+            if (!menu && powerButton.getAttribute('aria-expanded') !== 'true') {
+                powerButton.click();
+                menu = visibleMenus().at(-1);
+            }
+            const modelItem = Array.from(menu?.querySelectorAll('[role="menuitem"]') || [])
+                .find((item) => normalize(item.innerText || item.textContent).startsWith('model'));
+            if (!modelItem) {
+                const menuText = normalize(menu?.innerText || menu?.textContent || '');
+                return {
+                    ok: false,
+                    reason: 'model-control-not-found',
+                    available: [],
+                    diagnostic: {
+                        powerExpanded: powerButton.getAttribute('aria-expanded') === 'true',
+                        visibleMenuCount: visibleMenus().length,
+                        menuItemCount: menu?.querySelectorAll('[role="menuitem"]').length || 0,
+                        menuTextHasModel: /(^|\s)model(\s|$)/.test(menuText),
+                        menuTextHasSol: menuText.includes('5.6 sol'),
+                    },
+                };
+            }
+
+            const lines = String(modelItem.innerText || modelItem.textContent || '')
+                .split(/\n+/)
+                .map((value) => value.trim())
+                .filter(Boolean);
+            const descendants = Array.from(modelItem.querySelectorAll('span'))
+                .map((element) => String(element.innerText || element.textContent || '').trim())
+                .filter(Boolean);
+            const current = normalize(
+                lines.length > 1
+                    ? lines.slice(1).join(' ')
+                    : (descendants.at(-1) || lines.at(-1) || '')
+            );
+            if (matches(current)) {
                 powerButton.click();
                 return {ok: true, selected: current, available: [current]};
             }
 
             modelItem.click();
-            const submenu = visibleMenus().at(-1);
-            const candidates = Array.from(submenu?.querySelectorAll('[role="menuitem"], [role="option"]') || [])
-                .filter(isVisible);
-            const choice = candidates.find((item) => normalize(item.innerText || item.textContent) === normalize(label));
-            if (choice) {
-                choice.click();
-                return {ok: true, selected: normalize(label), available: candidates.map((item) => normalize(item.innerText || item.textContent))};
-            }
             return {
                 ok: false,
-                reason: 'model-not-exposed',
-                available: [current, ...candidates.map((item) => normalize(item.innerText || item.textContent))].filter(Boolean),
+                reason: 'selection-required',
+                current,
+                available: [current].filter(Boolean),
             };
-        }""",
-        {"label": option["remote_label"]},
-    )
+        }"""
+    result: Any = None
+    for _attempt in range(3):
+        result = page.evaluate(
+            model_control_script,
+            {"labels": list(remote_labels), "phase": "inspect"},
+        )
+        if isinstance(result, dict) and (
+            result.get("ok") or result.get("reason") == "selection-required"
+        ):
+            break
+        wait_for_timeout(500)
     if isinstance(result, dict) and result.get("ok"):
         return True
+    if isinstance(result, dict) and result.get("reason") == "selection-required":
+        wait_for_timeout(350)
+        selection = page.evaluate(
+            model_control_script,
+            {"labels": list(remote_labels), "phase": "choose"},
+        )
+        if isinstance(selection, dict) and selection.get("clicked"):
+            wait_for_timeout(500)
+            result = page.evaluate(
+                model_control_script,
+                {"labels": list(remote_labels), "phase": "verify"},
+            )
+            if isinstance(result, dict) and result.get("ok"):
+                return True
+        else:
+            result = selection
     available = []
     reason = "model-control-unavailable"
     if isinstance(result, dict):
         available = [str(value) for value in result.get("available", []) if str(value).strip()]
         reason = str(result.get("reason") or reason)
+    diagnostic = result.get("diagnostic", {}) if isinstance(result, dict) else {}
     available_text = ", ".join(dict.fromkeys(available)) or "none"
-    LOGGER.info(
-        "ChatGPT Web did not expose model %s (%s; available: %s); retaining the current remote model.",
-        option["remote_label"],
+    LOGGER.warning(
+        "ChatGPT Web could not verify model %s (%s; available: %s; diagnostic: %s).",
+        option["label"],
         reason,
         available_text,
+        diagnostic,
     )
     return False
 
@@ -2567,7 +3260,7 @@ def _select_web_model(page: Any, browser_kind: str, platform: str, model: str) -
 
 
 def _attach_context_file(page: Any, browser_kind: str, context_path: Path) -> bool:
-    """Attach Markdown directly where supported; Safari streams context on demand."""
+    """Attach Markdown and require a visible composer readback before claiming success."""
     if browser_kind == "safari":
         return False
     file_input = page.locator('input[type="file"]')
@@ -2581,7 +3274,66 @@ def _attach_context_file(page: Any, browser_kind: str, context_path: Path) -> bo
         return False
     try:
         file_input.first.set_input_files(str(context_path))
-        return True
+        expected_name = context_path.name
+        for _attempt in range(40):
+            state = page.evaluate(
+                r"""({expectedName}) => {
+                    const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                    const expected = normalize(expectedName);
+                    const escapedExpected = expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const exactFilename = new RegExp(
+                        `(^|[^a-z0-9._-])${escapedExpected}($|[^a-z0-9._-])`,
+                        'i'
+                    );
+                    const containsExactFilename = (value) => exactFilename.test(normalize(value));
+                    const composer = document.querySelector('#prompt-textarea')
+                        || document.querySelector('textarea')
+                        || document.querySelector('[contenteditable="true"]');
+                    const input = Array.from(document.querySelectorAll('input[type="file"]')).find((element) =>
+                        Array.from(element.files || []).some((file) => normalize(file.name) === expected)
+                    );
+                    const scope = composer?.closest('form')
+                        || composer?.parentElement?.parentElement?.parentElement
+                        || input?.closest('form')
+                        || input?.parentElement;
+                    const visible = (element) => {
+                        if (!element) return false;
+                        const style = getComputedStyle(element);
+                        return element.getClientRects().length > 0
+                            && style.display !== 'none'
+                            && style.visibility !== 'hidden';
+                    };
+                    const candidates = Array.from(scope?.querySelectorAll(
+                        '[data-testid*="attach" i], [data-testid*="file" i], [aria-label], [title], button, span'
+                    ) || []).filter(visible);
+                    const labels = candidates.map((element) => normalize(
+                        `${element.getAttribute('aria-label') || ''} ${element.getAttribute('title') || ''} ${element.innerText || element.textContent || ''}`
+                    ));
+                    const scopeText = normalize(scope?.innerText || scope?.textContent || '');
+                    const failure = labels.find((label) =>
+                        containsExactFilename(label)
+                        && /failed|unsupported|too large|could not upload|upload error/.test(label)
+                    );
+                    return {
+                        accepted: !failure && (
+                            containsExactFilename(scopeText)
+                            || labels.some(containsExactFilename)
+                        ),
+                        failed: Boolean(failure),
+                    };
+                }""",
+                {"expectedName": expected_name},
+            )
+            if isinstance(state, dict) and state.get("accepted"):
+                return True
+            if isinstance(state, dict) and state.get("failed"):
+                return False
+            _web_wait(page, browser_kind, 250)
+        LOGGER.info(
+            "Web context attachment did not expose a visible %s chip; using on-demand reads.",
+            expected_name,
+        )
+        return False
     except Exception as exc:
         LOGGER.info("Web context attachment fell back to on-demand reads: %s", exc)
         return False

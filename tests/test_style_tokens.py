@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.12-codex.14
+Code version: v1.47.12-codex.15
 """
 
 from pathlib import Path
@@ -1481,6 +1481,24 @@ def test_global_quick_actions_reuse_the_sibling_shell_positioning_contract() -> 
     assert "top: calc(var(--page-edge-pad) + var(--sidebar-toggle-top));" in action_rule
     assert "right: var(--global-quick-actions-right);" in action_rule
 
+    touch_contract_start = stylesheet.index("/* Keep the touch target stationary")
+    narrow_start = stylesheet.rfind(
+        "@media (max-width: 560px) {",
+        0,
+        touch_contract_start,
+    )
+    narrow_end = touch_contract_start
+    narrow_rule = stylesheet[narrow_start:narrow_end]
+    for token in (
+        "--sidebar-toggle-quick-action-clearance: 12px;",
+        "var(--sidebar-overlay-available-inline-size)",
+        "var(--sidebar-overlay-inset-left)",
+        "- 44px",
+        "var(--settings-round-icon-button-size)",
+        "var(--global-quick-actions-right)",
+    ):
+        assert token in narrow_rule
+
 
 def test_browser_picker_arrow_matches_the_shared_select_arrow() -> None:
     """Keep custom picker arrows visually aligned with native select controls."""
@@ -1537,7 +1555,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.82.17-codex.63 */",
+            "/* Code version: v2.82.17-codex.64 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
