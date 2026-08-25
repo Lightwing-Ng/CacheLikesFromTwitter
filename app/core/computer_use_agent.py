@@ -1,13 +1,13 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.20.0-codex.1
+Code version: v3.21.0-codex.1
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from fnmatch import fnmatch
 import hashlib
 import ipaddress
@@ -390,6 +390,39 @@ class ComputerUseSettings:
             if self.operating_system == "windows"
             else self.macos_system_prompt
         )
+
+
+SAFE_PROTOCOL_PROMPT_MARKERS = (
+    "fenced code block labelled json",
+    "replace_base64",
+    "write_base64",
+)
+
+
+def system_prompt_has_safe_protocol(prompt: str) -> bool:
+    """Return whether one system prompt includes the current JSON controller contract."""
+    text = str(prompt or "")
+    return all(marker in text for marker in SAFE_PROTOCOL_PROMPT_MARKERS)
+
+
+def migrate_legacy_system_prompts(settings: ComputerUseSettings) -> ComputerUseSettings:
+    """Replace persisted prompts that lack the current safe-protocol markers."""
+    macos_prompt = settings.macos_system_prompt
+    windows_prompt = settings.windows_system_prompt
+    if not system_prompt_has_safe_protocol(macos_prompt):
+        macos_prompt = DEFAULT_MACOS_SYSTEM_PROMPT
+    if not system_prompt_has_safe_protocol(windows_prompt):
+        windows_prompt = DEFAULT_WINDOWS_SYSTEM_PROMPT
+    if (
+        macos_prompt == settings.macos_system_prompt
+        and windows_prompt == settings.windows_system_prompt
+    ):
+        return settings
+    return replace(
+        settings,
+        macos_system_prompt=macos_prompt,
+        windows_system_prompt=windows_prompt,
+    )
 
 
 @dataclass(slots=True)
@@ -897,14 +930,27 @@ def _bounded_int(value: Any, label: str, minimum: int, maximum: int) -> int:
 def load_computer_use_settings(
     settings_path: Path = DEFAULT_AGENT_SETTINGS_PATH,
 ) -> ComputerUseSettings:
-    """Load local Agent settings or return safe defaults."""
+    """Load local Agent settings or return safe defaults.
+
+    Legacy persisted prompts that lack the current fenced-JSON and base64
+    transport markers are replaced with the current defaults and written back
+    immediately. Unrelated settings are preserved.
+    """
     if not settings_path.exists():
         return ComputerUseSettings()
     try:
         payload = json.loads(settings_path.read_text(encoding="utf-8"))
         if not isinstance(payload, dict):
             raise ValueError("Agent settings must be a JSON object.")
-        return validate_computer_use_settings(payload)
+        settings = validate_computer_use_settings(payload)
+        migrated = migrate_legacy_system_prompts(settings)
+        if migrated != settings:
+            save_computer_use_settings(migrated, settings_path)
+            LOGGER.info(
+                "Migrated legacy Computer Use Agent system prompts at %s.",
+                settings_path,
+            )
+        return migrated
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         LOGGER.warning("Ignoring invalid Computer Use Agent settings at %s.", settings_path)
         return ComputerUseSettings()
@@ -926,10 +972,10 @@ def save_computer_use_settings(
 class ComputerUseSettingsStore:
     """Own thread-safe Agent settings without a separate runtime process."""
 
-    def __init__(self, settings_path: Path = DEFAULT_AGENT_SETTINGS_PATH) -> None:
+    def __init__(self, settings_path: Path | None = None) -> None:
         self._lock = RLock()
-        self._settings_path = settings_path
-        self._settings = load_computer_use_settings(settings_path)
+        self._settings_path = settings_path or DEFAULT_AGENT_SETTINGS_PATH
+        self._settings = load_computer_use_settings(self._settings_path)
 
     @property
     def settings(self) -> ComputerUseSettings:
@@ -2272,6 +2318,32 @@ class ComputerUseAgentService:
         with self._lock:
             self._sleep_assertion = process
 
+    def _publish_run_completion(
+        self,
+        *,
+        sleep_assertion: subprocess.Popen[Any] | None,
+        context_path: Path | None,
+        completion: dict[str, Any],
+    ) -> None:
+        """Release runtime resources, then publish running=false as the completion barrier."""
+        self._set_active_process(None)
+        _stop_macos_idle_sleep_assertion(sleep_assertion)
+        self._set_sleep_assertion(None)
+        if context_path is not None:
+            try:
+                context_path.unlink(missing_ok=True)
+                context_path.parent.rmdir()
+            except OSError:
+                pass
+        with self._lock:
+            for key, value in completion.items():
+                if hasattr(self._snapshot, key):
+                    setattr(self._snapshot, key, value)
+            self._snapshot.context_file = ""
+            self._snapshot.context_bytes = 0
+            self._snapshot.running = False
+            self._persist_snapshot_locked()
+
     def _run(
         self,
         prompt: str,
@@ -2286,6 +2358,7 @@ class ComputerUseAgentService:
         sleep_assertion = _start_macos_idle_sleep_assertion()
         self._set_sleep_assertion(sleep_assertion)
         context_path: Path | None = None
+        completion: dict[str, Any] = {}
         try:
             run_directory = self._runtime_root / time.strftime("%Y%m%d-%H%M%S")
             context_path, context_bytes = build_context_markdown(
@@ -2349,23 +2422,23 @@ class ComputerUseAgentService:
                     history = history[-MAX_AGENT_SESSION_HISTORY:]
                     self._conversation_histories[final_history_key] = history
                     self._conversation_titles[final_history_key] = self._snapshot.session_title
-                self._snapshot.running = False
-                self._snapshot.phase = "stopped" if stopped else "finished"
-                self._snapshot.message = (
-                    "Agent request stopped."
-                    if stopped
-                    else (
-                        f"{self._snapshot.actual_model or AGENT_PLATFORM_BY_KEY[settings.platform]['label']} "
-                        "completed the project task after local bodycheck."
-                    )
-                )
-                self._snapshot.response = response
-                self._snapshot.conversation_url = conversation_url
-                self._snapshot.history = history
-                self._snapshot.turn_count = turn_count
-                self._snapshot.bodycheck_passed = bodycheck_passed
-                self._snapshot.finished_at = finished_at
-                self._persist_snapshot_locked()
+                completion = {
+                    "phase": "stopped" if stopped else "finished",
+                    "message": (
+                        "Agent request stopped."
+                        if stopped
+                        else (
+                            f"{self._snapshot.actual_model or AGENT_PLATFORM_BY_KEY[settings.platform]['label']} "
+                            "completed the project task after local bodycheck."
+                        )
+                    ),
+                    "response": response,
+                    "conversation_url": conversation_url,
+                    "history": history,
+                    "turn_count": turn_count,
+                    "bodycheck_passed": bodycheck_passed,
+                    "finished_at": finished_at,
+                }
         except Exception as exc:
             LOGGER.exception("Computer Use web-agent request failed.")
             with self._lock:
@@ -2403,31 +2476,25 @@ class ComputerUseAgentService:
                         "and bodycheck remain unfinished until the Agent controller verifies them."
                     )
             failure_message = str(exc).splitlines()[0][:500]
-            with self._lock:
-                self._snapshot.running = False
-                self._snapshot.phase = "failed"
-                self._snapshot.message = (
+            completion = {
+                "phase": "failed",
+                "message": (
                     f"{failure_message} {handoff_message}".strip()
                     if handoff_message
                     else failure_message
-                )
-                self._snapshot.last_error = str(exc)
-                self._snapshot.traditional_handoff_available = handoff_available
-                self._snapshot.traditional_handoff_opened = handoff_opened
-                self._snapshot.traditional_handoff_message = handoff_message
-                self._snapshot.finished_at = utc_now()
-                self._persist_snapshot_locked()
+                ),
+                "last_error": str(exc),
+                "traditional_handoff_available": handoff_available,
+                "traditional_handoff_opened": handoff_opened,
+                "traditional_handoff_message": handoff_message,
+                "finished_at": utc_now(),
+            }
         finally:
-            self._set_active_process(None)
-            _stop_macos_idle_sleep_assertion(sleep_assertion)
-            self._set_sleep_assertion(None)
-            if context_path is not None:
-                try:
-                    context_path.unlink(missing_ok=True)
-                    context_path.parent.rmdir()
-                except OSError:
-                    pass
-                self._update(context_file="", context_bytes=0)
+            self._publish_run_completion(
+                sleep_assertion=sleep_assertion,
+                context_path=context_path,
+                completion=completion,
+            )
 
     def _update(self, **changes: Any) -> None:
         with self._lock:

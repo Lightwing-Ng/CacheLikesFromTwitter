@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.20.0-codex.1
+Code version: v3.21.0-codex.1
 """
 
 from __future__ import annotations
@@ -19,14 +19,18 @@ from app.core.computer_use_agent import (
     AgentRunSnapshot,
     CHATGPT_MODEL_VERIFICATION_ATTEMPTS,
     DEFAULT_CHATGPT_MODEL,
+    DEFAULT_MACOS_SYSTEM_PROMPT,
+    DEFAULT_WINDOWS_SYSTEM_PROMPT,
     MAX_BASE64_DECODED_BYTES,
     MAX_INVALID_ACTION_RETRIES,
+    SAFE_PROTOCOL_PROMPT_MARKERS,
     WorkspaceController,
     _detect_browser_interruption,
     _run_web_action_loop,
     _select_chatgpt_model,
     parse_agent_action,
     ComputerUseSettings,
+    ComputerUseSettingsStore,
     session_type_for_mode,
 )
 from app.web.app import (
@@ -972,3 +976,60 @@ class TestSnapshotFields:
         """Default browser must be edge to enforce the Edge constraint."""
         snapshot = AgentRunSnapshot()
         assert snapshot.browser == "edge"
+
+
+# ---------------------------------------------------------------------------
+# 8. Persisted prompt migration and status API
+# ---------------------------------------------------------------------------
+
+
+class TestPersistedPromptMigration:
+    """Legacy persisted prompts must be rewritten to the current safe protocol."""
+
+    def test_status_api_exposes_migrated_prompt_markers(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = tmp_path / "Kept Project"
+        workspace.mkdir()
+        settings_path = tmp_path / "computer-use-agent.json"
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "workspace_path": str(workspace),
+                    "operating_system": "macos",
+                    "platform": "chatgpt",
+                    "browser": "edge",
+                    "model": "gpt-5.6-sol",
+                    "target_url": "https://chatgpt.com/",
+                    "context_limit_mib": 8,
+                    "max_turns": 40,
+                    "command_timeout_seconds": 120,
+                    "macos_system_prompt": "Legacy macOS prompt without fenced JSON.",
+                    "windows_system_prompt": "Legacy Windows prompt without base64 actions.",
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "app.core.computer_use_agent.DEFAULT_AGENT_SETTINGS_PATH",
+            settings_path,
+        )
+        app = create_app(tmp_path / "local_store")
+        with app.test_client() as client:
+            response = client.get("/api/agent/status")
+        assert response.status_code == 200
+        runtime_settings = response.get_json()["runtime"]["settings"]
+        for marker in SAFE_PROTOCOL_PROMPT_MARKERS:
+            assert marker in runtime_settings["macos_system_prompt"]
+            assert marker in runtime_settings["windows_system_prompt"]
+        persisted = json.loads(settings_path.read_text(encoding="utf-8"))
+        for marker in SAFE_PROTOCOL_PROMPT_MARKERS:
+            assert marker in persisted["macos_system_prompt"]
+            assert marker in persisted["windows_system_prompt"]
+        restarted = ComputerUseSettingsStore(settings_path)
+        assert restarted.settings.macos_system_prompt == DEFAULT_MACOS_SYSTEM_PROMPT
+        assert restarted.settings.windows_system_prompt == DEFAULT_WINDOWS_SYSTEM_PROMPT

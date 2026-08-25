@@ -46,7 +46,11 @@ from app.core.computer_use_agent import (
     open_chatgpt_in_default_browser,
     open_agent_in_default_browser,
     parse_agent_action,
+    load_computer_use_settings,
     save_computer_use_settings,
+    DEFAULT_MACOS_SYSTEM_PROMPT,
+    DEFAULT_WINDOWS_SYSTEM_PROMPT,
+    SAFE_PROTOCOL_PROMPT_MARKERS,
     terminal_execution_permission_snapshot,
     _submit_and_wait,
     validate_computer_use_settings,
@@ -855,6 +859,128 @@ def test_saved_settings_are_owner_readable_only() -> None:
 
         assert settings_path.stat().st_mode & 0o777 == 0o600
         assert "owner_token" not in settings_path.read_text(encoding="utf-8")
+
+
+LEGACY_MACOS_SYSTEM_PROMPT = (
+    "You are the reasoning component of a local Computer Use coding agent.\n"
+    "The controller runs on macOS and owns one selected project.\n"
+    "Return exactly one JSON action. Use replace and write. Do not use base64 transport."
+)
+LEGACY_WINDOWS_SYSTEM_PROMPT = (
+    "You are the reasoning component of a local Computer Use coding agent targeting Windows.\n"
+    "The future controller will use PowerShell 7 and Windows paths.\n"
+    "Return exactly one JSON action."
+)
+
+
+def test_load_migrates_legacy_persisted_prompts_and_keeps_unrelated_settings(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "Kept Project"
+    workspace.mkdir()
+    settings_path = tmp_path / "computer-use-agent.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(workspace),
+                "operating_system": "macos",
+                "platform": "chatgpt",
+                "browser": "edge",
+                "model": "gpt-5.6-sol",
+                "target_url": "https://chatgpt.com/c/legacy-session",
+                "context_limit_mib": 32,
+                "max_turns": 55,
+                "command_timeout_seconds": 240,
+                "macos_system_prompt": LEGACY_MACOS_SYSTEM_PROMPT,
+                "windows_system_prompt": LEGACY_WINDOWS_SYSTEM_PROMPT,
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    settings_path.chmod(0o600)
+
+    loaded = load_computer_use_settings(settings_path)
+    for marker in SAFE_PROTOCOL_PROMPT_MARKERS:
+        assert marker in loaded.macos_system_prompt
+        assert marker in loaded.windows_system_prompt
+    assert loaded.macos_system_prompt == DEFAULT_MACOS_SYSTEM_PROMPT
+    assert loaded.windows_system_prompt == DEFAULT_WINDOWS_SYSTEM_PROMPT
+    assert loaded.browser == "edge"
+    assert loaded.model == "gpt-5.6-sol"
+    assert loaded.platform == "chatgpt"
+    assert loaded.workspace_path == str(workspace.resolve())
+    assert loaded.context_limit_mib == 32
+    assert loaded.max_turns == 55
+    assert loaded.command_timeout_seconds == 240
+    assert loaded.target_url == "https://chatgpt.com/c/legacy-session"
+
+    persisted = json.loads(settings_path.read_text(encoding="utf-8"))
+    for marker in SAFE_PROTOCOL_PROMPT_MARKERS:
+        assert marker in persisted["macos_system_prompt"]
+        assert marker in persisted["windows_system_prompt"]
+    assert persisted["browser"] == "edge"
+    assert persisted["model"] == "gpt-5.6-sol"
+    assert persisted["platform"] == "chatgpt"
+    assert persisted["target_url"] == "https://chatgpt.com/c/legacy-session"
+
+    restarted = ComputerUseSettingsStore(settings_path)
+    for marker in SAFE_PROTOCOL_PROMPT_MARKERS:
+        assert marker in restarted.settings.macos_system_prompt
+        assert marker in restarted.settings.windows_system_prompt
+    assert restarted.settings.macos_system_prompt == DEFAULT_MACOS_SYSTEM_PROMPT
+    assert restarted.settings.windows_system_prompt == DEFAULT_WINDOWS_SYSTEM_PROMPT
+    assert restarted.settings.browser == "edge"
+    assert restarted.settings.model == "gpt-5.6-sol"
+    assert restarted.settings.workspace_path == str(workspace.resolve())
+
+
+def test_running_false_is_published_after_sleep_assertion_release(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        workspace = root / "project"
+        workspace.mkdir()
+        store = ComputerUseSettingsStore(root / "settings.json")
+        sleep_assertion = object()
+        released_assertions: list[object] = []
+        seen_running_false = {"value": False}
+
+        def stop_assertion(process: object) -> None:
+            assert service.snapshot()["running"] is True
+            released_assertions.append(process)
+
+        monkeypatch.setattr(
+            "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+            lambda: sleep_assertion,
+        )
+        monkeypatch.setattr(
+            "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+            stop_assertion,
+        )
+
+        def runner(**kwargs: object) -> tuple[str, str, int, bool]:
+            update = kwargs["update"]
+            assert callable(update)
+            update(phase="running", message="Using local controller actions.")
+            return "Verified result", "https://chatgpt.com/c/example", 4, True
+
+        service = ComputerUseAgentService(store, runner=runner, runtime_root=root / "runtime")
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+        deadline = time.monotonic() + 2
+        while service.snapshot()["running"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        snapshot = service.snapshot()
+        seen_running_false["value"] = snapshot["running"] is False
+        assert seen_running_false["value"]
+        assert snapshot["phase"] == "finished"
+        assert snapshot["response"] == "Verified result"
+        assert released_assertions == [sleep_assertion]
+        assert snapshot["context_file"] == ""
+        assert snapshot["context_bytes"] == 0
 
 
 def test_context_markdown_contains_instructions_request_and_bounded_index() -> None:
