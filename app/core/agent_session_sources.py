@@ -1,6 +1,6 @@
 """Provider-neutral Web Agent Project and session discovery.
 
-Code version: v1.3.0-codex.1
+Code version: v1.4.0-codex.1
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from .browser_sessions import (
     browser_descriptors,
     goto_with_retry,
     launch_chromium_context,
+    select_provider_tab,
     sync_playwright_or_error,
 )
 from .chatgpt_agent_sources import (
@@ -852,7 +853,17 @@ def _run_chromium_source_collection(
             background_window=True,
             silent=silent,
         ) as context:
-            page = context.pages[0] if context.pages else context.new_page()
-            goto_with_retry(page, home_url, attempts=2, timeout_ms=90_000)
+            home_host = (urlsplit(home_url).hostname or "").lower()
+            hosts = {home_host, f"www.{home_host}"} if home_host else set()
+            if home_host in GEMINI_HOSTS:
+                hosts = set(GEMINI_HOSTS)
+            elif home_host in GROK_HOSTS:
+                hosts = set(GROK_HOSTS)
+            elif home_host in CLAUDE_HOSTS:
+                hosts = set(CLAUDE_HOSTS)
+            page = select_provider_tab(context, home_url=home_url, hosts=hosts)
+            current_url = str(getattr(page, "url", "") or "").strip().rstrip("/")
+            if current_url != str(home_url).strip().rstrip("/"):
+                goto_with_retry(page, home_url, attempts=2, timeout_ms=90_000)
             page.wait_for_timeout(500)
             return collector(page)

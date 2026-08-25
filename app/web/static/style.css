@@ -1,4 +1,4 @@
-/* Code version: v2.82.17-codex.64 */
+/* Code version: v2.82.17-codex.65 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -3604,6 +3604,11 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-composer-submit.is-stop .agent-composer-submit-icon {
     mask-image: url("/static/images/stop.fill.svg");
     -webkit-mask-image: url("/static/images/stop.fill.svg");
+}
+
+.agent-composer-submit.is-resume .agent-composer-submit-icon {
+    mask-image: url("/static/images/arrow.trianglehead.clockwise.svg");
+    -webkit-mask-image: url("/static/images/arrow.trianglehead.clockwise.svg");
 }
 
 .agent-composer-submit-icon {

@@ -1,10 +1,12 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.19.0-codex.2
+Code version: v3.20.0-codex.1
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
 from dataclasses import asdict, dataclass, field
 from fnmatch import fnmatch
 import hashlib
@@ -73,6 +75,10 @@ MAX_ACTION_OUTPUT_CHARS = 48_000
 MAX_FILE_READ_CHARS = 120_000
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
+CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
+MAX_BASE64_DECODED_BYTES = MAX_FILE_READ_CHARS
+BROWSER_INTERRUPTION_TIMEOUT_SECONDS = 300
+BROWSER_INTERRUPTION_POLL_SECONDS = 1.0
 MAX_AGENT_SESSION_HISTORY = 100
 PERSISTED_AGENT_SNAPSHOT_FILENAME = "last-run.json"
 WEB_RESPONSE_MINIMUM_SECONDS = 1.5
@@ -213,7 +219,15 @@ JSON_ACTION_RESPONSE_INSTRUCTION = (
     "Return exactly one strict JSON controller action inside one Markdown fenced code block labelled json, "
     "with no prose outside the fence. The fence preserves quotes, backslashes, asterisks, and source code "
     "through the Web page's rendered text. JSON-escape embedded double quotes as \\\", backslashes as \\\\, "
-    "and newlines as \\n."
+    "and newlines as \\n. "
+    "When old or new text contains HTML attributes, template syntax, or multiple layers of quotes, "
+    "use replace_base64 or write_base64 with standard base64-encoded fields to avoid quote corruption."
+)
+
+_BASE64_CORRECTION_INSTRUCTION = (
+    "The previous action contained unescapable quotes or backslashes. "
+    "Resend it using replace_base64 or write_base64 with base64-encoded content fields. "
+    "Do not attempt to manually escape the problematic characters."
 )
 
 DEFAULT_MACOS_SYSTEM_PROMPT = (
@@ -231,7 +245,9 @@ Use one of these actions:
 {"action":"read","path":"relative/file","start_line":1,"end_line":240}
 {"action":"search","query":"text or regex","path":".","glob":"*.py","max_results":80}
 {"action":"replace","path":"relative/file","old":"exact text appearing once","new":"replacement text"}
+{"action":"replace_base64","path":"relative/file","old_base64":"base64-of-old","new_base64":"base64-of-new"}
 {"action":"write","path":"relative/new-file","content":"complete content"}
+{"action":"write_base64","path":"relative/new-file","content_base64":"base64-of-content"}
 {"action":"run","command":"focused inspection, build, lint, or test command"}
 {"action":"bodycheck"}
 {"action":"final","summary":"concise Markdown outcome","verification":["check and result"],"limitations":["remaining limitation"]}
@@ -406,6 +422,11 @@ class AgentRunSnapshot:
     model: str = DEFAULT_CHATGPT_MODEL
     model_verified: bool = False
     actual_model: str = ""
+    session_type: str = ""
+    catalog_state: str = "idle"
+    catalog_error: str = ""
+    paused: bool = False
+    pause_reason: str = ""
     traditional_handoff_available: bool = False
     traditional_handoff_opened: bool = False
     traditional_handoff_message: str = ""
@@ -1034,6 +1055,16 @@ def agent_session_opening_message(
     return f"{messages.get(session_mode, messages['new'])} in {browser_label}."
 
 
+def session_type_for_mode(session_mode: str) -> str:
+    """Map an explicit session_mode to fresh, reused, or project."""
+    mode = str(session_mode or "new").strip().lower()
+    if mode == "recent":
+        return "reused"
+    if mode in {"project_new", "project_session"}:
+        return "project"
+    return "fresh"
+
+
 def build_context_markdown(
     workspace: Path,
     user_request: str,
@@ -1260,52 +1291,133 @@ def _fallback_search_matches(
     return matches
 
 
+_FENCED_JSON_RE = re.compile(
+    r"```json\s*\n(.*?)\n\s*```", re.DOTALL
+)
+_PRE_CODE_RE = re.compile(
+    r"<pre>\s*<code(?:\s[^>]*)?>(.*?)</code>\s*</pre>", re.DOTALL | re.IGNORECASE
+)
+
+
+def _mask_regions(text: str, regions: list[tuple[int, int]]) -> str:
+    """Replace selected spans with spaces so raw_decode cannot repair them."""
+    if not regions:
+        return text
+    chars = list(text)
+    for start, end in regions:
+        for index in range(max(0, start), min(len(chars), end)):
+            chars[index] = " "
+    return "".join(chars)
+
+
 def parse_agent_action(response: str) -> dict[str, Any]:
-    """Parse one JSON controller action across provider formatting variants."""
+    """Parse one JSON controller action across provider formatting variants.
+
+    Collect valid candidates from the whole response in document order:
+    1. Literal ```json fences (never repaired on JSONDecodeError).
+    2. Literal <pre><code> blocks (never repaired on JSONDecodeError).
+    3. Strict json.loads on the remaining response.
+    4. raw_decode scanning of the remaining response.
+
+    Same-action duplicates keep the final candidate. Different actions reject.
+    """
     text = str(response or "").strip()
     if len(text) > MAX_ACTION_JSON_CHARS:
         raise ValueError("The Web provider returned an action that exceeds the controller limit.")
 
-    candidates: list[dict[str, Any]] = []
+    ordered: list[tuple[int, dict[str, Any]]] = []
     candidate_signatures: set[str] = set()
     decoder = json.JSONDecoder()
+    masked_regions: list[tuple[int, int]] = []
+    malformed_fenced = False
 
-    def register(payload: Any) -> None:
+    def register(payload: Any, position: int) -> None:
         if not isinstance(payload, dict) or not isinstance(payload.get("action"), str):
             return
         signature = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         if signature not in candidate_signatures:
             candidate_signatures.add(signature)
-            candidates.append(payload)
+            ordered.append((position, payload))
 
+    def resolve_candidates() -> dict[str, Any]:
+        candidates = [payload for _position, payload in sorted(ordered, key=lambda item: item[0])]
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            action_names = {
+                str(candidate.get("action") or "").strip().lower() for candidate in candidates
+            }
+            if len(action_names) == 1:
+                LOGGER.warning(
+                    "The Web provider returned %s same-action controller candidates; using the final candidate.",
+                    len(candidates),
+                )
+                return candidates[-1]
+            raise ValueError("The Web provider returned more than one JSON controller action.")
+        if malformed_fenced:
+            raise ValueError(
+                "The Web provider returned a fenced JSON block that is not valid strict JSON. "
+                "Use replace_base64 or write_base64 for content containing HTML quotes or backslashes."
+            )
+        raise ValueError("The Web provider must return exactly one JSON controller action.")
+
+    for match in _FENCED_JSON_RE.finditer(text):
+        masked_regions.append((match.start(), match.end()))
+        try:
+            register(json.loads(match.group(1).strip()), match.start())
+        except json.JSONDecodeError:
+            malformed_fenced = True
+
+    for match in _PRE_CODE_RE.finditer(text):
+        masked_regions.append((match.start(), match.end()))
+        try:
+            register(json.loads(match.group(1).strip()), match.start())
+        except json.JSONDecodeError:
+            pass
+
+    remainder = _mask_regions(text, masked_regions)
     try:
-        register(json.loads(text))
+        register(json.loads(remainder.strip()), 0)
     except json.JSONDecodeError:
         cursor = 0
-        while cursor < len(text):
-            start = text.find("{", cursor)
+        while cursor < len(remainder):
+            start = remainder.find("{", cursor)
             if start < 0:
                 break
             try:
-                payload, end = decoder.raw_decode(text, start)
+                payload, end = decoder.raw_decode(remainder, start)
             except json.JSONDecodeError:
                 cursor = start + 1
                 continue
-            register(payload)
+            register(payload, start)
             cursor = end
 
-    if len(candidates) == 1:
-        return candidates[0]
-    if len(candidates) > 1:
-        action_names = {str(candidate.get("action") or "").strip().lower() for candidate in candidates}
-        if len(action_names) == 1:
-            LOGGER.warning(
-                "The Web provider returned %s same-action controller candidates; using the final candidate.",
-                len(candidates),
-            )
-            return candidates[-1]
-        raise ValueError("The Web provider returned more than one JSON controller action.")
-    raise ValueError("The Web provider must return exactly one JSON controller action.")
+    return resolve_candidates()
+
+
+def _decode_base64_utf8(
+    value: str,
+    *,
+    field_name: str,
+    allow_empty: bool = False,
+) -> str:
+    """Decode one controller base64 field with strict validation and a size cap."""
+    raw = str(value or "")
+    if not raw:
+        if allow_empty:
+            return ""
+        raise ValueError(f"The {field_name} field requires non-empty base64.")
+    try:
+        decoded = base64.b64decode(raw, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError(f"Invalid base64 encoding in {field_name}.") from exc
+    if len(decoded) > MAX_BASE64_DECODED_BYTES:
+        raise ValueError(f"Decoded {field_name} exceeds the controller size limit.")
+    try:
+        return decoded.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"Decoded {field_name} is not valid UTF-8.") from exc
+
 
 
 class WorkspaceController:
@@ -1342,7 +1454,9 @@ class WorkspaceController:
             "read": self._read,
             "search": self._search,
             "replace": self._replace,
+            "replace_base64": self._replace_base64,
             "write": self._write,
+            "write_base64": self._write_base64,
             "run": self._run,
             "bodycheck": self._bodycheck,
         }
@@ -1517,6 +1631,58 @@ class WorkspaceController:
         return {
             "ok": True,
             "action": "write",
+            "path": path.relative_to(self.workspace).as_posix(),
+            "bytes": path.stat().st_size,
+        }
+
+    def _replace_base64(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Replace with base64-encoded old/new to avoid HTML quote corruption."""
+        path = self._resolve_path(payload.get("path"))
+        if not path.is_file():
+            raise ValueError("The replace_base64 action requires an existing file.")
+        old = _decode_base64_utf8(
+            str(payload.get("old_base64") or ""),
+            field_name="old_base64",
+            allow_empty=False,
+        )
+        if not old:
+            raise ValueError("The replace_base64 action requires non-empty old text.")
+        new = _decode_base64_utf8(
+            str(payload.get("new_base64") or ""),
+            field_name="new_base64",
+            allow_empty=True,
+        )
+        source = path.read_text(encoding="utf-8")
+        occurrences = source.count(old)
+        if occurrences != 1:
+            raise ValueError(f"Replace text must appear exactly once; found {occurrences:,} occurrences.")
+        path.write_text(source.replace(old, new, 1), encoding="utf-8")
+        self.state.edit_generation += 1
+        return {
+            "ok": True,
+            "action": "replace_base64",
+            "path": path.relative_to(self.workspace).as_posix(),
+            "changed_characters": len(new) - len(old),
+        }
+
+    def _write_base64(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Write a new file with base64-encoded content to avoid quote corruption."""
+        path = self._resolve_path(payload.get("path"), allow_missing=True)
+        if path.exists():
+            raise ValueError("The write_base64 action creates new files only; use replace_base64 for an existing file.")
+        content = _decode_base64_utf8(
+            str(payload.get("content_base64") or ""),
+            field_name="content_base64",
+            allow_empty=False,
+        )
+        if not content:
+            raise ValueError("The write_base64 action requires non-empty decoded content.")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        self.state.edit_generation += 1
+        return {
+            "ok": True,
+            "action": "write_base64",
             "path": path.relative_to(self.workspace).as_posix(),
             "bytes": path.stat().st_size,
         }
@@ -1874,6 +2040,7 @@ class ComputerUseAgentService:
         self._lock = RLock()
         self._snapshot = self._load_persisted_snapshot()
         self._stop_requested = Event()
+        self._resume_requested = Event()
         self._worker: Thread | None = None
         self._active_process: subprocess.Popen[str] | None = None
         self._sleep_assertion: subprocess.Popen[Any] | None = None
@@ -2007,6 +2174,7 @@ class ComputerUseAgentService:
                 raise RuntimeError("An Agent request is already running.")
             self._settings_store.update(settings)
             self._stop_requested.clear()
+            self._resume_requested.clear()
             history_key = _agent_history_key(target_url, settings.platform)
             existing_history = (
                 []
@@ -2068,6 +2236,25 @@ class ComputerUseAgentService:
         if process is not None and process.poll() is None:
             _stop_process(process)
         _stop_macos_idle_sleep_assertion(sleep_assertion)
+        return True
+
+    def request_resume(self) -> bool:
+        """Resume a paused Web Agent run without duplicating the outstanding submit."""
+        with self._lock:
+            if not self._snapshot.running or not self._snapshot.paused:
+                return False
+            self._resume_requested.set()
+            self._snapshot.message = (
+                "Resume requested. Continuing the current Web Agent turn."
+            )
+            self._persist_snapshot_locked()
+            return True
+
+    def _consume_resume(self) -> bool:
+        """Return True once for each Resume click without leaving a sticky event."""
+        if not self._resume_requested.is_set():
+            return False
+        self._resume_requested.clear()
         return True
 
     def stop_at_exit(self) -> None:
@@ -2132,6 +2319,7 @@ class ComputerUseAgentService:
                     session_title=session_title,
                     read_only=read_only,
                     should_stop=self._stop_requested.is_set,
+                    should_resume=self._consume_resume,
                     update=self._update,
                     process_changed=self._set_active_process,
                 )
@@ -2263,6 +2451,7 @@ def run_web_computer_use(
     session_mode: str = "new",
     session_title: str = "",
     read_only: bool = False,
+    should_resume: Callable[[], bool] | None = None,
 ) -> tuple[str, str, int, bool]:
     """Run one selected Web AI session as a local controller action loop."""
     descriptor = browser_descriptors(config)[settings.browser]
@@ -2303,6 +2492,7 @@ def run_web_computer_use(
                 session_mode=session_mode,
                 selected_target_url=selected_target_url,
                 should_stop=should_stop,
+                should_resume=should_resume,
                 update=update,
             )
 
@@ -2328,6 +2518,7 @@ def run_web_computer_use(
                 session_mode=session_mode,
                 selected_target_url=selected_target_url,
                 should_stop=should_stop,
+                should_resume=should_resume,
                 update=update,
             )
 
@@ -2409,6 +2600,185 @@ def _current_agent_conversation_url(
     return normalized_fallback or current or str(fallback or "").strip()
 
 
+def _provider_tab_identity(page: Any) -> tuple[Any, str, str]:
+    """Return provider-tab id, exact URL, and title without activating the window."""
+    tab_id = getattr(page, "_guid", None)
+    if tab_id is None:
+        tab_id = id(page)
+    url = str(getattr(page, "url", "") or "").strip()
+    title = ""
+    title_fn = getattr(page, "title", None)
+    if callable(title_fn):
+        try:
+            title = str(title_fn() or "").strip()
+        except Exception:
+            title = ""
+    return tab_id, url, title
+
+
+def _chatgpt_fresh_navigation_allowed(expected_url: str, current_url: str) -> bool:
+    """Permit the normal ChatGPT home-to-conversation transition."""
+    expected = urlsplit(str(expected_url or ""))
+    current = urlsplit(str(current_url or ""))
+    if (expected.hostname or "").lower() not in CHATGPT_HOSTS:
+        return False
+    if (current.hostname or "").lower() not in CHATGPT_HOSTS:
+        return False
+    expected_path = expected.path.rstrip("/") or "/"
+    current_path = current.path.rstrip("/") or "/"
+    if expected_path == "/" and re.fullmatch(r"/c/[^/]+/?", current_path, re.IGNORECASE):
+        return True
+    if expected_path.endswith("/project"):
+        project_prefix = expected_path[: -len("/project")]
+        if re.fullmatch(re.escape(project_prefix) + r"/c/[^/]+/?", current_path, re.IGNORECASE):
+            return True
+    return False
+
+
+def _provider_url_still_on_selected_target(
+    platform: str,
+    expected_url: str,
+    current_url: str,
+    session_mode: str,
+) -> bool:
+    """Compare the remote provider tab against the selected target URL."""
+    if _web_target_is_open(platform, expected_url, current_url):
+        return True
+    mode = str(session_mode or "new").strip().lower()
+    if platform == "chatgpt" and mode in {"new", "project_new"}:
+        return _chatgpt_fresh_navigation_allowed(expected_url, current_url)
+    return False
+
+
+def _macos_screen_is_locked() -> bool | None:
+    """Return lock-screen state only when a reliable macOS signal is present."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        result = subprocess.run(
+            ["ioreg", "-n", "Root", "-d1", "-w0"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    text = result.stdout or ""
+    match = re.search(r'"CGSSessionScreenIsLocked"\s*=\s*(\w+)', text)
+    if match is None:
+        return None
+    value = match.group(1).strip().lower()
+    if value in {"yes", "true", "1"}:
+        return True
+    if value in {"no", "false", "0"}:
+        return False
+    return None
+
+
+def _detect_browser_interruption(
+    page: Any,
+    expected_url: str,
+    browser_kind: str,
+    *,
+    platform: str = DEFAULT_AGENT_PLATFORM,
+    session_mode: str = "new",
+    expected_tab_id: Any = None,
+    expected_title: str = "",
+) -> tuple[bool, str]:
+    """Detect provider-tab closure, crash, identity change, or user takeover.
+
+    Compares the selected remote provider target, not the local Agent page.
+    Edge being frontmost is not treated as user takeover. Unknown lock-screen
+    state must not create a permanent false pause.
+    """
+    del browser_kind  # retained for callers; frontmost-app checks are not used
+    is_closed = getattr(page, "is_closed", None)
+    if callable(is_closed):
+        try:
+            if is_closed():
+                return True, "The selected provider tab was closed."
+        except Exception:
+            return True, "The selected provider page crashed or is no longer accessible."
+
+    tab_id, current_url, current_title = _provider_tab_identity(page)
+    if expected_tab_id is not None and tab_id != expected_tab_id:
+        return True, "The selected provider tab identity changed."
+    if expected_url and current_url:
+        hosts = {str(host).lower() for host in _platform_hosts(platform)}
+        expected_host = (urlsplit(expected_url).hostname or "").lower()
+        current_host = (urlsplit(current_url).hostname or "").lower()
+        if current_host and hosts and current_host not in hosts:
+            return True, f"The selected provider tab navigated away from {expected_host or platform} to {current_host}."
+        if not _provider_url_still_on_selected_target(
+            platform, expected_url, current_url, session_mode
+        ):
+            return True, "The selected provider tab navigated away from the chosen session."
+    if expected_title and current_title and expected_title != current_title:
+        if current_url and expected_url and current_url.rstrip("/") != str(expected_url).rstrip("/"):
+            return True, "The selected provider tab title no longer matches the chosen session."
+
+    if callable(is_closed):
+        locked = _macos_screen_is_locked()
+        if locked is True:
+            return True, "The screen is locked."
+    return False, ""
+
+
+def _wait_for_browser_recovery(
+    *,
+    page: Any,
+    expected_url: str,
+    browser_kind: str,
+    platform: str,
+    session_mode: str,
+    expected_tab_id: Any,
+    expected_title: str,
+    should_stop: Callable[[], bool],
+    should_resume: Callable[[], bool] | None,
+    update: Callable[..., None],
+    reason: str,
+) -> str:
+    """Pause until the provider tab recovers, the user resumes, or the wait expires.
+
+    Returns 'recovered', 'stopped', or 'timeout'. Does not submit a prompt.
+    """
+    update(
+        paused=True,
+        pause_reason=reason,
+        phase="paused",
+        message=reason,
+    )
+    deadline = time.monotonic() + BROWSER_INTERRUPTION_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if should_stop():
+            return "stopped"
+        resume_requested = bool(should_resume and should_resume())
+        interrupted, current_reason = _detect_browser_interruption(
+            page,
+            expected_url,
+            browser_kind,
+            platform=platform,
+            session_mode=session_mode,
+            expected_tab_id=expected_tab_id,
+            expected_title=expected_title,
+        )
+        if not interrupted:
+            update(paused=False, pause_reason="", phase="running", message="Resumed the Web Agent after a browser interruption.")
+            return "recovered"
+        if resume_requested:
+            update(
+                paused=True,
+                pause_reason=current_reason or reason,
+                phase="paused",
+                message=(
+                    "Resume was requested, but the selected provider tab is still interrupted. "
+                    + (current_reason or reason)
+                ),
+            )
+        time.sleep(BROWSER_INTERRUPTION_POLL_SECONDS)
+    return "timeout"
+
+
 def _run_web_action_loop(
     *,
     page: Any,
@@ -2422,12 +2792,20 @@ def _run_web_action_loop(
     should_stop: Callable[[], bool],
     update: Callable[..., None],
     platform: str = DEFAULT_AGENT_PLATFORM,
+    should_resume: Callable[[], bool] | None = None,
 ) -> tuple[str, str, int, bool]:
     """Exchange JSON actions and compact observations in one Web AI conversation."""
     _verify_agent_page(page, browser_kind, platform, selected_target_url)
     if platform == "chatgpt":
         _select_chat_mode(page, browser_kind)
-    model_selected = _select_web_model(page, browser_kind, platform, settings.model)
+
+    session_type = session_type_for_mode(session_mode)
+    page_url = str(getattr(page, "url", "") or "").strip()
+    expected_tab_id, _expected_url, expected_title = _provider_tab_identity(page)
+    model_observation: dict[str, Any] = {}
+    model_selected = _select_web_model(
+        page, browser_kind, platform, settings.model, model_observation
+    )
     selected_option = next(
         (
             option
@@ -2436,17 +2814,33 @@ def _run_web_action_loop(
         ),
         None,
     )
+    expected_label = str((selected_option or {}).get("label") or settings.model)
+    attempted_labels = tuple(
+        (selected_option or {}).get("remote_labels") or (expected_label,)
+    )
     if model_selected:
-        actual_model = str((selected_option or {}).get("label") or settings.model)
+        actual_model = str(
+            model_observation.get("observed") or expected_label
+        )
         update(
             phase="preparing",
             message=f"Verified {actual_model} in {AGENT_PLATFORM_BY_KEY[platform]['label']} Web.",
             model_verified=True,
             actual_model=actual_model,
+            session_type=session_type,
         )
     elif platform == "chatgpt":
+        observed = str(model_observation.get("observed") or "").strip() or "none"
+        menu_text = str(model_observation.get("menu_text") or "").strip() or "none"
+        available = model_observation.get("available") or []
+        available_text = ", ".join(str(item) for item in available if str(item).strip()) or menu_text
         raise RuntimeError(
-            "ChatGPT Web could not verify GPT-5.6 Sol. No project context or prompt was sent."
+            f"ChatGPT Web could not verify {expected_label} after "
+            f"{CHATGPT_MODEL_VERIFICATION_ATTEMPTS} attempt(s). "
+            "No project context or prompt was sent. "
+            f"URL={page_url}, session_mode={session_mode}, session_type={session_type}, "
+            f"expected_model={expected_label}, observed_model={observed}, "
+            f"menu_text={available_text}, attempted_labels={list(attempted_labels)}."
         )
     else:
         update(
@@ -2455,6 +2849,7 @@ def _run_web_action_loop(
                 f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Web did not expose a model selector; "
                 "keeping the selected session's current model."
             ),
+            session_type=session_type,
         )
     attached = _attach_context_file(page, browser_kind, context_path)
     update(context_attached=attached)
@@ -2489,6 +2884,7 @@ def _run_web_action_loop(
 
     turn_index = 0
     invalid_action_retries = 0
+    _seen_failure_hashes: set[str] = set()
     while turn_index < settings.max_turns:
         if should_stop():
             _stop_web_generation(page, browser_kind)
@@ -2499,28 +2895,82 @@ def _run_web_action_loop(
                 controller.state.bodycheck_current,
             )
 
+        interrupted, interrupt_reason = _detect_browser_interruption(
+            page,
+            selected_target_url,
+            browser_kind,
+            platform=platform,
+            session_mode=session_mode,
+            expected_tab_id=expected_tab_id,
+            expected_title=expected_title,
+        )
+        if interrupted:
+            LOGGER.info("Browser interrupted: %s. Waiting for recovery.", interrupt_reason)
+            wait_result = _wait_for_browser_recovery(
+                page=page,
+                expected_url=selected_target_url,
+                browser_kind=browser_kind,
+                platform=platform,
+                session_mode=session_mode,
+                expected_tab_id=expected_tab_id,
+                expected_title=expected_title,
+                should_stop=should_stop,
+                should_resume=should_resume,
+                update=update,
+                reason=interrupt_reason,
+            )
+            if wait_result == "stopped":
+                _stop_web_generation(page, browser_kind)
+                return (
+                    "",
+                    _current_agent_conversation_url(page, platform, conversation_url),
+                    turn_index,
+                    controller.state.bodycheck_current,
+                )
+            if wait_result != "recovered":
+                raise RuntimeError(
+                    f"Browser did not recover after interruption: {interrupt_reason}"
+                )
+            LOGGER.info("Browser recovered from interruption without duplicating a submit.")
+
         try:
             action = parse_agent_action(response)
         except ValueError as exc:
             invalid_action_retries += 1
+            response_hash = hashlib.sha256(
+                str(response or "").encode("utf-8", errors="replace")
+            ).hexdigest()[:16]
             LOGGER.warning(
                 "%s returned an invalid controller response on retry %s "
                 "(characters=%s, sha256=%s).",
                 AGENT_PLATFORM_BY_KEY[platform]["label"],
                 invalid_action_retries,
                 len(str(response or "")),
-                hashlib.sha256(
-                    str(response or "").encode("utf-8", errors="replace")
-                ).hexdigest()[:16],
+                response_hash,
             )
+            # Fail immediately if the same malformed response appears twice
+            if response_hash in _seen_failure_hashes:
+                raise RuntimeError(
+                    f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned the same invalid "
+                    f"controller action twice (sha256={response_hash}). "
+                    f"Parser reason: {exc}"
+                ) from exc
+            _seen_failure_hashes.add(response_hash)
             if invalid_action_retries > MAX_INVALID_ACTION_RETRIES:
                 raise RuntimeError(
-                    f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned too many invalid controller actions in a row."
+                    f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned too many invalid "
+                    f"controller actions in a row. Last parser reason: {exc}"
                 ) from exc
+            # Request base64 safe transport on correction
+            correction_instruction = (
+                _BASE64_CORRECTION_INSTRUCTION
+                if "quote" in str(exc).lower() or "base64" in str(exc).lower()
+                else JSON_ACTION_RESPONSE_INSTRUCTION
+            )
             observation = {
                 "ok": False,
                 "error": str(exc),
-                "instruction": JSON_ACTION_RESPONSE_INSTRUCTION,
+                "instruction": correction_instruction,
             }
             response = _submit_and_wait(
                 page,
@@ -2931,10 +3381,33 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
     return result if isinstance(result, dict) else {"ok": False, "diagnostic": {}}
 
 
+def _record_model_observation(
+    observation: dict[str, Any] | None,
+    *,
+    observed: str = "",
+    available: list[str] | tuple[str, ...] | None = None,
+    reason: str = "",
+    attempted_labels: tuple[str, ...] = (),
+    menu_text: str = "",
+) -> None:
+    if observation is None:
+        return
+    observation.update(
+        {
+            "observed": str(observed or "").strip(),
+            "available": [str(item) for item in (available or []) if str(item).strip()],
+            "reason": str(reason or "").strip(),
+            "attempted_labels": list(attempted_labels),
+            "menu_text": str(menu_text or observed or "").strip(),
+        }
+    )
+
+
 def _select_chatgpt_model_chromium(
     page: Any,
     option: dict[str, Any],
     remote_labels: tuple[str, ...],
+    observation: dict[str, Any] | None = None,
 ) -> bool:
     """Use trusted Playwright clicks, then read back the remote Chromium model."""
     power_labels = (
@@ -2950,11 +3423,23 @@ def _select_chatgpt_model_chromium(
         "Faster",
         "Smarter",
     )
-    power_button = _first_visible_role_control(page, "button", power_labels)
+    power_button = None
+    wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
+    for attempt in range(CHATGPT_MODEL_VERIFICATION_ATTEMPTS):
+        power_button = _first_visible_role_control(page, "button", power_labels)
+        if power_button is not None:
+            break
+        if attempt + 1 < CHATGPT_MODEL_VERIFICATION_ATTEMPTS:
+            wait_for_timeout(500)
     if power_button is None:
         LOGGER.warning(
             "ChatGPT Web could not find the visible power control for %s.",
             option["label"],
+        )
+        _record_model_observation(
+            observation,
+            reason="power-control-not-found",
+            attempted_labels=remote_labels,
         )
         return False
 
@@ -2970,6 +3455,13 @@ def _select_chatgpt_model_chromium(
     if result.get("ok") and _chatgpt_model_text_matches(current, remote_labels):
         if power_button.get_attribute("aria-expanded") == "true":
             power_button.click()
+        _record_model_observation(
+            observation,
+            observed=current,
+            available=[current],
+            attempted_labels=remote_labels,
+            menu_text=current,
+        )
         return True
 
     model_item = None
@@ -3003,10 +3495,19 @@ def _select_chatgpt_model_chromium(
                     current = str(result.get("current") or "")
                     if power_button.get_attribute("aria-expanded") == "true":
                         power_button.click()
-                    return bool(
+                    matched = bool(
                         result.get("ok")
                         and _chatgpt_model_text_matches(current, remote_labels)
                     )
+                    _record_model_observation(
+                        observation,
+                        observed=current,
+                        available=[current] if current else [],
+                        attempted_labels=remote_labels,
+                        menu_text=current,
+                        reason="" if matched else "model-mismatch",
+                    )
+                    return matched
 
     if power_button.get_attribute("aria-expanded") == "true":
         power_button.click()
@@ -3016,10 +3517,23 @@ def _select_chatgpt_model_chromium(
         current or "none",
         result.get("diagnostic", {}),
     )
+    _record_model_observation(
+        observation,
+        observed=current,
+        available=[current] if current else [],
+        attempted_labels=remote_labels,
+        menu_text=current or str(result.get("diagnostic") or ""),
+        reason="model-mismatch",
+    )
     return False
 
 
-def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
+def _select_chatgpt_model(
+    page: Any,
+    browser_kind: str,
+    model: str,
+    observation: dict[str, Any] | None = None,
+) -> bool:
     """Select and read back the requested ChatGPT model before any project upload."""
     selected_model = str(model or DEFAULT_CHATGPT_MODEL).strip().lower()
     option = next(
@@ -3031,7 +3545,9 @@ def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
 
     remote_labels = tuple(option.get("remote_labels") or (option.get("label", ""),))
     if browser_kind != "safari" and hasattr(page, "get_by_role"):
-        return _select_chatgpt_model_chromium(page, option, remote_labels)
+        return _select_chatgpt_model_chromium(
+            page, option, remote_labels, observation=observation
+        )
     wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
     model_control_script = r"""({labels, phase}) => {
             const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -3132,7 +3648,7 @@ def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
             };
         }"""
     result: Any = None
-    for _attempt in range(3):
+    for _attempt in range(CHATGPT_MODEL_VERIFICATION_ATTEMPTS):
         result = page.evaluate(
             model_control_script,
             {"labels": list(remote_labels), "phase": "inspect"},
@@ -3143,6 +3659,13 @@ def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
             break
         wait_for_timeout(500)
     if isinstance(result, dict) and result.get("ok"):
+        _record_model_observation(
+            observation,
+            observed=str(result.get("selected") or ""),
+            available=list(result.get("available") or []),
+            attempted_labels=remote_labels,
+            menu_text=str(result.get("selected") or ""),
+        )
         return True
     if isinstance(result, dict) and result.get("reason") == "selection-required":
         wait_for_timeout(350)
@@ -3157,6 +3680,13 @@ def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
                 {"labels": list(remote_labels), "phase": "verify"},
             )
             if isinstance(result, dict) and result.get("ok"):
+                _record_model_observation(
+                    observation,
+                    observed=str(result.get("selected") or ""),
+                    available=list(result.get("available") or []),
+                    attempted_labels=remote_labels,
+                    menu_text=str(result.get("selected") or ""),
+                )
                 return True
         else:
             result = selection
@@ -3174,13 +3704,27 @@ def _select_chatgpt_model(page: Any, browser_kind: str, model: str) -> bool:
         available_text,
         diagnostic,
     )
+    _record_model_observation(
+        observation,
+        observed=str(result.get("current") or "") if isinstance(result, dict) else "",
+        available=available,
+        attempted_labels=remote_labels,
+        menu_text=available_text,
+        reason=reason,
+    )
     return False
 
 
-def _select_web_model(page: Any, browser_kind: str, platform: str, model: str) -> bool:
+def _select_web_model(
+    page: Any,
+    browser_kind: str,
+    platform: str,
+    model: str,
+    observation: dict[str, Any] | None = None,
+) -> bool:
     """Select a provider model when its page exposes a compatible model menu."""
     if platform == "chatgpt":
-        return _select_chatgpt_model(page, browser_kind, model)
+        return _select_chatgpt_model(page, browser_kind, model, observation)
     options = _platform_model_options(platform)
     option = next((candidate for candidate in options if candidate["key"] == model), None)
     if option is None:

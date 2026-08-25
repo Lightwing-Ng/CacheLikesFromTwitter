@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.48.1-codex.1
+# Code version: v1.49.0-codex.1
 
 from __future__ import annotations
 
@@ -381,6 +381,73 @@ def reconcile_cached_snapshot(snapshot: dict[str, Any], hydrated_payload: dict[s
     if is_idle:
         snapshot["message"] = hydrated_payload["message"]
     return snapshot
+
+
+_EXCLUDED_SYSTEM_DIRECTORY_PREFIXES = (
+    "/System",
+    "/bin",
+    "/sbin",
+    "/usr/bin",
+    "/usr/sbin",
+    "/usr/lib",
+    "/usr/libexec",
+    "/Library",
+    "/private/etc",
+    "/private/var/log",
+    "/private/var/db",
+    "/private/var/root",
+    "/dev",
+    "/cores",
+    "/proc",
+)
+
+
+def is_excluded_system_directory(path: Path) -> bool:
+    """Return whether a resolved path is a protected system directory."""
+    posix = path.as_posix()
+    if posix in {"/", "/usr"}:
+        return True
+    if len(posix) >= 2 and posix[1] == ":":
+        drive_path = posix[2:].lower()
+        if drive_path == "/windows" or drive_path.startswith("/windows/"):
+            return True
+        if drive_path == "/program files" or drive_path.startswith("/program files/"):
+            return True
+        if drive_path == "/program files (x86)" or drive_path.startswith("/program files (x86)/"):
+            return True
+    return any(
+        posix == prefix or posix.startswith(prefix + "/")
+        for prefix in _EXCLUDED_SYSTEM_DIRECTORY_PREFIXES
+    )
+
+
+def validate_local_directory_path(raw_path: str) -> tuple[bool, str, str]:
+    """Validate an absolute, readable, non-system directory after symlink resolution."""
+    candidate_text = str(raw_path or "").strip()
+    if not candidate_text:
+        return False, "No path provided.", ""
+    candidate = Path(candidate_text).expanduser()
+    if not candidate.is_absolute():
+        return False, "The path must be absolute.", ""
+    try:
+        resolved = candidate.resolve(strict=True)
+    except FileNotFoundError:
+        return False, "The path does not exist.", ""
+    except OSError as exc:
+        return False, str(exc)[:200], ""
+    if not resolved.is_dir():
+        return False, "The path is not a directory.", ""
+    if is_excluded_system_directory(resolved):
+        return False, "System directories cannot be selected.", ""
+    try:
+        resolved.iterdir().__next__()
+    except StopIteration:
+        pass
+    except PermissionError:
+        return False, "Permission denied.", ""
+    except OSError as exc:
+        return False, str(exc)[:200], ""
+    return True, "", str(resolved)
 
 
 def create_app(local_store_root: Path | str | None = None) -> Flask:
@@ -1830,6 +1897,31 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         if selected_path is None:
             return jsonify({"cancelled": True})
         return jsonify({"directory": str(selected_path)})
+
+    @app.post("/api/settings/directory/validate")
+    def validate_settings_directory_route():
+        """Validate a manually-entered directory path without opening a native picker."""
+        if not is_loopback_address(request.remote_addr):
+            return jsonify({"error": "Path validation is only available on the local host."}), 403
+        payload = request.get_json(silent=True) or {}
+        raw_path = str(payload.get("path") or "").strip()
+        valid, reason, resolved = validate_local_directory_path(raw_path)
+        body: dict[str, Any] = {"valid": valid, "reason": reason}
+        if resolved:
+            body["path"] = resolved
+        return jsonify(body)
+
+    @app.post("/api/agent/resume")
+    def resume_agent():
+        require_local_agent_request()
+        return jsonify(
+            {
+                "resume_requested": computer_use_agent_service.request_resume(),
+                "runtime": computer_use_settings.snapshot(),
+                "agent": build_agent_snapshot(),
+            }
+        )
+
 
     @app.get("/api/status")
     def api_status():

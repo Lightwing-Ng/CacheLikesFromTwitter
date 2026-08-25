@@ -475,7 +475,7 @@ class WebAppTests(unittest.TestCase):
                 if page_source in {"x", "grok", "chatgpt", "gemini"}:
                     expected_style_version = "style-v2.82.17-codex.54"
                 elif page_source == "agent":
-                    expected_style_version = "style-v2.82.17-codex.64"
+                    expected_style_version = "style-v2.82.17-codex.65"
                 else:
                     expected_style_version = "style-v2.82.17-codex.49"
                 self.assertIn(expected_style_version, body)
@@ -632,7 +632,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-terminal-authorization-status aria-live="polite" hidden></span>', settings_body)
         self.assertIn('class="settings-inline-button settings-inline-button-primary shadow-backup-sync-button"', settings_body)
         self.assertIn('shadow-backup-settings.js?v=shadow-backup-settings-v1.3.0-codex.1', settings_body)
-        self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.1.0-codex.1', settings_body)
+        self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', settings_body)
         self.assertIn("Danger zone", settings_body)
 
     def test_cache_source_switcher_uses_one_complete_registry_on_every_cache_page(self) -> None:
@@ -770,6 +770,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-combobox-option="safari"', local_body)
         self.assertNotIn('name="port"', local_body)
         self.assertIn('id="agent_project_path"', local_body)
+        self.assertIn('aria-describedby="agent_project_path_status"', local_body)
+        self.assertIn('id="agent_project_path_status"', local_body)
+        self.assertNotIn('aria-describedby="true"', local_body)
         self.assertIn('data-directory-field="agent_allowed_root"', local_body)
         self.assertIn('data-agent-project-name', local_body)
         self.assertIn('<span class="field-label">Current project</span>', local_body)
@@ -798,10 +801,10 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<span class="field-label">Workspace</span>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
-        self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.1.0-codex.1', local_body)
+        self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.2', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.17.0-codex.2', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.18.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -1113,6 +1116,12 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('selectedValue(".agent-browser-combobox", "edge")', script)
         self.assertIn('elements.ask.classList.toggle("is-stop", running)', script)
         self.assertIn('mutate("/api/agent/stop")', script)
+        self.assertIn('mutate("/api/agent/resume")', script)
+        self.assertIn("CATALOG_TIMEOUT_MS = 15000", script)
+        self.assertIn('query.set("refresh", "1")', script)
+        self.assertIn("loadAgentSources({forceRefresh: true})", script)
+        self.assertIn("Recent sessions timed out after 15 seconds.", script)
+        self.assertIn("clearCatalogLoadingState", script)
         self.assertIn('requestJson("/api/agent/open-conversation"', script)
         self.assertIn('elements.conversationLink.classList.toggle("is-traditional-handoff"', script)
         self.assertIn("agent?.traditional_handoff_available", script)
@@ -1165,7 +1174,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.17.0-codex.2',
+            'computer-use-agent-v3.18.0-codex.1',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
@@ -1645,6 +1654,9 @@ class WebAppTests(unittest.TestCase):
             "field: fieldName",
             "initial_path: input.value",
             'input.setAttribute("aria-invalid", "true")',
+            "AbortController",
+            "/api/settings/directory/validate",
+            "The folder picker did not respond. You can type the path directly.",
         ):
             with self.subTest(directory_picker_fragment=fragment):
                 self.assertIn(fragment, directory_picker_script)

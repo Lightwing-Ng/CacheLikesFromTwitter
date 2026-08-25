@@ -1,4 +1,4 @@
-/* Code version: v3.17.0-codex.2 */
+/* Code version: v3.18.0-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -19,6 +19,7 @@
         conversationLink: document.getElementById("agent_conversation_link"),
         conversationLinkLabel: document.querySelector("[data-agent-conversation-link-label]"),
         ask: document.getElementById("agent_ask_button"),
+        resume: document.getElementById("agent_resume_button"),
         projectPath: document.querySelector("[data-agent-project-path]"),
         projectChoose: document.getElementById("agent_project_path_choose"),
         projectName: document.querySelector("[data-agent-project-name]"),
@@ -67,6 +68,10 @@
     let sourcesLoaded = false;
     let sourcesLoading = false;
     let sourceRequestId = 0;
+    let catalogState = "idle";
+    let catalogError = "";
+    let catalogAbort = null;
+    const CATALOG_TIMEOUT_MS = 15000;
     let projectSessionRequestId = 0;
     let agentSources = {recent_sessions: [], projects: []};
     let projectSessions = [];
@@ -894,6 +899,8 @@
             ? payload
             : {recent_sessions: [], projects: []};
         agentSources = sourcePayload;
+        catalogState = "ready";
+        catalogError = "";
         populateListCombobox(
             elements.recentSessionCombobox,
             sourcePayload.recent_sessions,
@@ -905,34 +912,62 @@
             "No recent projects found",
         );
         sourcesLoaded = true;
+        clearCatalogLoadingState();
     }
 
     function applyAgentSourcesError(message) {
         agentSources = {recent_sessions: [], projects: []};
+        catalogState = "error";
+        catalogError = message || "Could not load Recent sessions";
         setComboboxValue(
             elements.recentSessionCombobox,
             "",
-            message || "Could not load Recent sessions",
+            catalogError,
         );
         setComboboxValue(
             elements.projectCombobox,
             "",
             "Recent projects are unavailable",
         );
-        setComboboxLoading(elements.recentSessionCombobox, false);
-        setComboboxLoading(elements.projectCombobox, false);
         sourcesLoaded = true;
+        clearCatalogLoadingState();
     }
 
-    async function loadAgentSources() {
+    function setCatalogControlsLoading(loading) {
+        [elements.recentSessionCombobox, elements.projectCombobox].forEach((combobox) => {
+            if (!combobox) return;
+            const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
+            if (trigger && loading) trigger.disabled = true;
+            setComboboxLoading(combobox, loading);
+        });
+    }
+
+    function clearCatalogLoadingState() {
+        sourcesLoading = false;
+        setCatalogControlsLoading(false);
+        [elements.recentSessionCombobox, elements.projectCombobox].forEach((combobox) => {
+            const trigger = combobox?.querySelector("[data-agent-combobox-trigger]");
+            const hasOptions = Boolean(combobox?.querySelector("[data-agent-combobox-option]"));
+            if (trigger && (catalogState === "error" || catalogState === "ready" || hasOptions)) {
+                trigger.disabled = catalogState === "error" ? false : trigger.disabled && !hasOptions;
+                if (catalogState === "error") trigger.disabled = false;
+                if (catalogState === "ready" && hasOptions) trigger.disabled = false;
+            }
+        });
+    }
+
+    async function loadAgentSources(options = {}) {
+        const forceRefresh = Boolean(options.forceRefresh);
         if (!lastBrowserStatus?.can_download || !selectedBrowser()) return;
         if (
-            sourcesLoading
+            !forceRefresh
+            && sourcesLoading
             && sourceBrowser === selectedBrowser()
             && sourcePlatform === selectedPlatform()
         ) return;
         if (
-            sourcesLoaded
+            !forceRefresh
+            && sourcesLoaded
             && sourceBrowser === selectedBrowser()
             && sourcePlatform === selectedPlatform()
         ) return;
@@ -943,15 +978,19 @@
         const bootstrappedError = lastBrowserStatus?.agent_sources_error;
         sourceBrowser = browserName;
         sourcePlatform = platform;
-        if (bootstrappedSources && (platform === "chatgpt" || platform === "claude")) {
+        if (!forceRefresh && bootstrappedSources && (platform === "chatgpt" || platform === "claude")) {
             applyAgentSources(bootstrappedSources);
             return;
         }
-        if (bootstrappedError && (platform === "chatgpt" || platform === "claude")) {
+        if (!forceRefresh && bootstrappedError && (platform === "chatgpt" || platform === "claude")) {
             applyAgentSourcesError(String(bootstrappedError));
             return;
         }
+        if (catalogAbort) catalogAbort.abort();
+        catalogAbort = new AbortController();
         const requestId = ++sourceRequestId;
+        catalogState = "loading";
+        catalogError = "";
         sourcesLoading = true;
         if (elements.recentSessionCombobox) {
             const trigger = elements.recentSessionCombobox.querySelector("[data-agent-combobox-trigger]");
@@ -971,20 +1010,44 @@
             }
             setComboboxLoading(elements.projectCombobox, true);
         }
+        const timeoutId = window.setTimeout(() => catalogAbort.abort(), CATALOG_TIMEOUT_MS);
         try {
             const query = new URLSearchParams({platform, browser: browserName});
-            const payload = await requestJson(`/api/agent/sources?${query.toString()}`);
+            if (forceRefresh) query.set("refresh", "1");
+            const response = await fetch(`/api/agent/sources?${query.toString()}`, {
+                cache: "no-store",
+                signal: catalogAbort.signal,
+                headers: {"Content-Type": "application/json", "Accept": "application/json"},
+            });
             if (
                 requestId !== sourceRequestId
                 || browserName !== selectedBrowser()
                 || platform !== selectedPlatform()
-            ) return;
+            ) {
+                return;
+            }
+            let payload;
+            try {
+                payload = await response.json();
+            } catch (_jsonError) {
+                throw new Error("The server returned a malformed catalog response.");
+            }
+            if (!response.ok) {
+                throw new Error(payload.error || `Could not load ${platformLabel} sessions`);
+            }
             applyAgentSources(payload);
-        } catch (_error) {
-            if (requestId !== sourceRequestId) return;
-            applyAgentSourcesError(`Could not load ${platformLabel} sessions`);
+        } catch (error) {
+            if (requestId !== sourceRequestId) {
+                return;
+            }
+            if (error && error.name === "AbortError") {
+                applyAgentSourcesError("Recent sessions timed out after 15 seconds.");
+            } else {
+                applyAgentSourcesError(error.message || `Could not load ${platformLabel} sessions`);
+            }
         } finally {
-            if (requestId === sourceRequestId) sourcesLoading = false;
+            window.clearTimeout(timeoutId);
+            if (requestId === sourceRequestId) clearCatalogLoadingState();
         }
     }
 
@@ -1001,6 +1064,7 @@
         sessionTitleOverride = sessionTitle;
         sourceBrowser = "";
         sourcesLoaded = false;
+        loadAgentSources({forceRefresh: true});
         const projectUrl = String(agent.project_url || "").trim();
         if (String(agent.session_mode || "").startsWith("project") && projectUrl) {
             if (elements.sessionMode instanceof HTMLInputElement) elements.sessionMode.value = "project";
@@ -1535,6 +1599,7 @@
         const agent = lastPayload.agent || {};
         const readiness = readinessState(lastPayload);
         const running = Boolean(agent.running);
+        const paused = Boolean(agent.paused);
         const platformLabel = selectedPlatformLabel();
         syncExecutionChoices();
         syncPlatformState();
@@ -1553,7 +1618,10 @@
             const sessionMessage = remoteSessionHistoryLoading
                 ? "Loading the selected ChatGPT session history…"
                 : remoteSessionHistoryError;
-            const statusCopy = sessionMessage || agent.message || readiness.message;
+            const pauseCopy = paused
+                ? (agent.pause_reason || agent.message || "The Web Agent is paused.")
+                : "";
+            const statusCopy = sessionMessage || pauseCopy || agent.message || readiness.message;
             if (elements.statusMessageCopy) elements.statusMessageCopy.textContent = statusCopy;
             else elements.statusMessage.textContent = statusCopy;
             if (elements.statusSpinner) elements.statusSpinner.hidden = !remoteSessionHistoryLoading;
@@ -1566,8 +1634,12 @@
         updateSessionChoiceInputs();
         if (readiness.ready && !running) loadAgentSources();
 
+        if (elements.resume) {
+            elements.resume.hidden = !paused;
+            elements.resume.disabled = !paused;
+        }
         if (elements.ask) {
-            elements.ask.disabled = (!readiness.ready || !sessionChoiceReady()) && !running;
+            elements.ask.disabled = ((!readiness.ready || !sessionChoiceReady()) && !running);
             elements.ask.classList.toggle("is-stop", running);
             elements.ask.dataset.agentAction = running ? "stop" : "ask";
             const label = running ? "Stop Agent task" : `Ask ${platformLabel} Web`;
@@ -1613,6 +1685,9 @@
         updateSessionChoiceInputs();
         schedulePreferenceSave();
         mutate("/api/agent/ask", formPayload(promptForm));
+    });
+    elements.resume?.addEventListener("click", () => {
+        mutate("/api/agent/resume");
     });
     elements.ask?.addEventListener("click", () => {
         if (elements.ask?.classList.contains("is-stop")) {

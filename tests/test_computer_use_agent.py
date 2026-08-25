@@ -1206,6 +1206,83 @@ def test_final_requires_a_successful_run_and_then_current_bodycheck_after_an_edi
     assert controller.state.bodycheck_current
 
 
+def test_verification_gate_resets_after_every_edit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://chatgpt.com/c/verification-reset"
+
+    class _SuccessfulProcess:
+        returncode = 0
+
+        def communicate(self, *, timeout: int) -> tuple[str, None]:
+            return "1 passed\n", None
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(workspace_path=str(workspace), max_turns=12)
+    controller = WorkspaceController(workspace, settings, lambda: False)
+    verification_command = "python3 -m pytest tests/test_example.py -q"
+    responses = iter(
+        (
+            '{"action":"write","path":"created.txt","content":"created\\n"}',
+            json.dumps({"action": "run", "command": verification_command}),
+            '{"action":"bodycheck"}',
+            '{"action":"replace","path":"created.txt","old":"created\\n","new":"changed\\n"}',
+            '{"action":"final","summary":"Stale after the second edit."}',
+            json.dumps({"action": "run", "command": verification_command}),
+            '{"action":"final","summary":"Still needs bodycheck after the second verification."}',
+            '{"action":"bodycheck"}',
+            '{"action":"final","summary":"Done after the second edit."}',
+        )
+    )
+    submitted: list[str] = []
+
+    def submit(
+        _page: object,
+        _browser: str,
+        message: str,
+        _should_stop: object,
+        **_kwargs: object,
+    ) -> str:
+        submitted.append(message)
+        return next(responses)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: _SuccessfulProcess(),
+    )
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Edit twice and verify after each edit.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=settings,
+        session_mode="recent",
+        selected_target_url="https://chatgpt.com/c/verification-reset",
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+    )
+
+    assert result[0] == "Done after the second edit."
+    assert any("verification command succeeds" in message for message in submitted)
+    assert any("bodycheck succeeds" in message for message in submitted)
+    assert controller.state.verification_current
+    assert controller.state.bodycheck_current
+    assert controller.state.edit_generation == 2
+
+
 @pytest.mark.parametrize(
     ("platform", "target_url", "model"),
     (

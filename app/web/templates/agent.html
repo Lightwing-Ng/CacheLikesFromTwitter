@@ -1,4 +1,4 @@
-<!-- Code version: v3.17.0-codex.8 -->
+<!-- Code version: v3.18.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.64') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.65') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -43,8 +43,7 @@
                             value="{{ settings.workspace_path }}"
                             spellcheck="false"
                             autocomplete="off"
-                            readonly
-                            aria-readonly="true"
+                            aria-describedby="agent_project_path_status"
                             data-agent-project-path
                         >
                         <button
@@ -62,7 +61,7 @@
                             <span class="icon settings-directory-choose-icon" aria-hidden="true"></span>
                         </button>
                     </span>
-                    <span class="settings-directory-status" data-directory-picker-status aria-live="polite" hidden></span>
+                    <span id="agent_project_path_status" class="settings-directory-status" data-directory-picker-status role="status" aria-live="polite" hidden></span>
                 </label>
 
                 <div class="agent-connect-fields">
@@ -390,6 +389,9 @@
                                         </span>
                                     </span>
                                     <span class="agent-composer-actions">
+                                        <button type="button" class="agent-composer-submit is-resume" id="agent_resume_button" data-agent-resume hidden aria-label="Resume Agent task" title="Resume Agent task">
+                                            <span class="icon agent-composer-submit-icon" aria-hidden="true"></span>
+                                        </button>
                                         <button type="button" class="agent-composer-submit{% if agent_snapshot.running %} is-stop{% endif %}" id="agent_ask_button" data-agent-action="{{ 'stop' if agent_snapshot.running else 'ask' }}" aria-label="{{ 'Stop Agent task' if agent_snapshot.running else 'Ask ' ~ selected_platform.label ~ ' Web' }}" title="{{ 'Stop Agent task' if agent_snapshot.running else 'Ask ' ~ selected_platform.label ~ ' Web' }}"{% if not agent_snapshot.running %} disabled{% endif %}>
                                             <span class="icon agent-composer-submit-icon" aria-hidden="true"></span>
                                         </button>
@@ -408,10 +410,10 @@
 </main>
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.19.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.1.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.3.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.4.0-codex.2') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.17.0-codex.2') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.18.0-codex.1') }}"></script>
 </body>
 </html>

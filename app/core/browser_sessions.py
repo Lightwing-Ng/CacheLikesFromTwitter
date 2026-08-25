@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.18.2-codex.1
+# Code version: v1.19.0-codex.1
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .browser.x_session import X_READY_SELECTORS, detect_account_handle
 from .config import CrawlConfig, default_edge_user_data_dir, is_macos_host, is_windows_host
@@ -680,6 +681,63 @@ def _is_idempotent_chromium_context_close_error(error: Exception) -> bool:
         marker in normalized_error
         for marker in IDEMPOTENT_CHROMIUM_CONTEXT_CLOSE_ERROR_MARKERS
     )
+
+
+def select_provider_tab(
+    context: Any,
+    *,
+    home_url: str,
+    hosts: set[str] | frozenset[str],
+    title: str = "",
+) -> Any:
+    """Reuse an existing provider tab by id, exact URL, and title.
+
+    Catalog discovery must never call bring_to_front. Matching prefers an exact
+    URL, then an exact title on the provider host, then any provider-host tab.
+    """
+    pages = [page for page in list(getattr(context, "pages", None) or [])]
+    exact_url: list[Any] = []
+    title_matches: list[Any] = []
+    host_matches: list[Any] = []
+    wanted_url = str(home_url or "").strip().rstrip("/")
+    wanted_hosts = {str(host or "").strip().lower() for host in hosts if str(host or "").strip()}
+    wanted_title = str(title or "").strip()
+
+    for page in pages:
+        is_closed = getattr(page, "is_closed", None)
+        if callable(is_closed):
+            try:
+                if is_closed():
+                    continue
+            except Exception:
+                continue
+        url = str(getattr(page, "url", "") or "").strip()
+        host = (urlsplit(url).hostname or "").lower()
+        if host not in wanted_hosts:
+            continue
+        page_title = ""
+        title_fn = getattr(page, "title", None)
+        if callable(title_fn):
+            try:
+                page_title = str(title_fn() or "").strip()
+            except Exception:
+                page_title = ""
+        if wanted_url and url.rstrip("/") == wanted_url:
+            exact_url.append(page)
+        elif wanted_title and page_title == wanted_title:
+            title_matches.append(page)
+        else:
+            host_matches.append(page)
+
+    chosen = (exact_url or title_matches or host_matches or [None])[0]
+    if chosen is None:
+        new_page = getattr(context, "new_page", None)
+        if callable(new_page):
+            return new_page()
+        if pages:
+            return pages[0]
+        raise RuntimeError("The browser context has no pages for source discovery.")
+    return chosen
 
 
 def launch_chromium_context(
