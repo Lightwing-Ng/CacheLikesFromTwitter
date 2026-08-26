@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.23.0-codex.1`
+Documentation version: `v3.23.1-codex.1`
 
 ## Purpose
 
@@ -157,7 +157,8 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
   `git status` is filtered inspection only and never satisfies the post-edit verification gate. The
   command layer rejects direct `rg` execution in favor of `search`, paths or network targets outside
   the selected project, linked or sensitive path arguments, pytest configuration/package/plugin
-  overrides, non-check Ruff modes, mutating or unbounded flags, file-writing redirection, deletion, moving,
+  overrides, non-check Ruff modes, TypeScript invocations other than the exact `tsc --noEmit`
+  inspection command, mutating or unbounded flags, file-writing redirection, deletion, moving,
   installation, downloads, publishing, environment enumeration, and Git-history mutation.
   A bounded before-and-after content fingerprint covers up to 12,000 files, 12,000 directories,
   512 MiB, and 15 seconds per scan while excluding the documented ignored/runtime directories.
@@ -284,13 +285,16 @@ probe was not possible because the selected account is currently restricted. The
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
 
-On 26 Aug 2026, 280 focused controller/hardening tests passed. The production-hardening suite
-covered recursive search parity, Stop propagation, completion cleanup, explicit session reuse,
+On 26 Aug 2026, 280 focused controller/hardening tests passed with the bundled ripgrep available.
+The same suite passed 279 tests with only its real-ripgrep integration test skipped under an explicit
+no-`rg` PATH; all mocked ripgrep JSON, Stop, timeout, post-filter, and diagnostic-isolation cases still
+executed through a workspace-external trusted fixture. The production-hardening suite covered
+recursive search parity, Stop propagation, completion cleanup, explicit session reuse,
 verification-gate ordering, canonical executable and argument confinement, hard-link rejection,
-bounded content fingerprints, and real POSIX leader-exited descendant processes. The complete
-project gate passed 825 tests and 357 subtests with 67.23% overall coverage and branch measurement
-enabled. This verification did not restart the user-owned service or send a new Web-provider task;
-Windows received static and mock validation only.
+strict direct `tsc --noEmit` parsing, bounded content fingerprints, and real POSIX leader-exited
+descendant processes. The complete project gate passed 825 tests and 357 subtests with 67.26%
+overall coverage and branch measurement enabled. This verification did not restart the user-owned
+service or send a new Web-provider task; Windows received static and mock validation only.
 
 On 19 Aug 2026, the named `08.19 Agentic` Edge tasks completed a 38-turn ChatGPT audit and a
 9-turn Gemini audit with `bodycheck`. Grok completed its first read action and the live Submit/Enter

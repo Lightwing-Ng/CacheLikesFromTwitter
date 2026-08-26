@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.28.0-codex.1
+Code version: v3.28.1-codex.1
 """
 
 from __future__ import annotations
@@ -3462,19 +3462,11 @@ def inspection_command_parts(
             "Use the project-confined search action instead of running ripgrep directly."
         )
     if executable == "tsc":
-        normalized_arguments = [argument.casefold() for argument in arguments]
-        no_emit_positions = [
-            index
-            for index, argument in enumerate(normalized_arguments)
-            if argument == "--noemit"
-        ]
-        no_emit_has_boolean_value = bool(
-            no_emit_positions
-            and no_emit_positions[0] + 1 < len(normalized_arguments)
-            and normalized_arguments[no_emit_positions[0] + 1] in {"false", "true"}
-        )
-        if len(no_emit_positions) != 1 or no_emit_has_boolean_value:
-            raise ValueError("TypeScript verification must use one standalone --noEmit.")
+        if arguments != ["--noEmit"]:
+            raise ValueError(
+                "TypeScript verification must use exactly one standalone --noEmit "
+                "and no other arguments."
+            )
     if executable in {"pytest", "ruff", "mypy", "pyright", "eslint", "tsc"}:
         return [canonical_executable, *arguments]
     if python_executable:

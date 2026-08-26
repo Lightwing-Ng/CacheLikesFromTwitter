@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.28.0-codex.1
+Code version: v3.28.1-codex.1
 """
 
 from __future__ import annotations
@@ -2695,6 +2695,30 @@ def _rg_json_match(path: str, line_number: int, text: str) -> str:
     )
 
 
+@pytest.fixture
+def trusted_mock_rg(
+    tmp_path_factory: pytest.TempPathFactory,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """Bind mocked ripgrep tests through the real trusted-executable resolver."""
+    import app.core.computer_use_agent as computer_use_agent
+
+    trusted_tools = tmp_path_factory.mktemp("trusted-rg-bin")
+    trusted_rg = trusted_tools / ("rg.exe" if os.name == "nt" else "rg")
+    trusted_rg.write_text("", encoding="utf-8")
+    trusted_rg.chmod(0o755)
+    trusted_rg = trusted_rg.resolve(strict=True)
+    original_which = computer_use_agent.shutil.which
+
+    def locate(executable_name: str) -> str | None:
+        if executable_name == "rg":
+            return str(trusted_rg)
+        return original_which(executable_name)
+
+    monkeypatch.setattr(computer_use_agent.shutil, "which", locate)
+    return trusted_rg
+
+
 def _mock_rg_popen(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -2770,6 +2794,7 @@ def test_rg_json_parser_normalizes_windows_separators(
 def test_workspace_search_rg_explicit_file_keeps_the_filename_and_glob_semantics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
     glob: str,
     expected_matches: list[str],
 ) -> None:
@@ -2804,7 +2829,7 @@ def test_workspace_search_rg_explicit_file_keeps_the_filename_and_glob_semantics
     assert result["ok"]
     assert result["engine"] == "rg"
     assert result["matches"] == expected_matches
-    assert Path(observed_command[0]).is_absolute()
+    assert Path(observed_command[0]) == trusted_mock_rg
     assert "--no-config" in observed_command
     assert "--json" in observed_command
     assert "--fixed-strings" in observed_command
@@ -2886,6 +2911,7 @@ def test_workspace_search_python_fallback_matches_workspace_relative_globs(
 def test_workspace_search_rg_matches_workspace_relative_globs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
     glob: str,
     expected_matches: list[str],
 ) -> None:
@@ -2932,6 +2958,7 @@ def test_workspace_search_rg_matches_workspace_relative_globs(
 def test_workspace_search_rg_applies_root_relative_glob_before_exclusions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     workspace = tmp_path / "project"
     source = workspace / "app" / "core" / "agent.py"
@@ -2974,6 +3001,7 @@ def test_workspace_search_rg_applies_root_relative_glob_before_exclusions(
 def test_windows_search_glob_normalizes_separators_case_and_engine_parity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     import app.core.computer_use_agent as computer_use_agent
 
@@ -3154,6 +3182,7 @@ def test_search_rejects_unbounded_or_control_character_queries(
 def test_workspace_search_rg_normalizes_paths_and_post_filters_nested_ignored_output(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     workspace = tmp_path / "project"
     workspace.mkdir()
@@ -3216,6 +3245,7 @@ def test_workspace_search_rg_normalizes_paths_and_post_filters_nested_ignored_ou
 def test_workspace_search_rg_rejects_linked_external_and_protected_targets(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     workspace = tmp_path / "project"
     workspace.mkdir()
@@ -3275,6 +3305,7 @@ def test_workspace_search_rg_rejects_linked_external_and_protected_targets(
 def test_workspace_search_rg_stops_at_the_global_raw_event_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     import app.core.computer_use_agent as computer_use_agent
 
@@ -3309,6 +3340,7 @@ def test_workspace_search_rg_stops_at_the_global_raw_event_limit(
 def test_workspace_search_rg_stop_clears_the_active_process(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     workspace = tmp_path / "project"
     workspace.mkdir()
@@ -3346,6 +3378,7 @@ def test_workspace_search_rg_stop_clears_the_active_process(
 def test_workspace_search_rg_failure_never_exposes_raw_output_or_diagnostics(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     workspace = tmp_path / "project"
     workspace.mkdir()
@@ -3382,6 +3415,7 @@ def test_workspace_search_rg_failure_never_exposes_raw_output_or_diagnostics(
 def test_workspace_search_rg_timeout_returns_a_bounded_observation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     import app.core.computer_use_agent as computer_use_agent
 
@@ -3439,6 +3473,7 @@ def test_workspace_search_rg_timeout_returns_a_bounded_observation(
 def test_workspace_search_stream_failure_stops_and_clears_the_process(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     import app.core.computer_use_agent as computer_use_agent
 
@@ -3673,6 +3708,7 @@ def test_workspace_search_real_rg_respects_glob_size_and_ignored_directories(
 def test_workspace_controller_never_exposes_env_or_private_key_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    trusted_mock_rg: Path,
 ) -> None:
     workspace = tmp_path / "project"
     workspace.mkdir()
@@ -4044,10 +4080,22 @@ def test_tsc_requires_one_standalone_no_emit_flag(
     for unsafe in (
         "tsc",
         "tsc --noEmit=false",
+        "tsc --noemit",
         "tsc --noEmit false",
         "tsc --noEmit --noEmit false",
+        "tsc --noEmit --noEmit=false",
+        "tsc --noEmit --incremental",
+        "tsc --incremental --noEmit",
+        "tsc --noEmit --composite",
+        "tsc --noEmit --init",
+        "tsc --noEmit --generateTrace trace",
+        "tsc --noEmit --generateCpuProfile profile.cpuprofile",
+        "tsc --noEmit --build --clean",
+        "tsc --noEmit tsconfig.json",
+        "tsc --noEmit --project tsconfig.json",
+        "tsc --noEmit --pretty false",
     ):
-        with pytest.raises(ValueError, match="standalone --noEmit"):
+        with pytest.raises(ValueError, match="exactly one standalone --noEmit"):
             inspection_command_parts(unsafe, workspace=workspace)
 
 
