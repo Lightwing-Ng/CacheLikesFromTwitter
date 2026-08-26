@@ -1,6 +1,6 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.2.0-codex.2`
+Documentation version: `v1.3.3-codex.1`
 
 ## Agent Web execution safety contract established on 24 Aug 2026
 
@@ -12,17 +12,30 @@ Documentation version: `v1.2.0-codex.2`
   filename. A missing filename or reported upload failure falls back to bounded on-demand reads
   instead of claiming that the package was attached.
 - Controller discovery now excludes recognized credential, environment, cookie, and private-key
-  paths. `search` uses a project-confined, size- and result-bounded Python regular-expression
-  fallback when `rg` is unavailable. `run` rejects direct `rg`, network or out-of-project targets,
+  paths. `search` is literal-only in both the bounded fixed-string `rg` path and its project-confined
+  Python fallback. `run` rejects direct `rg`, network or out-of-project targets,
   and mutating or unbounded flags; a bounded project fingerprint also detects command-side writes,
   fails that verification, and makes the prior bodycheck stale.
 - Agent-scoped `/api/browser-session` requests now pass through the same network, Host, Origin, and
   password gate as the rest of the control plane. Admitted responses carry `no-store`, `Pragma`,
   and expired `Expires` headers.
-- The service atomically persists only bounded run metadata in an owner-only directory and `0600`
-  snapshot, and restores an abandoned active run as `interrupted`. Prompt bodies, responses,
+- The service atomically persists only bounded run metadata through a same-directory unique temporary
+  file. POSIX runtime directories and snapshots use `0700` and `0600`; Windows additionally depends
+  on the configured application-data directory's inherited ACL. Prompt bodies, responses,
   conversation history, source text, and error stacks are not stored in that snapshot. Task context
-  files, including new-session contexts, are removed on every exit path.
+  removal, including new-session contexts, is attempted on every exit path. Startup also removes
+  unreferenced app-owned timestamp contexts, rejects linked or junction-backed runtime ancestors,
+  metadata, run directories, hard-linked context files, and FIFO/device/socket persistence inputs,
+  and blocks the next task on any cleanup-boundary failure rather than following or reading them.
+- A synchronous worker-thread launch failure is committed as `failed` with `running=false` before
+  the start error returns. Stop therefore remains unavailable for a worker that never existed, and
+  the next valid task is not blocked by a stale `starting` or `stopping` snapshot.
+- macOS and Windows prompts share the same complete 10-action JSON schema. Prompt migrations preserve
+  custom guidance and use an owner-only, `fsync`-backed atomic settings replacement so a failed write
+  cannot truncate the previous configuration.
+- Stop is checked during Safari composer/send polling and Chromium navigation retries. The exception
+  completion barrier reads Stop under the lifecycle lock, so an accepted Stop remains `stopped` and
+  clears stale error or handoff state even when a synchronous browser error returns afterward.
 - Structured console and JSON-line logging redact recognized browser credentials across messages,
   fields, exceptions, and stack traces. Active and rotated log files use mode `0600`. Chromium
   context cleanup ignores only known already-closed or driver-disconnected second-close errors,

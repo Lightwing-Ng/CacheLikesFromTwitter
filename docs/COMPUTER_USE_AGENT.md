@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.23.2-codex.1`
+Documentation version: `v3.24.3-codex.1`
 
 ## Purpose
 
@@ -177,14 +177,16 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
   the temporary context, then releases the macOS idle-sleep assertion and clears context metadata;
   only after those cleanup steps does it persist `running=false` as the completion barrier. A context
   deletion failure instead publishes a failed phase, persists the context path and size as bounded
-  recovery metadata, and logs the cleanup error. The next production run retries only that exact
-  runtime-local cleanup and remains blocked if the file still exists. Sleep-assertion release
-  failures cannot prevent the final barrier.
+  recovery metadata, and logs the cleanup error. The next production run retries that exact
+  runtime-local cleanup, sweeps every other unreferenced app-owned timestamp context, and remains
+  blocked if any cleanup fails. Sleep-assertion release failures cannot prevent the final barrier.
   Local context-package construction, Chromium profile cloning, and browser-context launch are
   synchronous and not fully preemptible; initial navigation can also remain in flight until its
   configured timeout. Stop can wait for those phases. Gates before browser startup, immediately
-  after context launch, and after navigation avoid later work where possible and still prevent
-  context attachment or prompt submission.
+  after context launch, after navigation, during Chromium navigation retries, and throughout
+  Safari composer/send polling avoid later work where possible and still prevent context attachment
+  or prompt submission. A synchronous browser error observed after an accepted Stop is published as
+  `stopped`, not as a task failure.
 - The Flask control routes accept host-loopback traffic directly. Private-network requests must
   first unlock `/agent` with the six-digit password gate; the successful signed session also
   authorizes same-origin `/api/agent/*` requests. Public and host-rebinding requests are rejected.
@@ -199,12 +201,15 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
   verification, attachment confirmation, timestamps, conversation target, bodycheck state, and a
   temporary context cleanup path and byte count while a run is active or cleanup recovery is pending. It does not persist prompt
   bodies, responses, conversation history, source text, or error stacks in that snapshot. The
-  runtime directory is owner-only, and the snapshot file uses mode `0600`. If a persisted run was
+  runtime directory and each task directory are owner-only, and context and snapshot files use mode
+  `0600`. If a persisted run was
   still marked active when the service exited, the next process restores it as `interrupted`
   instead of claiming that it is still running or completed.
 - The generated context package is task-scoped and is normally deleted after success, stop, or
-  failure, including a task that opened a new Web session. A deletion failure is visible as a failed
-  run and blocks the next task until the exact runtime-local file can be removed. Structured log
+  failure, including a task that opened a new Web session. Service startup and the next task also
+  delete unreferenced `context.md` files only from app-owned timestamp directories while preserving
+  the exact recovery pointer. A deletion failure is visible or logged and blocks the next task until
+  the runtime-local file can be removed. Structured log
   formatters redact recognized
   browser credentials from messages, structured fields, exceptions, and stack traces. Active and
   rotated JSON-line logs use owner-only mode `0600`.
@@ -224,11 +229,14 @@ Settings → Agent stores:
 - the local command timeout;
 - separate macOS and Windows system prompts.
 
-At load time, prompts missing the fenced-JSON or base64 transport contract are replaced with the
-current safe defaults. Marker-complete prompts using the former `text or regex` search example are
-upgraded in place to the literal-search contract, receive the authoritative literal-only instruction,
-and retain all other user-authored guidance and unrelated settings. The migrated settings are written
-back immediately and the migration is idempotent across later service starts.
+Both operating-system defaults use one shared, complete 10-action JSON schema. At load time, prompts
+missing the fenced-JSON or base64 transport contract are replaced with the current safe defaults.
+Marker-complete prompts with an incomplete action schema receive the canonical schema; former
+`text or regex` query fields are normalized even when their JSON whitespace differs, and the
+authoritative literal-only instruction is added when absent. All other user-authored guidance and
+unrelated settings remain intact. Settings are written through an owner-only, same-directory
+temporary file, flushed with `fsync`, and atomically replaced. A failed write preserves the complete
+previous file. Successful migrations are immediate and idempotent across later service starts.
 
 The selected provider's file-upload limit remains authoritative. ChatGPT documents a 512 MB hard
 file limit and a 2 million-token limit for text and document files; the application uses the lower
@@ -236,7 +244,7 @@ applicable boundary and keeps the local byte ceiling configurable. Gemini, Grok,
 different limits or attachment behavior, so the controller requires a visible exact-filename
 readback before claiming an attachment and otherwise falls back to bounded controller observations.
 
-Windows uses the same file-action boundary with native Windows paths, a new process group, an
+Windows uses the same complete action schema and file-action boundary with native Windows paths, a new process group, an
 absolute System32 `taskkill /T /F` fallback, and Edge or Chrome Chromium sessions. This round's
 Windows process-tree contract is covered statically and by mocks, not by a real Windows end-to-end
 run. If a Windows group leader exits before its descendants, `taskkill` is best effort rather than
@@ -293,17 +301,25 @@ probe was not possible because the selected account is currently restricted. The
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
 
-On 26 Aug 2026, 287 focused controller/hardening tests passed with the bundled ripgrep available.
-The same suite passed 286 tests with only its real-ripgrep integration test skipped under an explicit
+On 26 Aug 2026, 308 focused controller/hardening tests passed with the bundled ripgrep available.
+The same suite passed 307 tests with only its real-ripgrep integration test skipped under an explicit
 no-`rg` PATH; all mocked ripgrep JSON, Stop, timeout, post-filter, and diagnostic-isolation cases still
 executed through a workspace-external trusted fixture. The production-hardening suite covered
 recursive search parity, Stop propagation, completion cleanup, explicit session reuse,
 verification-gate ordering, canonical executable and argument confinement, hard-link rejection,
-strict direct `tsc --noEmit` parsing, persisted literal-search prompt migration, browser-start Stop
-gates, bounded content fingerprints, and real POSIX leader-exited descendant processes. The complete
-project gate passed 832 tests and 357 subtests with 67.41%
-overall coverage and branch measurement enabled. This verification did not restart the user-owned
-service or send a new Web-provider task; Windows received static and mock validation only.
+strict direct `tsc --noEmit` parsing, shared cross-platform action-schema migration, atomic settings
+replacement, unique atomic run-snapshot replacement, Safari submission Stop gates, Chromium retry
+Stop gates, linked-path-confined orphaned-context housekeeping, bounded content fingerprints, and
+real POSIX leader-exited descendant processes. Runtime regressions reject linked or junction-backed
+runtime ancestors, timestamp directories, snapshot metadata, hard-linked context files, and
+non-regular persisted inputs without changing external content or permissions or blocking startup.
+A worker-thread launch failure is also published and persisted as `failed` with `running=false`, so
+Stop is not falsely accepted and a later task can start. The complete project gate passed 856 tests
+and 357 subtests with 67.52%
+overall coverage and branch measurement enabled. A protected runtime inventory also found and then
+removed 45 historical orphaned context bundles totaling 1,481,451 bytes; no timestamp context remained.
+This verification did not restart the user-owned service or send a new Web-provider task; Windows
+received static and mock validation only.
 
 On 19 Aug 2026, the named `08.19 Agentic` Edge tasks completed a 38-turn ChatGPT audit and a
 9-turn Gemini audit with `bodycheck`. Grok completed its first read action and the live Submit/Enter

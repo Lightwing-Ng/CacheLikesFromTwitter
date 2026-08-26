@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.5-codex.1
+Code version: v1.6.6-codex.1
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from app.core.browser_sessions import (
     extract_x_account_from_source,
     detect_safari_x_account_handle,
     fetch_safari_page_snapshot,
+    goto_with_retry,
     _housekeep_stale_chromium_profiles,
     is_grok_security_verification_page,
     launch_chromium_context,
@@ -38,6 +39,38 @@ from app.core.scraper import (
     collect_liked_tweet_urls,
 )
 from app.core.state import TaskState
+
+
+@pytest.mark.parametrize("stop_stage", ("before_navigation", "after_error", "during_retry_wait"))
+def test_goto_with_retry_does_not_navigate_again_after_stop(stop_stage: str) -> None:
+    stop_requested = stop_stage == "before_navigation"
+    goto_calls: list[str] = []
+    waits: list[int] = []
+
+    class Page:
+        def goto(self, url: str, **_kwargs: object) -> None:
+            nonlocal stop_requested
+            goto_calls.append(url)
+            if stop_stage == "after_error":
+                stop_requested = True
+            raise RuntimeError("net::ERR_NETWORK_CHANGED")
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            nonlocal stop_requested
+            waits.append(milliseconds)
+            if stop_stage == "during_retry_wait":
+                stop_requested = True
+
+    goto_with_retry(
+        Page(),
+        "https://chatgpt.com/",
+        attempts=2,
+        timeout_ms=90_000,
+        should_stop=lambda: stop_requested,
+    )
+
+    assert goto_calls == ([] if stop_stage == "before_navigation" else ["https://chatgpt.com/"])
+    assert waits == ([1_500] if stop_stage == "during_retry_wait" else [])
 
 
 def _tweet_entry(status_id: str, handle: str) -> dict[str, object]:

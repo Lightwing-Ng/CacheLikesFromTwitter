@@ -1,11 +1,12 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.28.2-codex.1
+Code version: v3.29.4-codex.1
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
 from io import BytesIO, StringIO, TextIOWrapper
 import json
 import os
@@ -32,6 +33,7 @@ from app.core.computer_use_agent import (
     ComputerUseSettingsStore,
     WorkspaceController,
     _attach_context_file,
+    _CONTROLLER_ACTION_SCHEMA_MARKERS,
     _chatgpt_visible_model_controls,
     default_model_for_platform,
     strongest_model_option,
@@ -43,6 +45,7 @@ from app.core.computer_use_agent import (
     _select_web_model,
     _submit_chromium_prompt,
     _submit_chromium_web_prompt,
+    _submit_safari_prompt,
     _wait_for_chromium_composer,
     _web_last_text,
     _web_is_generating,
@@ -1225,6 +1228,85 @@ def test_saved_settings_are_owner_readable_only() -> None:
         assert "owner_token" not in settings_path.read_text(encoding="utf-8")
 
 
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO regression requires POSIX.")
+def test_non_regular_settings_file_returns_without_blocking(tmp_path: Path) -> None:
+    settings_path = tmp_path / "computer-use-agent.json"
+    os.mkfifo(settings_path)
+    script = (
+        "from pathlib import Path; import sys; "
+        "from app.core.computer_use_agent import load_computer_use_settings; "
+        "print(load_computer_use_settings(Path(sys.argv[1])).browser)"
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(settings_path)],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+
+    assert completed.stdout.strip() == "edge"
+
+
+def test_default_prompts_share_the_complete_controller_action_schema() -> None:
+    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 2_589
+    assert hashlib.sha256(DEFAULT_MACOS_SYSTEM_PROMPT.encode()).hexdigest() == (
+        "5ba03b475f16499e104e9f18df56f07ac44b5b28e4dab9e9cb170d19bff32fb1"
+    )
+    for prompt in (DEFAULT_MACOS_SYSTEM_PROMPT, DEFAULT_WINDOWS_SYSTEM_PROMPT):
+        for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS:
+            assert marker in prompt
+        assert '"old_base64":"base64-of-old"' in prompt
+        assert '"content_base64":"base64-of-content"' in prompt
+        assert '"verification":["check and result"]' in prompt
+        assert '"limitations":["remaining limitation"]' in prompt
+
+
+def test_atomic_settings_replace_failure_preserves_the_previous_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    settings_path = tmp_path / "computer-use-agent.json"
+    original = b'{"preserve":"the complete prior settings"}\n'
+    settings_path.write_bytes(original)
+
+    def fail_replace(_source: object, _destination: object) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(computer_use_agent.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="replace failed"):
+        save_computer_use_settings(ComputerUseSettings(), settings_path)
+
+    assert settings_path.read_bytes() == original
+    assert list(tmp_path.glob(".computer-use-agent.json.*.tmp")) == []
+
+
+def test_atomic_settings_fsync_failure_preserves_the_previous_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    settings_path = tmp_path / "computer-use-agent.json"
+    original = b'{"preserve":"the complete prior settings"}\n'
+    settings_path.write_bytes(original)
+    monkeypatch.setattr(
+        computer_use_agent.os,
+        "fsync",
+        lambda _descriptor: (_ for _ in ()).throw(OSError("fsync failed")),
+    )
+
+    with pytest.raises(OSError, match="fsync failed"):
+        save_computer_use_settings(ComputerUseSettings(), settings_path)
+
+    assert settings_path.read_bytes() == original
+    assert list(tmp_path.glob(".computer-use-agent.json.*.tmp")) == []
+
+
 LEGACY_MACOS_SYSTEM_PROMPT = (
     "You are the reasoning component of a local Computer Use coding agent.\n"
     "The controller runs on macOS and owns one selected project.\n"
@@ -1321,8 +1403,9 @@ def test_load_upgrades_literal_search_contract_without_losing_custom_prompt_text
         current_action,
         legacy_action,
     ).replace(f"\n\n{literal_instruction}", "")
-    legacy_windows_prompt = DEFAULT_WINDOWS_SYSTEM_PROMPT.replace(
-        f"\n\n{literal_instruction}", ""
+    legacy_windows_prompt = (
+        "Keep this marker-complete Windows controller prompt. Return one action in a "
+        "fenced code block labelled json. Use replace_base64 and write_base64 when needed."
     )
     custom_macos_text = "Keep this custom macOS project guidance."
     custom_windows_text = "Keep this custom Windows project guidance."
@@ -1351,6 +1434,9 @@ def test_load_upgrades_literal_search_contract_without_losing_custom_prompt_text
     assert legacy_action not in loaded.macos_system_prompt
     assert literal_instruction in loaded.macos_system_prompt
     assert literal_instruction in loaded.windows_system_prompt
+    for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS:
+        assert marker in loaded.macos_system_prompt
+        assert marker in loaded.windows_system_prompt
     assert custom_macos_text in loaded.macos_system_prompt
     assert custom_windows_text in loaded.windows_system_prompt
     assert loaded.workspace_path == str(workspace.resolve())
@@ -1369,6 +1455,41 @@ def test_load_upgrades_literal_search_contract_without_losing_custom_prompt_text
 
     restarted = ComputerUseSettingsStore(settings_path)
     assert restarted.settings == loaded
+    assert settings_path.read_text(encoding="utf-8") == persisted_once
+
+
+def test_load_normalizes_a_whitespace_variant_of_the_legacy_search_query(
+    tmp_path: Path,
+) -> None:
+    settings_path = tmp_path / "computer-use-agent.json"
+    legacy_search = (
+        '{ "action" : "search", "query" : "text or regex", "path" : ".", '
+        '"glob" : "*.py", "max_results" : 80 }'
+    )
+    prompt = DEFAULT_MACOS_SYSTEM_PROMPT.replace(
+        '{"action":"search","query":"literal text","path":".",'
+        '"glob":"*.py","max_results":80}',
+        legacy_search,
+    )
+    payload = asdict(
+        ComputerUseSettings(
+            macos_system_prompt=prompt,
+            windows_system_prompt=DEFAULT_WINDOWS_SYSTEM_PROMPT,
+        )
+    )
+    settings_path.write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_computer_use_settings(settings_path)
+
+    assert "text or regex" not in loaded.macos_system_prompt
+    assert '"query" : "literal text"' in loaded.macos_system_prompt
+    for marker in SAFE_PROTOCOL_PROMPT_MARKERS:
+        assert marker in loaded.macos_system_prompt
+    persisted_once = settings_path.read_text(encoding="utf-8")
+    assert ComputerUseSettingsStore(settings_path).settings == loaded
     assert settings_path.read_text(encoding="utf-8") == persisted_once
 
 
@@ -1667,6 +1788,116 @@ def test_request_stop_does_not_release_sleep_assertion_before_completion(
         assert released_assertions == [sleep_assertion]
 
 
+def test_exception_after_an_accepted_stop_is_published_as_stopped(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    runner_entered = Event()
+
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: None,
+    )
+
+    def runner(**kwargs: object) -> tuple[str, str, int, bool]:
+        should_stop = kwargs["should_stop"]
+        assert callable(should_stop)
+        runner_entered.set()
+        deadline = time.monotonic() + 2
+        while not should_stop() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        raise RuntimeError("navigation ended after Stop")
+
+    service = ComputerUseAgentService(
+        store,
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert runner_entered.wait(timeout=2)
+    assert service.request_stop() is True
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    snapshot = service.snapshot()
+    assert snapshot["running"] is False
+    assert snapshot["phase"] == "stopped"
+    assert snapshot["message"] == "Agent request stopped."
+    assert snapshot["last_error"] == ""
+    assert snapshot["traditional_handoff_available"] is False
+
+
+def test_exception_completion_lock_preserves_an_accepted_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runner_entered = Event()
+    release_runner = Event()
+    runner_raising = Event()
+
+    class _ObservedStopEvent:
+        def __init__(self) -> None:
+            self._event = Event()
+            self.read_started = Event()
+            self.release_read = Event()
+
+        def set(self) -> None:
+            self._event.set()
+
+        def is_set(self) -> bool:
+            captured = self._event.is_set()
+            self.read_started.set()
+            assert self.release_read.wait(timeout=2)
+            return captured
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_start_macos_idle_sleep_assertion",
+        lambda: None,
+    )
+    def runner(**_kwargs: object) -> tuple[str, str, int, bool]:
+        runner_entered.set()
+        assert release_runner.wait(timeout=2)
+        runner_raising.set()
+        raise RuntimeError("runner failed while Stop was being accepted")
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert runner_entered.wait(timeout=2)
+    observed_stop = _ObservedStopEvent()
+    service._stop_requested = observed_stop
+
+    with service._lock:
+        release_runner.set()
+        try:
+            assert runner_raising.wait(timeout=2)
+            observed_stop.read_started.wait(timeout=1)
+            assert service.request_stop() is True
+        finally:
+            observed_stop.release_read.set()
+
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    snapshot = service.snapshot()
+    assert snapshot["running"] is False
+    assert snapshot["phase"] == "stopped"
+    assert snapshot["last_error"] == ""
+    assert snapshot["traditional_handoff_available"] is False
+
+
 def test_context_cleanup_failure_is_published_and_keeps_recovery_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1803,6 +2034,65 @@ def test_request_stop_returns_false_after_completion_cleanup_starts(
     assert snapshot["phase"] == "finished"
 
 
+def test_worker_start_failure_publishes_failed_and_allows_the_next_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    original_thread_start = computer_use_agent.Thread.start
+    start_calls = {"count": 0}
+
+    def fail_once(thread: object) -> None:
+        start_calls["count"] += 1
+        if start_calls["count"] == 1:
+            raise RuntimeError("cannot start new thread")
+        original_thread_start(thread)
+
+    monkeypatch.setattr(computer_use_agent.Thread, "start", fail_once)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_start_macos_idle_sleep_assertion",
+        lambda: None,
+    )
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runner=lambda **_kwargs: (
+            "Verified result",
+            "https://chatgpt.com/c/recovered-worker",
+            1,
+            True,
+        ),
+        runtime_root=runtime_root,
+    )
+
+    with pytest.raises(RuntimeError, match="cannot start new thread"):
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+
+    failed_snapshot = service.snapshot()
+    assert failed_snapshot["running"] is False
+    assert failed_snapshot["phase"] == "failed"
+    assert failed_snapshot["last_error"] == "cannot start new thread"
+    assert failed_snapshot["context_file"] == ""
+    assert service.request_stop() is False
+    persisted = json.loads(
+        (runtime_root / "last-run.json").read_text(encoding="utf-8")
+    )
+    assert persisted["running"] is False
+    assert persisted["phase"] == "failed"
+
+    service.start("Inspect the workspace again", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    recovered_snapshot = service.snapshot()
+    assert recovered_snapshot["running"] is False
+    assert recovered_snapshot["phase"] == "finished"
+
+
 def test_sleep_assertion_release_failure_cannot_block_running_false(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1846,6 +2136,336 @@ def test_sleep_assertion_release_failure_cannot_block_running_false(
     assert snapshot["context_bytes"] == 0
     assert len(context_paths) == 1
     assert not context_paths[0].exists()
+
+
+def test_service_startup_removes_only_unreferenced_context_bundles(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir(mode=0o755)
+    orphaned_directory = runtime_root / "20260813-190638"
+    orphaned_directory.mkdir(mode=0o755)
+    orphaned_context = orphaned_directory / "context.md"
+    orphaned_context.write_text("orphaned private context", encoding="utf-8")
+    preserved_directory = runtime_root / "20260826-160000"
+    preserved_directory.mkdir(mode=0o755)
+    preserved_context = preserved_directory / "context.md"
+    preserved_context.write_text("recorded private context", encoding="utf-8")
+    (runtime_root / "last-run.json").write_text(
+        json.dumps(
+            {
+                "running": False,
+                "context_file": str(preserved_context),
+                "context_bytes": preserved_context.stat().st_size,
+            }
+        ),
+        encoding="utf-8",
+    )
+    ignored_directory = runtime_root / "manual-notes"
+    ignored_directory.mkdir()
+    ignored_context = ignored_directory / "context.md"
+    ignored_context.write_text("not an Agent run directory", encoding="utf-8")
+    ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=runtime_root,
+    )
+
+    assert not orphaned_context.exists()
+    assert not orphaned_directory.exists()
+    assert preserved_context.read_text(encoding="utf-8") == "recorded private context"
+    assert ignored_context.exists()
+    assert runtime_root.stat().st_mode & 0o777 == 0o700
+    assert preserved_directory.stat().st_mode & 0o777 == 0o700
+    assert preserved_context.stat().st_mode & 0o777 == 0o600
+
+
+def test_orphaned_context_cleanup_failure_blocks_the_next_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    orphaned_directory = runtime_root / "20260813-190638"
+    orphaned_directory.mkdir(parents=True)
+    orphaned_context = orphaned_directory / "context.md"
+    orphaned_context.write_text("orphaned private context", encoding="utf-8")
+    original_unlink = Path.unlink
+
+    def fail_orphaned_context_unlink(
+        path: Path,
+        *args: object,
+        **kwargs: object,
+    ) -> None:
+        if path == orphaned_context:
+            raise OSError("context is locked")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_orphaned_context_unlink)
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=runtime_root,
+    )
+
+    with pytest.raises(RuntimeError, match="1 orphaned runtime bundle"):
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert service.snapshot()["running"] is False
+    assert orphaned_context.exists()
+
+
+def test_orphaned_context_cleanup_rejects_a_hard_link_without_chmod_or_unlink(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    run_directory = runtime_root / "20260813-190638"
+    run_directory.mkdir(parents=True)
+    outside_context = tmp_path / "outside-context.md"
+    outside_context.write_text("outside private context", encoding="utf-8")
+    outside_context.chmod(0o640)
+    linked_context = run_directory / "context.md"
+    try:
+        os.link(outside_context, linked_context)
+    except OSError:
+        pytest.skip("This filesystem cannot create the hard link required by this test.")
+    original_mode = outside_context.stat().st_mode & 0o777
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=runtime_root,
+    )
+
+    with pytest.raises(RuntimeError, match="1 orphaned runtime bundle"):
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert linked_context.exists()
+    assert outside_context.read_text(encoding="utf-8") == "outside private context"
+    assert outside_context.stat().st_mode & 0o777 == original_mode
+
+
+def test_orphaned_context_cleanup_rejects_a_linked_run_directory(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    outside_directory = tmp_path / "outside-run"
+    outside_directory.mkdir()
+    outside_context = outside_directory / "context.md"
+    outside_context.write_text("outside private context", encoding="utf-8")
+    outside_context.chmod(0o640)
+    linked_run = runtime_root / "20260813-190638"
+    try:
+        linked_run.symlink_to(outside_directory, target_is_directory=True)
+    except OSError:
+        pytest.skip("This host cannot create the directory link required by this test.")
+    original_mode = outside_context.stat().st_mode & 0o777
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=runtime_root,
+    )
+
+    with pytest.raises(RuntimeError, match="1 orphaned runtime bundle"):
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert linked_run.is_symlink()
+    assert outside_context.read_text(encoding="utf-8") == "outside private context"
+    assert outside_context.stat().st_mode & 0o777 == original_mode
+
+
+def test_linked_runtime_root_is_not_read_written_or_cleaned(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    outside_root = tmp_path / "outside-runtime"
+    outside_run = outside_root / "20260813-190638"
+    outside_run.mkdir(parents=True)
+    outside_context = outside_run / "context.md"
+    outside_context.write_text("outside private context", encoding="utf-8")
+    persisted_snapshot = outside_root / "last-run.json"
+    original_snapshot = json.dumps({"running": True, "phase": "running"}) + "\n"
+    persisted_snapshot.write_text(original_snapshot, encoding="utf-8")
+    linked_root = tmp_path / "runtime"
+    try:
+        linked_root.symlink_to(outside_root, target_is_directory=True)
+    except OSError:
+        pytest.skip("This host cannot create the directory link required by this test.")
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=linked_root,
+    )
+
+    assert service.snapshot()["phase"] == "idle"
+    with pytest.raises(RuntimeError, match="1 orphaned runtime bundle"):
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert outside_context.read_text(encoding="utf-8") == "outside private context"
+    assert persisted_snapshot.read_text(encoding="utf-8") == original_snapshot
+
+
+def test_runtime_root_beneath_a_linked_parent_is_not_cleaned(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    outside_parent = tmp_path / "outside-parent"
+    outside_run = outside_parent / "runtime" / "20260813-190638"
+    outside_run.mkdir(parents=True)
+    outside_context = outside_run / "context.md"
+    outside_context.write_text("outside private context", encoding="utf-8")
+    outside_context.chmod(0o640)
+    linked_parent = tmp_path / "linked-parent"
+    try:
+        linked_parent.symlink_to(outside_parent, target_is_directory=True)
+    except OSError:
+        pytest.skip("This host cannot create the directory link required by this test.")
+    original_mode = outside_context.stat().st_mode & 0o777
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=linked_parent / "runtime",
+    )
+
+    with pytest.raises(RuntimeError, match="1 orphaned runtime bundle"):
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert outside_context.read_text(encoding="utf-8") == "outside private context"
+    assert outside_context.stat().st_mode & 0o777 == original_mode
+
+
+def test_runtime_root_beneath_a_mocked_junction_is_not_cleaned(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    junction_parent = tmp_path / "junction-parent"
+    run_directory = junction_parent / "runtime" / "20260813-190638"
+    run_directory.mkdir(parents=True)
+    context_path = run_directory / "context.md"
+    context_path.write_text("junction private context", encoding="utf-8")
+    original_is_junction = getattr(Path, "is_junction", lambda _path: False)
+
+    def mocked_is_junction(path: Path) -> bool:
+        return path == junction_parent or bool(original_is_junction(path))
+
+    monkeypatch.setattr(Path, "is_junction", mocked_is_junction, raising=False)
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=junction_parent / "runtime",
+    )
+
+    with pytest.raises(RuntimeError, match="1 orphaned runtime bundle"):
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert context_path.read_text(encoding="utf-8") == "junction private context"
+
+
+def test_linked_snapshot_metadata_is_not_read_replaced_or_cleaned(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    outside_snapshot = tmp_path / "outside-last-run.json"
+    original_snapshot = json.dumps({"running": True, "phase": "running"}) + "\n"
+    outside_snapshot.write_text(original_snapshot, encoding="utf-8")
+    linked_snapshot = runtime_root / "last-run.json"
+    try:
+        linked_snapshot.symlink_to(outside_snapshot)
+    except OSError:
+        pytest.skip("This host cannot create the file link required by this test.")
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=runtime_root,
+    )
+
+    assert service.snapshot()["phase"] == "idle"
+    with pytest.raises(RuntimeError, match="1 orphaned runtime bundle"):
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert linked_snapshot.is_symlink()
+    assert outside_snapshot.read_text(encoding="utf-8") == original_snapshot
+
+
+def test_snapshot_metadata_directory_blocks_the_next_task(tmp_path: Path) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    snapshot_directory = runtime_root / "last-run.json"
+    snapshot_directory.mkdir(parents=True)
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=runtime_root,
+    )
+
+    assert service.snapshot()["phase"] == "idle"
+    with pytest.raises(RuntimeError, match="1 orphaned runtime bundle"):
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert snapshot_directory.is_dir()
+
+
+def test_snapshot_persistence_ignores_a_precreated_fixed_temporary_link(
+    tmp_path: Path,
+) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    outside_file = tmp_path / "outside-target.json"
+    outside_file.write_text("outside metadata", encoding="utf-8")
+    outside_file.chmod(0o640)
+    fixed_temporary_link = runtime_root / "last-run.tmp"
+    try:
+        fixed_temporary_link.symlink_to(outside_file)
+    except OSError:
+        pytest.skip("This host cannot create the file link required by this test.")
+    original_mode = outside_file.stat().st_mode & 0o777
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=runtime_root,
+    )
+
+    with service._lock:
+        service._persist_snapshot_locked()
+
+    snapshot_path = runtime_root / "last-run.json"
+    assert snapshot_path.is_file()
+    assert not snapshot_path.is_symlink()
+    assert snapshot_path.stat().st_mode & 0o777 == 0o600
+    assert fixed_temporary_link.is_symlink()
+    assert outside_file.read_text(encoding="utf-8") == "outside metadata"
+    assert outside_file.stat().st_mode & 0o777 == original_mode
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="FIFO regression requires POSIX.")
+def test_non_regular_snapshot_file_returns_without_blocking(tmp_path: Path) -> None:
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    os.mkfifo(runtime_root / "last-run.json")
+    script = (
+        "from pathlib import Path; import sys; "
+        "from app.core.computer_use_agent import ComputerUseAgentService, "
+        "ComputerUseSettingsStore; "
+        "service=ComputerUseAgentService(ComputerUseSettingsStore(Path(sys.argv[1])), "
+        "runtime_root=Path(sys.argv[2])); print(service.snapshot()['phase'])"
+    )
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            script,
+            str(tmp_path / "settings.json"),
+            str(runtime_root),
+        ],
+        cwd=Path.cwd(),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=3,
+    )
+
+    assert completed.stdout.strip() == "idle"
 
 
 def test_context_markdown_contains_instructions_request_and_bounded_index(
@@ -1918,6 +2538,7 @@ def test_context_markdown_contains_instructions_request_and_bounded_index(
         assert ".env" not in content
         assert "credentials/token.txt" not in content
         assert path.stat().st_mode & 0o777 == 0o600
+        assert path.parent.stat().st_mode & 0o777 == 0o700
 
 
 def test_context_post_write_failure_leaves_no_orphan_or_recovery_pointer(
@@ -5829,6 +6450,46 @@ def test_safari_submission_clicks_send_button_instead_of_dispatching_enter() -> 
     assert any("document.execCommand" in expression for expression in expressions)
     assert any("sendButton.click()" in expression for expression in expressions)
     assert all("KeyboardEvent" not in expression for expression in expressions)
+
+
+@pytest.mark.parametrize("stop_stage", ("after_fill", "during_send_wait"))
+def test_safari_submission_never_clicks_send_after_stop(stop_stage: str) -> None:
+    stop_requested = Event()
+
+    class _Page:
+        def __init__(self) -> None:
+            self.evaluate_calls: list[str] = []
+            self.waits: list[int] = []
+
+        def evaluate(self, expression: str, _argument: object = None) -> dict[str, object]:
+            self.evaluate_calls.append(expression)
+            if "filled: true" in expression:
+                if stop_stage == "after_fill":
+                    stop_requested.set()
+                return {"filled": True, "tagName": "DIV", "contentEditable": True}
+            assert "sendButton.click()" in expression
+            return {"clicked": False, "generating": False, "sendButtons": []}
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+            if stop_stage == "during_send_wait":
+                stop_requested.set()
+
+    page = _Page()
+
+    _submit_safari_prompt(
+        page,
+        "Inspect the project",
+        stop_requested.is_set,
+    )
+
+    send_attempts = [
+        expression
+        for expression in page.evaluate_calls
+        if "sendButton.click()" in expression
+    ]
+    assert len(send_attempts) == (0 if stop_stage == "after_fill" else 1)
+    assert page.waits == ([] if stop_stage == "after_fill" else [250])
 
 
 def test_safari_submission_waits_for_send_after_stop_answering() -> None:

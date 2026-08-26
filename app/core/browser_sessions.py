@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.19.0-codex.1
+# Code version: v1.19.1-codex.1
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.parse import urlsplit
 
 from .browser.x_session import X_READY_SELECTORS, detect_account_handle
@@ -609,19 +609,35 @@ def wait_for_x_page_ready(page, browser_label: str) -> None:
     raise RuntimeError(f"X page did not finish loading in {browser_label}.")
 
 
-def goto_with_retry(page, url: str, attempts: int = 3, timeout_ms: int = 120_000) -> None:
-    """Navigate with a small retry budget for transient browser tunnel errors."""
+def goto_with_retry(
+    page,
+    url: str,
+    attempts: int = 3,
+    timeout_ms: int = 120_000,
+    *,
+    should_stop: Callable[[], bool] | None = None,
+) -> None:
+    """Navigate with bounded transient retries that honor an optional Stop request."""
+    stop_requested = should_stop or (lambda: False)
     last_error: Exception | None = None
     for attempt_index in range(1, attempts + 1):
+        if stop_requested():
+            return
         try:
             page.goto(url, wait_until="domcontentloaded", timeout=max(1_000, int(timeout_ms)))
             return
         except Exception as exc:  # pragma: no cover - depends on local browser/network state
             last_error = exc
+            if stop_requested():
+                return
             error_text = str(exc)
             if attempt_index >= attempts or not any(marker in error_text for marker in TRANSIENT_BROWSER_ERROR_MARKERS):
                 raise
+            if stop_requested():
+                return
             page.wait_for_timeout(1_500)
+            if stop_requested():
+                return
     if last_error is not None:
         raise last_error
 

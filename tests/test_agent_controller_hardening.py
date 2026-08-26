@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.24.1-codex.1
+Code version: v3.25.0-codex.1
 """
 
 from __future__ import annotations
@@ -1138,6 +1138,11 @@ class TestPersistedPromptMigration:
             legacy_action,
         ).replace(f"\n\n{literal_instruction}", "")
         custom_text = "Preserve this status-visible custom guidance."
+        custom_windows_text = "Preserve this Windows status-visible guidance."
+        legacy_windows_prompt = (
+            "Return one action in a fenced code block labelled json. "
+            "Use replace_base64 and write_base64 when needed."
+        )
         settings_path.write_text(
             json.dumps(
                 {
@@ -1151,7 +1156,9 @@ class TestPersistedPromptMigration:
                     "max_turns": 40,
                     "command_timeout_seconds": 120,
                     "macos_system_prompt": f"{legacy_prompt}\n\n{custom_text}",
-                    "windows_system_prompt": DEFAULT_WINDOWS_SYSTEM_PROMPT,
+                    "windows_system_prompt": (
+                        f"{legacy_windows_prompt}\n\n{custom_windows_text}"
+                    ),
                 },
                 indent=2,
             )
@@ -1175,6 +1182,12 @@ class TestPersistedPromptMigration:
         assert legacy_action not in runtime_prompt
         assert literal_instruction in runtime_prompt
         assert custom_text in runtime_prompt
+        runtime_windows_prompt = response.get_json()["runtime"]["settings"][
+            "windows_system_prompt"
+        ]
+        for marker in SAFE_PROTOCOL_PROMPT_MARKERS:
+            assert marker in runtime_windows_prompt
+        assert custom_windows_text in runtime_windows_prompt
         persisted_prompt = json.loads(
             settings_path.read_text(encoding="utf-8")
         )["macos_system_prompt"]

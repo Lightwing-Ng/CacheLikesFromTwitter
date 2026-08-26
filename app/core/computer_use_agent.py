@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.28.2-codex.1
+Code version: v3.29.4-codex.1
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ import signal
 import stat as stat_module
 import subprocess
 import sys
+import tempfile
 from threading import Event, RLock, Thread, current_thread
 import time
 from typing import Any, Callable
@@ -86,6 +87,7 @@ BROWSER_INTERRUPTION_TIMEOUT_SECONDS = 300
 BROWSER_INTERRUPTION_POLL_SECONDS = 1.0
 MAX_AGENT_SESSION_HISTORY = 100
 PERSISTED_AGENT_SNAPSHOT_FILENAME = "last-run.json"
+_AGENT_RUN_DIRECTORY_PATTERN = re.compile(r"^\d{8}-\d{6}$")
 WEB_RESPONSE_MINIMUM_SECONDS = 1.5
 WEB_RESPONSE_STABLE_SECONDS = 1.0
 WEB_TURN_TIMEOUT_SECONDS = 1_800
@@ -241,12 +243,30 @@ _CURRENT_SEARCH_ACTION_EXAMPLE = (
     '{"action":"search","query":"literal text","path":".",'
     '"glob":"*.py","max_results":80}'
 )
-_LEGACY_REGEX_SEARCH_ACTION_EXAMPLE = (
-    '{"action":"search","query":"text or regex","path":".",'
-    '"glob":"*.py","max_results":80}'
+_LEGACY_REGEX_SEARCH_QUERY_PATTERN = re.compile(
+    r'("query"\s*:\s*)"text or regex"'
 )
 _LITERAL_SEARCH_PROMPT_INSTRUCTION = (
     "Search action queries are literal text, never regular expressions."
+)
+_CONTROLLER_ACTION_SCHEMA = (
+    "\n\nUse one of these actions:\n"
+    '{"action":"list","path":".","depth":2}\n'
+    '{"action":"read","path":"relative/file","start_line":1,"end_line":240}\n'
+    + _CURRENT_SEARCH_ACTION_EXAMPLE
+    + "\n"
+    '{"action":"replace","path":"relative/file","old":"exact text appearing once","new":"replacement text"}\n'
+    '{"action":"replace_base64","path":"relative/file","old_base64":"base64-of-old","new_base64":"base64-of-new"}\n'
+    '{"action":"write","path":"relative/new-file","content":"complete content"}\n'
+    '{"action":"write_base64","path":"relative/new-file","content_base64":"base64-of-content"}\n'
+    '{"action":"run","command":"focused inspection, build, lint, or test command"}\n'
+    '{"action":"bodycheck"}\n'
+    '{"action":"final","summary":"concise Markdown outcome","verification":["check and result"],"limitations":["remaining limitation"]}\n'
+)
+_CONTROLLER_ACTION_SCHEMA_MARKERS = tuple(
+    line
+    for line in _CONTROLLER_ACTION_SCHEMA.splitlines()
+    if line.startswith('{"action":')
 )
 
 DEFAULT_MACOS_SYSTEM_PROMPT = (
@@ -257,23 +277,8 @@ Work autonomously from the user's request. Read the repository instruction files
 
 """
     + JSON_ACTION_RESPONSE_INSTRUCTION
-    + """
-
-Use one of these actions:
-{"action":"list","path":".","depth":2}
-{"action":"read","path":"relative/file","start_line":1,"end_line":240}
-"""
-    + _CURRENT_SEARCH_ACTION_EXAMPLE
-    + """
-{"action":"replace","path":"relative/file","old":"exact text appearing once","new":"replacement text"}
-{"action":"replace_base64","path":"relative/file","old_base64":"base64-of-old","new_base64":"base64-of-new"}
-{"action":"write","path":"relative/new-file","content":"complete content"}
-{"action":"write_base64","path":"relative/new-file","content_base64":"base64-of-content"}
-{"action":"run","command":"focused inspection, build, lint, or test command"}
-{"action":"bodycheck"}
-{"action":"final","summary":"concise Markdown outcome","verification":["check and result"],"limitations":["remaining limitation"]}
-
-"""
+    + _CONTROLLER_ACTION_SCHEMA
+    + "\n"
     + _LITERAL_SEARCH_PROMPT_INSTRUCTION
     + """
 
@@ -286,15 +291,12 @@ The controller runs on Windows, uses PowerShell-compatible Windows paths, and ow
 
 """
     + JSON_ACTION_RESPONSE_INSTRUCTION
-    + """
-
-Use the controller actions list, read, search, replace, write, run, bodycheck, or final. Never claim an operation succeeded before the controller reports it.
-
-"""
+    + _CONTROLLER_ACTION_SCHEMA
+    + "\n"
     + _LITERAL_SEARCH_PROMPT_INSTRUCTION
     + """
 
-After edits, run one approved verification command and then bodycheck before final. Do not use commands to write, delete, move, install, download, change Git history, publish, or access secrets."""
+Never claim an operation succeeded before the controller reports it. After edits, run one approved verification command and then bodycheck before final. Do not use commands to write, delete, move, install, download, change Git history, publish, or access secrets."""
 )
 
 _IGNORED_DIRECTORY_NAMES = frozenset(
@@ -458,14 +460,17 @@ class ComputerUseSettings:
         )
 
 
-SAFE_PROTOCOL_PROMPT_MARKERS = (
+_SAFE_TRANSPORT_PROMPT_MARKERS = (
     "fenced code block labelled json",
     "replace_base64",
     "write_base64",
-    _LITERAL_SEARCH_PROMPT_INSTRUCTION,
 )
 
-_SAFE_TRANSPORT_PROMPT_MARKERS = SAFE_PROTOCOL_PROMPT_MARKERS[:-1]
+SAFE_PROTOCOL_PROMPT_MARKERS = (
+    *_SAFE_TRANSPORT_PROMPT_MARKERS,
+    *_CONTROLLER_ACTION_SCHEMA_MARKERS,
+    _LITERAL_SEARCH_PROMPT_INSTRUCTION,
+)
 
 
 def system_prompt_has_safe_protocol(prompt: str) -> bool:
@@ -476,15 +481,19 @@ def system_prompt_has_safe_protocol(prompt: str) -> bool:
 
 def _migrate_marker_complete_system_prompt(prompt: str) -> str:
     """Upgrade known prompt semantics without discarding user-authored guidance."""
-    migrated = prompt.replace(
-        _LEGACY_REGEX_SEARCH_ACTION_EXAMPLE,
-        _CURRENT_SEARCH_ACTION_EXAMPLE,
+    migrated = _LEGACY_REGEX_SEARCH_QUERY_PATTERN.sub(
+        r'\1"literal text"',
+        prompt,
     )
+    if not all(
+        marker in migrated for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS
+    ):
+        migrated = f"{migrated.rstrip()}{_CONTROLLER_ACTION_SCHEMA}"
     if _LITERAL_SEARCH_PROMPT_INSTRUCTION not in migrated:
         migrated = (
             f"{migrated.rstrip()}\n\n{_LITERAL_SEARCH_PROMPT_INSTRUCTION}"
         )
-    return migrated
+    return migrated.rstrip()
 
 
 def migrate_legacy_system_prompts(settings: ComputerUseSettings) -> ComputerUseSettings:
@@ -1056,6 +1065,15 @@ def load_computer_use_settings(
     transport markers are replaced with the current defaults and written back
     immediately. Unrelated settings are preserved.
     """
+    if (
+        _path_crosses_link_like_component(settings_path.parent)
+        or _path_is_unsafe_file_leaf(settings_path)
+    ):
+        LOGGER.warning(
+            "Ignoring linked or non-regular Computer Use Agent settings at %s.",
+            settings_path,
+        )
+        return ComputerUseSettings()
     if not settings_path.exists():
         return ComputerUseSettings()
     try:
@@ -1083,17 +1101,49 @@ def load_computer_use_settings(
         return ComputerUseSettings()
 
 
+def _atomic_write_owner_only_text(path: Path, content: str) -> None:
+    """Atomically replace one local text file through an owner-only unique sibling."""
+    if (
+        _path_crosses_link_like_component(path.parent)
+        or _path_is_unsafe_file_leaf(path)
+    ):
+        raise OSError(f"Refusing to replace linked or non-regular local file {path}.")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, raw_temporary_path = tempfile.mkstemp(
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+    )
+    temporary_path = Path(raw_temporary_path)
+    try:
+        temporary_path.chmod(0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    finally:
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError as exc:
+                LOGGER.warning("Could not close temporary local file %s: %s", path, exc)
+        try:
+            temporary_path.unlink(missing_ok=True)
+        except OSError as exc:
+            LOGGER.warning("Could not remove temporary local file for %s: %s", path, exc)
+
+
 def save_computer_use_settings(
     settings: ComputerUseSettings,
     settings_path: Path = DEFAULT_AGENT_SETTINGS_PATH,
 ) -> None:
-    """Persist non-secret Agent settings with owner-only permissions."""
-    settings_path.parent.mkdir(parents=True, exist_ok=True)
-    settings_path.write_text(
+    """Atomically persist non-secret Agent settings with owner-only permissions."""
+    _atomic_write_owner_only_text(
+        settings_path,
         json.dumps(asdict(settings), indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
-    settings_path.chmod(0o600)
 
 
 class ComputerUseSettingsStore:
@@ -1295,6 +1345,7 @@ def build_context_markdown(
 
     destination.parent.mkdir(parents=True, exist_ok=True)
     try:
+        destination.parent.chmod(0o700)
         destination.write_bytes(b"".join(encoded_parts))
         destination.chmod(0o600)
         byte_count = destination.stat().st_size
@@ -1526,17 +1577,67 @@ def _is_safe_context_file(workspace: Path, path: Path) -> bool:
 
 
 def _path_is_link_like(path: Path) -> bool:
-    """Reject symbolic, junction, and hard-linked files at trust boundaries."""
+    """Reject symbolic, junction, hard-linked, and special trust-boundary paths."""
     try:
         is_junction = getattr(path, "is_junction", None)
         if path.is_symlink() or bool(callable(is_junction) and is_junction()):
             return True
         path_stat = path.stat()
-        return stat_module.S_ISREG(path_stat.st_mode) and path_stat.st_nlink != 1
+        if stat_module.S_ISDIR(path_stat.st_mode):
+            return False
+        return not stat_module.S_ISREG(path_stat.st_mode) or path_stat.st_nlink != 1
     except FileNotFoundError:
         return False
     except OSError:
         return True
+
+
+def _path_is_unsafe_file_leaf(path: Path) -> bool:
+    """Reject an existing persistence leaf unless it is one single-link regular file."""
+    try:
+        is_junction = getattr(path, "is_junction", None)
+        if path.is_symlink() or bool(callable(is_junction) and is_junction()):
+            return True
+        path_stat = path.lstat()
+        return not stat_module.S_ISREG(path_stat.st_mode) or path_stat.st_nlink != 1
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
+def _path_crosses_link_like_component(path: Path) -> bool:
+    """Return whether any existing component of one path is linked or uninspectable."""
+    try:
+        candidate = path.expanduser()
+        if not candidate.is_absolute():
+            candidate = Path.cwd() / candidate
+        if ".." in candidate.parts:
+            return True
+        relative_parts = candidate.parts[1:]
+        current = Path(candidate.anchor)
+        trusted_anchors: list[Path] = []
+        for raw_anchor in (Path.home(), Path(tempfile.gettempdir())):
+            for anchor in (raw_anchor.expanduser(), raw_anchor.expanduser().resolve(strict=False)):
+                if anchor not in trusted_anchors:
+                    trusted_anchors.append(anchor)
+        for anchor in trusted_anchors:
+            try:
+                relative = candidate.relative_to(anchor)
+            except ValueError:
+                continue
+            current = anchor
+            relative_parts = relative.parts
+            break
+        for part in relative_parts:
+            current /= part
+            if _path_is_link_like(current):
+                return True
+            if not current.exists():
+                break
+    except OSError:
+        return True
+    return False
 
 
 def _is_safe_context_directory(workspace: Path, path: Path) -> bool:
@@ -3638,6 +3739,98 @@ def _clean_agent_session_title(value: str, fallback: str) -> str:
     return (candidate or clean_fallback)[:240]
 
 
+def _cleanup_orphaned_agent_contexts(
+    runtime_root: Path,
+    *,
+    preserved_context_file: str = "",
+) -> tuple[int, int, tuple[Path, ...]]:
+    """Remove unreferenced context bundles from app-owned run directories."""
+    raw_root = runtime_root.expanduser()
+    if _path_crosses_link_like_component(raw_root):
+        return 0, 0, (raw_root,)
+    if not raw_root.exists():
+        return 0, 0, ()
+    removed_files = 0
+    removed_bytes = 0
+    failures: list[Path] = []
+    try:
+        root = raw_root.resolve(strict=True)
+        if not root.is_dir():
+            return 0, 0, (raw_root,)
+        snapshot_path = root / PERSISTED_AGENT_SNAPSHOT_FILENAME
+        if _path_is_unsafe_file_leaf(snapshot_path):
+            return 0, 0, (snapshot_path,)
+        root.chmod(0o700)
+        candidates = tuple(root.iterdir())
+    except (OSError, ValueError):
+        return 0, 0, (raw_root,)
+    preserved = (
+        Path(preserved_context_file).expanduser().resolve(strict=False)
+        if str(preserved_context_file or "").strip()
+        else None
+    )
+
+    for run_directory in candidates:
+        if not _AGENT_RUN_DIRECTORY_PATTERN.fullmatch(run_directory.name):
+            continue
+        context_path = run_directory / "context.md"
+        if _path_is_link_like(run_directory):
+            failures.append(context_path)
+            continue
+        try:
+            run_stat = run_directory.lstat()
+            if not stat_module.S_ISDIR(run_stat.st_mode):
+                continue
+            resolved_run_directory = run_directory.resolve(strict=True)
+            resolved_run_directory.relative_to(root)
+            run_directory.chmod(0o700)
+            context_stat = context_path.lstat()
+            if (
+                _path_is_link_like(context_path)
+                or not stat_module.S_ISREG(context_stat.st_mode)
+            ):
+                failures.append(context_path)
+                continue
+            resolved_context_path = context_path.resolve(strict=True)
+            resolved_context_path.relative_to(root)
+            if resolved_context_path.parent != resolved_run_directory:
+                failures.append(context_path)
+                continue
+            is_preserved = (
+                preserved is not None and resolved_context_path == preserved
+            )
+            context_path.chmod(0o600)
+            if is_preserved:
+                continue
+            context_path.unlink()
+            removed_files += 1
+            removed_bytes += max(0, int(context_stat.st_size))
+            try:
+                run_directory.rmdir()
+            except OSError:
+                pass
+        except FileNotFoundError:
+            try:
+                run_directory.rmdir()
+            except OSError:
+                pass
+        except (OSError, ValueError):
+            failures.append(context_path)
+    return removed_files, removed_bytes, tuple(failures)
+
+
+def _require_orphaned_agent_context_cleanup(runtime_root: Path) -> None:
+    """Block production work while an orphaned app-owned context cannot be removed."""
+    _removed_contexts, _removed_bytes, cleanup_failures = (
+        _cleanup_orphaned_agent_contexts(runtime_root)
+    )
+    if cleanup_failures:
+        raise RuntimeError(
+            "Temporary Agent context cleanup is still pending for "
+            f"{len(cleanup_failures)} orphaned runtime bundle(s)."
+        )
+
+
 class ComputerUseAgentService:
     """Run a fresh Web Agent action loop for one selected local project."""
 
@@ -3662,13 +3855,39 @@ class ComputerUseAgentService:
         self._completion_started = False
         self._conversation_histories: dict[str, list[dict[str, str]]] = {}
         self._conversation_titles: dict[str, str] = {}
+        removed_contexts, removed_bytes, cleanup_failures = (
+            _cleanup_orphaned_agent_contexts(
+                self._runtime_root,
+                preserved_context_file=self._snapshot.context_file,
+            )
+        )
+        if removed_contexts:
+            LOGGER.info(
+                "Removed %s orphaned Agent context bundles totaling %s bytes.",
+                removed_contexts,
+                removed_bytes,
+            )
+        if cleanup_failures:
+            LOGGER.warning(
+                "Could not remove %s orphaned Agent context bundles; the next task will remain blocked.",
+                len(cleanup_failures),
+            )
         if self._snapshot.phase == "interrupted":
             with self._lock:
                 self._persist_snapshot_locked()
 
     def _load_persisted_snapshot(self) -> AgentRunSnapshot:
         """Restore non-content run metadata and mark abandoned work as interrupted."""
-        path = self._runtime_root / PERSISTED_AGENT_SNAPSHOT_FILENAME
+        raw_runtime_root = self._runtime_root.expanduser()
+        if _path_crosses_link_like_component(raw_runtime_root):
+            LOGGER.warning(
+                "Refusing to read Agent run metadata through a linked runtime root."
+            )
+            return AgentRunSnapshot()
+        path = raw_runtime_root / PERSISTED_AGENT_SNAPSHOT_FILENAME
+        if _path_is_unsafe_file_leaf(path):
+            LOGGER.warning("Refusing to read linked Agent run metadata at %s.", path)
+            return AgentRunSnapshot()
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError, TypeError):
@@ -3718,18 +3937,23 @@ class ComputerUseAgentService:
         payload = {
             field_name: getattr(self._snapshot, field_name) for field_name in fields
         }
-        path = self._runtime_root / PERSISTED_AGENT_SNAPSHOT_FILENAME
-        temporary = path.with_suffix(".tmp")
-        try:
-            self._runtime_root.mkdir(parents=True, exist_ok=True)
-            self._runtime_root.chmod(0o700)
-            temporary.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
+        raw_runtime_root = self._runtime_root.expanduser()
+        if _path_crosses_link_like_component(raw_runtime_root):
+            LOGGER.warning(
+                "Refusing to persist Agent run metadata through a linked runtime root."
             )
-            temporary.chmod(0o600)
-            os.replace(temporary, path)
-            path.chmod(0o600)
+            return
+        path = raw_runtime_root / PERSISTED_AGENT_SNAPSHOT_FILENAME
+        if _path_is_unsafe_file_leaf(path):
+            LOGGER.warning("Refusing to replace linked Agent run metadata at %s.", path)
+            return
+        try:
+            raw_runtime_root.mkdir(parents=True, exist_ok=True)
+            raw_runtime_root.chmod(0o700)
+            _atomic_write_owner_only_text(
+                path,
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            )
         except OSError as exc:
             LOGGER.warning("Could not persist bounded Agent run metadata: %s", exc)
 
@@ -3741,20 +3965,64 @@ class ComputerUseAgentService:
         """Retry one recorded cleanup and block a new run while context remains."""
         raw_path = str(self._snapshot.context_file or "").strip()
         if not raw_path:
+            _require_orphaned_agent_context_cleanup(self._runtime_root)
             return
-        runtime_root = self._runtime_root.expanduser().resolve()
-        context_path = Path(raw_path).expanduser().resolve(strict=False)
+        _removed_contexts, _removed_bytes, cleanup_failures = (
+            _cleanup_orphaned_agent_contexts(
+                self._runtime_root,
+                preserved_context_file=raw_path,
+            )
+        )
+        if cleanup_failures:
+            raise RuntimeError(
+                "Temporary Agent context cleanup is still pending for "
+                f"{len(cleanup_failures)} orphaned runtime bundle(s)."
+            )
+        raw_runtime_root = self._runtime_root.expanduser()
+        context_path = Path(raw_path).expanduser()
+        run_directory = context_path.parent
+        if (
+            _path_crosses_link_like_component(raw_runtime_root)
+            or _path_crosses_link_like_component(run_directory)
+            or _path_crosses_link_like_component(context_path)
+        ):
+            raise RuntimeError(
+                "The previous Agent context cleanup record crosses a linked runtime boundary; "
+                "resolve it before starting another production run."
+            )
+        runtime_root = raw_runtime_root.resolve(strict=False)
+        resolved_run_directory = run_directory.resolve(strict=False)
+        resolved_context_path = context_path.resolve(strict=False)
         try:
-            context_path.relative_to(runtime_root)
+            resolved_run_directory.relative_to(runtime_root)
+            resolved_context_path.relative_to(runtime_root)
         except ValueError as exc:
             raise RuntimeError(
                 "The previous Agent context cleanup record is outside the runtime root; "
                 "resolve it before starting another production run."
             ) from exc
-        if context_path.name != "context.md":
+        if (
+            context_path.name != "context.md"
+            or not _AGENT_RUN_DIRECTORY_PATTERN.fullmatch(run_directory.name)
+            or resolved_run_directory.parent != runtime_root
+            or resolved_context_path.parent != resolved_run_directory
+        ):
             raise RuntimeError(
                 "The previous Agent context cleanup record is invalid; resolve it before "
                 "starting another production run."
+            )
+        try:
+            context_stat = context_path.lstat()
+        except FileNotFoundError:
+            context_stat = None
+        except OSError as exc:
+            raise RuntimeError(
+                f"Temporary Agent context cleanup is still pending for {context_path}."
+            ) from exc
+        if context_stat is not None and not stat_module.S_ISREG(context_stat.st_mode):
+            raise RuntimeError(
+                "The previous Agent context cleanup record is not a regular file; resolve it "
+                "before starting another production run."
             )
         try:
             context_path.unlink(missing_ok=True)
@@ -3774,6 +4042,8 @@ class ComputerUseAgentService:
         self._snapshot.context_file = ""
         self._snapshot.context_bytes = 0
         self._persist_snapshot_locked()
+
+        _require_orphaned_agent_context_cleanup(self._runtime_root)
 
     def start(
         self,
@@ -3879,7 +4149,18 @@ class ComputerUseAgentService:
                 ),
                 daemon=True,
             )
-            self._worker.start()
+            try:
+                self._worker.start()
+            except RuntimeError as exc:
+                self._worker = None
+                self._completion_started = True
+                self._snapshot.phase = "failed"
+                self._snapshot.message = f"Could not start the Agent worker: {exc}"
+                self._snapshot.last_error = str(exc)
+                self._snapshot.finished_at = utc_now()
+                self._snapshot.running = False
+                self._persist_snapshot_locked()
+                raise
 
     def request_stop(self) -> bool:
         with self._lock:
@@ -4101,10 +4382,15 @@ class ComputerUseAgentService:
                     "finished_at": finished_at,
                 }
         except Exception as exc:
-            LOGGER.exception("Computer Use web-agent request failed.")
             with self._lock:
                 self._completion_started = True
+                stopped_after_error = self._stop_requested.is_set()
                 recorded_conversation_url = str(self._snapshot.conversation_url or "")
+                recorded_turn_count = int(self._snapshot.turn_count or 0)
+            if stopped_after_error:
+                LOGGER.info("Computer Use web-agent request ended after Stop: %s", exc)
+            else:
+                LOGGER.exception("Computer Use web-agent request failed.")
             handoff_url = normalize_agent_conversation_url(
                 settings.platform,
                 recorded_conversation_url,
@@ -4113,7 +4399,7 @@ class ComputerUseAgentService:
                 settings.platform == "chatgpt"
                 and settings.browser == "edge"
                 and handoff_url
-                and not self._stop_requested.is_set()
+                and not stopped_after_error
             )
             handoff_opened = False
             handoff_message = ""
@@ -4151,6 +4437,20 @@ class ComputerUseAgentService:
                 "traditional_handoff_message": handoff_message,
                 "finished_at": utc_now(),
             }
+            if stopped_after_error:
+                completion = {
+                    "phase": "stopped",
+                    "message": "Agent request stopped.",
+                    "response": "",
+                    "conversation_url": recorded_conversation_url or target_url,
+                    "turn_count": recorded_turn_count,
+                    "bodycheck_passed": False,
+                    "last_error": "",
+                    "traditional_handoff_available": False,
+                    "traditional_handoff_opened": False,
+                    "traditional_handoff_message": "",
+                    "finished_at": utc_now(),
+                }
         finally:
             self._publish_run_completion(
                 sleep_assertion=sleep_assertion,
@@ -4244,7 +4544,13 @@ def run_web_computer_use(
             if should_stop():
                 return stopped_result
             page = context.pages[0] if context.pages else context.new_page()
-            goto_with_retry(page, selected_target_url, attempts=2, timeout_ms=90_000)
+            goto_with_retry(
+                page,
+                selected_target_url,
+                attempts=2,
+                timeout_ms=90_000,
+                should_stop=should_stop,
+            )
             if should_stop():
                 return stopped_result
             return _run_web_action_loop(
@@ -6050,7 +6356,7 @@ def _submit_and_wait(
     if browser_kind == "safari":
         if platform != "chatgpt":
             raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Agent sessions require Edge or Chrome.")
-        _submit_safari_prompt(page, message)
+        _submit_safari_prompt(page, message, should_stop)
     elif platform == "chatgpt":
         _submit_chromium_prompt(page, message, should_stop)
     else:
@@ -6217,8 +6523,14 @@ def _submit_chromium_web_prompt(
     )
 
 
-def _submit_safari_prompt(page: Any, message: str) -> None:
+def _submit_safari_prompt(
+    page: Any,
+    message: str,
+    should_stop: Callable[[], bool],
+) -> None:
     """Fill Safari's composer and wait for ChatGPT's visible send control."""
+    if should_stop():
+        return
     fill_result = page.evaluate(
         """({value}) => {
             const composer = document.querySelector('#prompt-textarea');
@@ -6246,10 +6558,14 @@ def _submit_safari_prompt(page: Any, message: str) -> None:
     )
     if not isinstance(fill_result, dict) or not fill_result.get("filled"):
         raise RuntimeError("Safari did not fill the ChatGPT composer.")
+    if should_stop():
+        return
 
     deadline = time.monotonic() + SAFARI_SEND_BUTTON_TIMEOUT_SECONDS
     last_state: dict[str, Any] = {}
     while time.monotonic() < deadline:
+        if should_stop():
+            return
         result = page.evaluate(
             r"""() => {
                 const isVisible = (element) => {
@@ -6296,6 +6612,8 @@ def _submit_safari_prompt(page: Any, message: str) -> None:
             last_state = result
             if result.get("clicked"):
                 return
+        if should_stop():
+            return
         page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
 
     details = json.dumps(last_state, ensure_ascii=False, separators=(",", ":"))[:500]
