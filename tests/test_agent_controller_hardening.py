@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.21.0-codex.1
+Code version: v3.22.0-codex.1
 """
 
 from __future__ import annotations
@@ -117,6 +117,62 @@ class _MissingMenuPage:
         pass
 
 
+class _ChromiumTriggerPage:
+    """Chromium reused-session page whose model trigger uses a confirmed live label."""
+
+    def __init__(self, trigger_name: str, current: str = "GPT-5.6 Sol"):
+        self.trigger_name = trigger_name
+        self.current = current
+        self.url = "https://chatgpt.com/c/reused-session"
+        self.expanded = False
+
+    class _Empty:
+        def count(self) -> int:
+            return 0
+
+    class _Trigger:
+        def __init__(self, owner: "_ChromiumTriggerPage") -> None:
+            self.owner = owner
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, _index: int) -> "_ChromiumTriggerPage._Trigger":
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.owner.expanded else "false"
+            return None
+
+        def click(self) -> None:
+            self.owner.expanded = not self.owner.expanded
+
+    def get_by_role(
+        self,
+        role: str,
+        name: str | None = None,
+        exact: bool | None = None,
+    ) -> object:
+        if role == "button" and name == self.trigger_name and exact is True:
+            return self._Trigger(self)
+        return self._Empty()
+
+    def locator(self, _selector: str) -> object:
+        return self._Empty()
+
+    def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+        if "current:" in expression:
+            return {"ok": True, "current": self.current}
+        return {"buttons": [self.trigger_name], "menus": []}
+
+    def wait_for_timeout(self, _ms: int) -> None:
+        pass
+
+
 def _patch_action_loop_browser(
     monkeypatch: pytest.MonkeyPatch,
     *,
@@ -127,9 +183,18 @@ def _patch_action_loop_browser(
     calls = {"attach": 0, "submit": 0}
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(
-        computer_use_agent, "_select_web_model", lambda *_args: model_ok
-    )
+    def select_model(*args: object) -> bool:
+        observation = args[-1]
+        if isinstance(observation, dict):
+            observation.update(
+                {
+                    "attempted_labels": ["GPT-5.6 Sol", "diagnostic-trigger"],
+                    "visible_buttons": ["Instant"],
+                }
+            )
+        return model_ok
+
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", select_model)
 
     def attach(*_args: object, **_kwargs: object) -> bool:
         calls["attach"] += 1
@@ -223,8 +288,17 @@ class TestModelVerificationFreshSession:
         assert f"session_mode={session_mode}" in message
         assert "expected_model=" in message
         assert "observed_model=" in message
-        assert "attempted_labels=" in message
+        assert "attempted_labels=['GPT-5.6 Sol', 'diagnostic-trigger']" in message
+        assert "visible_buttons=['Instant']" in message
         assert calls == {"attach": 0, "submit": 0}
+
+    def test_reused_session_sol_trigger_verifies(self) -> None:
+        page = _ChromiumTriggerPage("GPT-5.6 Sol")
+        assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
+
+    def test_reused_session_instant_trigger_verifies(self) -> None:
+        page = _ChromiumTriggerPage("Instant")
+        assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
 
 
 # ---------------------------------------------------------------------------

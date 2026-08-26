@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.16.0-codex.2
+Code version: v3.17.0-codex.1
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ from app.core.computer_use_agent import (
     ComputerUseSettingsStore,
     WorkspaceController,
     _attach_context_file,
+    _chatgpt_visible_model_controls,
     default_model_for_platform,
     strongest_model_option,
     _chatgpt_target_is_open,
@@ -311,11 +312,129 @@ def test_chromium_model_selector_uses_trusted_locator_clicks_and_read_only_evalu
     assert page.power.click_count == 2
     assert not page.power.expanded
     assert ("button", "Extra High", True) in page.role_calls
-    assert page.locator_calls == []
+    assert page.locator_calls in ([], ["#prompt-textarea"])
     assert page.waits == [200]
     assert len(page.evaluate_scripts) == 1
     assert all(".click(" not in expression for expression in page.evaluate_scripts)
     assert "current:" in page.evaluate_scripts[0]
+
+
+def _chromium_model_page(trigger_name: str, current: str = "GPT-5.6 Sol"):
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.click_count = 0
+            self.expanded = False
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> _PowerLocator:
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-label":
+                return trigger_name if trigger_name == "Switch model" else None
+            return None
+
+        def inner_text(self) -> str:
+            return "" if trigger_name == "Switch model" else trigger_name
+
+        def click(self) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _Page:
+        def __init__(self) -> None:
+            self.power = _PowerLocator()
+            self.evaluate_scripts: list[str] = []
+            self.role_calls: list[tuple[str, str | None, bool | None]] = []
+            self.url = "https://chatgpt.com/c/reused-session"
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            self.role_calls.append((role, name, exact))
+            if role == "button" and name == trigger_name and exact is True:
+                return self.power
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            self.evaluate_scripts.append(expression)
+            if "visibleMenuCount" in expression or "current:" in expression:
+                return {"ok": True, "current": current}
+            return {"buttons": [trigger_name], "menus": []}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    return _Page()
+
+
+def test_chromium_reused_session_verifies_gpt_5_6_sol_trigger() -> None:
+    page = _chromium_model_page("GPT-5.6 Sol")
+    observation: dict[str, object] = {}
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert ("button", "GPT-5.6 Sol", True) in page.role_calls
+    assert observation["observed"] == "GPT-5.6 Sol"
+    assert page.power.click_count == 2
+
+
+def test_chromium_reused_session_verifies_instant_trigger() -> None:
+    page = _chromium_model_page("Instant")
+    observation: dict[str, object] = {}
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert ("button", "Instant", True) in page.role_calls
+    assert observation["observed"] == "GPT-5.6 Sol"
+    assert page.power.click_count == 2
+
+
+def test_chromium_wrong_model_readback_fails_closed() -> None:
+    page = _chromium_model_page("Instant", current="GPT-4o")
+    observation: dict[str, object] = {}
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert observation.get("reason") == "model-mismatch"
+
+
+def test_chatgpt_model_diagnostics_are_filtered_bounded_and_deduplicated() -> None:
+    class _Page:
+        def evaluate(self, _expression: str) -> dict[str, object]:
+            return {
+                "buttons": [
+                    "Project",
+                    "Profile",
+                    "Prompt",
+                    "Pro",
+                    "Instant",
+                    "instant",
+                    "Model " + ("x" * 300),
+                    *(f"Model {index}" for index in range(30)),
+                ],
+                "menus": ["menu", "listbox", "dialog", "MENU"],
+            }
+
+    result = _chatgpt_visible_model_controls(_Page())
+
+    assert result["buttons"][:2] == ["Pro", "Instant"]
+    assert all(label not in result["buttons"] for label in ("Project", "Profile", "Prompt"))
+    assert len(result["buttons"]) == 20
+    assert all(len(label) <= 160 for label in result["buttons"])
+    assert result["menus"] == ["menu", "listbox"]
 
 
 def test_chromium_model_selector_returns_false_without_a_visible_power_control() -> None:
@@ -359,7 +478,7 @@ def test_chromium_model_selector_returns_false_without_a_visible_power_control()
     page = _Page()
 
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is False
-    assert page.locator_calls == []
+    assert all(call == "#prompt-textarea" for call in page.locator_calls)
 
 
 def test_non_chatgpt_model_selection_uses_the_provider_menu_when_exposed() -> None:
@@ -934,6 +1053,50 @@ def test_load_migrates_legacy_persisted_prompts_and_keeps_unrelated_settings(
     assert restarted.settings.browser == "edge"
     assert restarted.settings.model == "gpt-5.6-sol"
     assert restarted.settings.workspace_path == str(workspace.resolve())
+
+
+def test_load_keeps_migrated_prompts_when_persist_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "Kept Project"
+    workspace.mkdir()
+    settings_path = tmp_path / "computer-use-agent.json"
+    payload = {
+        "workspace_path": str(workspace),
+        "operating_system": "macos",
+        "platform": "chatgpt",
+        "browser": "edge",
+        "model": "gpt-5.6-sol",
+        "target_url": "https://chatgpt.com/c/legacy-session",
+        "context_limit_mib": 32,
+        "max_turns": 55,
+        "command_timeout_seconds": 240,
+        "macos_system_prompt": LEGACY_MACOS_SYSTEM_PROMPT,
+        "windows_system_prompt": LEGACY_WINDOWS_SYSTEM_PROMPT,
+    }
+    settings_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    def fail_save(*_args: object, **_kwargs: object) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(computer_use_agent, "save_computer_use_settings", fail_save)
+    loaded = load_computer_use_settings(settings_path)
+    for marker in SAFE_PROTOCOL_PROMPT_MARKERS:
+        assert marker in loaded.macos_system_prompt
+        assert marker in loaded.windows_system_prompt
+    assert loaded.macos_system_prompt == DEFAULT_MACOS_SYSTEM_PROMPT
+    assert loaded.windows_system_prompt == DEFAULT_WINDOWS_SYSTEM_PROMPT
+    assert loaded.browser == "edge"
+    assert loaded.model == "gpt-5.6-sol"
+    assert loaded.platform == "chatgpt"
+    assert loaded.workspace_path == str(workspace.resolve())
+    assert loaded.target_url == "https://chatgpt.com/c/legacy-session"
+    persisted = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert persisted["macos_system_prompt"] == LEGACY_MACOS_SYSTEM_PROMPT
+    assert persisted["windows_system_prompt"] == LEGACY_WINDOWS_SYSTEM_PROMPT
 
 
 def test_running_false_is_published_after_sleep_assertion_release(
@@ -1513,6 +1676,20 @@ def test_workspace_search_uses_python_fallback_when_rg_is_unavailable(
         "fallback-search-marker=must-not-leak\n",
         encoding="utf-8",
     )
+    ignored = workspace / ".git"
+    ignored.mkdir()
+    (ignored / "config").write_text(
+        "fallback-search-marker=must-not-leak\n",
+        encoding="utf-8",
+    )
+    (workspace / "oversized.txt").write_text(
+        "fallback-search-marker\n" + ("x" * (2 * 1_024 * 1_024)),
+        encoding="utf-8",
+    )
+    try:
+        (workspace / "linked.txt").symlink_to("notes.txt")
+    except OSError:
+        pass
     controller = WorkspaceController(
         workspace,
         ComputerUseSettings(workspace_path=str(workspace)),
@@ -1536,6 +1713,108 @@ def test_workspace_search_uses_python_fallback_when_rg_is_unavailable(
     assert result["engine"] == "python-fallback"
     assert result["matches"] == ["notes.txt:1:fallback-search-marker"]
     assert "must-not-leak" not in str(result)
+
+
+@pytest.mark.parametrize(
+    ("glob", "expected_matches"),
+    (
+        ("*.md", ["AGENTS.md:2:## 10) Definition of Done"]),
+        ("*.py", []),
+    ),
+)
+def test_workspace_search_python_fallback_supports_an_explicit_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    glob: str,
+    expected_matches: list[str],
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "AGENTS.md").write_text(
+        "# Policy\n## 10) Definition of Done\n",
+        encoding="utf-8",
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("rg")),
+    )
+
+    result = controller.execute(
+        {
+            "action": "search",
+            "query": "Definition of Done",
+            "path": "AGENTS.md",
+            "glob": glob,
+            "max_results": 20,
+        }
+    )
+
+    assert result["ok"]
+    assert result["engine"] == "python-fallback"
+    assert result["matches"] == expected_matches
+
+
+@pytest.mark.parametrize(
+    ("glob", "expected_matches"),
+    (
+        ("*.md", ["AGENTS.md:1:## 10) Definition of Done"]),
+        ("*.py", []),
+    ),
+)
+def test_workspace_search_rg_explicit_file_keeps_the_filename_and_glob_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    glob: str,
+    expected_matches: list[str],
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "AGENTS.md").write_text(
+        "## 10) Definition of Done\n",
+        encoding="utf-8",
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    observed_command: list[str] = []
+
+    class _SearchResult:
+        returncode = 0
+        stdout = "AGENTS.md:1:## 10) Definition of Done\n"
+        stderr = ""
+
+    def search(command: list[str], **_kwargs: object) -> _SearchResult:
+        observed_command.extend(command)
+        return _SearchResult()
+
+    monkeypatch.setattr(computer_use_agent.subprocess, "run", search)
+
+    result = controller.execute(
+        {
+            "action": "search",
+            "query": "Definition of Done",
+            "path": "AGENTS.md",
+            "glob": glob,
+        }
+    )
+
+    assert result["ok"]
+    assert result["engine"] == "rg"
+    assert result["matches"] == expected_matches
+    assert "--with-filename" in observed_command
+    assert observed_command[-2:] == ["Definition of Done", "AGENTS.md"]
 
 
 def test_workspace_controller_never_exposes_env_or_private_key_files(

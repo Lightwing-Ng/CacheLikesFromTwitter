@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.21.0-codex.1
+Code version: v3.23.0-codex.1
 """
 
 from __future__ import annotations
@@ -945,11 +945,18 @@ def load_computer_use_settings(
         settings = validate_computer_use_settings(payload)
         migrated = migrate_legacy_system_prompts(settings)
         if migrated != settings:
-            save_computer_use_settings(migrated, settings_path)
-            LOGGER.info(
-                "Migrated legacy Computer Use Agent system prompts at %s.",
-                settings_path,
-            )
+            try:
+                save_computer_use_settings(migrated, settings_path)
+                LOGGER.info(
+                    "Migrated legacy Computer Use Agent system prompts at %s.",
+                    settings_path,
+                )
+            except OSError as exc:
+                LOGGER.warning(
+                    "Could not persist migrated Computer Use Agent settings at %s: %s",
+                    settings_path,
+                    exc,
+                )
         return migrated
     except (OSError, ValueError, TypeError, json.JSONDecodeError):
         LOGGER.warning("Ignoring invalid Computer Use Agent settings at %s.", settings_path)
@@ -1277,6 +1284,14 @@ def _path_has_sensitive_part(relative: Path) -> bool:
     return False
 
 
+def _path_matches_search_glob(path: Path, root: Path, glob: str) -> bool:
+    """Apply the controller glob consistently to discovered and explicit files."""
+    if not glob:
+        return True
+    relative_to_root = path.name if root.is_file() else path.relative_to(root).as_posix()
+    return fnmatch(relative_to_root, glob) or fnmatch(path.name, glob)
+
+
 def _fallback_search_matches(
     *,
     workspace: Path,
@@ -1296,7 +1311,8 @@ def _fallback_search_matches(
     matches: list[str] = []
     inspected_files = 0
     try:
-        candidates = root.rglob("*")
+        root_is_file = root.is_file()
+        candidates = (root,) if root_is_file else root.rglob("*")
         for path in candidates:
             if inspected_files >= 12_000 or len(matches) >= max_results:
                 break
@@ -1314,10 +1330,7 @@ def _fallback_search_matches(
             except (OSError, ValueError):
                 continue
 
-            relative_to_root = path.relative_to(root).as_posix()
-            if glob and not (
-                fnmatch(relative_to_root, glob) or fnmatch(path.name, glob)
-            ):
+            if not _path_matches_search_glob(path, root, glob):
                 continue
 
             inspected_files += 1
@@ -1583,7 +1596,15 @@ class WorkspaceController:
             raise ValueError("The search action requires a query.")
         root = self._resolve_path(payload.get("path", "."))
         max_results = max(1, min(300, int(payload.get("max_results", 80))))
-        command = ["rg", "--line-number", "--color", "never", "--max-count", str(max_results)]
+        command = [
+            "rg",
+            "--line-number",
+            "--with-filename",
+            "--color",
+            "never",
+            "--max-count",
+            str(max_results),
+        ]
         for excluded_glob in (
             "!.env",
             "!.env.*",
@@ -1628,7 +1649,10 @@ class WorkspaceController:
         if process.returncode not in {0, 1}:
             raise RuntimeError((process.stderr or process.stdout or "Search failed.").strip())
         matches = []
-        for value in (process.stdout or "").splitlines():
+        output = process.stdout or ""
+        if root.is_file() and not _path_matches_search_glob(root, root, glob):
+            output = ""
+        for value in output.splitlines():
             relative_text = value.split(":", 1)[0]
             if _path_has_sensitive_part(Path(relative_text)):
                 continue
@@ -2901,13 +2925,24 @@ def _run_web_action_loop(
         menu_text = str(model_observation.get("menu_text") or "").strip() or "none"
         available = model_observation.get("available") or []
         available_text = ", ".join(str(item) for item in available if str(item).strip()) or menu_text
+        recorded_attempted_labels = model_observation.get("attempted_labels")
+        if not isinstance(recorded_attempted_labels, (list, tuple)):
+            recorded_attempted_labels = attempted_labels
+        verified_attempted_labels = [
+            str(item).strip()
+            for item in recorded_attempted_labels
+            if str(item).strip()
+        ] or list(attempted_labels)
         raise RuntimeError(
             f"ChatGPT Web could not verify {expected_label} after "
             f"{CHATGPT_MODEL_VERIFICATION_ATTEMPTS} attempt(s). "
             "No project context or prompt was sent. "
             f"URL={page_url}, session_mode={session_mode}, session_type={session_type}, "
             f"expected_model={expected_label}, observed_model={observed}, "
-            f"menu_text={available_text}, attempted_labels={list(attempted_labels)}."
+            f"menu_text={available_text}, "
+            f"visible_buttons={model_observation.get('visible_buttons') or []}, "
+            f"menu_roles={model_observation.get('menu_roles') or []}, "
+            f"attempted_labels={verified_attempted_labels}."
         )
     else:
         update(
@@ -3385,6 +3420,35 @@ def _chatgpt_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
     )
 
 
+CHATGPT_MODEL_TRIGGER_LABELS = (
+    "Instant",
+    "GPT-5.6 Sol",
+    "5.6 Sol",
+    "Extra High",
+    "High",
+    "Medium",
+    "Low",
+    "Auto",
+    "Max",
+    "Pro",
+    "Advanced",
+    "Faster",
+    "Smarter",
+    "Model",
+    "Model picker",
+    "Switch model",
+)
+
+CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS = 20
+CHATGPT_MODEL_DIAGNOSTIC_MAX_CHARS = 160
+_CHATGPT_MODEL_DIAGNOSTIC_PATTERN = re.compile(
+    r"(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|"
+    r"model(?: picker)?|switch model|auto|high|medium|low|max|pro|"
+    r"advanced|faster|smarter)(?:$|\s)",
+    re.IGNORECASE,
+)
+
+
 def _first_visible_role_control(
     page: Any, role: str, names: tuple[str, ...]
 ) -> Any | None:
@@ -3396,6 +3460,93 @@ def _first_visible_role_control(
             if candidate.is_visible():
                 return candidate
     return None
+
+
+def _wait_for_chatgpt_composer_if_available(page: Any) -> None:
+    """Wait for the ChatGPT composer when the page exposes Playwright locators."""
+    locator_fn = getattr(page, "locator", None)
+    if not callable(locator_fn):
+        return
+    try:
+        handle = locator_fn("#prompt-textarea")
+        target = getattr(handle, "first", handle)
+        wait_for = getattr(target, "wait_for", None)
+        if callable(wait_for):
+            wait_for(state="visible", timeout=CHATGPT_COMPOSER_TIMEOUT_SECONDS * 1_000)
+    except Exception:
+        return
+
+
+def _chatgpt_visible_model_controls(page: Any) -> dict[str, Any]:
+    """Read visible model-related button names and menu roles without clicking."""
+    evaluate = getattr(page, "evaluate", None)
+    if not callable(evaluate):
+        return {"buttons": [], "menus": []}
+    try:
+        result = evaluate(
+            r"""() => {
+                const visible = (element) => {
+                    if (!element) return false;
+                    const style = getComputedStyle(element);
+                    return element.getClientRects().length > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const textOf = (element) => String(
+                    element.getAttribute('aria-label')
+                    || element.innerText
+                    || element.textContent
+                    || ''
+                ).replace(/\s+/g, ' ').trim();
+                const diagnosticPattern = /(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|model(?: picker)?|switch model|auto|high|medium|low|max|pro|advanced|faster|smarter)(?:$|\s)/i;
+                const buttons = Array.from(document.querySelectorAll('button, [role="button"]'))
+                    .filter(visible)
+                    .map(textOf)
+                    .map((label) => label.slice(0, 160))
+                    .filter((label) => diagnosticPattern.test(label));
+                const menus = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"]'))
+                    .filter(visible)
+                    .map((element) => element.getAttribute('role') || '');
+                return {
+                    buttons: [...new Set(buttons)].slice(0, 20),
+                    menus: [...new Set(menus.filter(Boolean))].slice(0, 20),
+                };
+            }"""
+        )
+    except Exception:
+        return {"buttons": [], "menus": []}
+    if not isinstance(result, dict):
+        return {"buttons": [], "menus": []}
+    raw_buttons = result.get("buttons", [])
+    if not isinstance(raw_buttons, (list, tuple)):
+        raw_buttons = []
+    buttons: list[str] = []
+    seen_buttons: set[str] = set()
+    for item in raw_buttons:
+        label = " ".join(str(item).split())[:CHATGPT_MODEL_DIAGNOSTIC_MAX_CHARS]
+        identity = label.casefold()
+        if (
+            not label
+            or identity in seen_buttons
+            or not _CHATGPT_MODEL_DIAGNOSTIC_PATTERN.search(label)
+        ):
+            continue
+        seen_buttons.add(identity)
+        buttons.append(label)
+        if len(buttons) >= CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS:
+            break
+
+    raw_menus = result.get("menus", [])
+    if not isinstance(raw_menus, (list, tuple)):
+        raw_menus = []
+    menus: list[str] = []
+    for item in raw_menus:
+        role = str(item).strip().casefold()
+        if role in {"menu", "listbox"} and role not in menus:
+            menus.append(role)
+        if len(menus) >= CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS:
+            break
+    return {"buttons": buttons, "menus": menus}
 
 
 def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
@@ -3456,6 +3607,8 @@ def _record_model_observation(
     reason: str = "",
     attempted_labels: tuple[str, ...] = (),
     menu_text: str = "",
+    visible_buttons: list[str] | tuple[str, ...] | None = None,
+    menu_roles: list[str] | tuple[str, ...] | None = None,
 ) -> None:
     if observation is None:
         return
@@ -3466,6 +3619,8 @@ def _record_model_observation(
             "reason": str(reason or "").strip(),
             "attempted_labels": list(attempted_labels),
             "menu_text": str(menu_text or observed or "").strip(),
+            "visible_buttons": [str(item).strip() for item in (visible_buttons or []) if str(item).strip()],
+            "menu_roles": [str(item).strip() for item in (menu_roles or []) if str(item).strip()],
         }
     )
 
@@ -3477,36 +3632,28 @@ def _select_chatgpt_model_chromium(
     observation: dict[str, Any] | None = None,
 ) -> bool:
     """Use trusted Playwright clicks, then read back the remote Chromium model."""
-    power_labels = (
-        "Instant",
-        "Extra High",
-        "High",
-        "Medium",
-        "Low",
-        "Auto",
-        "Max",
-        "Pro",
-        "Advanced",
-        "Faster",
-        "Smarter",
-    )
-    power_button = None
     wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
+    _wait_for_chatgpt_composer_if_available(page)
+    power_button = None
     for attempt in range(CHATGPT_MODEL_VERIFICATION_ATTEMPTS):
-        power_button = _first_visible_role_control(page, "button", power_labels)
+        power_button = _first_visible_role_control(page, "button", CHATGPT_MODEL_TRIGGER_LABELS)
         if power_button is not None:
             break
         if attempt + 1 < CHATGPT_MODEL_VERIFICATION_ATTEMPTS:
-            wait_for_timeout(500)
+            wait_for_timeout(1_000)
     if power_button is None:
+        controls = _chatgpt_visible_model_controls(page)
         LOGGER.warning(
-            "ChatGPT Web could not find the visible power control for %s.",
+            "ChatGPT Web could not find the visible power control for %s (visible=%s).",
             option["label"],
+            controls.get("buttons") or [],
         )
         _record_model_observation(
             observation,
             reason="power-control-not-found",
-            attempted_labels=remote_labels,
+            attempted_labels=remote_labels + CHATGPT_MODEL_TRIGGER_LABELS,
+            visible_buttons=controls.get("buttons") or [],
+            menu_roles=controls.get("menus") or [],
         )
         return False
 
@@ -3578,6 +3725,7 @@ def _select_chatgpt_model_chromium(
 
     if power_button.get_attribute("aria-expanded") == "true":
         power_button.click()
+    controls = _chatgpt_visible_model_controls(page)
     LOGGER.warning(
         "ChatGPT Web could not verify model %s through the Chromium power menu (current=%s; diagnostic=%s).",
         option["label"],
@@ -3588,9 +3736,11 @@ def _select_chatgpt_model_chromium(
         observation,
         observed=current,
         available=[current] if current else [],
-        attempted_labels=remote_labels,
+        attempted_labels=remote_labels + CHATGPT_MODEL_TRIGGER_LABELS,
         menu_text=current or str(result.get("diagnostic") or ""),
         reason="model-mismatch",
+        visible_buttons=controls.get("buttons") or [],
+        menu_roles=controls.get("menus") or [],
     )
     return False
 
@@ -3634,12 +3784,18 @@ def _select_chatgpt_model(
             };
             const powerLabels = new Set([
                 'auto', 'instant', 'low', 'medium', 'high', 'extra high', 'max', 'pro',
-                'advanced', 'faster', 'smarter'
+                'advanced', 'faster', 'smarter', 'gpt-5.6 sol', '5.6 sol', 'model',
+                'model picker', 'switch model'
             ]);
-            const powerButton = Array.from(document.querySelectorAll('button')).find((button) =>
+            const labelFor = (button) => normalize(
+                `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`
+            );
+            const powerButton = Array.from(document.querySelectorAll('button, [role="button"]')).find((button) =>
                 isVisible(button)
-                && powerLabels.has(normalize(button.innerText || button.textContent))
                 && !button.closest('[role="menu"]')
+                && (powerLabels.has(normalize(button.innerText || button.textContent))
+                    || powerLabels.has(normalize(button.getAttribute('aria-label') || ''))
+                    || [...powerLabels].some((label) => labelFor(button) === label || labelFor(button).endsWith(` ${label}`)))
             );
             if (!powerButton) return {ok: false, reason: 'power-control-not-found', available: []};
             if (phase === 'choose') {
