@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.28.1-codex.1
+Code version: v3.28.2-codex.1
 """
 
 from __future__ import annotations
@@ -237,6 +237,18 @@ _BASE64_CORRECTION_INSTRUCTION = (
     "Do not attempt to manually escape the problematic characters."
 )
 
+_CURRENT_SEARCH_ACTION_EXAMPLE = (
+    '{"action":"search","query":"literal text","path":".",'
+    '"glob":"*.py","max_results":80}'
+)
+_LEGACY_REGEX_SEARCH_ACTION_EXAMPLE = (
+    '{"action":"search","query":"text or regex","path":".",'
+    '"glob":"*.py","max_results":80}'
+)
+_LITERAL_SEARCH_PROMPT_INSTRUCTION = (
+    "Search action queries are literal text, never regular expressions."
+)
+
 DEFAULT_MACOS_SYSTEM_PROMPT = (
     """You are the reasoning component of a local Computer Use coding agent.
 The controller runs on macOS and owns one selected project. It can read and change only that project and can run bounded local checks. Treat controller results as authoritative. Never claim a file changed or a check passed until the controller reports it.
@@ -250,7 +262,9 @@ Work autonomously from the user's request. Read the repository instruction files
 Use one of these actions:
 {"action":"list","path":".","depth":2}
 {"action":"read","path":"relative/file","start_line":1,"end_line":240}
-{"action":"search","query":"literal text","path":".","glob":"*.py","max_results":80}
+"""
+    + _CURRENT_SEARCH_ACTION_EXAMPLE
+    + """
 {"action":"replace","path":"relative/file","old":"exact text appearing once","new":"replacement text"}
 {"action":"replace_base64","path":"relative/file","old_base64":"base64-of-old","new_base64":"base64-of-new"}
 {"action":"write","path":"relative/new-file","content":"complete content"}
@@ -258,6 +272,10 @@ Use one of these actions:
 {"action":"run","command":"focused inspection, build, lint, or test command"}
 {"action":"bodycheck"}
 {"action":"final","summary":"concise Markdown outcome","verification":["check and result"],"limitations":["remaining limitation"]}
+
+"""
+    + _LITERAL_SEARCH_PROMPT_INSTRUCTION
+    + """
 
 Use read/search/list before editing. Use replace for existing files and write mainly for new files. Do not use shell commands to write, delete, move, install, download, change Git history, publish, or access secrets. After edits, run at least one approved focused verification command, then ask the controller to run bodycheck. A final action is invalid until both verification and bodycheck succeed after the latest edit. The final summary must be concise and must not restate the full transcript."""
 )
@@ -270,7 +288,13 @@ The controller runs on Windows, uses PowerShell-compatible Windows paths, and ow
     + JSON_ACTION_RESPONSE_INSTRUCTION
     + """
 
-Use the controller actions list, read, search, replace, write, run, bodycheck, or final. Never claim an operation succeeded before the controller reports it. After edits, run one approved verification command and then bodycheck before final. Do not use commands to write, delete, move, install, download, change Git history, publish, or access secrets."""
+Use the controller actions list, read, search, replace, write, run, bodycheck, or final. Never claim an operation succeeded before the controller reports it.
+
+"""
+    + _LITERAL_SEARCH_PROMPT_INSTRUCTION
+    + """
+
+After edits, run one approved verification command and then bodycheck before final. Do not use commands to write, delete, move, install, download, change Git history, publish, or access secrets."""
 )
 
 _IGNORED_DIRECTORY_NAMES = frozenset(
@@ -438,7 +462,10 @@ SAFE_PROTOCOL_PROMPT_MARKERS = (
     "fenced code block labelled json",
     "replace_base64",
     "write_base64",
+    _LITERAL_SEARCH_PROMPT_INSTRUCTION,
 )
+
+_SAFE_TRANSPORT_PROMPT_MARKERS = SAFE_PROTOCOL_PROMPT_MARKERS[:-1]
 
 
 def system_prompt_has_safe_protocol(prompt: str) -> bool:
@@ -447,14 +474,31 @@ def system_prompt_has_safe_protocol(prompt: str) -> bool:
     return all(marker in text for marker in SAFE_PROTOCOL_PROMPT_MARKERS)
 
 
+def _migrate_marker_complete_system_prompt(prompt: str) -> str:
+    """Upgrade known prompt semantics without discarding user-authored guidance."""
+    migrated = prompt.replace(
+        _LEGACY_REGEX_SEARCH_ACTION_EXAMPLE,
+        _CURRENT_SEARCH_ACTION_EXAMPLE,
+    )
+    if _LITERAL_SEARCH_PROMPT_INSTRUCTION not in migrated:
+        migrated = (
+            f"{migrated.rstrip()}\n\n{_LITERAL_SEARCH_PROMPT_INSTRUCTION}"
+        )
+    return migrated
+
+
 def migrate_legacy_system_prompts(settings: ComputerUseSettings) -> ComputerUseSettings:
-    """Replace persisted prompts that lack the current safe-protocol markers."""
+    """Upgrade persisted transport and action semantics to the current contract."""
     macos_prompt = settings.macos_system_prompt
     windows_prompt = settings.windows_system_prompt
-    if not system_prompt_has_safe_protocol(macos_prompt):
+    if not all(marker in macos_prompt for marker in _SAFE_TRANSPORT_PROMPT_MARKERS):
         macos_prompt = DEFAULT_MACOS_SYSTEM_PROMPT
-    if not system_prompt_has_safe_protocol(windows_prompt):
+    else:
+        macos_prompt = _migrate_marker_complete_system_prompt(macos_prompt)
+    if not all(marker in windows_prompt for marker in _SAFE_TRANSPORT_PROMPT_MARKERS):
         windows_prompt = DEFAULT_WINDOWS_SYSTEM_PROMPT
+    else:
+        windows_prompt = _migrate_marker_complete_system_prompt(windows_prompt)
     if (
         macos_prompt == settings.macos_system_prompt
         and windows_prompt == settings.windows_system_prompt
@@ -4161,11 +4205,18 @@ def run_web_computer_use(
         platform=settings.platform,
         session_title=session_title,
     )
+    stopped_result = ("", selected_target_url, 0, False)
+    if should_stop():
+        return stopped_result
 
     if descriptor.engine == "safari":
         with SafariContext(selected_target_url) as context:
+            if should_stop():
+                return stopped_result
             page = context.primary_page
             page.goto(selected_target_url, wait_until="domcontentloaded", timeout=90_000)
+            if should_stop():
+                return stopped_result
             return _run_web_action_loop(
                 page=page,
                 browser_kind="safari",
@@ -4190,8 +4241,12 @@ def run_web_computer_use(
             background_window=True,
             silent=settings.browser == "edge",
         ) as context:
+            if should_stop():
+                return stopped_result
             page = context.pages[0] if context.pages else context.new_page()
             goto_with_retry(page, selected_target_url, attempts=2, timeout_ms=90_000)
+            if should_stop():
+                return stopped_result
             return _run_web_action_loop(
                 page=page,
                 browser_kind="chromium",

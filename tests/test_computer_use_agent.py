@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.28.1-codex.1
+Code version: v3.28.2-codex.1
 """
 
 from __future__ import annotations
@@ -55,6 +55,7 @@ from app.core.computer_use_agent import (
     open_chatgpt_in_default_browser,
     open_agent_in_default_browser,
     parse_agent_action,
+    run_web_computer_use,
     load_computer_use_settings,
     save_computer_use_settings,
     DEFAULT_MACOS_SYSTEM_PROMPT,
@@ -1299,6 +1300,78 @@ def test_load_migrates_legacy_persisted_prompts_and_keeps_unrelated_settings(
     assert restarted.settings.workspace_path == str(workspace.resolve())
 
 
+def test_load_upgrades_literal_search_contract_without_losing_custom_prompt_text(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "Kept Project"
+    workspace.mkdir()
+    settings_path = tmp_path / "computer-use-agent.json"
+    legacy_action = (
+        '{"action":"search","query":"text or regex","path":".",'
+        '"glob":"*.py","max_results":80}'
+    )
+    current_action = (
+        '{"action":"search","query":"literal text","path":".",'
+        '"glob":"*.py","max_results":80}'
+    )
+    literal_instruction = (
+        "Search action queries are literal text, never regular expressions."
+    )
+    legacy_macos_prompt = DEFAULT_MACOS_SYSTEM_PROMPT.replace(
+        current_action,
+        legacy_action,
+    ).replace(f"\n\n{literal_instruction}", "")
+    legacy_windows_prompt = DEFAULT_WINDOWS_SYSTEM_PROMPT.replace(
+        f"\n\n{literal_instruction}", ""
+    )
+    custom_macos_text = "Keep this custom macOS project guidance."
+    custom_windows_text = "Keep this custom Windows project guidance."
+    payload = asdict(
+        ComputerUseSettings(
+            workspace_path=str(workspace),
+            browser="edge",
+            model="gpt-5.6-sol",
+            context_limit_mib=32,
+            max_turns=55,
+            command_timeout_seconds=240,
+            macos_system_prompt=f"{legacy_macos_prompt}\n\n{custom_macos_text}",
+            windows_system_prompt=(
+                f"{legacy_windows_prompt}\n\n{custom_windows_text}"
+            ),
+        )
+    )
+    settings_path.write_text(
+        json.dumps(payload, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_computer_use_settings(settings_path)
+
+    assert current_action in loaded.macos_system_prompt
+    assert legacy_action not in loaded.macos_system_prompt
+    assert literal_instruction in loaded.macos_system_prompt
+    assert literal_instruction in loaded.windows_system_prompt
+    assert custom_macos_text in loaded.macos_system_prompt
+    assert custom_windows_text in loaded.windows_system_prompt
+    assert loaded.workspace_path == str(workspace.resolve())
+    assert loaded.browser == "edge"
+    assert loaded.model == "gpt-5.6-sol"
+    assert loaded.context_limit_mib == 32
+    assert loaded.max_turns == 55
+    assert loaded.command_timeout_seconds == 240
+
+    persisted_once = settings_path.read_text(encoding="utf-8")
+    persisted = json.loads(persisted_once)
+    assert current_action in persisted["macos_system_prompt"]
+    assert legacy_action not in persisted["macos_system_prompt"]
+    assert custom_macos_text in persisted["macos_system_prompt"]
+    assert custom_windows_text in persisted["windows_system_prompt"]
+
+    restarted = ComputerUseSettingsStore(settings_path)
+    assert restarted.settings == loaded
+    assert settings_path.read_text(encoding="utf-8") == persisted_once
+
+
 def test_load_keeps_migrated_prompts_when_persist_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1341,6 +1414,154 @@ def test_load_keeps_migrated_prompts_when_persist_fails(
     persisted = json.loads(settings_path.read_text(encoding="utf-8"))
     assert persisted["macos_system_prompt"] == LEGACY_MACOS_SYSTEM_PROMPT
     assert persisted["windows_system_prompt"] == LEGACY_WINDOWS_SYSTEM_PROMPT
+
+
+def test_pre_requested_stop_never_opens_a_web_browser_context(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Descriptor:
+        engine = "chromium"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    context_path = tmp_path / "context.md"
+    context_path.write_text("context", encoding="utf-8")
+    monkeypatch.setattr(
+        computer_use_agent,
+        "browser_descriptors",
+        lambda _config: {"edge": _Descriptor()},
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "sync_playwright_or_error",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("A pre-requested Stop must prevent browser startup.")
+        ),
+    )
+
+    result = run_web_computer_use(
+        prompt="Inspect the project.",
+        workspace=workspace,
+        context_path=context_path,
+        config=CrawlConfig(),
+        settings=ComputerUseSettings(workspace_path=str(workspace)),
+        target_url="https://chatgpt.com/",
+        should_stop=lambda: True,
+        update=lambda **_changes: None,
+        process_changed=lambda _process: None,
+    )
+
+    assert result == ("", "https://chatgpt.com/", 0, False)
+
+
+@pytest.mark.parametrize("engine", ("safari", "chromium"))
+@pytest.mark.parametrize("stop_stage", ("context", "navigation"))
+def test_stop_during_browser_startup_never_enters_the_action_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    engine: str,
+    stop_stage: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Descriptor:
+        def __init__(self, selected_engine: str) -> None:
+            self.engine = selected_engine
+
+    stop_requested = Event()
+    navigation_calls: list[str] = []
+    context_exited: list[bool] = []
+
+    class _Page:
+        url = "https://chatgpt.com/"
+
+        def goto(self, *_args: object, **_kwargs: object) -> None:
+            navigation_calls.append("safari")
+            if stop_stage == "navigation":
+                stop_requested.set()
+
+    page = _Page()
+
+    class _BrowserContext:
+        primary_page = page
+        pages = [page]
+
+        def __enter__(self) -> "_BrowserContext":
+            if stop_stage == "context":
+                stop_requested.set()
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            context_exited.append(True)
+
+        def new_page(self) -> _Page:
+            return page
+
+    class _PlaywrightContext:
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    browser_context = _BrowserContext()
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    context_path = tmp_path / "context.md"
+    context_path.write_text("context", encoding="utf-8")
+    monkeypatch.setattr(
+        computer_use_agent,
+        "browser_descriptors",
+        lambda _config: {"edge": _Descriptor(engine)},
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "SafariContext",
+        lambda _target_url: browser_context,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "sync_playwright_or_error",
+        lambda: _PlaywrightContext(),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "launch_chromium_context",
+        lambda *_args, **_kwargs: browser_context,
+    )
+
+    def goto_with_stop(*_args: object, **_kwargs: object) -> None:
+        navigation_calls.append("chromium")
+        if stop_stage == "navigation":
+            stop_requested.set()
+
+    monkeypatch.setattr(computer_use_agent, "goto_with_retry", goto_with_stop)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_run_web_action_loop",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Stop must prevent the browser action loop.")
+        ),
+    )
+
+    result = run_web_computer_use(
+        prompt="Inspect the project.",
+        workspace=workspace,
+        context_path=context_path,
+        config=CrawlConfig(),
+        settings=ComputerUseSettings(workspace_path=str(workspace)),
+        target_url="https://chatgpt.com/",
+        should_stop=stop_requested.is_set,
+        update=lambda **_changes: None,
+        process_changed=lambda _process: None,
+    )
+
+    assert result == ("", "https://chatgpt.com/", 0, False)
+    assert navigation_calls == ([] if stop_stage == "context" else [engine])
+    assert context_exited == [True]
 
 
 def test_running_false_is_published_after_context_cleanup_and_sleep_release(

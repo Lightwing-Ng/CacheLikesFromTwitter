@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.23.1-codex.1`
+Documentation version: `v3.23.2-codex.1`
 
 ## Purpose
 
@@ -180,9 +180,11 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
   recovery metadata, and logs the cleanup error. The next production run retries only that exact
   runtime-local cleanup and remains blocked if the file still exists. Sleep-assertion release
   failures cannot prevent the final barrier.
-  Initial synchronous browser navigation and local context-package construction are not fully
-  preemptible; Stop can wait for those bounded operations, but later gates still prevent context
-  attachment or prompt submission.
+  Local context-package construction, Chromium profile cloning, and browser-context launch are
+  synchronous and not fully preemptible; initial navigation can also remain in flight until its
+  configured timeout. Stop can wait for those phases. Gates before browser startup, immediately
+  after context launch, and after navigation avoid later work where possible and still prevent
+  context attachment or prompt submission.
 - The Flask control routes accept host-loopback traffic directly. Private-network requests must
   first unlock `/agent` with the six-digit password gate; the successful signed session also
   authorizes same-origin `/api/agent/*` requests. Public and host-rebinding requests are rejected.
@@ -221,6 +223,12 @@ Settings → Agent stores:
 - the maximum controller-turn count;
 - the local command timeout;
 - separate macOS and Windows system prompts.
+
+At load time, prompts missing the fenced-JSON or base64 transport contract are replaced with the
+current safe defaults. Marker-complete prompts using the former `text or regex` search example are
+upgraded in place to the literal-search contract, receive the authoritative literal-only instruction,
+and retain all other user-authored guidance and unrelated settings. The migrated settings are written
+back immediately and the migration is idempotent across later service starts.
 
 The selected provider's file-upload limit remains authoritative. ChatGPT documents a 512 MB hard
 file limit and a 2 million-token limit for text and document files; the application uses the lower
@@ -285,14 +293,15 @@ probe was not possible because the selected account is currently restricted. The
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
 
-On 26 Aug 2026, 280 focused controller/hardening tests passed with the bundled ripgrep available.
-The same suite passed 279 tests with only its real-ripgrep integration test skipped under an explicit
+On 26 Aug 2026, 287 focused controller/hardening tests passed with the bundled ripgrep available.
+The same suite passed 286 tests with only its real-ripgrep integration test skipped under an explicit
 no-`rg` PATH; all mocked ripgrep JSON, Stop, timeout, post-filter, and diagnostic-isolation cases still
 executed through a workspace-external trusted fixture. The production-hardening suite covered
 recursive search parity, Stop propagation, completion cleanup, explicit session reuse,
 verification-gate ordering, canonical executable and argument confinement, hard-link rejection,
-strict direct `tsc --noEmit` parsing, bounded content fingerprints, and real POSIX leader-exited
-descendant processes. The complete project gate passed 825 tests and 357 subtests with 67.26%
+strict direct `tsc --noEmit` parsing, persisted literal-search prompt migration, browser-start Stop
+gates, bounded content fingerprints, and real POSIX leader-exited descendant processes. The complete
+project gate passed 832 tests and 357 subtests with 67.41%
 overall coverage and branch measurement enabled. This verification did not restart the user-owned
 service or send a new Web-provider task; Windows received static and mock validation only.
 

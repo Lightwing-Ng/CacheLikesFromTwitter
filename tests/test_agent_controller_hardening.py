@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.24.0-codex.1
+Code version: v3.24.1-codex.1
 """
 
 from __future__ import annotations
@@ -1113,3 +1113,69 @@ class TestPersistedPromptMigration:
         restarted = ComputerUseSettingsStore(settings_path)
         assert restarted.settings.macos_system_prompt == DEFAULT_MACOS_SYSTEM_PROMPT
         assert restarted.settings.windows_system_prompt == DEFAULT_WINDOWS_SYSTEM_PROMPT
+
+    def test_status_api_upgrades_marker_complete_literal_search_contract(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        workspace = tmp_path / "Kept Project"
+        workspace.mkdir()
+        settings_path = tmp_path / "computer-use-agent.json"
+        legacy_action = (
+            '{"action":"search","query":"text or regex","path":".",'
+            '"glob":"*.py","max_results":80}'
+        )
+        current_action = (
+            '{"action":"search","query":"literal text","path":".",'
+            '"glob":"*.py","max_results":80}'
+        )
+        literal_instruction = (
+            "Search action queries are literal text, never regular expressions."
+        )
+        legacy_prompt = DEFAULT_MACOS_SYSTEM_PROMPT.replace(
+            current_action,
+            legacy_action,
+        ).replace(f"\n\n{literal_instruction}", "")
+        custom_text = "Preserve this status-visible custom guidance."
+        settings_path.write_text(
+            json.dumps(
+                {
+                    "workspace_path": str(workspace),
+                    "operating_system": "macos",
+                    "platform": "chatgpt",
+                    "browser": "edge",
+                    "model": "gpt-5.6-sol",
+                    "target_url": "https://chatgpt.com/",
+                    "context_limit_mib": 8,
+                    "max_turns": 40,
+                    "command_timeout_seconds": 120,
+                    "macos_system_prompt": f"{legacy_prompt}\n\n{custom_text}",
+                    "windows_system_prompt": DEFAULT_WINDOWS_SYSTEM_PROMPT,
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            "app.core.computer_use_agent.DEFAULT_AGENT_SETTINGS_PATH",
+            settings_path,
+        )
+
+        app = create_app(tmp_path / "local_store")
+        with app.test_client() as client:
+            response = client.get("/api/agent/status")
+
+        assert response.status_code == 200
+        runtime_prompt = response.get_json()["runtime"]["settings"][
+            "macos_system_prompt"
+        ]
+        assert current_action in runtime_prompt
+        assert legacy_action not in runtime_prompt
+        assert literal_instruction in runtime_prompt
+        assert custom_text in runtime_prompt
+        persisted_prompt = json.loads(
+            settings_path.read_text(encoding="utf-8")
+        )["macos_system_prompt"]
+        assert persisted_prompt == runtime_prompt
