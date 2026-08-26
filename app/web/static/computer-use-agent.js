@@ -1,4 +1,4 @@
-/* Code version: v3.18.0-codex.1 */
+/* Code version: v3.19.0-codex.1 */
 
 (() => {
     const runtimeForm = document.getElementById("agent_runtime_form");
@@ -507,7 +507,6 @@
         const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
         if (!menu || !trigger) return;
         const selectedValue = input instanceof HTMLInputElement ? input.value : "";
-        const selectedLabel = selectedComboboxLabel(combobox);
         let selectedOption = null;
         menu.replaceChildren();
         const safeItems = Array.isArray(items) ? items : [];
@@ -524,10 +523,6 @@
             if (selectedValue && itemValue === selectedValue) selectedOption = option;
             menu.append(option);
         });
-        if (!selectedOption && selectedValue && selectedLabel) {
-            selectedOption = sourceOptionButton(selectedValue, selectedLabel, icon, true);
-            menu.prepend(selectedOption);
-        }
         const readyLabel = combobox.dataset.agentSessionList === "projects"
             ? "Choose a recent project"
             : "Choose a recent session";
@@ -536,10 +531,13 @@
             if (selectedOption) {
                 if (input instanceof HTMLInputElement) input.value = selectedValue;
                 syncComboboxTriggerFromOption(combobox, selectedOption);
-                if (combobox === elements.recentSessionCombobox) {
+                if (combobox === elements.recentSessionCombobox && selectedSessionMode() === "recent") {
                     sessionTitleOverride = selectedOption.dataset.agentComboboxLabel || "";
                 }
             } else {
+                if (selectedValue && combobox === elements.recentSessionCombobox) {
+                    sessionTitleOverride = selectedSessionMode() === "recent" ? "" : sessionTitleOverride;
+                }
                 setComboboxValue(combobox, "", readyLabel, icon);
             }
         } else {
@@ -572,7 +570,6 @@
         const trigger = elements.projectSessionCombobox.querySelector("[data-agent-combobox-trigger]");
         if (!menu || !trigger) return;
         const selectedValue = input instanceof HTMLInputElement ? input.value : "new";
-        const selectedLabel = selectedComboboxLabel(elements.projectSessionCombobox);
         let selectedOption = null;
         menu.replaceChildren();
         const newOption = sourceOptionButton(
@@ -596,15 +593,11 @@
             if (selectedValue && itemValue === selectedValue) selectedOption = option;
             menu.append(option);
         });
-        if (!selectedOption && selectedValue && selectedValue !== "new" && selectedLabel) {
-            selectedOption = sourceOptionButton(selectedValue, selectedLabel, "", true);
-            menu.prepend(selectedOption);
-        }
         if (selectedOption) {
             if (input instanceof HTMLInputElement) input.value = selectedValue;
             syncComboboxTriggerFromOption(elements.projectSessionCombobox, selectedOption);
-            sessionTitleOverride = selectedValue === "new"
-                ? ""
+            sessionTitleOverride = selectedValue === "new" || selectedSessionMode() !== "project"
+                ? (selectedSessionMode() === "project" ? "" : sessionTitleOverride)
                 : selectedOption.dataset.agentComboboxLabel || "";
         } else {
             setComboboxValue(elements.projectSessionCombobox, "new", "New session in project");
@@ -620,18 +613,15 @@
         const menu = combobox.querySelector("[data-agent-combobox-menu]");
         const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
         if (!(input instanceof HTMLInputElement) || !menu || !trigger) return;
-        let option = Array.from(menu.querySelectorAll("[data-agent-combobox-option]")).find(
+        const option = Array.from(menu.querySelectorAll("[data-agent-combobox-option]")).find(
             (candidate) => candidate.dataset.agentComboboxOption === value,
         );
-        if (!option) {
-            option = sourceOptionButton(value, label || "Untitled session");
-            menu.prepend(option);
-        }
+        if (!option) return;
         input.value = value;
         if (label) {
             option.dataset.agentComboboxLabel = label;
             const text = option.querySelector(".trade-strategy-dropdown-text");
-            text.textContent = label;
+            if (text) text.textContent = label;
         }
         syncComboboxTriggerFromOption(combobox, option);
         setComboboxLoading(combobox, false);
@@ -1059,26 +1049,7 @@
         const signature = `${agent.started_at || ""}|${agent.finished_at || ""}|${conversationUrl}`;
         if (!agent.finished_at || signature === boundAgentSessionSignature) return;
         boundAgentSessionSignature = signature;
-
-        const sessionTitle = String(agent.session_title || agent.prompt || "Untitled session").trim();
-        sessionTitleOverride = sessionTitle;
-        sourceBrowser = "";
-        sourcesLoaded = false;
         loadAgentSources({forceRefresh: true});
-        const projectUrl = String(agent.project_url || "").trim();
-        if (String(agent.session_mode || "").startsWith("project") && projectUrl) {
-            if (elements.sessionMode instanceof HTMLInputElement) elements.sessionMode.value = "project";
-            if (elements.projectUrl instanceof HTMLInputElement) {
-                elements.projectUrl.value = projectUrl;
-            }
-            selectSessionListValue(elements.projectCombobox, projectUrl, "Selected project");
-            selectSessionListValue(elements.projectSessionCombobox, conversationUrl, sessionTitle);
-            loadProjectSessions(projectUrl);
-        } else {
-            if (elements.sessionMode instanceof HTMLInputElement) elements.sessionMode.value = "recent";
-            selectSessionListValue(elements.recentSessionCombobox, conversationUrl, sessionTitle);
-        }
-        updateSessionChoiceInputs();
     }
 
     function readinessState(payload) {

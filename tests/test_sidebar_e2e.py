@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.9.1-codex.2
+Code version: v1.10.0-codex.1
 """
 
 from __future__ import annotations
@@ -1521,5 +1521,334 @@ def test_gemini_source_mark_preserves_full_color_at_target_viewports(
         assert "Google_Gemini_logo_2025_symbol.svg" in rendering["backgroundImage"], device_name
         assert rendering["maskImage"] == "none", device_name
         assert rendering["width"] == rendering["height"] == "16px", device_name
+    finally:
+        context.close()
+
+
+FINISHED_SNAPSHOT_URL = "https://chatgpt.com/c/6a8d4fce-d1e8-83ee-9996-68e9ef114ef0"
+AGENTIC_TROUBLESHOOTING_URL = "https://chatgpt.com/c/6a8d310f-7af4-83e8-acb4-6e3e825e984f"
+
+
+def _finished_chatgpt_agent_payload() -> dict[str, object]:
+    return {
+        "runtime": {
+            "ready": True,
+            "host_operating_system": "macos",
+            "message": "Computer Use is ready on this Mac.",
+            "terminal_execution": {
+                "ready": True,
+                "status_label": "Granted",
+                "message": "Terminal execution is available.",
+            },
+        },
+        "agent": {
+            "running": False,
+            "paused": False,
+            "phase": "finished",
+            "message": "GPT-5.6 Sol completed the project task after local bodycheck.",
+            "prompt": "",
+            "response": "Read-only inspection finished.",
+            "response_html": "<p>Read-only inspection finished.</p>",
+            "history": [],
+            "activity": [],
+            "conversation_url": FINISHED_SNAPSHOT_URL,
+            "project_url": "",
+            "session_title": "Reused model verification",
+            "session_mode": "recent",
+            "platform": "chatgpt",
+            "browser": "edge",
+            "model": "gpt-5.6-sol",
+            "model_verified": True,
+            "actual_model": "GPT-5.6 Sol",
+            "bodycheck_passed": True,
+            "started_at": "2026-08-25T09:02:38Z",
+            "finished_at": "2026-08-25T09:03:57Z",
+        },
+    }
+
+
+def _chatgpt_catalog_sessions(*sessions: dict[str, str]) -> dict[str, object]:
+    return {
+        "platform": "chatgpt",
+        "browser_label": "Edge",
+        "recent_sessions": list(sessions),
+        "projects": [],
+        "limit": 20,
+    }
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_finished_snapshot_does_not_auto_select_recent_chatgpt_session(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    captured_ask_payloads: list[dict[str, str]] = []
+    source_requests: list[str] = []
+
+    def fulfill_agent_status(route) -> None:
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    def fulfill_browser_status(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "chatgpt",
+                "browser": "edge",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "ChatGPT account",
+                "message": "Edge is ready for ChatGPT Web.",
+            }
+        )
+
+    def fulfill_preferences(route) -> None:
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    def fulfill_sources(route) -> None:
+        source_requests.append(route.request.url)
+        route.fulfill(
+            json=_chatgpt_catalog_sessions(
+                {
+                    "id": "qqqm-session",
+                    "title": "比较 QQQM 与 QQQ",
+                    "url": FINISHED_SNAPSHOT_URL,
+                    "updated_at": "2026-08-25T09:03:57Z",
+                },
+                {
+                    "id": "agentic-troubleshooting",
+                    "title": "Agentic Troubleshooting",
+                    "url": AGENTIC_TROUBLESHOOTING_URL,
+                    "updated_at": "2026-08-26T01:00:00Z",
+                },
+            )
+        )
+
+    def fulfill_ask(route) -> None:
+        captured_ask_payloads.append(route.request.post_data_json or {})
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    def fulfill_history(route) -> None:
+        route.fulfill(json={"title": "", "history": []})
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/preferences", fulfill_preferences)
+    page.route("**/api/agent/sources**", fulfill_sources)
+    page.route("**/api/agent/ask", fulfill_ask)
+    page.route("**/api/agent/chatgpt-session-history**", fulfill_history)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        expect(page.locator(".agent-session-mode-combobox [data-agent-combobox-selected-label]")).to_have_text(
+            "New session"
+        )
+        expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("new")
+        expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value("")
+        expect(page.locator("[data-agent-prompt-session-title]")).to_have_value("")
+        expect(page.locator("#agent_conversation_link")).to_have_attribute("href", FINISHED_SNAPSHOT_URL)
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').some((entry) =>
+                String(entry.name || '').includes('/api/agent/sources')
+                && String(entry.name || '').includes('refresh=1')
+            )"""
+        )
+        assert any("refresh=1" in url for url in source_requests)
+
+        expect(page.locator("#agent_ask_button")).to_be_enabled()
+        page.locator("[data-agent-prompt-input]").fill("Inspect the workspace without changing files.")
+        with page.expect_request(re.compile(r"/api/agent/ask$")):
+            page.locator("#agent_ask_button").click()
+        assert captured_ask_payloads
+        payload = captured_ask_payloads[0]
+        assert payload["session_mode"] == "new"
+        assert payload.get("conversation_url", "") == ""
+        assert payload.get("session_title", "") == ""
+        assert payload["prompt"] == "Inspect the workspace without changing files."
+
+        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        page.locator('.agent-session-mode-combobox [data-agent-combobox-option="recent"]').click()
+        snapshot_option = page.locator(
+            f'[data-agent-session-list="recent"] [data-agent-combobox-option="{FINISHED_SNAPSHOT_URL}"]'
+        )
+        expect(snapshot_option).to_have_count(1)
+        expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("recent")
+        expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value("")
+        expect(page.locator("[data-agent-recent-session-url]")).to_have_value("")
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_missing_snapshot_url_is_not_synthesized_into_session_catalog(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    def fulfill_agent_status(route) -> None:
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    def fulfill_browser_status(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "chatgpt",
+                "browser": "edge",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "ChatGPT account",
+                "message": "Edge is ready for ChatGPT Web.",
+            }
+        )
+
+    def fulfill_preferences(route) -> None:
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    def fulfill_sources(route) -> None:
+        route.fulfill(
+            json=_chatgpt_catalog_sessions(
+                {
+                    "id": "agentic-troubleshooting",
+                    "title": "Agentic Troubleshooting",
+                    "url": AGENTIC_TROUBLESHOOTING_URL,
+                    "updated_at": "2026-08-26T01:00:00Z",
+                }
+            )
+        )
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/preferences", fulfill_preferences)
+    page.route("**/api/agent/sources**", fulfill_sources)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("new")
+        expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value("")
+        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        page.locator('.agent-session-mode-combobox [data-agent-combobox-option="recent"]').click()
+        expect(
+            page.locator(
+                f'[data-agent-session-list="recent"] [data-agent-combobox-option="{FINISHED_SNAPSHOT_URL}"]'
+            )
+        ).to_have_count(0)
+        expect(
+            page.locator(
+                f'[data-agent-session-list="recent"] [data-agent-combobox-option="{AGENTIC_TROUBLESHOOTING_URL}"]'
+            )
+        ).to_have_count(1)
+        expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value("")
+        expect(page.locator("#agent_conversation_link")).to_have_attribute("href", FINISHED_SNAPSHOT_URL)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_explicit_agentic_troubleshooting_session_is_the_only_reused_target(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    captured_ask_payloads: list[dict[str, str]] = []
+
+    def fulfill_agent_status(route) -> None:
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    def fulfill_browser_status(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "chatgpt",
+                "browser": "edge",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "ChatGPT account",
+                "message": "Edge is ready for ChatGPT Web.",
+            }
+        )
+
+    def fulfill_preferences(route) -> None:
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    def fulfill_sources(route) -> None:
+        route.fulfill(
+            json=_chatgpt_catalog_sessions(
+                {
+                    "id": "qqqm-session",
+                    "title": "比较 QQQM 与 QQQ",
+                    "url": FINISHED_SNAPSHOT_URL,
+                    "updated_at": "2026-08-25T09:03:57Z",
+                },
+                {
+                    "id": "agentic-troubleshooting",
+                    "title": "Agentic Troubleshooting",
+                    "url": AGENTIC_TROUBLESHOOTING_URL,
+                    "updated_at": "2026-08-26T01:00:00Z",
+                },
+            )
+        )
+
+    def fulfill_history(route) -> None:
+        route.fulfill(
+            json={
+                "title": "Agentic Troubleshooting",
+                "history": [],
+            }
+        )
+
+    def fulfill_ask(route) -> None:
+        captured_ask_payloads.append(route.request.post_data_json or {})
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/preferences", fulfill_preferences)
+    page.route("**/api/agent/sources**", fulfill_sources)
+    page.route("**/api/agent/chatgpt-session-history**", fulfill_history)
+    page.route("**/api/agent/ask", fulfill_ask)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("new")
+        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        page.locator('.agent-session-mode-combobox [data-agent-combobox-option="recent"]').click()
+        page.locator('[data-agent-session-list="recent"] [data-agent-combobox-trigger]').click()
+        page.locator(
+            f'[data-agent-session-list="recent"] [data-agent-combobox-option="{AGENTIC_TROUBLESHOOTING_URL}"]'
+        ).click()
+        expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("recent")
+        expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value(
+            AGENTIC_TROUBLESHOOTING_URL
+        )
+        expect(page.locator("[data-agent-prompt-session-title]")).to_have_value(
+            "Agentic Troubleshooting"
+        )
+        page.locator("[data-agent-prompt-input]").fill("Continue the existing troubleshooting session.")
+        with page.expect_request(re.compile(r"/api/agent/ask$")):
+            page.locator("#agent_ask_button").click()
+        assert captured_ask_payloads
+        payload = captured_ask_payloads[0]
+        assert payload["session_mode"] == "recent"
+        assert payload["conversation_url"] == AGENTIC_TROUBLESHOOTING_URL
+        assert payload["session_title"] == "Agentic Troubleshooting"
+        assert payload["conversation_url"] != FINISHED_SNAPSHOT_URL
     finally:
         context.close()

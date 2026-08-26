@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.23.0-codex.1
+Code version: v3.24.0-codex.1
 """
 
 from __future__ import annotations
@@ -86,6 +86,7 @@ WEB_RESPONSE_STABLE_SECONDS = 1.0
 WEB_TURN_TIMEOUT_SECONDS = 1_800
 GROK_KEYBOARD_SUBMIT_FALLBACK_SECONDS = 2.0
 CHATGPT_COMPOSER_TIMEOUT_SECONDS = 60
+CHATGPT_MODEL_COMPOSER_WAIT_SECONDS = 15
 CHATGPT_COMPOSER_RELOAD_ATTEMPTS = 2
 SAFARI_SEND_BUTTON_TIMEOUT_SECONDS = 15
 CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS = 180
@@ -287,6 +288,7 @@ _IGNORED_DIRECTORY_NAMES = frozenset(
         "venv",
     }
 )
+SEARCH_MAX_FILE_BYTES = 2 * 1_024 * 1_024
 _CONTEXT_PRIORITY_NAMES = (
     "AGENTS.md",
     "CLAUDE.md",
@@ -1284,12 +1286,31 @@ def _path_has_sensitive_part(relative: Path) -> bool:
     return False
 
 
-def _path_matches_search_glob(path: Path, root: Path, glob: str) -> bool:
-    """Apply the controller glob consistently to discovered and explicit files."""
+def _path_matches_search_glob(
+    path: Path,
+    root: Path,
+    glob: str,
+    *,
+    workspace: Path,
+) -> bool:
+    """Match glob against basename, workspace-relative path, and root-relative path."""
     if not glob:
         return True
-    relative_to_root = path.name if root.is_file() else path.relative_to(root).as_posix()
-    return fnmatch(relative_to_root, glob) or fnmatch(path.name, glob)
+    candidates = [path.name]
+    try:
+        workspace_relative = path.relative_to(workspace).as_posix()
+        if workspace_relative not in candidates:
+            candidates.append(workspace_relative)
+    except ValueError:
+        pass
+    if not root.is_file():
+        try:
+            root_relative = path.relative_to(root).as_posix()
+            if root_relative not in candidates:
+                candidates.append(root_relative)
+        except ValueError:
+            pass
+    return any(fnmatch(candidate, glob) for candidate in candidates)
 
 
 def _fallback_search_matches(
@@ -1323,14 +1344,14 @@ def _fallback_search_matches(
                     or not path.is_file()
                     or _path_has_ignored_part(relative_to_workspace)
                     or _path_has_sensitive_part(relative_to_workspace)
-                    or path.stat().st_size > 2 * 1_024 * 1_024
+                    or path.stat().st_size > SEARCH_MAX_FILE_BYTES
                 ):
                     continue
                 path.resolve(strict=True).relative_to(workspace)
             except (OSError, ValueError):
                 continue
 
-            if not _path_matches_search_glob(path, root, glob):
+            if not _path_matches_search_glob(path, root, glob, workspace=workspace):
                 continue
 
             inspected_files += 1
@@ -1604,6 +1625,8 @@ class WorkspaceController:
             "never",
             "--max-count",
             str(max_results),
+            "--max-filesize",
+            str(SEARCH_MAX_FILE_BYTES),
         ]
         for excluded_glob in (
             "!.env",
@@ -1616,6 +1639,7 @@ class WorkspaceController:
             "!.ssh/**",
             "!credentials.json",
             "!secrets.json",
+            *(f"!{directory_name}/**" for directory_name in sorted(_IGNORED_DIRECTORY_NAMES)),
         ):
             command.extend(["--glob", excluded_glob])
         glob = str(payload.get("glob") or "").strip()
@@ -1650,7 +1674,9 @@ class WorkspaceController:
             raise RuntimeError((process.stderr or process.stdout or "Search failed.").strip())
         matches = []
         output = process.stdout or ""
-        if root.is_file() and not _path_matches_search_glob(root, root, glob):
+        if root.is_file() and not _path_matches_search_glob(
+            root, root, glob, workspace=self.workspace
+        ):
             output = ""
         for value in output.splitlines():
             relative_text = value.split(":", 1)[0]
@@ -2302,10 +2328,8 @@ class ComputerUseAgentService:
             self._snapshot.message = "Stop requested. Ending the browser turn and active local command."
             self._persist_snapshot_locked()
             process = self._active_process
-            sleep_assertion = self._sleep_assertion
         if process is not None and process.poll() is None:
             _stop_process(process)
-        _stop_macos_idle_sleep_assertion(sleep_assertion)
         return True
 
     def request_resume(self) -> bool:
@@ -2895,8 +2919,20 @@ def _run_web_action_loop(
     expected_tab_id, _expected_url, expected_title = _provider_tab_identity(page)
     model_observation: dict[str, Any] = {}
     model_selected = _select_web_model(
-        page, browser_kind, platform, settings.model, model_observation
+        page,
+        browser_kind,
+        platform,
+        settings.model,
+        model_observation,
+        should_stop=should_stop,
     )
+    if should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, page_url or selected_target_url),
+            0,
+            False,
+        )
     selected_option = next(
         (
             option
@@ -3425,18 +3461,6 @@ CHATGPT_MODEL_TRIGGER_LABELS = (
     "GPT-5.6 Sol",
     "5.6 Sol",
     "Extra High",
-    "High",
-    "Medium",
-    "Low",
-    "Auto",
-    "Max",
-    "Pro",
-    "Advanced",
-    "Faster",
-    "Smarter",
-    "Model",
-    "Model picker",
-    "Switch model",
 )
 
 CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS = 20
@@ -3450,20 +3474,26 @@ _CHATGPT_MODEL_DIAGNOSTIC_PATTERN = re.compile(
 
 
 def _first_visible_role_control(
-    page: Any, role: str, names: tuple[str, ...]
+    page: Any,
+    role: str,
+    names: tuple[str, ...],
+    predicate: Callable[[Any], bool] | None = None,
 ) -> Any | None:
     """Return the first visible exact-name Playwright role control."""
     for name in names:
         locator = page.get_by_role(role, name=name, exact=True)
         for index in range(locator.count()):
             candidate = locator.nth(index)
-            if candidate.is_visible():
+            if candidate.is_visible() and (predicate is None or predicate(candidate)):
                 return candidate
     return None
 
 
-def _wait_for_chatgpt_composer_if_available(page: Any) -> None:
-    """Wait for the ChatGPT composer when the page exposes Playwright locators."""
+def _wait_for_chatgpt_composer_if_available(
+    page: Any,
+    should_stop: Callable[[], bool] | None = None,
+) -> None:
+    """Wait briefly for the ChatGPT composer, aborting when Stop is requested."""
     locator_fn = getattr(page, "locator", None)
     if not callable(locator_fn):
         return
@@ -3471,8 +3501,19 @@ def _wait_for_chatgpt_composer_if_available(page: Any) -> None:
         handle = locator_fn("#prompt-textarea")
         target = getattr(handle, "first", handle)
         wait_for = getattr(target, "wait_for", None)
-        if callable(wait_for):
-            wait_for(state="visible", timeout=CHATGPT_COMPOSER_TIMEOUT_SECONDS * 1_000)
+        if not callable(wait_for):
+            return
+        deadline = time.monotonic() + CHATGPT_MODEL_COMPOSER_WAIT_SECONDS
+        while time.monotonic() < deadline:
+            if callable(should_stop) and should_stop():
+                return
+            remaining_ms = max(50.0, (deadline - time.monotonic()) * 1_000)
+            try:
+                wait_for(state="visible", timeout=min(250.0, remaining_ms))
+                return
+            except Exception:
+                if callable(should_stop) and should_stop():
+                    return
     except Exception:
         return
 
@@ -3625,18 +3666,66 @@ def _record_model_observation(
     )
 
 
+def _chatgpt_control_has_model_menu_semantics(control: Any) -> bool:
+    """Accept only model-menu triggers, never composer or open-menu internals."""
+    evaluate = getattr(control, "evaluate", None)
+    if callable(evaluate):
+        try:
+            return bool(
+                evaluate(
+                    r"""element => {
+                        if (!(element instanceof Element)) return false;
+                        if (element.closest('[role="menu"], [role="listbox"]')) return false;
+                        if (element.closest('#prompt-textarea, [contenteditable="true"]')) return false;
+                        const popup = String(element.getAttribute('aria-haspopup') || '').trim().toLowerCase();
+                        const expanded = String(element.getAttribute('aria-expanded') || '').trim().toLowerCase();
+                        return popup === 'menu' || popup === 'listbox' || popup === 'true'
+                            || expanded === 'true' || expanded === 'false';
+                    }"""
+                )
+            )
+        except Exception:
+            return False
+    get_attribute = getattr(control, "get_attribute", None)
+    if not callable(get_attribute):
+        return False
+    popup = str(get_attribute("aria-haspopup") or "").strip().casefold()
+    expanded = str(get_attribute("aria-expanded") or "").strip().casefold()
+    return popup in {"menu", "listbox", "true"} or expanded in {"true", "false"}
+
+
 def _select_chatgpt_model_chromium(
     page: Any,
     option: dict[str, Any],
     remote_labels: tuple[str, ...],
     observation: dict[str, Any] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> bool:
     """Use trusted Playwright clicks, then read back the remote Chromium model."""
     wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
-    _wait_for_chatgpt_composer_if_available(page)
+    _wait_for_chatgpt_composer_if_available(page, should_stop=should_stop)
+    if callable(should_stop) and should_stop():
+        _record_model_observation(
+            observation,
+            reason="stop-requested",
+            attempted_labels=remote_labels,
+        )
+        return False
     power_button = None
     for attempt in range(CHATGPT_MODEL_VERIFICATION_ATTEMPTS):
-        power_button = _first_visible_role_control(page, "button", CHATGPT_MODEL_TRIGGER_LABELS)
+        if callable(should_stop) and should_stop():
+            _record_model_observation(
+                observation,
+                reason="stop-requested",
+                attempted_labels=remote_labels,
+            )
+            return False
+        power_button = _first_visible_role_control(
+            page,
+            "button",
+            CHATGPT_MODEL_TRIGGER_LABELS,
+            predicate=_chatgpt_control_has_model_menu_semantics,
+        )
         if power_button is not None:
             break
         if attempt + 1 < CHATGPT_MODEL_VERIFICATION_ATTEMPTS:
@@ -3750,6 +3839,7 @@ def _select_chatgpt_model(
     browser_kind: str,
     model: str,
     observation: dict[str, Any] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> bool:
     """Select and read back the requested ChatGPT model before any project upload."""
     selected_model = str(model or DEFAULT_CHATGPT_MODEL).strip().lower()
@@ -3763,7 +3853,11 @@ def _select_chatgpt_model(
     remote_labels = tuple(option.get("remote_labels") or (option.get("label", ""),))
     if browser_kind != "safari" and hasattr(page, "get_by_role"):
         return _select_chatgpt_model_chromium(
-            page, option, remote_labels, observation=observation
+            page,
+            option,
+            remote_labels,
+            observation=observation,
+            should_stop=should_stop,
         )
     wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
     model_control_script = r"""({labels, phase}) => {
@@ -3783,16 +3877,22 @@ def _select_chatgpt_model(
                 });
             };
             const powerLabels = new Set([
-                'auto', 'instant', 'low', 'medium', 'high', 'extra high', 'max', 'pro',
-                'advanced', 'faster', 'smarter', 'gpt-5.6 sol', '5.6 sol', 'model',
-                'model picker', 'switch model'
+                'instant', 'gpt-5.6 sol', '5.6 sol', 'extra high'
             ]);
             const labelFor = (button) => normalize(
                 `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`
             );
+            const hasMenuSemantics = (button) => {
+                const popup = normalize(button.getAttribute('aria-haspopup') || '');
+                const expanded = normalize(button.getAttribute('aria-expanded') || '');
+                return popup === 'menu' || popup === 'listbox' || popup === 'true'
+                    || expanded === 'true' || expanded === 'false';
+            };
             const powerButton = Array.from(document.querySelectorAll('button, [role="button"]')).find((button) =>
                 isVisible(button)
-                && !button.closest('[role="menu"]')
+                && !button.closest('[role="menu"], [role="listbox"]')
+                && !button.closest('#prompt-textarea, [contenteditable="true"]')
+                && hasMenuSemantics(button)
                 && (powerLabels.has(normalize(button.innerText || button.textContent))
                     || powerLabels.has(normalize(button.getAttribute('aria-label') || ''))
                     || [...powerLabels].some((label) => labelFor(button) === label || labelFor(button).endsWith(` ${label}`)))
@@ -3944,10 +4044,17 @@ def _select_web_model(
     platform: str,
     model: str,
     observation: dict[str, Any] | None = None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> bool:
     """Select a provider model when its page exposes a compatible model menu."""
     if platform == "chatgpt":
-        return _select_chatgpt_model(page, browser_kind, model, observation)
+        return _select_chatgpt_model(
+            page,
+            browser_kind,
+            model,
+            observation,
+            should_stop=should_stop,
+        )
     options = _platform_model_options(platform)
     option = next((candidate for candidate in options if candidate["key"] == model), None)
     if option is None:

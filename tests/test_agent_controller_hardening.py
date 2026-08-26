@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.22.0-codex.1
+Code version: v3.24.0-codex.1
 """
 
 from __future__ import annotations
@@ -183,8 +183,10 @@ def _patch_action_loop_browser(
     calls = {"attach": 0, "submit": 0}
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    def select_model(*args: object) -> bool:
-        observation = args[-1]
+    def select_model(*args: object, **kwargs: object) -> bool:
+        observation = kwargs.get("observation")
+        if observation is None:
+            observation = args[-1] if args else None
         if isinstance(observation, dict):
             observation.update(
                 {
@@ -454,7 +456,7 @@ class TestAriaDescribedbyRegression:
 
         monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
         monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-        monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+        monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
 
@@ -753,6 +755,10 @@ class TestRecentSessionCatalog:
         bind_chunk = script[bind_index:bind_index + 1_800]
         assert "loadAgentSources({forceRefresh: true})" in bind_chunk
         assert 'query.set("refresh", "1")' in script
+        assert 'elements.sessionMode.value = "recent"' not in bind_chunk
+        assert 'elements.sessionMode.value = "project"' not in bind_chunk
+        assert "selectSessionListValue(" not in bind_chunk
+        assert "sessionTitleOverride =" not in bind_chunk
 
     def test_catalog_tab_reconciliation_never_calls_bring_to_front(self) -> None:
         chatgpt = MagicMock()
@@ -948,7 +954,7 @@ class TestBrowserInterruption:
 
         monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
         monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-        monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+        monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
         monkeypatch.setattr(computer_use_agent, "_detect_browser_interruption", detect)
@@ -992,7 +998,7 @@ class TestBrowserInterruption:
         )
         monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
         monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-        monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+        monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(
             computer_use_agent,

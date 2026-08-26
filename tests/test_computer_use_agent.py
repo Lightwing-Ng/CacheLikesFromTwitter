@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.17.0-codex.1
+Code version: v3.24.0-codex.1
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import json
 from pathlib import Path
+import shutil
 from tempfile import TemporaryDirectory
 from threading import Event
 import time
@@ -18,7 +19,9 @@ from app.core.computer_use_agent import (
     AGENT_MODEL_OPTIONS_BY_PLATFORM,
     AGENT_PLATFORM_OPTIONS,
     AgentRunSnapshot,
+    CHATGPT_MODEL_TRIGGER_LABELS,
     DEFAULT_CHATGPT_MODEL,
+    SEARCH_MAX_FILE_BYTES,
     ComputerUseAgentService,
     ComputerUseSettings,
     ComputerUseSettingsStore,
@@ -268,9 +271,12 @@ def test_chromium_model_selector_uses_trusted_locator_clicks_and_read_only_evalu
         def is_visible(self) -> bool:
             return True
 
-        def get_attribute(self, name: str) -> str:
-            assert name == "aria-expanded"
-            return "true" if self.expanded else "false"
+        def get_attribute(self, name: str) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            return None
 
         def click(self) -> None:
             self.click_count += 1
@@ -409,6 +415,75 @@ def test_chromium_wrong_model_readback_fails_closed() -> None:
     observation: dict[str, object] = {}
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert observation.get("reason") == "model-mismatch"
+
+
+def test_chatgpt_model_click_targets_exclude_generic_text_labels() -> None:
+    assert "Switch model" not in CHATGPT_MODEL_TRIGGER_LABELS
+    assert "Pro" not in CHATGPT_MODEL_TRIGGER_LABELS
+    assert "High" not in CHATGPT_MODEL_TRIGGER_LABELS
+    assert "Model" not in CHATGPT_MODEL_TRIGGER_LABELS
+
+
+def test_chromium_switch_model_control_is_not_a_click_target() -> None:
+    page = _chromium_model_page("Switch model")
+    observation: dict[str, object] = {}
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert observation.get("reason") == "power-control-not-found"
+    assert page.power.click_count == 0
+    assert ("button", "Switch model", True) not in page.role_calls
+    assert observation.get("visible_buttons") == ["Switch model"]
+
+
+def test_chromium_unrelated_pro_button_is_not_a_click_target() -> None:
+    page = _chromium_model_page("Pro")
+    observation: dict[str, object] = {}
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert observation.get("reason") == "power-control-not-found"
+    assert page.power.click_count == 0
+    assert ("button", "Pro", True) not in page.role_calls
+
+
+def test_chatgpt_composer_wait_stops_when_requested() -> None:
+    stopped = {"value": False}
+
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _ComposerLocator:
+        def wait_for(self, **_kwargs: object) -> None:
+            stopped["value"] = True
+            raise TimeoutError("composer not ready")
+
+        @property
+        def first(self) -> "_ComposerLocator":
+            return self
+
+    class _Page:
+        def get_by_role(self, *_args: object, **_kwargs: object) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _ComposerLocator:
+            return _ComposerLocator()
+
+        def evaluate(self, _expression: str, *_args: object) -> dict[str, object]:
+            return {"buttons": [], "menus": []}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    observation: dict[str, object] = {}
+    assert (
+        _select_chatgpt_model(
+            _Page(),
+            "chromium",
+            DEFAULT_CHATGPT_MODEL,
+            observation,
+            should_stop=lambda: stopped["value"],
+        )
+        is False
+    )
+    assert observation.get("reason") == "stop-requested"
 
 
 def test_chatgpt_model_diagnostics_are_filtered_bounded_and_deduplicated() -> None:
@@ -1146,6 +1221,53 @@ def test_running_false_is_published_after_sleep_assertion_release(
         assert snapshot["context_bytes"] == 0
 
 
+def test_request_stop_does_not_release_sleep_assertion_before_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        workspace = root / "project"
+        workspace.mkdir()
+        store = ComputerUseSettingsStore(root / "settings.json")
+        sleep_assertion = object()
+        released_assertions: list[object] = []
+        entered = Event()
+        hold_runner = Event()
+
+        monkeypatch.setattr(
+            "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+            lambda: sleep_assertion,
+        )
+        monkeypatch.setattr(
+            "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+            released_assertions.append,
+        )
+
+        def runner(**kwargs: object) -> tuple[str, str, int, bool]:
+            entered.set()
+            should_stop = kwargs["should_stop"]
+            assert callable(should_stop)
+            while not should_stop():
+                time.sleep(0.01)
+            hold_runner.wait(timeout=2)
+            return "", "https://chatgpt.com/c/example", 0, False
+
+        service = ComputerUseAgentService(store, runner=runner, runtime_root=root / "runtime")
+        service.start("Inspect the workspace", str(workspace), CrawlConfig())
+        assert entered.wait(timeout=2)
+        assert service.request_stop() is True
+        assert released_assertions == []
+        hold_runner.set()
+        deadline = time.monotonic() + 2
+        while service.snapshot()["running"] and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        snapshot = service.snapshot()
+        assert snapshot["running"] is False
+        assert snapshot["phase"] == "stopped"
+        assert released_assertions == [sleep_assertion]
+
+
 def test_context_markdown_contains_instructions_request_and_bounded_index() -> None:
     with TemporaryDirectory() as raw_root:
         workspace = Path(raw_root) / "project"
@@ -1282,7 +1404,7 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
 
     monkeypatch.setattr(computer_use_agent, "_verify_chatgpt_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_chatgpt_model", lambda *_args: True)
+    monkeypatch.setattr(computer_use_agent, "_select_chatgpt_model", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
     monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
 
@@ -1335,7 +1457,7 @@ def test_chatgpt_action_loop_fails_closed_before_context_or_prompt_when_model_is
 
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: False)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: False)
     monkeypatch.setattr(computer_use_agent, "_attach_context_file", attach)
     monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
 
@@ -1384,7 +1506,7 @@ def test_completed_action_loop_reports_attachment_and_normalizes_conversation_ur
 
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         computer_use_agent,
         "_attach_context_file",
@@ -1463,7 +1585,7 @@ def test_final_requires_a_successful_run_and_then_current_bodycheck_after_an_edi
 
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(
         computer_use_agent, "_attach_context_file", lambda *_args: False
     )
@@ -1542,7 +1664,7 @@ def test_verification_gate_resets_after_every_edit(
 
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
     monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
     monkeypatch.setattr(
@@ -1611,7 +1733,7 @@ def test_recent_gemini_and_grok_targets_enter_the_shared_agentic_action_loop(
         return next(responses)
 
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", verify)
-    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args: True)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
     monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
     monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
 
@@ -1814,7 +1936,177 @@ def test_workspace_search_rg_explicit_file_keeps_the_filename_and_glob_semantics
     assert result["engine"] == "rg"
     assert result["matches"] == expected_matches
     assert "--with-filename" in observed_command
+    assert "--max-filesize" in observed_command
+    assert str(SEARCH_MAX_FILE_BYTES) in observed_command
+    assert "!.git/**" in observed_command
+    assert "!node_modules/**" in observed_command
     assert observed_command[-2:] == ["Definition of Done", "AGENTS.md"]
+
+
+@pytest.mark.parametrize(
+    ("glob", "expected_matches"),
+    (
+        ("docs/*.md", ["docs/AGENTS.md:1:## 10) Definition of Done"]),
+        ("*.md", ["docs/AGENTS.md:1:## 10) Definition of Done"]),
+        ("*.py", []),
+    ),
+)
+def test_workspace_search_python_fallback_matches_workspace_relative_globs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    glob: str,
+    expected_matches: list[str],
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    docs = workspace / "docs"
+    docs.mkdir(parents=True)
+    (docs / "AGENTS.md").write_text(
+        "## 10) Definition of Done\n",
+        encoding="utf-8",
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "run",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("rg")),
+    )
+
+    result = controller.execute(
+        {
+            "action": "search",
+            "query": "Definition of Done",
+            "path": "docs/AGENTS.md",
+            "glob": glob,
+        }
+    )
+
+    assert result["ok"]
+    assert result["engine"] == "python-fallback"
+    assert result["matches"] == expected_matches
+
+
+@pytest.mark.parametrize(
+    ("glob", "expected_matches"),
+    (
+        ("docs/*.md", ["docs/AGENTS.md:1:## 10) Definition of Done"]),
+        ("*.py", []),
+    ),
+)
+def test_workspace_search_rg_matches_workspace_relative_globs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    glob: str,
+    expected_matches: list[str],
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    docs = workspace / "docs"
+    docs.mkdir(parents=True)
+    (docs / "AGENTS.md").write_text(
+        "## 10) Definition of Done\n",
+        encoding="utf-8",
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    observed_command: list[str] = []
+
+    class _SearchResult:
+        returncode = 0
+        stdout = "docs/AGENTS.md:1:## 10) Definition of Done\n"
+        stderr = ""
+
+    def search(command: list[str], **_kwargs: object) -> _SearchResult:
+        observed_command.extend(command)
+        return _SearchResult()
+
+    monkeypatch.setattr(computer_use_agent.subprocess, "run", search)
+
+    result = controller.execute(
+        {
+            "action": "search",
+            "query": "Definition of Done",
+            "path": "docs/AGENTS.md",
+            "glob": glob,
+        }
+    )
+
+    assert result["ok"]
+    assert result["engine"] == "rg"
+    assert result["matches"] == expected_matches
+    assert observed_command[-2:] == ["Definition of Done", "docs/AGENTS.md"]
+
+
+@pytest.mark.skipif(shutil.which("rg") is None, reason="rg is not installed")
+def test_workspace_search_real_rg_respects_glob_size_and_ignored_directories(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    docs = workspace / "docs"
+    ignored = workspace / "node_modules" / "pkg"
+    docs.mkdir(parents=True)
+    ignored.mkdir(parents=True)
+    (docs / "AGENTS.md").write_text(
+        "## 10) Definition of Done\n",
+        encoding="utf-8",
+    )
+    (ignored / "index.js").write_text(
+        "## 10) Definition of Done from ignored package\n",
+        encoding="utf-8",
+    )
+    oversized = workspace / "huge.md"
+    oversized.write_bytes(
+        b"## 10) Definition of Done oversized\n" + (b"x" * SEARCH_MAX_FILE_BYTES)
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    nested = controller.execute(
+        {
+            "action": "search",
+            "query": "Definition of Done",
+            "path": "docs/AGENTS.md",
+            "glob": "docs/*.md",
+        }
+    )
+    mismatched = controller.execute(
+        {
+            "action": "search",
+            "query": "Definition of Done",
+            "path": "docs/AGENTS.md",
+            "glob": "*.py",
+        }
+    )
+    tree = controller.execute(
+        {
+            "action": "search",
+            "query": "Definition of Done",
+            "path": ".",
+        }
+    )
+
+    assert nested["ok"]
+    assert nested["engine"] == "rg"
+    assert nested["matches"] == ["docs/AGENTS.md:1:## 10) Definition of Done"]
+    assert mismatched["ok"]
+    assert mismatched["matches"] == []
+    assert tree["ok"]
+    assert tree["engine"] == "rg"
+    assert tree["matches"] == ["docs/AGENTS.md:1:## 10) Definition of Done"]
+    assert "ignored package" not in str(tree)
+    assert "oversized" not in str(tree)
 
 
 def test_workspace_controller_never_exposes_env_or_private_key_files(

@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.19.0-codex.2`
+Documentation version: `v3.20.0-codex.1`
 
 ## Purpose
 
@@ -58,7 +58,10 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
    The browser status card also reports whether the host Terminal or PowerShell executable is
    available and the selected project currently grants read, write, and directory-entry access.
 2. Keep `New session` or choose a recent session/Project and, for a Project, either
-   `New session in project` or one of its recent sessions.
+   `New session in project` or one of its recent sessions. A completed run refreshes the
+   session catalog and keeps the Open conversation link, but it does not switch the page
+   off `New session` or write a conversation URL into the next submit. Reuse requires an
+   explicit user selection that is present in the latest catalog.
 3. Enter a task. The service validates the selected provider's official URL and opens it in the
    selected browser profile. When a request switches away from the persisted provider, the service
    resets a stale previous-provider target URL to the new provider's official home before
@@ -87,9 +90,12 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
    `run`, `bodycheck`, and `final`. If a provider emits multiple complete
    candidates with the same action name in one response, the controller uses the final candidate in textual
    response order; mixed action types remain rejected as ambiguous.
-   `search` uses project-confined `rg` when available. If the service cannot launch `rg`, a bounded
-   Python regular-expression fallback skips ignored, symlinked, sensitive, and oversized files and
-   still enforces the requested path, glob, and result limit.
+   `search` uses project-confined `rg` when available, with a 2 MiB file-size cap and the same
+   ignored-directory globs as the Python fallback. Explicit file globs match basename and
+   workspace-relative paths so `path=docs/AGENTS.md` plus `glob=docs/*.md` stays consistent across
+   engines. If the service cannot launch `rg`, a bounded Python regular-expression fallback skips
+   ignored, symlinked, sensitive, and oversized files and still enforces the requested path, glob,
+   and result limit.
 8. A malformed non-JSON reply receives up to three strict-format corrections that repeat the fenced JSON and
    escaping contract without spending the
    configured controller-action budget. This keeps a recoverable web-model formatting lapse from
@@ -112,7 +118,9 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
    Escape-to-close behavior. The question header and Markdown answer each have an independent
    vertical scroll region and reuse the standard expand/collapse control. The composer remains a
    non-shrinking bottom flex item so long responses cannot push it out of view. The sidebar session
-   trigger follows the selected or newly completed conversation title.
+   trigger stays on `New session` after a completed run unless the user explicitly
+   chooses a catalog session; the Open conversation link still targets the finished
+   conversation.
 
 ## Safety boundary
 
@@ -128,6 +136,8 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
   bounded before-and-after project metadata fingerprint detects writes made by an otherwise allowed
   verification command; such a run is reported as failed and invalidates the prior bodycheck.
 - Stop ends Web-provider generation and terminates the current local process group.
+  macOS idle-sleep assertions are released only after temporary context cleanup publishes
+  `running=false`.
 - The Flask control routes accept host-loopback traffic directly. Private-network requests must
   first unlock `/agent` with the six-digit password gate; the successful signed session also
   authorizes same-origin `/api/agent/*` requests. Public and host-rebinding requests are rejected.
