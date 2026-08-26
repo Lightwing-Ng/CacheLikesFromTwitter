@@ -1,14 +1,19 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.24.0-codex.1
+Code version: v3.28.0-codex.1
 """
 
 from __future__ import annotations
 
 from dataclasses import asdict
+from io import BytesIO, StringIO, TextIOWrapper
 import json
+import os
 from pathlib import Path
+import signal
 import shutil
+import subprocess
+import sys
 from tempfile import TemporaryDirectory
 from threading import Event
 import time
@@ -125,20 +130,79 @@ def test_windows_agent_rejects_safari_and_accepts_chromium(tmp_path: Path) -> No
 
 
 def test_windows_inspection_commands_use_powershell_for_safe_scripts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    script = workspace / "scripts" / "check.ps1"
+    script.parent.mkdir(parents=True)
+    script.write_text("exit 0\n", encoding="utf-8")
+    powershell = tmp_path / "pwsh.exe"
+    powershell.write_text("", encoding="utf-8")
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: True)
+    monkeypatch.setattr(
+        computer_use_agent.shutil,
+        "which",
+        lambda name: str(powershell) if name == "pwsh" else None,
+    )
+
+    assert inspection_command_parts(
+        r".\scripts\check.ps1",
+        workspace=workspace,
+    ) == [
+        str(powershell),
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        str(script),
+    ]
+
+    assert inspection_command_parts(
+        r'".\scripts\check.ps1"',
+        workspace=workspace,
+    ) == [
+        str(powershell),
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        str(script),
+    ]
+    assert inspection_command_parts(
+        r"'.\scripts\check.ps1'",
+        workspace=workspace,
+    ) == [
+        str(powershell),
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        str(script),
+    ]
+
+
+def test_windows_inspection_commands_remove_outer_quotes_from_path_arguments(
+    tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import app.core.computer_use_agent as computer_use_agent
 
     monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: True)
-    monkeypatch.setattr(computer_use_agent.shutil, "which", lambda _name: "pwsh.exe")
 
-    assert inspection_command_parts(r".\scripts\check.ps1") == [
-        "pwsh.exe",
-        "-NoProfile",
-        "-NonInteractive",
-        "-File",
-        r".\scripts\check.ps1",
-    ]
+    double_quoted = inspection_command_parts(
+        r'pytest "tests\foo bar.py" -q',
+        workspace=tmp_path,
+    )
+    single_quoted = inspection_command_parts(
+        r"pytest 'tests\foo bar.py' -q",
+        workspace=tmp_path,
+    )
+    assert Path(double_quoted[0]).is_absolute()
+    assert double_quoted[1:] == [r"tests\foo bar.py", "-q"]
+    assert Path(single_quoted[0]).is_absolute()
+    assert single_quoted[1:] == [r"tests\foo bar.py", "-q"]
+    with pytest.raises(ValueError, match="unsupported Windows command quoting"):
+        inspection_command_parts(r'pytest tests"foo.py -q')
 
 
 def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None:
@@ -486,6 +550,56 @@ def test_chatgpt_composer_wait_stops_when_requested() -> None:
     assert observation.get("reason") == "stop-requested"
 
 
+def test_chatgpt_model_selector_stops_after_opening_the_power_menu() -> None:
+    page = _chromium_model_page("GPT-5.6 Sol")
+    stopped = {"value": False}
+    original_click = page.power.click
+
+    def click_and_stop() -> None:
+        original_click()
+        stopped["value"] = True
+
+    page.power.click = click_and_stop
+    observation: dict[str, object] = {}
+
+    assert (
+        _select_chatgpt_model(
+            page,
+            "chromium",
+            DEFAULT_CHATGPT_MODEL,
+            observation,
+            should_stop=lambda: stopped["value"],
+        )
+        is False
+    )
+    assert observation.get("reason") == "stop-requested"
+    assert page.power.click_count == 1
+    assert page.evaluate_scripts == []
+
+
+def test_chatgpt_model_composer_probe_returns_after_one_fatal_failure() -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    attempts = {"value": 0}
+
+    class _ComposerLocator:
+        @property
+        def first(self) -> "_ComposerLocator":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            attempts["value"] += 1
+            raise RuntimeError("Target page, context or browser has been closed")
+
+    class _Page:
+        def locator(self, _selector: str) -> _ComposerLocator:
+            return _ComposerLocator()
+
+    computer_use_agent._wait_for_chatgpt_composer_if_available(_Page())
+
+    assert attempts["value"] == 1
+
+
 def test_chatgpt_model_diagnostics_are_filtered_bounded_and_deduplicated() -> None:
     class _Page:
         def evaluate(self, _expression: str) -> dict[str, object]:
@@ -676,6 +790,61 @@ def test_context_attachment_timeout_and_failure_return_false(
 
     assert _attach_context_file(page, "chromium", context_path) is False
     assert page.waits == (40 if state == "timeout" else 0)
+
+
+@pytest.mark.parametrize("stop_stage", ("before", "during-upload"))
+def test_context_attachment_honors_stop_without_polling(
+    tmp_path: Path,
+    stop_stage: str,
+) -> None:
+    context_path = tmp_path / "context.md"
+    context_path.write_text("# Context\n", encoding="utf-8")
+    stop_requested = Event()
+    if stop_stage == "before":
+        stop_requested.set()
+
+    class _FileInput:
+        first = None
+
+        def __init__(self) -> None:
+            self.first = self
+            self.uploads = 0
+
+        def count(self) -> int:
+            return 1
+
+        def set_input_files(self, _path: str) -> None:
+            self.uploads += 1
+            stop_requested.set()
+
+    class _Page:
+        def __init__(self) -> None:
+            self.file_input = _FileInput()
+            self.locator_calls = 0
+
+        def locator(self, _selector: str) -> _FileInput:
+            self.locator_calls += 1
+            return self.file_input
+
+        def evaluate(self, *_args: object, **_kwargs: object) -> dict[str, bool]:
+            raise AssertionError("Stop must return before attachment polling.")
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            raise AssertionError("Stop must return before attachment polling.")
+
+    page = _Page()
+
+    assert (
+        _attach_context_file(
+            page,
+            "chromium",
+            context_path,
+            stop_requested.is_set,
+        )
+        is False
+    )
+    assert page.locator_calls == (0 if stop_stage == "before" else 1)
+    assert page.file_input.uploads == (0 if stop_stage == "before" else 1)
 
 
 def test_all_web_agent_platforms_support_new_recent_and_project_targets() -> None:
@@ -1174,7 +1343,7 @@ def test_load_keeps_migrated_prompts_when_persist_fails(
     assert persisted["windows_system_prompt"] == LEGACY_WINDOWS_SYSTEM_PROMPT
 
 
-def test_running_false_is_published_after_sleep_assertion_release(
+def test_running_false_is_published_after_context_cleanup_and_sleep_release(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     with TemporaryDirectory() as raw_root:
@@ -1184,10 +1353,13 @@ def test_running_false_is_published_after_sleep_assertion_release(
         store = ComputerUseSettingsStore(root / "settings.json")
         sleep_assertion = object()
         released_assertions: list[object] = []
+        context_paths: list[Path] = []
         seen_running_false = {"value": False}
 
         def stop_assertion(process: object) -> None:
             assert service.snapshot()["running"] is True
+            assert context_paths
+            assert not context_paths[0].exists()
             released_assertions.append(process)
 
         monkeypatch.setattr(
@@ -1202,6 +1374,9 @@ def test_running_false_is_published_after_sleep_assertion_release(
         def runner(**kwargs: object) -> tuple[str, str, int, bool]:
             update = kwargs["update"]
             assert callable(update)
+            context_path = Path(str(kwargs["context_path"]))
+            assert context_path.is_file()
+            context_paths.append(context_path)
             update(phase="running", message="Using local controller actions.")
             return "Verified result", "https://chatgpt.com/c/example", 4, True
 
@@ -1217,6 +1392,9 @@ def test_running_false_is_published_after_sleep_assertion_release(
         assert snapshot["phase"] == "finished"
         assert snapshot["response"] == "Verified result"
         assert released_assertions == [sleep_assertion]
+        assert len(context_paths) == 1
+        assert not context_paths[0].exists()
+        assert not context_paths[0].parent.exists()
         assert snapshot["context_file"] == ""
         assert snapshot["context_bytes"] == 0
 
@@ -1268,13 +1446,232 @@ def test_request_stop_does_not_release_sleep_assertion_before_completion(
         assert released_assertions == [sleep_assertion]
 
 
-def test_context_markdown_contains_instructions_request_and_bounded_index() -> None:
+def test_context_cleanup_failure_is_published_and_keeps_recovery_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    sleep_assertion = object()
+    released_assertions: list[object] = []
+    context_paths: list[Path] = []
+    original_unlink = Path.unlink
+
+    def fail_context_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path.name == "context.md":
+            raise OSError("context file is locked")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_context_unlink)
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: sleep_assertion,
+    )
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+        released_assertions.append,
+    )
+
+    def runner(**kwargs: object) -> tuple[str, str, int, bool]:
+        context_paths.append(Path(str(kwargs["context_path"])))
+        return "Verified result", "https://chatgpt.com/c/example", 4, True
+
+    service = ComputerUseAgentService(
+        store,
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    snapshot = service.snapshot()
+    assert snapshot["running"] is False
+    assert snapshot["phase"] == "failed"
+    assert "temporary context cleanup failed" in snapshot["message"]
+    assert context_paths == [Path(snapshot["context_file"])]
+    assert context_paths[0].is_file()
+    assert snapshot["context_bytes"] > 0
+    assert "context file is locked" in snapshot["last_error"]
+    assert released_assertions == [sleep_assertion]
+    persisted = json.loads(
+        (tmp_path / "runtime" / "last-run.json").read_text(encoding="utf-8")
+    )
+    assert persisted["context_file"] == snapshot["context_file"]
+    assert persisted["context_bytes"] == snapshot["context_bytes"]
+
+    restarted_service = ComputerUseAgentService(
+        store,
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+    assert restarted_service.snapshot()["context_file"] == snapshot["context_file"]
+    with pytest.raises(RuntimeError, match="cleanup is still pending"):
+        restarted_service.start(
+            "Inspect the workspace again",
+            str(workspace),
+            CrawlConfig(),
+        )
+    assert restarted_service.snapshot()["running"] is False
+
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    restarted_service.start(
+        "Inspect the workspace after cleanup recovery",
+        str(workspace),
+        CrawlConfig(),
+    )
+    deadline = time.monotonic() + 2
+    while restarted_service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    recovered_snapshot = restarted_service.snapshot()
+    assert recovered_snapshot["running"] is False
+    assert recovered_snapshot["phase"] == "finished"
+    assert recovered_snapshot["context_file"] == ""
+    assert recovered_snapshot["context_bytes"] == 0
+
+
+def test_request_stop_returns_false_after_completion_cleanup_starts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    cleanup_started = Event()
+    release_cleanup = Event()
+
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: object(),
+    )
+
+    def stop_assertion(_process: object) -> None:
+        cleanup_started.set()
+        assert release_cleanup.wait(timeout=2)
+
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+        stop_assertion,
+    )
+
+    service = ComputerUseAgentService(
+        store,
+        runner=lambda **_kwargs: (
+            "Verified result",
+            "https://chatgpt.com/c/example",
+            4,
+            True,
+        ),
+        runtime_root=tmp_path / "runtime",
+    )
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    assert cleanup_started.wait(timeout=2)
+
+    assert service.snapshot()["running"] is True
+    assert service.request_stop() is False
+    assert service.snapshot()["phase"] != "stopping"
+
+    release_cleanup.set()
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    snapshot = service.snapshot()
+    assert snapshot["running"] is False
+    assert snapshot["phase"] == "finished"
+
+
+def test_sleep_assertion_release_failure_cannot_block_running_false(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    context_paths: list[Path] = []
+
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: object(),
+    )
+
+    def fail_sleep_release(_process: object) -> None:
+        raise RuntimeError("caffeinate cleanup failed")
+
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+        fail_sleep_release,
+    )
+
+    def runner(**kwargs: object) -> tuple[str, str, int, bool]:
+        context_paths.append(Path(str(kwargs["context_path"])))
+        return "Verified result", "https://chatgpt.com/c/example", 4, True
+
+    service = ComputerUseAgentService(
+        store,
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    snapshot = service.snapshot()
+    assert snapshot["running"] is False
+    assert snapshot["phase"] == "finished"
+    assert snapshot["context_file"] == ""
+    assert snapshot["context_bytes"] == 0
+    assert len(context_paths) == 1
+    assert not context_paths[0].exists()
+
+
+def test_context_markdown_contains_instructions_request_and_bounded_index(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
     with TemporaryDirectory() as raw_root:
         workspace = Path(raw_root) / "project"
         workspace.mkdir()
         (workspace / "AGENTS.md").write_text("Follow this repository contract.\n", encoding="utf-8")
         (workspace / "README.md").write_text("# Example\n", encoding="utf-8")
         (workspace / "app.py").write_text("print('hello')\n", encoding="utf-8")
+        (workspace / ".git").mkdir()
+        runtime_internal = workspace / ".computer-use-agent"
+        runtime_internal.mkdir()
+        (runtime_internal / "context.md").write_text(
+            "INTERNAL_CONTEXT_SECRET\n",
+            encoding="utf-8",
+        )
+        credential_directory = workspace / "credentials"
+        credential_directory.mkdir()
+        (credential_directory / "AGENTS.md").write_text(
+            "CREDENTIAL_INSTRUCTION_SECRET\n",
+            encoding="utf-8",
+        )
+        outside_instruction = Path(raw_root) / "outside-instruction.md"
+        outside_instruction.write_text("OUTSIDE_INSTRUCTION_SECRET\n", encoding="utf-8")
+        outside_entry = Path(raw_root) / "outside-package.json"
+        outside_entry.write_text("OUTSIDE_ENTRY_SECRET\n", encoding="utf-8")
+        try:
+            (workspace / "CLAUDE.md").symlink_to(outside_instruction)
+            (workspace / "package.json").symlink_to(outside_entry)
+        except OSError:
+            pass
+        status_output = (
+            "?? .env\x00"
+            "?? safe.py\x00"
+            "R  safe-new.py\x00credentials/token.txt\x00"
+            "?? nested/.computer-use-agent/context.md\x00"
+        )
+
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_bounded_git_status_output",
+            lambda _workspace, **_kwargs: (status_output, False),
+        )
         destination = Path(raw_root) / "runtime" / "context.md"
         settings = ComputerUseSettings(workspace_path=str(workspace), context_limit_mib=1)
 
@@ -1291,12 +1688,257 @@ def test_context_markdown_contains_instructions_request_and_bounded_index() -> N
         assert "Follow this repository contract." in content
         assert "app.py" in content
         assert "bodycheck" in content
+        assert "INTERNAL_CONTEXT_SECRET" not in content
+        assert "CREDENTIAL_INSTRUCTION_SECRET" not in content
+        assert "OUTSIDE_INSTRUCTION_SECRET" not in content
+        assert "OUTSIDE_ENTRY_SECRET" not in content
+        assert ".computer-use-agent/context.md" not in content
+        assert '?? "safe.py"' in content
+        assert ".env" not in content
+        assert "credentials/token.txt" not in content
         assert path.stat().st_mode & 0o777 == 0o600
 
 
-def test_project_file_index_falls_back_when_rg_is_unavailable(
+def test_context_post_write_failure_leaves_no_orphan_or_recovery_pointer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    runtime_root = tmp_path / "runtime"
+    original_chmod = Path.chmod
+
+    def fail_context_chmod(path: Path, mode: int) -> None:
+        if path.name == "context.md":
+            raise OSError("context chmod failed")
+        original_chmod(path, mode)
+
+    monkeypatch.setattr(Path, "chmod", fail_context_chmod)
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: None,
+    )
+    service = ComputerUseAgentService(
+        store,
+        runner=lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("The Web runner must not start after a context build failure.")
+        ),
+        runtime_root=runtime_root,
+    )
+
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    snapshot = service.snapshot()
+    assert snapshot["running"] is False
+    assert snapshot["phase"] == "failed"
+    assert "context chmod failed" in snapshot["last_error"]
+    assert snapshot["context_file"] == ""
+    assert snapshot["context_bytes"] == 0
+    assert list(runtime_root.glob("*/context.md")) == []
+
+
+def test_context_post_write_and_unlink_failure_persists_recovery_pointer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+    runtime_root = tmp_path / "runtime"
+    original_chmod = Path.chmod
+    original_unlink = Path.unlink
+
+    def fail_context_chmod(path: Path, mode: int) -> None:
+        if path.name == "context.md":
+            raise OSError("context chmod failed")
+        original_chmod(path, mode)
+
+    def fail_context_unlink(path: Path, *args: object, **kwargs: object) -> None:
+        if path.name == "context.md":
+            raise OSError("context unlink failed")
+        original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "chmod", fail_context_chmod)
+    monkeypatch.setattr(Path, "unlink", fail_context_unlink)
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: None,
+    )
+    service = ComputerUseAgentService(
+        store,
+        runtime_root=runtime_root,
+    )
+
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    snapshot = service.snapshot()
+    context_path = Path(snapshot["context_file"])
+    assert snapshot["running"] is False
+    assert snapshot["phase"] == "failed"
+    assert context_path.is_file()
+    assert snapshot["context_bytes"] == context_path.stat().st_size
+    assert "context unlink failed" in snapshot["last_error"]
+    persisted = json.loads(
+        (runtime_root / "last-run.json").read_text(encoding="utf-8")
+    )
+    assert persisted["context_file"] == str(context_path)
+    assert persisted["context_bytes"] == context_path.stat().st_size
+
+
+def test_git_status_stream_has_a_global_raw_limit_and_stops_the_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    observed_command: list[str] = []
+    stopped: list[object] = []
+
+    class _StatusProcess:
+        pid = 12_345
+
+        def __init__(self) -> None:
+            self.stdout = StringIO(("?? safe-file.py\x00" * 20))
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int | None:
+            return self.returncode
+
+    process = _StatusProcess()
+
+    def launch(command: list[str], **kwargs: object) -> _StatusProcess:
+        observed_command.extend(command)
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
+        return process
+
+    def stop_process(value: object, **_kwargs: object) -> None:
+        stopped.append(value)
+        process.returncode = -15
+
+    monkeypatch.setattr(computer_use_agent, "GIT_STATUS_MAX_RAW_CHARS", 64)
+    monkeypatch.setattr(computer_use_agent.subprocess, "Popen", launch)
+    monkeypatch.setattr(computer_use_agent, "_stop_process", stop_process)
+
+    output, truncated = computer_use_agent._bounded_git_status_output(workspace)
+
+    assert truncated is True
+    assert len(output) == 64
+    assert stopped == [process]
+    assert Path(observed_command[0]).is_absolute()
+    assert Path(observed_command[0]).name == "git"
+    assert "--porcelain=v1" in observed_command
+    assert "-z" in observed_command
+    assert "--untracked-files=normal" in observed_command
+
+
+def test_filtered_git_status_drops_sensitive_rename_and_truncated_records(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    raw = (
+        "?? safe.py\x00"
+        "R  safe-new.py\x00credentials/token.txt\x00"
+        "?? .env\x00"
+        "?? incomplete-sensitive"
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_bounded_git_status_output",
+        lambda _workspace, **_kwargs: (raw, True),
+    )
+
+    status = computer_use_agent._filtered_git_status(tmp_path)
+
+    assert '?? "safe.py"' in status
+    assert "credentials" not in status
+    assert ".env" not in status
+    assert "incomplete-sensitive" not in status
+    assert "status truncated at the controller output limit" in status
+
+
+def test_filtered_git_status_drops_a_fully_incomplete_first_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_bounded_git_status_output",
+        lambda _workspace, **_kwargs: ("?? incomplete-sensitive", True),
+    )
+
+    status = computer_use_agent._filtered_git_status(tmp_path)
+
+    assert status == "!! [status truncated at the controller output limit]"
+    assert "incomplete-sensitive" not in status
+
+
+def test_git_status_stream_timeout_is_bounded_and_cleans_up(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _SlowOutput:
+        def read(self, _maximum: int) -> str:
+            time.sleep(0.02)
+            return ""
+
+        def close(self) -> None:
+            return None
+
+    class _StatusProcess:
+        pid = 12_345
+
+        def __init__(self) -> None:
+            self.stdout = _SlowOutput()
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int | None:
+            return self.returncode
+
+    process = _StatusProcess()
+    stopped: list[object] = []
+
+    def stop_process(value: object, **_kwargs: object) -> None:
+        stopped.append(value)
+        process.returncode = -15
+
+    monkeypatch.setattr(computer_use_agent, "GIT_STATUS_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(computer_use_agent, "_stop_process", stop_process)
+
+    with pytest.raises(RuntimeError, match="0.001-second controller limit"):
+        computer_use_agent._bounded_git_status_output(tmp_path)
+
+    assert stopped == [process]
+
+
+def test_project_file_index_is_bounded_to_safe_regular_files(
+    tmp_path: Path,
 ) -> None:
     import app.core.computer_use_agent as computer_use_agent
 
@@ -1307,13 +1949,18 @@ def test_project_file_index_falls_back_when_rg_is_unavailable(
     ignored = workspace / "node_modules" / "dependency.js"
     ignored.parent.mkdir()
     ignored.write_text("ignored\n", encoding="utf-8")
+    runtime_context = workspace / ".computer-use-agent" / "context.md"
+    runtime_context.parent.mkdir()
+    runtime_context.write_text("internal\n", encoding="utf-8")
+    sensitive = workspace / "credentials" / "token.txt"
+    sensitive.parent.mkdir()
+    sensitive.write_text("secret\n", encoding="utf-8")
+    try:
+        (workspace / "linked.py").symlink_to(workspace / "app.py")
+    except OSError:
+        pass
 
-    def missing_rg(*_args: object, **_kwargs: object) -> str:
-        raise FileNotFoundError("rg")
-
-    monkeypatch.setattr(computer_use_agent, "_run_capture", missing_rg)
-
-    assert computer_use_agent._project_file_index(workspace) == ["README.md", "app.py"]
+    assert computer_use_agent._project_file_index(workspace) == ["app.py", "README.md"]
 
 
 def test_action_parser_requires_one_json_object() -> None:
@@ -1478,6 +2125,73 @@ def test_chatgpt_action_loop_fails_closed_before_context_or_prompt_when_model_is
     assert calls == {"attach": 0, "submit": 0}
 
 
+@pytest.mark.parametrize("stop_stage", ("model", "attach", "context-update"))
+def test_stop_after_model_verification_never_attaches_or_submits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stop_stage: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://chatgpt.com/c/stop-before-transfer"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(workspace_path=str(workspace))
+    stop_requested = Event()
+    controller = WorkspaceController(workspace, settings, stop_requested.is_set)
+    calls = {"attach": 0, "submit": 0}
+
+    def select_model(*_args: object, **_kwargs: object) -> bool:
+        if stop_stage == "model":
+            stop_requested.set()
+        return True
+
+    def attach(
+        _page: object,
+        _browser: str,
+        _context_path: Path,
+        should_stop: object,
+    ) -> bool:
+        calls["attach"] += 1
+        assert callable(should_stop)
+        if stop_stage == "attach":
+            stop_requested.set()
+        return False
+
+    def submit(*_args: object, **_kwargs: object) -> str:
+        calls["submit"] += 1
+        raise AssertionError("Stop must return before prompt submission.")
+
+    def update(**changes: object) -> None:
+        if stop_stage == "context-update" and "context_attached" in changes:
+            stop_requested.set()
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: True)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", select_model)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", attach)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Inspect the project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=settings,
+        session_mode="recent",
+        selected_target_url=_Page.url,
+        should_stop=stop_requested.is_set,
+        update=update,
+    )
+
+    assert result == ("", _Page.url, 0, False)
+    assert calls["attach"] == (0 if stop_stage == "model" else 1)
+    assert calls["submit"] == 0
+
+
 @pytest.mark.parametrize("context_attached", (True, False))
 def test_completed_action_loop_reports_attachment_and_normalizes_conversation_url(
     tmp_path: Path,
@@ -1550,11 +2264,15 @@ def test_final_requires_a_successful_run_and_then_current_bodycheck_after_an_edi
         url = "https://chatgpt.com/c/verification-gate"
 
     class _SuccessfulProcess:
-        returncode = 0
+        def __init__(self) -> None:
+            self.stdout = StringIO("1 passed\n")
+            self.returncode = 0
 
-        def communicate(self, *, timeout: int) -> tuple[str, None]:
-            assert timeout == 120
-            return "1 passed\n", None
+        def poll(self) -> int:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int:
+            return self.returncode
 
     workspace = tmp_path / "project"
     workspace.mkdir()
@@ -1627,10 +2345,15 @@ def test_verification_gate_resets_after_every_edit(
         url = "https://chatgpt.com/c/verification-reset"
 
     class _SuccessfulProcess:
-        returncode = 0
+        def __init__(self) -> None:
+            self.stdout = StringIO("1 passed\n")
+            self.returncode = 0
 
-        def communicate(self, *, timeout: int) -> tuple[str, None]:
-            return "1 passed\n", None
+        def poll(self) -> int:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int:
+            return self.returncode
 
     workspace = tmp_path / "project"
     workspace.mkdir()
@@ -1726,7 +2449,14 @@ def test_recent_gemini_and_grok_targets_enter_the_shared_agentic_action_loop(
         '{"action":"final","summary":"Done."}',
     ))
 
-    def verify(_page: object, _browser: str, selected_platform: str, selected_target: str) -> None:
+    def verify(
+        _page: object,
+        _browser: str,
+        selected_platform: str,
+        selected_target: str,
+        should_stop: object,
+    ) -> None:
+        assert callable(should_stop)
         verified.append((selected_platform, selected_target))
 
     def submit(_page: object, _browser: str, _message: str, _should_stop: object, **_kwargs: object) -> str:
@@ -1821,7 +2551,7 @@ def test_workspace_search_uses_python_fallback_when_rg_is_unavailable(
     def missing_rg(*_args: object, **_kwargs: object) -> object:
         raise FileNotFoundError("rg")
 
-    monkeypatch.setattr(computer_use_agent.subprocess, "run", missing_rg)
+    monkeypatch.setattr(computer_use_agent.subprocess, "Popen", missing_rg)
 
     result = controller.execute(
         {
@@ -1835,6 +2565,71 @@ def test_workspace_search_uses_python_fallback_when_rg_is_unavailable(
     assert result["engine"] == "python-fallback"
     assert result["matches"] == ["notes.txt:1:fallback-search-marker"]
     assert "must-not-leak" not in str(result)
+
+
+def test_workspace_search_python_fallback_bounds_each_matching_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "long.txt").write_text(
+        "LONG_MATCH_MARKER " + ("x" * 8_000) + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("rg")),
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    result = controller.execute(
+        {"action": "search", "query": "LONG_MATCH_MARKER", "path": "long.txt"}
+    )
+
+    assert result["ok"]
+    assert result["engine"] == "python-fallback"
+    assert len(result["matches"]) == 1
+    assert len(result["matches"][0]) < 4_100
+    assert result["matches"][0].endswith("characters]")
+
+
+def test_workspace_search_python_fallback_treats_regex_syntax_as_literal(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "patterns.txt").write_text(
+        "aaaaaaaaaaaaaaaa\n(a|aa)+$\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("rg")),
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    result = controller.execute(
+        {"action": "search", "query": "(a|aa)+$", "path": "."}
+    )
+
+    assert result["ok"]
+    assert result["matches"] == ["patterns.txt:2:(a|aa)+$"]
 
 
 @pytest.mark.parametrize(
@@ -1865,7 +2660,7 @@ def test_workspace_search_python_fallback_supports_an_explicit_file(
     )
     monkeypatch.setattr(
         computer_use_agent.subprocess,
-        "run",
+        "Popen",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("rg")),
     )
 
@@ -1884,6 +2679,87 @@ def test_workspace_search_python_fallback_supports_an_explicit_file(
     assert result["matches"] == expected_matches
 
 
+def _rg_json_match(path: str, line_number: int, text: str) -> str:
+    """Build one ripgrep JSON match event for controller tests."""
+    return json.dumps(
+        {
+            "type": "match",
+            "data": {
+                "path": {"text": path},
+                "lines": {"text": text + "\n"},
+                "line_number": line_number,
+                "submatches": [],
+            },
+        },
+        separators=(",", ":"),
+    )
+
+
+def _mock_rg_popen(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    stdout: str,
+    stderr: str = "",
+    returncode: int = 0,
+    observed_command: list[str] | None = None,
+) -> None:
+    """Install a completed UTF-8 text process for bounded ripgrep tests."""
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _SearchProcess:
+        pid = 12_345
+
+        def __init__(self) -> None:
+            self.stdout = StringIO(stdout)
+            self.stderr = StringIO(stderr)
+            self.returncode = returncode
+
+        def poll(self) -> int:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int:
+            return self.returncode
+
+    def launch(command: list[str], **kwargs: object) -> _SearchProcess:
+        if observed_command is not None:
+            observed_command.extend(command)
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
+        return _SearchProcess()
+
+    monkeypatch.setattr(computer_use_agent.subprocess, "Popen", launch)
+
+
+def test_rg_json_parser_preserves_posix_colons_and_backslashes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: False)
+
+    assert computer_use_agent._parse_rg_search_match(
+        _rg_json_match("outer:part/docs/name\\literal.md", 7, "marker")
+    ) == (
+        Path("outer:part/docs/name\\literal.md"),
+        "outer:part/docs/name\\literal.md:7:marker",
+    )
+
+
+def test_rg_json_parser_normalizes_windows_separators(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: True)
+
+    assert computer_use_agent._parse_rg_search_match(
+        _rg_json_match(r"docs\nested\agent.py", 3, "marker")
+    ) == (
+        Path("docs/nested/agent.py"),
+        "docs/nested/agent.py:3:marker",
+    )
+
+
 @pytest.mark.parametrize(
     ("glob", "expected_matches"),
     (
@@ -1897,8 +2773,6 @@ def test_workspace_search_rg_explicit_file_keeps_the_filename_and_glob_semantics
     glob: str,
     expected_matches: list[str],
 ) -> None:
-    import app.core.computer_use_agent as computer_use_agent
-
     workspace = tmp_path / "project"
     workspace.mkdir()
     (workspace / "AGENTS.md").write_text(
@@ -1912,16 +2786,11 @@ def test_workspace_search_rg_explicit_file_keeps_the_filename_and_glob_semantics
     )
     observed_command: list[str] = []
 
-    class _SearchResult:
-        returncode = 0
-        stdout = "AGENTS.md:1:## 10) Definition of Done\n"
-        stderr = ""
-
-    def search(command: list[str], **_kwargs: object) -> _SearchResult:
-        observed_command.extend(command)
-        return _SearchResult()
-
-    monkeypatch.setattr(computer_use_agent.subprocess, "run", search)
+    _mock_rg_popen(
+        monkeypatch,
+        stdout=_rg_json_match("AGENTS.md", 1, "## 10) Definition of Done") + "\n",
+        observed_command=observed_command,
+    )
 
     result = controller.execute(
         {
@@ -1935,12 +2804,27 @@ def test_workspace_search_rg_explicit_file_keeps_the_filename_and_glob_semantics
     assert result["ok"]
     assert result["engine"] == "rg"
     assert result["matches"] == expected_matches
+    assert Path(observed_command[0]).is_absolute()
+    assert "--no-config" in observed_command
+    assert "--json" in observed_command
+    assert "--fixed-strings" in observed_command
+    assert "--hidden" in observed_command
+    assert "--no-ignore" in observed_command
+    assert "--no-follow" in observed_command
+    assert "--no-messages" in observed_command
     assert "--with-filename" in observed_command
     assert "--max-filesize" in observed_command
     assert str(SEARCH_MAX_FILE_BYTES) in observed_command
+    assert "--iglob" in observed_command
     assert "!.git/**" in observed_command
+    assert "!**/.git/**" in observed_command
     assert "!node_modules/**" in observed_command
-    assert observed_command[-2:] == ["Definition of Done", "AGENTS.md"]
+    assert "!**/node_modules/**" in observed_command
+    assert "!.computer-use-agent/**" in observed_command
+    assert "!**/credentials/**" in observed_command
+    assert "--glob" in observed_command
+    assert glob in observed_command
+    assert observed_command[-3:] == ["--", "Definition of Done", "AGENTS.md"]
 
 
 @pytest.mark.parametrize(
@@ -1966,6 +2850,7 @@ def test_workspace_search_python_fallback_matches_workspace_relative_globs(
         "## 10) Definition of Done\n",
         encoding="utf-8",
     )
+    (docs / "option-pattern.txt").write_text("--version\n", encoding="utf-8")
     controller = WorkspaceController(
         workspace,
         ComputerUseSettings(workspace_path=str(workspace)),
@@ -1973,7 +2858,7 @@ def test_workspace_search_python_fallback_matches_workspace_relative_globs(
     )
     monkeypatch.setattr(
         computer_use_agent.subprocess,
-        "run",
+        "Popen",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("rg")),
     )
 
@@ -2004,8 +2889,6 @@ def test_workspace_search_rg_matches_workspace_relative_globs(
     glob: str,
     expected_matches: list[str],
 ) -> None:
-    import app.core.computer_use_agent as computer_use_agent
-
     workspace = tmp_path / "project"
     docs = workspace / "docs"
     docs.mkdir(parents=True)
@@ -2020,16 +2903,16 @@ def test_workspace_search_rg_matches_workspace_relative_globs(
     )
     observed_command: list[str] = []
 
-    class _SearchResult:
-        returncode = 0
-        stdout = "docs/AGENTS.md:1:## 10) Definition of Done\n"
-        stderr = ""
-
-    def search(command: list[str], **_kwargs: object) -> _SearchResult:
-        observed_command.extend(command)
-        return _SearchResult()
-
-    monkeypatch.setattr(computer_use_agent.subprocess, "run", search)
+    _mock_rg_popen(
+        monkeypatch,
+        stdout=_rg_json_match(
+            "docs/AGENTS.md",
+            1,
+            "## 10) Definition of Done",
+        )
+        + "\n",
+        observed_command=observed_command,
+    )
 
     result = controller.execute(
         {
@@ -2043,26 +2926,649 @@ def test_workspace_search_rg_matches_workspace_relative_globs(
     assert result["ok"]
     assert result["engine"] == "rg"
     assert result["matches"] == expected_matches
-    assert observed_command[-2:] == ["Definition of Done", "docs/AGENTS.md"]
+    assert observed_command[-3:] == ["--", "Definition of Done", "docs/AGENTS.md"]
+
+
+def test_workspace_search_rg_applies_root_relative_glob_before_exclusions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    source = workspace / "app" / "core" / "agent.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("ROOT_RELATIVE_GLOB_MARKER\n", encoding="utf-8")
+    observed_command: list[str] = []
+    _mock_rg_popen(
+        monkeypatch,
+        stdout=_rg_json_match(
+            "app/core/agent.py",
+            1,
+            "ROOT_RELATIVE_GLOB_MARKER",
+        )
+        + "\n",
+        observed_command=observed_command,
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    result = controller.execute(
+        {
+            "action": "search",
+            "query": "ROOT_RELATIVE_GLOB_MARKER",
+            "path": "app",
+            "glob": "core/*.py",
+        }
+    )
+
+    assert result["matches"] == [
+        "app/core/agent.py:1:ROOT_RELATIVE_GLOB_MARKER"
+    ]
+    assert "core/*.py" in observed_command
+    assert "app/core/*.py" in observed_command
+    assert observed_command.index("--glob") < observed_command.index("--iglob")
+
+
+def test_windows_search_glob_normalizes_separators_case_and_engine_parity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: True)
+    workspace = tmp_path / "project"
+    source = workspace / "app" / "core" / "agent.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("WINDOWS_GLOB_MARKER\n", encoding="utf-8")
+    observed_command: list[str] = []
+    _mock_rg_popen(
+        monkeypatch,
+        stdout=_rg_json_match(
+            r"app\core\agent.py",
+            1,
+            "WINDOWS_GLOB_MARKER",
+        )
+        + "\n",
+        observed_command=observed_command,
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    payload = {
+        "action": "search",
+        "query": "WINDOWS_GLOB_MARKER",
+        "path": "app",
+        "glob": r"core\*.PY",
+    }
+
+    rg_result = controller.execute(payload)
+
+    assert rg_result["matches"] == [
+        "app/core/agent.py:1:WINDOWS_GLOB_MARKER"
+    ]
+    assert "--glob" not in observed_command
+    assert "core/*.PY" in observed_command
+    assert "app/core/*.PY" in observed_command
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("rg")),
+    )
+    fallback_result = controller.execute(payload)
+
+    assert fallback_result["engine"] == "python-fallback"
+    assert fallback_result["matches"] == rg_result["matches"]
+
+
+def test_search_glob_star_does_not_cross_directories_in_either_engine(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    source = workspace / "app" / "core" / "agent.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("NO_CROSS_DIRECTORY_GLOB\n", encoding="utf-8")
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    payload = {
+        "action": "search",
+        "query": "NO_CROSS_DIRECTORY_GLOB",
+        "path": ".",
+        "glob": "app*.py",
+    }
+
+    if shutil.which("rg") is not None:
+        real_rg_result = controller.execute(payload)
+        assert real_rg_result["engine"] == "rg"
+        assert real_rg_result["matches"] == []
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("rg")),
+    )
+    fallback_result = controller.execute(payload)
+
+    assert fallback_result["engine"] == "python-fallback"
+    assert fallback_result["matches"] == []
+
+
+@pytest.mark.skipif(
+    os.name == "nt",
+    reason="Backslash is a path separator on Windows.",
+)
+def test_posix_literal_backslash_glob_has_rg_and_fallback_parity(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    source = workspace / r"name\literal.md"
+    source.write_text("POSIX_BACKSLASH_GLOB\n", encoding="utf-8")
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    payload = {
+        "action": "search",
+        "query": "POSIX_BACKSLASH_GLOB",
+        "path": ".",
+        "glob": r"name\literal.md",
+    }
+
+    if shutil.which("rg") is not None:
+        real_rg_result = controller.execute(payload)
+        assert real_rg_result["matches"] == [
+            r"name\literal.md:1:POSIX_BACKSLASH_GLOB"
+        ]
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(FileNotFoundError("rg")),
+    )
+    fallback_result = controller.execute(payload)
+
+    assert fallback_result["matches"] == [
+        r"name\literal.md:1:POSIX_BACKSLASH_GLOB"
+    ]
+
+
+@pytest.mark.parametrize("glob", ("{foo,bar}.txt", "[^a]*.txt", "[abc].txt"))
+def test_search_rejects_glob_grammar_that_differs_between_engines(
+    tmp_path: Path,
+    glob: str,
+) -> None:
+    controller = WorkspaceController(
+        tmp_path,
+        ComputerUseSettings(workspace_path=str(tmp_path)),
+        lambda: False,
+    )
+
+    result = controller.execute(
+        {"action": "search", "query": "marker", "path": ".", "glob": glob}
+    )
+
+    assert result == {
+        "ok": False,
+        "action": "search",
+        "error": "The search glob supports literals, path separators, *, ?, and ** only.",
+    }
+
+
+@pytest.mark.parametrize("query", ("x" * 8_001, "before\x00after", "before\nafter"))
+def test_search_rejects_unbounded_or_control_character_queries(
+    tmp_path: Path,
+    query: str,
+) -> None:
+    controller = WorkspaceController(
+        tmp_path,
+        ComputerUseSettings(workspace_path=str(tmp_path)),
+        lambda: False,
+    )
+
+    result = controller.execute(
+        {"action": "search", "query": query, "path": "."}
+    )
+
+    assert result == {
+        "ok": False,
+        "action": "search",
+        "error": "The search query is invalid or exceeds the controller limit.",
+    }
+
+
+def test_workspace_search_rg_normalizes_paths_and_post_filters_nested_ignored_output(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    docs = workspace / "docs"
+    docs.mkdir()
+    (docs / "AGENTS.md").write_text(
+        "Definition of Done\n",
+        encoding="utf-8",
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    _mock_rg_popen(
+        monkeypatch,
+        stdout="\n".join(
+            (
+                _rg_json_match("./docs/AGENTS.md", 1, "Definition of Done"),
+                _rg_json_match(
+                    "./packages/example/node_modules/pkg/index.js",
+                    1,
+                    "Definition of Done",
+                ),
+                _rg_json_match(
+                    "./packages/example/logs/agent.log",
+                    1,
+                    "Definition of Done",
+                ),
+                _rg_json_match(
+                    "./packages/example/vendor/bundle.js",
+                    1,
+                    "Definition of Done",
+                ),
+                _rg_json_match(
+                    "./nested/.computer-use-agent/context.md",
+                    1,
+                    "Definition of Done secret context",
+                ),
+            )
+        ),
+    )
+
+    result = controller.execute(
+        {
+            "action": "search",
+            "query": "Definition of Done",
+            "path": ".",
+        }
+    )
+
+    assert result["ok"]
+    assert result["engine"] == "rg"
+    assert result["matches"] == ["docs/AGENTS.md:1:Definition of Done"]
+    assert "secret context" not in str(result)
+    assert not any(match.startswith("./") for match in result["matches"])
+
+
+def test_workspace_search_rg_rejects_linked_external_and_protected_targets(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "external.txt").write_text(
+        "EXTERNAL_LINK_SECRET\n",
+        encoding="utf-8",
+    )
+    credentials = workspace / "credentials"
+    credentials.mkdir()
+    (credentials / "token.txt").write_text(
+        "PROTECTED_LINK_SECRET\n",
+        encoding="utf-8",
+    )
+    try:
+        (workspace / "external-link").symlink_to(outside, target_is_directory=True)
+        (workspace / "safe-alias").symlink_to(
+            credentials,
+            target_is_directory=True,
+        )
+    except OSError:
+        pytest.skip("Directory symlinks are unavailable on this host.")
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    _mock_rg_popen(
+        monkeypatch,
+        stdout="\n".join(
+            (
+                _rg_json_match(
+                    "external-link/external.txt",
+                    1,
+                    "EXTERNAL_LINK_SECRET",
+                ),
+                _rg_json_match(
+                    "safe-alias/token.txt",
+                    1,
+                    "PROTECTED_LINK_SECRET",
+                ),
+            )
+        ),
+    )
+
+    result = controller.execute(
+        {"action": "search", "query": "LINK_SECRET", "path": "."}
+    )
+
+    assert result["ok"]
+    assert result["matches"] == []
+    assert "EXTERNAL_LINK_SECRET" not in str(result)
+    assert "PROTECTED_LINK_SECRET" not in str(result)
+
+
+def test_workspace_search_rg_stops_at_the_global_raw_event_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    output = "\n".join(
+        _rg_json_match(f"docs/file-{index}.txt", 1, "marker")
+        for index in range(computer_use_agent.SEARCH_MAX_RAW_EVENTS + 1)
+    )
+    _mock_rg_popen(monkeypatch, stdout=output)
+
+    result = controller.execute(
+        {
+            "action": "search",
+            "query": "marker",
+            "path": ".",
+            "glob": "*.py",
+        }
+    )
+
+    assert result["ok"]
+    assert result["engine"] == "rg"
+    assert result["matches"] == []
+    assert result["truncated"] is True
+
+
+def test_workspace_search_rg_stop_clears_the_active_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    stop_checks = {"value": 0}
+    process_states: list[bool] = []
+
+    def should_stop() -> bool:
+        stop_checks["value"] += 1
+        return stop_checks["value"] >= 3
+
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        should_stop,
+        process_changed=lambda process: process_states.append(process is not None),
+    )
+    _mock_rg_popen(
+        monkeypatch,
+        stdout=_rg_json_match("safe.txt", 1, "marker") + "\n",
+    )
+
+    result = controller.execute(
+        {"action": "search", "query": "marker", "path": "."}
+    )
+
+    assert result == {
+        "ok": False,
+        "action": "search",
+        "stopped": True,
+        "error": "Stop requested.",
+    }
+    assert process_states == [True, False]
+
+
+def test_workspace_search_rg_failure_never_exposes_raw_output_or_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    _mock_rg_popen(
+        monkeypatch,
+        stdout=_rg_json_match(
+            "credentials/token.txt",
+            1,
+            "WEB_SECRET_VALUE",
+        )
+        + "\n",
+        stderr="credentials/token.txt: permission denied WEB_SECRET_VALUE\n",
+        returncode=2,
+    )
+
+    result = controller.execute(
+        {"action": "search", "query": "marker", "path": "."}
+    )
+
+    assert result == {
+        "ok": False,
+        "action": "search",
+        "error": "Search failed with ripgrep exit code 2.",
+    }
+    assert "WEB_SECRET_VALUE" not in str(result)
+    assert "credentials" not in str(result)
+
+
+def test_workspace_search_rg_timeout_returns_a_bounded_observation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+
+    class _SlowOutput:
+        def __iter__(self) -> "_SlowOutput":
+            return self
+
+        def __next__(self) -> str:
+            time.sleep(0.02)
+            raise StopIteration
+
+        def close(self) -> None:
+            return None
+
+    class _SearchProcess:
+        pid = 12_345
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.stdout = _SlowOutput()
+            self.stderr = StringIO("")
+
+        def poll(self) -> int:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int:
+            return self.returncode
+
+    monkeypatch.setattr(computer_use_agent, "SEARCH_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: _SearchProcess(),
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    result = controller.execute(
+        {"action": "search", "query": "marker", "path": "."}
+    )
+
+    assert result == {
+        "ok": False,
+        "action": "search",
+        "error": "Search exceeded the 0.001-second controller limit.",
+    }
+
+
+def test_workspace_search_stream_failure_stops_and_clears_the_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    stopped: list[object] = []
+    process_states: list[bool] = []
+
+    class _BrokenOutput:
+        def __iter__(self) -> "_BrokenOutput":
+            return self
+
+        def __next__(self) -> str:
+            raise OSError("private search diagnostic")
+
+        def close(self) -> None:
+            return None
+
+    class _SearchProcess:
+        pid = 12_345
+
+        def __init__(self) -> None:
+            self.stdout = _BrokenOutput()
+            self.stderr = StringIO("")
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int | None:
+            return self.returncode
+
+    process = _SearchProcess()
+
+    def stop_process(value: object, **_kwargs: object) -> None:
+        stopped.append(value)
+        process.returncode = -15
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(computer_use_agent, "_stop_process", stop_process)
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+        process_changed=lambda value: process_states.append(value is not None),
+    )
+
+    result = controller.execute(
+        {"action": "search", "query": "marker", "path": "."}
+    )
+
+    assert result == {
+        "ok": False,
+        "action": "search",
+        "error": "Search output could not be read safely.",
+    }
+    assert stopped == [process]
+    assert process_states == [True, False]
+    assert "private search diagnostic" not in str(result)
 
 
 @pytest.mark.skipif(shutil.which("rg") is None, reason="rg is not installed")
 def test_workspace_search_real_rg_respects_glob_size_and_ignored_directories(
     tmp_path: Path,
 ) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
     workspace = tmp_path / "project"
     docs = workspace / "docs"
-    ignored = workspace / "node_modules" / "pkg"
     docs.mkdir(parents=True)
-    ignored.mkdir(parents=True)
     (docs / "AGENTS.md").write_text(
         "## 10) Definition of Done\n",
         encoding="utf-8",
     )
-    (ignored / "index.js").write_text(
-        "## 10) Definition of Done from ignored package\n",
+    ignored_directories = (
+        workspace / "node_modules" / "pkg",
+        workspace / "packages" / "example" / "node_modules" / "pkg",
+        workspace / "packages" / "example" / "logs",
+        workspace / "src" / "vendor",
+        workspace / "nested" / ".computer-use-agent",
+    )
+    for index, ignored in enumerate(ignored_directories, start=1):
+        ignored.mkdir(parents=True)
+        (ignored / f"ignored-{index}.txt").write_text(
+            f"## 10) Definition of Done from ignored directory {index}\n",
+            encoding="utf-8",
+        )
+    colon_safe: dict[str, object] | None = None
+    colon_sensitive: dict[str, object] | None = None
+    if not computer_use_agent.is_windows_host():
+        colon_root = workspace / "outer:part"
+        (colon_root / "docs").mkdir(parents=True)
+        (colon_root / "docs" / "safe.md").write_text(
+            "COLON_SAFE_MARKER\n",
+            encoding="utf-8",
+        )
+        (colon_root / "config").mkdir()
+        (colon_root / "config" / "cookies.json").write_text(
+            "COLON_SENSITIVE_MARKER\n",
+            encoding="utf-8",
+        )
+    hidden = workspace / ".github" / "workflows"
+    hidden.mkdir(parents=True)
+    (hidden / "ci.yml").write_text("HIDDEN_SAFE_MARKER\n", encoding="utf-8")
+    nested_glob_root = workspace / "app" / "core"
+    nested_glob_root.mkdir(parents=True)
+    (nested_glob_root / "agent.py").write_text(
+        "ROOT_RELATIVE_GLOB_MARKER\n",
         encoding="utf-8",
     )
+    (docs / "option-pattern.txt").write_text(
+        "--version\n--pre=/usr/bin/env\n(a|aa)+$\n",
+        encoding="utf-8",
+    )
+    sensitive_directory = workspace / "packages" / "example" / "credentials"
+    sensitive_directory.mkdir(parents=True)
+    (sensitive_directory / "token.txt").write_text(
+        "NESTED_CREDENTIAL_MARKER\n",
+        encoding="utf-8",
+    )
+    outside = tmp_path / "outside.txt"
+    outside.write_text("SYMLINK_ESCAPE_MARKER\n", encoding="utf-8")
+    try:
+        (workspace / "linked-outside.txt").symlink_to(outside)
+    except OSError:
+        pass
     oversized = workspace / "huge.md"
     oversized.write_bytes(
         b"## 10) Definition of Done oversized\n" + (b"x" * SEARCH_MAX_FILE_BYTES)
@@ -2096,6 +3602,39 @@ def test_workspace_search_real_rg_respects_glob_size_and_ignored_directories(
             "path": ".",
         }
     )
+    if not computer_use_agent.is_windows_host():
+        colon_safe = controller.execute(
+            {"action": "search", "query": "COLON_SAFE_MARKER", "path": "."}
+        )
+        colon_sensitive = controller.execute(
+            {"action": "search", "query": "COLON_SENSITIVE_MARKER", "path": "."}
+        )
+    hidden_safe = controller.execute(
+        {"action": "search", "query": "HIDDEN_SAFE_MARKER", "path": "."}
+    )
+    root_relative_glob = controller.execute(
+        {
+            "action": "search",
+            "query": "ROOT_RELATIVE_GLOB_MARKER",
+            "path": "app",
+            "glob": "core/*.py",
+        }
+    )
+    option_like_query = controller.execute(
+        {"action": "search", "query": "--version", "path": "."}
+    )
+    pre_option_like_query = controller.execute(
+        {"action": "search", "query": "--pre=/usr/bin/env", "path": "."}
+    )
+    regex_shaped_literal = controller.execute(
+        {"action": "search", "query": "(a|aa)+$", "path": "."}
+    )
+    nested_sensitive = controller.execute(
+        {"action": "search", "query": "NESTED_CREDENTIAL_MARKER", "path": "."}
+    )
+    symlink_escape = controller.execute(
+        {"action": "search", "query": "SYMLINK_ESCAPE_MARKER", "path": "."}
+    )
 
     assert nested["ok"]
     assert nested["engine"] == "rg"
@@ -2105,16 +3644,36 @@ def test_workspace_search_real_rg_respects_glob_size_and_ignored_directories(
     assert tree["ok"]
     assert tree["engine"] == "rg"
     assert tree["matches"] == ["docs/AGENTS.md:1:## 10) Definition of Done"]
-    assert "ignored package" not in str(tree)
+    assert "ignored directory" not in str(tree)
     assert "oversized" not in str(tree)
+    if colon_safe is not None and colon_sensitive is not None:
+        assert colon_safe["matches"] == [
+            "outer:part/docs/safe.md:1:COLON_SAFE_MARKER"
+        ]
+        assert colon_sensitive["matches"] == []
+    assert hidden_safe["matches"] == [
+        ".github/workflows/ci.yml:1:HIDDEN_SAFE_MARKER"
+    ]
+    assert root_relative_glob["matches"] == [
+        "app/core/agent.py:1:ROOT_RELATIVE_GLOB_MARKER"
+    ]
+    assert option_like_query["matches"] == [
+        "docs/option-pattern.txt:1:--version"
+    ]
+    assert pre_option_like_query["matches"] == [
+        "docs/option-pattern.txt:2:--pre=/usr/bin/env"
+    ]
+    assert regex_shaped_literal["matches"] == [
+        "docs/option-pattern.txt:3:(a|aa)+$"
+    ]
+    assert nested_sensitive["matches"] == []
+    assert symlink_escape["matches"] == []
 
 
 def test_workspace_controller_never_exposes_env_or_private_key_files(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import app.core.computer_use_agent as computer_use_agent
-
     workspace = tmp_path / "project"
     workspace.mkdir()
     (workspace / ".env").write_text(
@@ -2126,36 +3685,51 @@ def test_workspace_controller_never_exposes_env_or_private_key_files(
     (workspace / "safe.txt").write_text(
         "SHARED_MARKER public-value\n", encoding="utf-8"
     )
+    runtime_context = workspace / ".COMPUTER-USE-AGENT" / "context.md"
+    runtime_context.parent.mkdir()
+    runtime_context.write_text(
+        "SHARED_MARKER runtime-context-value\n",
+        encoding="utf-8",
+    )
     controller = WorkspaceController(
         workspace,
         ComputerUseSettings(workspace_path=str(workspace)),
         lambda: False,
     )
 
-    class _SearchResult:
-        returncode = 0
-        stdout = (
-            ".env:1:SHARED_MARKER=env-secret-value\n"
-            "keys/deploy.pem:1:SHARED_MARKER private-key-value\n"
-            "safe.txt:1:SHARED_MARKER public-value\n"
-        )
-        stderr = ""
-
-    monkeypatch.setattr(
-        computer_use_agent.subprocess,
-        "run",
-        lambda *_args, **_kwargs: _SearchResult(),
+    _mock_rg_popen(
+        monkeypatch,
+        stdout="\n".join(
+            (
+                _rg_json_match(".env", 1, "SHARED_MARKER=env-secret-value"),
+                _rg_json_match(
+                    "keys/deploy.pem",
+                    1,
+                    "SHARED_MARKER private-key-value",
+                ),
+                _rg_json_match("safe.txt", 1, "SHARED_MARKER public-value"),
+                _rg_json_match(
+                    ".COMPUTER-USE-AGENT/context.md",
+                    1,
+                    "SHARED_MARKER runtime-context-value",
+                ),
+            )
+        ),
     )
 
     observations = {
         "env_read": controller.execute({"action": "read", "path": ".env"}),
         "key_read": controller.execute({"action": "read", "path": "keys/deploy.pem"}),
+        "runtime_read": controller.execute(
+            {"action": "read", "path": ".COMPUTER-USE-AGENT/context.md"}
+        ),
         "list": controller.execute({"action": "list", "path": ".", "depth": 3}),
         "search": controller.execute({"action": "search", "query": "SHARED_MARKER"}),
     }
 
     assert not observations["env_read"]["ok"]
     assert not observations["key_read"]["ok"]
+    assert not observations["runtime_read"]["ok"]
     assert observations["list"]["entries"] == ["keys/", "safe.txt"]
     assert observations["search"]["matches"] == [
         "safe.txt:1:SHARED_MARKER public-value"
@@ -2163,6 +3737,7 @@ def test_workspace_controller_never_exposes_env_or_private_key_files(
     web_visible = str(observations)
     assert "env-secret-value" not in web_visible
     assert "private-key-value" not in web_visible
+    assert "runtime-context-value" not in web_visible
 
 
 @pytest.mark.parametrize(
@@ -2184,16 +3759,1156 @@ def test_command_policy_rejects_mutation_network_and_environment_access(command:
 
 def test_command_policy_allows_focused_checks() -> None:
     assert inspection_command_parts("git status --short") == ["git", "status", "--short"]
-    assert inspection_command_parts("python3 -m pytest tests/test_example.py -q")[:3] == [
-        "python3",
-        "-m",
-        "pytest",
-    ]
-    assert inspection_command_parts("npm run test -- --runInBand")[:3] == [
-        "npm",
+    command = inspection_command_parts(
+        "python3 -m pytest tests/test_example.py -q"
+    )
+    assert Path(command[0]).is_absolute()
+    assert command[1:3] == ["-m", "pytest"]
+    ruff_command = inspection_command_parts("ruff --isolated check .")
+    assert Path(ruff_command[0]).is_absolute()
+    assert ruff_command[1:] == ["--isolated", "check", "."]
+
+
+def test_python_verification_uses_the_controller_runtime(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    unrelated_python = tmp_path / "python3"
+    unrelated_python.write_text("", encoding="utf-8")
+    unrelated_python.chmod(0o755)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    monkeypatch.setattr(
+        computer_use_agent.shutil,
+        "which",
+        lambda name: str(unrelated_python) if name.startswith("python") else None,
+    )
+
+    bare = inspection_command_parts(
+        "python3 -m pytest -q",
+        workspace=workspace,
+    )
+    explicit = inspection_command_parts(
+        f'"{sys.executable}" -m py_compile sample.py',
+        workspace=workspace,
+    )
+
+    assert Path(bare[0]).samefile(Path(sys.executable).resolve())
+    assert Path(explicit[0]).samefile(Path(sys.executable).resolve())
+    other_minor = 14 if sys.version_info.minor != 14 else 13
+    with pytest.raises(ValueError, match="controller runtime version"):
+        inspection_command_parts(f"python3.{other_minor} -m pytest -q")
+
+
+def test_command_policy_rewrites_trusted_tools_and_rejects_workspace_path_hijack(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    trusted = tmp_path / "trusted" / "pytest"
+    trusted.parent.mkdir()
+    trusted.write_text("", encoding="utf-8")
+    trusted.chmod(0o755)
+    alias = tmp_path / "alias" / "pytest"
+    alias.parent.mkdir()
+    alias.symlink_to(trusted)
+    monkeypatch.setattr(
+        computer_use_agent.shutil,
+        "which",
+        lambda name: str(trusted) if name == "pytest" else None,
+    )
+
+    bare = inspection_command_parts("pytest -q", workspace=workspace)
+    explicit_alias = inspection_command_parts(
+        f"{alias} -q",
+        workspace=workspace,
+    )
+
+    assert bare[0] == str(trusted.resolve())
+    assert explicit_alias[0] == str(trusted.resolve())
+
+    impostor = workspace / "pytest"
+    impostor.write_text("", encoding="utf-8")
+    impostor.chmod(0o755)
+    monkeypatch.setattr(
+        computer_use_agent.shutil,
+        "which",
+        lambda name: str(impostor) if name == "pytest" else None,
+    )
+    with pytest.raises(ValueError, match="unavailable"):
+        inspection_command_parts("pytest -q", workspace=workspace)
+
+
+def test_command_policy_allows_only_real_platform_scripts_under_workspace(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: False)
+    workspace = tmp_path / "project"
+    script = workspace / "scripts" / "check.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    script.chmod(0o755)
+
+    assert inspection_command_parts(
+        "scripts/check.sh",
+        workspace=workspace,
+    ) == [str(script.resolve())]
+
+    alias = workspace / "scripts" / "verify.sh"
+    try:
+        alias.symlink_to(script)
+    except OSError:
+        pytest.skip("This host cannot create the symlink required by this regression test.")
+    with pytest.raises(ValueError):
+        inspection_command_parts("scripts/verify.sh", workspace=workspace)
+    with pytest.raises(ValueError):
+        inspection_command_parts(
+            "scripts/../../outside/check.sh",
+            workspace=workspace,
+        )
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "/tmp/pytest -q",
+        "/tmp/python3 -m pytest -q",
+        "/tmp/ruff check .",
+        "python3 -m pytest -c/etc/passwd -q",
+        "eslint -c/etc/passwd .",
+        "pytest -q -o cache_dir=/tmp/web-agent-outside-cache",
+        "python3 -m pytest --override-ini=cache_dir=/tmp/web-agent-outside-cache",
+        "pytest --pastebin=all -q",
+        "pytest --pyargs pip -q",
+        "python3 -m pytest -p some_plugin -q",
+        "python3 -m mypy --install-types --non-interactive .",
+        "python3 -m mypy -p installed_package",
+        "python3 -m mypy --module=installed_module",
+        "python3 -m compileall -i/tmp/not-there",
+        "python3 -m compileall -b app",
+        "pytest @/tmp/external-arguments.txt",
+        "ruff format .",
+        "python3 -m ruff format .",
+        "ruff --isolated format .",
+        "python3 -m ruff --config pyproject.toml format .",
+        "ruff --config 'cache-dir = \"/tmp/agent-ruff-cache\"' check .",
+        "ruff --cache-dir /tmp/agent-ruff-cache check .",
+        "ruff clean",
+        "python3 -m ruff server",
+        "ruff check --add-noqa .",
+        "pyright --watch",
+        "pyright --createstub package",
+        "tsc --watch",
+        "tsc",
+        "tsc --noEmit false",
+        "tsc --noEmit --noEmit false",
+        "cargo test --config build.target-dir=/tmp/agent-out",
+        "cargo test --config=build.target-dir=/tmp/agent-out",
+        "make -C/tmp check",
+        "make -f/tmp/Makefile check",
+        "node --check -e",
+    ),
+)
+def test_command_policy_rejects_executable_config_and_eval_bypasses(
+    command: str,
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError):
+        inspection_command_parts(command, workspace=tmp_path)
+
+
+def test_command_policy_rejects_linked_path_arguments(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    credentials = workspace / "credentials"
+    credentials.mkdir(parents=True)
+    sensitive = credentials / "token.js"
+    sensitive.write_text("const TOKEN = 'secret';\n", encoding="utf-8")
+    direct_link = workspace / "safe.js"
+    try:
+        direct_link.symlink_to(sensitive)
+    except OSError:
+        pytest.skip("This host cannot create the symlink required by this regression test.")
+    linked_parent = workspace / "linked"
+    linked_parent.symlink_to(credentials, target_is_directory=True)
+    ordinary = workspace / "ordinary.js"
+    ordinary.write_text("const value = 1;\n", encoding="utf-8")
+    trusted_node = tmp_path / "trusted-node"
+    trusted_node.write_text("", encoding="utf-8")
+    trusted_node.chmod(0o755)
+    monkeypatch.setattr(
+        computer_use_agent.shutil,
+        "which",
+        lambda name: str(trusted_node) if name == "node" else None,
+    )
+
+    with pytest.raises(ValueError, match="symlinks or junctions"):
+        inspection_command_parts("node --check safe.js", workspace=workspace)
+    with pytest.raises(ValueError, match="symlinks or junctions"):
+        inspection_command_parts(
+            "node --check linked/token.js",
+            workspace=workspace,
+        )
+    ordinary_command = inspection_command_parts(
+        "node --check ordinary.js",
+        workspace=workspace,
+    )
+    assert ordinary_command == [str(trusted_node.resolve()), "--check", "ordinary.js"]
+
+
+def test_hard_link_is_rejected_across_controller_boundaries(
+    tmp_path: Path,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    outside = tmp_path / "outside.py"
+    outside.write_text("HARD_LINK_SECRET = 1\n", encoding="utf-8")
+    linked = workspace / "linked.py"
+    try:
+        os.link(outside, linked)
+    except OSError:
+        pytest.skip("This filesystem cannot create the hard link required by this test.")
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    read_result = controller.execute({"action": "read", "path": "linked.py"})
+    replace_result = controller.execute(
+        {
+            "action": "replace",
+            "path": "linked.py",
+            "old": "HARD_LINK_SECRET = 1",
+            "new": "HARD_LINK_SECRET = 2",
+        }
+    )
+    search_result = controller.execute(
+        {"action": "search", "query": "HARD_LINK_SECRET", "path": "."}
+    )
+    run_result = controller.execute(
+        {"action": "run", "command": "python3 -m py_compile linked.py"}
+    )
+    _digest, fingerprint_complete = (
+        computer_use_agent._workspace_mutation_fingerprint(workspace)
+    )
+    context_path, _context_bytes = build_context_markdown(
+        workspace,
+        "Inspect the project.",
+        ComputerUseSettings(workspace_path=str(workspace)),
+        tmp_path / "context.md",
+    )
+
+    assert not read_result["ok"]
+    assert not replace_result["ok"]
+    assert search_result["matches"] == []
+    assert not run_result["ok"]
+    assert fingerprint_complete is False
+    assert "linked.py" not in context_path.read_text(encoding="utf-8")
+    assert outside.read_text(encoding="utf-8") == "HARD_LINK_SECRET = 1\n"
+
+
+def test_tsc_requires_one_standalone_no_emit_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    trusted_tsc = tmp_path / "trusted-tsc"
+    trusted_tsc.write_text("", encoding="utf-8")
+    trusted_tsc.chmod(0o755)
+    monkeypatch.setattr(
+        computer_use_agent.shutil,
+        "which",
+        lambda name: str(trusted_tsc) if name == "tsc" else None,
+    )
+
+    command = inspection_command_parts("tsc --noEmit", workspace=workspace)
+    assert command == [str(trusted_tsc.resolve()), "--noEmit"]
+    for unsafe in (
+        "tsc",
+        "tsc --noEmit=false",
+        "tsc --noEmit false",
+        "tsc --noEmit --noEmit false",
+    ):
+        with pytest.raises(ValueError, match="standalone --noEmit"):
+            inspection_command_parts(unsafe, workspace=workspace)
+
+
+@pytest.mark.parametrize(
+    "command",
+    (
+        "git show HEAD:credentials.json",
+        "git diff -- credentials.json",
+        "git grep TOKEN",
+        "git log -p",
+        "git ls-files",
+        "pytest credentials/test_token.py -q",
+        "python3 -m pytest .computer-use-agent/test_context.py -q",
+    ),
+)
+def test_command_policy_rejects_content_git_and_sensitive_paths(
+    command: str,
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError):
+        inspection_command_parts(command, workspace=tmp_path)
+
+
+def test_git_status_run_returns_only_filtered_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_filtered_git_status",
+        lambda _workspace, **_kwargs: '?? "safe.py"',
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Filtered git status must not use the generic run process.")
+        ),
+    )
+
+    result = controller.execute(
+        {"action": "run", "command": "git status --short"}
+    )
+
+    assert result["ok"]
+    assert result["output"] == '?? "safe.py"'
+    assert result["mutated_workspace"] is False
+
+
+def test_git_status_run_never_satisfies_the_verification_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    controller.state.edit_generation = 7
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_filtered_git_status",
+        lambda _workspace, **_kwargs: ' M "sample.py"',
+    )
+
+    result = controller.execute(
+        {"action": "run", "command": "git status --short"}
+    )
+
+    assert result["ok"]
+    assert controller.state.verification_current is False
+    assert controller.state.successful_checks == []
+
+
+def test_git_status_run_stop_terminates_and_clears_the_active_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    stop_checks = {"count": 0}
+    stopped: list[object] = []
+    process_states: list[bool] = []
+
+    def should_stop() -> bool:
+        stop_checks["count"] += 1
+        return stop_checks["count"] >= 2
+
+    class _StatusProcess:
+        pid = 12_345
+
+        def __init__(self) -> None:
+            self.stdout = StringIO("")
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int | None:
+            return self.returncode
+
+    process = _StatusProcess()
+
+    def stop_process(value: object, **_kwargs: object) -> None:
+        stopped.append(value)
+        process.returncode = -15
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(computer_use_agent, "_stop_process", stop_process)
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        should_stop,
+        process_changed=lambda value: process_states.append(value is not None),
+    )
+
+    result = controller.execute({"action": "run", "command": "git status --short"})
+
+    assert result == {
+        "ok": False,
+        "action": "run",
+        "stopped": True,
+        "error": "Stop requested.",
+    }
+    assert stopped == [process]
+    assert process_states == [True, False]
+
+
+def test_run_does_not_launch_when_the_initial_fingerprint_is_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_workspace_mutation_fingerprint",
+        lambda _workspace, **_kwargs: ("incomplete", False),
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("An incomplete pre-scan must prevent process launch.")
+        ),
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    result = controller.execute(
+        {"action": "run", "command": "python3 -m py_compile sample.py"}
+    )
+
+    assert not result["ok"]
+    assert "was not started" in result["error"]
+    assert controller.state.edit_generation == 0
+    assert controller.state.verification_current is False
+
+
+def test_run_invalidates_gates_when_the_final_fingerprint_is_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    fingerprints = iter((("same", True), ("same", False)))
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_workspace_mutation_fingerprint",
+        lambda _workspace, **_kwargs: next(fingerprints),
+    )
+
+    class _SuccessfulProcess:
+        pid = 12_345
+        returncode = 0
+
+        def __init__(self) -> None:
+            self.stdout = StringIO("syntax ok\n")
+
+        def poll(self) -> int:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int:
+            return self.returncode
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: _SuccessfulProcess(),
+    )
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    controller.state.bodycheck_generation = controller.state.edit_generation
+
+    result = controller.execute(
+        {"action": "run", "command": "python3 -m py_compile sample.py"}
+    )
+
+    assert not result["ok"]
+    assert result["workspace_scan_complete"] is False
+    assert result["mutated_workspace"] is False
+    assert "could not prove" in result["error"]
+    assert controller.state.edit_generation == 1
+    assert controller.state.bodycheck_current is False
+    assert controller.state.verification_current is False
+
+
+def test_workspace_fingerprint_hashes_content_and_empty_directories(
+    tmp_path: Path,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    source = workspace / "sample.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    empty_directory = workspace / "empty-a"
+    empty_directory.mkdir()
+    original_stat = source.stat()
+
+    first_digest, first_complete = (
+        computer_use_agent._workspace_mutation_fingerprint(workspace)
+    )
+    source.write_text("value = 2\n", encoding="utf-8")
+    os.utime(
+        source,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    second_digest, second_complete = (
+        computer_use_agent._workspace_mutation_fingerprint(workspace)
+    )
+    empty_directory.rename(workspace / "empty-b")
+    third_digest, third_complete = (
+        computer_use_agent._workspace_mutation_fingerprint(workspace)
+    )
+
+    assert first_complete and second_complete and third_complete
+    assert first_digest != second_digest
+    assert second_digest != third_digest
+
+
+def test_workspace_fingerprint_limits_links_ignored_cache_and_stop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    source = workspace / "sample.py"
+    source.write_text("value = 1\n", encoding="utf-8")
+    cache = workspace / ".pytest_cache"
+    cache.mkdir()
+    cache_file = cache / "state"
+    cache_file.write_text("first\n", encoding="utf-8")
+    first_digest, first_complete = (
+        computer_use_agent._workspace_mutation_fingerprint(workspace)
+    )
+    cache_file.write_text("second\n", encoding="utf-8")
+    second_digest, second_complete = (
+        computer_use_agent._workspace_mutation_fingerprint(workspace)
+    )
+    assert first_complete and second_complete
+    assert first_digest == second_digest
+
+    link = workspace / "linked.py"
+    try:
+        link.symlink_to(source)
+    except OSError:
+        pytest.skip("This host cannot create the symlink required by this regression test.")
+    _link_digest, link_complete = (
+        computer_use_agent._workspace_mutation_fingerprint(workspace)
+    )
+    assert link_complete is False
+    link.unlink()
+
+    stop_calls = {"count": 0}
+
+    def should_stop() -> bool:
+        stop_calls["count"] += 1
+        return True
+
+    _stopped_digest, stopped_complete = (
+        computer_use_agent._workspace_mutation_fingerprint(
+            workspace,
+            should_stop=should_stop,
+        )
+    )
+    assert stopped_complete is False
+    assert stop_calls["count"] >= 1
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "WORKSPACE_FINGERPRINT_MAX_FILES",
+        0,
+    )
+    _limited_digest, limited_complete = (
+        computer_use_agent._workspace_mutation_fingerprint(workspace)
+    )
+    assert limited_complete is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group regression test.")
+def test_verification_timeout_kills_descendants_after_the_group_leader_exits(
+    tmp_path: Path,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    parent_code = (
+        "import pathlib,subprocess,sys; "
+        "child=subprocess.Popen([sys.executable,'-c',"
+        "'import time; time.sleep(30)']); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid), encoding='utf-8')"
+    )
+    pid_file = tmp_path / "descendant.pid"
+    process = subprocess.Popen(
+        [sys.executable, "-c", parent_code, str(pid_file)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        start_new_session=True,
+    )
+    child_pid = 0
+    started = time.monotonic()
+    try:
+        output, _returncode, _truncated, stopped, timed_out = (
+            computer_use_agent._bounded_verification_process_output(
+                process,
+                timeout_seconds=1,
+                should_stop=lambda: False,
+            )
+        )
+        assert output == ""
+        child_pid = int(pid_file.read_text(encoding="utf-8"))
+        assert stopped is False
+        assert timed_out is True
+        assert time.monotonic() - started < 4
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("The inherited-output descendant survived the timeout barrier.")
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=2)
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX process-group regression test.")
+def test_verification_success_kills_a_detached_output_descendant(
+    tmp_path: Path,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    parent_code = (
+        "import pathlib,subprocess,sys; "
+        "child=subprocess.Popen([sys.executable,'-c',"
+        "'import time; time.sleep(30)'], stdout=subprocess.DEVNULL, "
+        "stderr=subprocess.DEVNULL); "
+        "pathlib.Path(sys.argv[1]).write_text(str(child.pid), encoding='utf-8')"
+    )
+    pid_file = tmp_path / "detached-output-descendant.pid"
+    process = subprocess.Popen(
+        [sys.executable, "-c", parent_code, str(pid_file)],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        start_new_session=True,
+    )
+    child_pid = 0
+    try:
+        output, returncode, _truncated, stopped, timed_out = (
+            computer_use_agent._bounded_verification_process_output(
+                process,
+                timeout_seconds=3,
+                should_stop=lambda: False,
+            )
+        )
+        child_pid = int(pid_file.read_text(encoding="utf-8"))
+        assert output == ""
+        assert returncode == 0
+        assert stopped is False
+        assert timed_out is False
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(child_pid, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.05)
+        else:
+            pytest.fail("The detached-output descendant survived normal completion.")
+    finally:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=2)
+
+
+def test_windows_stop_attempts_system_taskkill_after_the_leader_exits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    taskkill = Path("C:/Windows/System32/taskkill.exe")
+    commands: list[list[str]] = []
+
+    class _ExitedProcess:
+        pid = 12_345
+
+        def poll(self) -> int:
+            return 0
+
+        def wait(self, **_kwargs: object) -> int:
+            return 0
+
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: True)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_trusted_windows_taskkill",
+        lambda: taskkill,
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
         "run",
-        "test",
+        lambda command, **_kwargs: commands.append(command),
+    )
+
+    computer_use_agent._stop_process(_ExitedProcess(), timeout=0.1)
+
+    assert commands == [
+        [str(taskkill), "/PID", "12345", "/T", "/F"],
     ]
+
+
+def test_run_streams_invalid_utf8_with_a_global_output_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    process_states: list[bool] = []
+
+    class _RunProcess:
+        pid = 12_345
+        returncode = 0
+
+        def __init__(self) -> None:
+            raw = b"\xff" + (b"x" * (computer_use_agent.MAX_ACTION_OUTPUT_CHARS * 2))
+            self.stdout = TextIOWrapper(
+                BytesIO(raw),
+                encoding="utf-8",
+                errors="replace",
+            )
+
+        def poll(self) -> int:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int:
+            return self.returncode
+
+    def launch(_command: list[str], **kwargs: object) -> _RunProcess:
+        assert kwargs["stdin"] is computer_use_agent.subprocess.DEVNULL
+        assert kwargs["stdout"] is computer_use_agent.subprocess.PIPE
+        assert kwargs["stderr"] is computer_use_agent.subprocess.STDOUT
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
+        return _RunProcess()
+
+    monkeypatch.setattr(computer_use_agent.subprocess, "Popen", launch)
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+        process_changed=lambda process: process_states.append(process is not None),
+    )
+
+    result = controller.execute(
+        {"action": "run", "command": "python3 -m py_compile sample.py"}
+    )
+
+    assert result["ok"]
+    assert result["output_truncated"] is True
+    assert "\ufffd" in result["output"]
+    assert result["output"].endswith("[output truncated at 48,000 characters]")
+    assert len(result["output"]) <= computer_use_agent.MAX_ACTION_OUTPUT_CHARS
+    assert process_states == [True, False]
+
+
+def test_run_stream_read_failure_stops_and_clears_the_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    stopped: list[object] = []
+    process_states: list[bool] = []
+
+    class _BrokenOutput:
+        def read(self, _maximum: int) -> str:
+            raise OSError("private diagnostic that must not escape")
+
+        def close(self) -> None:
+            return None
+
+    class _RunProcess:
+        pid = 12_345
+
+        def __init__(self) -> None:
+            self.stdout = _BrokenOutput()
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int | None:
+            return self.returncode
+
+    process_holder: dict[str, _RunProcess] = {}
+
+    def launch(*_args: object, **_kwargs: object) -> _RunProcess:
+        process = _RunProcess()
+        process_holder["process"] = process
+        return process
+
+    def stop_process(value: object, **_kwargs: object) -> None:
+        stopped.append(value)
+        process_holder["process"].returncode = -15
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        launch,
+    )
+    monkeypatch.setattr(computer_use_agent, "_stop_process", stop_process)
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+        process_changed=lambda value: process_states.append(value is not None),
+    )
+
+    result = controller.execute(
+        {"action": "run", "command": "python3 -m py_compile sample.py"}
+    )
+
+    assert result == {
+        "ok": False,
+        "action": "run",
+        "error": "Verification output could not be read safely.",
+    }
+    assert stopped == [process_holder["process"]]
+    assert process_states == [True, False]
+    assert "private diagnostic" not in str(result)
+
+
+def test_run_stop_records_mutation_and_invalidates_bodycheck(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    changed_path = workspace / "changed.txt"
+    stop_event = Event()
+    stopped: list[object] = []
+
+    def should_stop() -> bool:
+        return stop_event.is_set()
+
+    class _RunProcess:
+        pid = 12_345
+
+        def __init__(self) -> None:
+            changed_path.write_text("partial mutation\n", encoding="utf-8")
+            stop_event.set()
+            self.stdout = StringIO("")
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int | None:
+            return self.returncode
+
+    process_holder: dict[str, _RunProcess] = {}
+
+    def launch(*_args: object, **_kwargs: object) -> _RunProcess:
+        process = _RunProcess()
+        process_holder["process"] = process
+        return process
+
+    def stop_process(value: object, **_kwargs: object) -> None:
+        stopped.append(value)
+        process_holder["process"].returncode = -15
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        launch,
+    )
+    monkeypatch.setattr(computer_use_agent, "_stop_process", stop_process)
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        should_stop,
+    )
+    controller.state.bodycheck_generation = controller.state.edit_generation
+
+    result = controller.execute(
+        {"action": "run", "command": "python3 -m py_compile sample.py"}
+    )
+
+    assert result["stopped"] is True
+    assert result["mutated_workspace"] is True
+    assert controller.state.edit_generation == 1
+    assert controller.state.bodycheck_current is False
+    assert stopped == [process_holder["process"]]
+
+
+def test_run_timeout_records_mutation_and_stops_the_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / "sample.py").write_text("value = 1\n", encoding="utf-8")
+    changed_path = workspace / "changed.txt"
+    stopped: list[object] = []
+    process_states: list[bool] = []
+
+    class _RunProcess:
+        pid = 12_345
+
+        def __init__(self) -> None:
+            changed_path.write_text("partial mutation\n", encoding="utf-8")
+            self.stdout = StringIO("")
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int | None:
+            return self.returncode
+
+    process_holder: dict[str, _RunProcess] = {}
+
+    def launch(*_args: object, **_kwargs: object) -> _RunProcess:
+        process = _RunProcess()
+        process_holder["process"] = process
+        return process
+
+    def stop_process(value: object, **_kwargs: object) -> None:
+        stopped.append(value)
+        process_holder["process"].returncode = -15
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        launch,
+    )
+    monkeypatch.setattr(computer_use_agent, "_stop_process", stop_process)
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(
+            workspace_path=str(workspace),
+            command_timeout_seconds=0,
+        ),
+        lambda: False,
+        process_changed=lambda value: process_states.append(value is not None),
+    )
+    controller.state.bodycheck_generation = controller.state.edit_generation
+
+    result = controller.execute(
+        {"action": "run", "command": "python3 -m py_compile sample.py"}
+    )
+
+    assert result["ok"] is False
+    assert result["error"].startswith("Command timed out after 0 seconds.")
+    assert controller.state.edit_generation == 1
+    assert controller.state.bodycheck_current is False
+    assert stopped == [process_holder["process"]]
+    assert process_states == [True, False]
+
+
+def test_bodycheck_never_returns_raw_git_diagnostics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / ".git").mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_filtered_git_status",
+        lambda _workspace, **_kwargs: ' M "safe.py"',
+    )
+
+    class _DiffProcess:
+        pid = 12_345
+        returncode = 2
+
+        def poll(self) -> int:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int:
+            return self.returncode
+
+    observed_kwargs: dict[str, object] = {}
+
+    def run_diff(*_args: object, **kwargs: object) -> _DiffProcess:
+        observed_kwargs.update(kwargs)
+        return _DiffProcess()
+
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        run_diff,
+    )
+
+    result = controller.execute({"action": "bodycheck"})
+
+    assert result["ok"] is False
+    assert result["checks"][1]["output"] == (
+        "Git found whitespace errors in the current project diff."
+    )
+    assert "WEB_SECRET_VALUE" not in str(result)
+    assert "credentials" not in str(result)
+    assert observed_kwargs["stdin"] is computer_use_agent.subprocess.DEVNULL
+    assert observed_kwargs["stdout"] is computer_use_agent.subprocess.DEVNULL
+    assert observed_kwargs["stderr"] is computer_use_agent.subprocess.DEVNULL
+    assert "capture_output" not in observed_kwargs
+    npm_command = inspection_command_parts("npm run test -- --runInBand")
+    assert Path(npm_command[0]).is_absolute()
+    assert npm_command[1:3] == ["run", "test"]
+
+
+def test_bodycheck_stop_terminates_diff_check_and_clears_active_process(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    (workspace / ".git").mkdir()
+    stop_checks = {"count": 0}
+    stopped: list[object] = []
+    process_states: list[bool] = []
+
+    def should_stop() -> bool:
+        stop_checks["count"] += 1
+        return stop_checks["count"] >= 2
+
+    class _DiffProcess:
+        pid = 12_345
+
+        def __init__(self) -> None:
+            self.returncode: int | None = None
+
+        def poll(self) -> int | None:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int | None:
+            return self.returncode
+
+    process = _DiffProcess()
+
+    def stop_process(value: object, **_kwargs: object) -> None:
+        stopped.append(value)
+        process.returncode = -15
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_filtered_git_status",
+        lambda _workspace, **_kwargs: "",
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: process,
+    )
+    monkeypatch.setattr(computer_use_agent, "_stop_process", stop_process)
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        should_stop,
+        process_changed=lambda value: process_states.append(value is not None),
+    )
+
+    result = controller.execute({"action": "bodycheck"})
+
+    assert result == {
+        "ok": False,
+        "action": "bodycheck",
+        "stopped": True,
+        "error": "Stop requested.",
+    }
+    assert stopped == [process]
+    assert process_states == [True, False]
 
 
 @pytest.mark.parametrize(
@@ -2231,12 +4946,16 @@ def test_allowed_run_that_changes_project_files_makes_bodycheck_stale(
     )
 
     class _MutatingProcess:
-        returncode = 0
-
-        def communicate(self, *, timeout: int) -> tuple[str, None]:
-            assert timeout == controller.settings.command_timeout_seconds
+        def __init__(self) -> None:
             changed_path.write_text("changed by verification\n", encoding="utf-8")
-            return "1 passed\n", None
+            self.stdout = StringIO("1 passed\n")
+            self.returncode = 0
+
+        def poll(self) -> int:
+            return self.returncode
+
+        def wait(self, **_kwargs: object) -> int:
+            return self.returncode
 
     monkeypatch.setattr(
         computer_use_agent.subprocess,
@@ -2633,6 +5352,8 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
         "browser",
         "conversation_url",
         "context_attached",
+        "context_bytes",
+        "context_file",
         "finished_at",
         "message",
         "model",
@@ -2647,6 +5368,8 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
         "turn_count",
     }
     assert payload["context_attached"] is context_attached
+    assert Path(payload["context_file"]).name == "context.md"
+    assert payload["context_bytes"] > 0
     assert snapshot_path.stat().st_mode & 0o777 == 0o600
     serialized = snapshot_path.read_text(encoding="utf-8")
     assert "prompt" not in payload
@@ -2666,6 +5389,8 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
     assert recovered_snapshot["history"] == []
     assert recovered_snapshot["activity"] == []
     assert recovered_snapshot["context_attached"] is context_attached
+    assert recovered_snapshot["context_file"] == payload["context_file"]
+    assert recovered_snapshot["context_bytes"] == payload["context_bytes"]
     recovered_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
     assert recovered_payload["running"] is False
     assert recovered_payload["phase"] == "interrupted"
@@ -2722,6 +5447,38 @@ def test_macos_idle_sleep_assertion_uses_caffeinate_without_waking_display(
     assert "-u" not in popen_calls[0][0]
     assert popen_calls[0][1]["start_new_session"] is True
     assert process.terminated
+
+
+def test_macos_idle_sleep_assertion_cleanup_is_non_throwing_after_double_timeout() -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Process:
+        def __init__(self) -> None:
+            self.wait_calls = 0
+            self.terminated = False
+            self.killed = False
+
+        def poll(self) -> None:
+            return None
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def wait(self, *, timeout: int) -> None:
+            assert timeout == 3
+            self.wait_calls += 1
+            raise computer_use_agent.subprocess.TimeoutExpired("caffeinate", timeout)
+
+    process = _Process()
+
+    computer_use_agent._stop_macos_idle_sleep_assertion(process)
+
+    assert process.terminated
+    assert process.killed
+    assert process.wait_calls == 2
 
 
 def test_agent_service_rejects_windows_execution_on_macos_host() -> None:
@@ -2877,6 +5634,17 @@ def test_safari_generation_ignores_a_disabled_stop_answering_button() -> None:
             return False
 
     assert not _web_is_generating(_Page(), "safari")
+
+
+def test_chromium_submission_stop_before_entry_does_not_fill_or_click() -> None:
+    class _Page:
+        def locator(self, _selector: str) -> object:
+            raise AssertionError("Stop must return before reading or filling the composer.")
+
+        def evaluate(self, _expression: str) -> object:
+            raise AssertionError("Stop must return before clicking Send.")
+
+    _submit_chromium_prompt(_Page(), "Inspect the project", lambda: True)
 
 
 def test_chromium_submission_waits_for_attachment_then_clicks_send() -> None:
@@ -3084,15 +5852,123 @@ def test_chromium_last_response_prefers_fenced_controller_source() -> None:
     ) == source
 
 
-def test_chromium_composer_reloads_once_after_a_stalled_page() -> None:
+def test_chromium_composer_reloads_once_after_a_stalled_page(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "CHATGPT_COMPOSER_TIMEOUT_SECONDS",
+        0.001,
+    )
+
+    class _Composer:
+        def __init__(self, page: object) -> None:
+            self.page = page
+            self.attempts = 0
+
+        def wait_for(self, **_kwargs: object) -> None:
+            self.attempts += 1
+            if not self.page.reloaded:
+                raise TimeoutError("stalled")
+
+    class _Page:
+        def __init__(self) -> None:
+            self.reloaded = False
+            self.composer = _Composer(self)
+            self.reload_calls: list[dict[str, object]] = []
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "#prompt-textarea"
+            return self.composer
+
+        def reload(self, **kwargs: object) -> None:
+            self.reload_calls.append(kwargs)
+            self.reloaded = True
+
+    page = _Page()
+
+    assert _wait_for_chromium_composer(page) is True
+
+    assert page.composer.attempts >= 2
+    assert page.reload_calls == [{"wait_until": "commit", "timeout": 5_000}]
+
+
+def test_stop_interrupts_initial_chromium_composer_verification_before_any_send(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    stop_requested = Event()
+
+    class _Composer:
+        def __init__(self) -> None:
+            self.attempts = 0
+
+        def wait_for(self, **kwargs: object) -> None:
+            self.attempts += 1
+            assert int(kwargs["timeout"]) <= 250
+            stop_requested.set()
+            raise TimeoutError("composer still loading")
+
+    class _Page:
+        url = "https://chatgpt.com/c/stop-during-composer"
+
+        def __init__(self) -> None:
+            self.composer = _Composer()
+            self.reload_calls: list[dict[str, object]] = []
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "#prompt-textarea"
+            return self.composer
+
+        def reload(self, **kwargs: object) -> None:
+            self.reload_calls.append(kwargs)
+
+        def evaluate(self, _script: str) -> bool:
+            raise AssertionError("Stop must return before signed-in page evaluation.")
+
+    def unexpected(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("Stop must return before model, context, or prompt work.")
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(workspace_path=str(workspace))
+    controller = WorkspaceController(workspace, settings, stop_requested.is_set)
+    page = _Page()
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", unexpected)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", unexpected)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", unexpected)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", unexpected)
+
+    result = _run_web_action_loop(
+        page=page,
+        browser_kind="chromium",
+        initial_message="Inspect the project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=settings,
+        session_mode="recent",
+        selected_target_url=page.url,
+        should_stop=stop_requested.is_set,
+        update=lambda **_changes: None,
+    )
+
+    assert result == ("", page.url, 0, False)
+    assert page.composer.attempts == 1
+    assert page.reload_calls == []
+
+
+def test_chromium_composer_fails_immediately_on_a_closed_page() -> None:
     class _Composer:
         def __init__(self) -> None:
             self.attempts = 0
 
         def wait_for(self, **_kwargs: object) -> None:
             self.attempts += 1
-            if self.attempts == 1:
-                raise RuntimeError("stalled")
+            raise RuntimeError("Target page, context or browser has been closed")
 
     class _Page:
         def __init__(self) -> None:
@@ -3108,7 +5984,8 @@ def test_chromium_composer_reloads_once_after_a_stalled_page() -> None:
 
     page = _Page()
 
-    _wait_for_chromium_composer(page)
+    with pytest.raises(RuntimeError, match="browser has been closed"):
+        _wait_for_chromium_composer(page)
 
-    assert page.composer.attempts == 2
-    assert page.reload_calls == [{"wait_until": "domcontentloaded", "timeout": 90_000}]
+    assert page.composer.attempts == 1
+    assert page.reload_calls == []

@@ -1,24 +1,27 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.24.0-codex.1
+Code version: v3.28.0-codex.1
 """
 
 from __future__ import annotations
 
 import base64
 import binascii
+from collections import deque
 from dataclasses import asdict, dataclass, field, replace
-from fnmatch import fnmatch
+from glob import translate as translate_glob
 import hashlib
 import ipaddress
 import json
 import logging
 import os
 from pathlib import Path
+from queue import Empty, Full, Queue
 import re
 import shutil
 import shlex
 import signal
+import stat as stat_module
 import subprocess
 import sys
 from threading import Event, RLock, Thread, current_thread
@@ -50,6 +53,7 @@ from .state import utc_now
 
 
 LOGGER = logging.getLogger(__name__)
+_SUBPROCESS_POPEN_TYPE = subprocess.Popen
 CHATGPT_HOME_URL = "https://chatgpt.com/"
 CHATGPT_HOSTS = {"chatgpt.com", "www.chatgpt.com"}
 GEMINI_HOME_URL = "https://gemini.google.com/app"
@@ -72,6 +76,7 @@ DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
 MIN_COMMAND_TIMEOUT_SECONDS = 5
 MAX_COMMAND_TIMEOUT_SECONDS = 1_800
 MAX_ACTION_OUTPUT_CHARS = 48_000
+RUN_OUTPUT_QUEUE_SIZE = 4
 MAX_FILE_READ_CHARS = 120_000
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
@@ -88,6 +93,7 @@ GROK_KEYBOARD_SUBMIT_FALLBACK_SECONDS = 2.0
 CHATGPT_COMPOSER_TIMEOUT_SECONDS = 60
 CHATGPT_MODEL_COMPOSER_WAIT_SECONDS = 15
 CHATGPT_COMPOSER_RELOAD_ATTEMPTS = 2
+CHATGPT_COMPOSER_RELOAD_TIMEOUT_SECONDS = 5
 SAFARI_SEND_BUTTON_TIMEOUT_SECONDS = 15
 CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS = 180
 CHROMIUM_SUBMISSION_ACCEPT_TIMEOUT_SECONDS = 15
@@ -244,7 +250,7 @@ Work autonomously from the user's request. Read the repository instruction files
 Use one of these actions:
 {"action":"list","path":".","depth":2}
 {"action":"read","path":"relative/file","start_line":1,"end_line":240}
-{"action":"search","query":"text or regex","path":".","glob":"*.py","max_results":80}
+{"action":"search","query":"literal text","path":".","glob":"*.py","max_results":80}
 {"action":"replace","path":"relative/file","old":"exact text appearing once","new":"replacement text"}
 {"action":"replace_base64","path":"relative/file","old_base64":"base64-of-old","new_base64":"base64-of-new"}
 {"action":"write","path":"relative/new-file","content":"complete content"}
@@ -269,6 +275,7 @@ Use the controller actions list, read, search, replace, write, run, bodycheck, o
 
 _IGNORED_DIRECTORY_NAMES = frozenset(
     {
+        ".computer-use-agent",
         ".git",
         ".idea",
         ".mypy_cache",
@@ -289,6 +296,18 @@ _IGNORED_DIRECTORY_NAMES = frozenset(
     }
 )
 SEARCH_MAX_FILE_BYTES = 2 * 1_024 * 1_024
+SEARCH_MAX_RAW_EVENTS = 12_000
+SEARCH_MAX_MATCH_TEXT_CHARS = 4_000
+SEARCH_TIMEOUT_SECONDS = 30
+SEARCH_STDOUT_QUEUE_SIZE = 4
+MAX_SEARCH_QUERY_CHARS = 8_000
+GIT_STATUS_MAX_RAW_CHARS = 2 * 1_024 * 1_024
+GIT_STATUS_TIMEOUT_SECONDS = 10
+WORKSPACE_FINGERPRINT_MAX_FILES = 12_000
+WORKSPACE_FINGERPRINT_MAX_DIRECTORIES = 12_000
+WORKSPACE_FINGERPRINT_MAX_BYTES = 512 * 1_024 * 1_024
+WORKSPACE_FINGERPRINT_TIMEOUT_SECONDS = 15
+_STREAM_READ_FAILED = object()
 _CONTEXT_PRIORITY_NAMES = (
     "AGENTS.md",
     "CLAUDE.md",
@@ -309,7 +328,20 @@ _COMMAND_WRITE_PATTERN = re.compile(
 )
 _COMMAND_REDIRECTION_PATTERN = re.compile(r"(?:^|\s)(?:>>?|2>|&>)\s*\S|\btee\b", re.IGNORECASE)
 _COMMAND_SHELL_OPERATOR_PATTERN = re.compile(r"(?:&&|\|\||[;|`]|\$\(|\n|\r)")
-_SAFE_GIT_SUBCOMMANDS = frozenset({"diff", "grep", "log", "ls-files", "show", "status"})
+_SAFE_GIT_SUBCOMMANDS = frozenset({"status"})
+_SAFE_GIT_STATUS_FLAGS = frozenset(
+    {
+        "--branch",
+        "--porcelain",
+        "--porcelain=v1",
+        "--short",
+        "--untracked-files=all",
+        "--untracked-files=no",
+        "--untracked-files=normal",
+        "-b",
+        "-s",
+    }
+)
 _SAFE_PYTHON_MODULES = frozenset({"compileall", "mypy", "py_compile", "pytest", "ruff"})
 _SAFE_PACKAGE_SCRIPTS = re.compile(
     r"^(?:build|check|ci|lint|test|test:[\w:-]+|typecheck|verify)$",
@@ -325,18 +357,26 @@ _UNSAFE_WRAPPER_EXECUTABLES = frozenset(
 _MUTATING_OR_UNBOUNDED_RUN_FLAGS = frozenset(
     {
         "--apply",
+        "--add-noqa",
+        "--createstub",
         "--exec",
         "--fix",
         "--force",
         "--in-place",
+        "--install-types",
         "--output",
         "--output-file",
+        "--pastebin",
         "--pre",
         "--pre-glob",
         "--replace",
         "--update-snapshots",
+        "--watch",
         "--write",
+        "-exec",
         "-i",
+        "-o",
+        "-w",
     }
 )
 _SENSITIVE_PATH_NAMES = frozenset(
@@ -520,38 +560,72 @@ def _process_group_options() -> dict[str, Any]:
 
 
 def _stop_process(process: subprocess.Popen[Any], *, timeout: float = 3) -> None:
-    """Stop one task process without relying on POSIX process groups."""
-    if process.poll() is not None:
-        return
+    """Stop one isolated task process and every surviving descendant."""
+    bounded_timeout = max(0.05, float(timeout))
     if is_windows_host():
+        if process.poll() is None:
+            try:
+                process.send_signal(
+                    getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM)
+                )
+            except (OSError, ValueError):
+                pass
+            try:
+                process.wait(timeout=bounded_timeout)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        taskkill = _trusted_windows_taskkill()
+        if taskkill is not None:
+            try:
+                subprocess.run(
+                    [str(taskkill), "/PID", str(process.pid), "/T", "/F"],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    check=False,
+                    timeout=bounded_timeout,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
         try:
-            process.send_signal(getattr(signal, "CTRL_BREAK_EVENT", signal.SIGTERM))
-        except (OSError, ValueError):
-            pass
-        try:
-            process.wait(timeout=timeout)
-            return
-        except subprocess.TimeoutExpired:
-            pass
-        except OSError:
-            return
-        try:
-            process.kill()
-            process.wait(timeout=timeout)
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=bounded_timeout)
         except (OSError, subprocess.TimeoutExpired):
             return
         return
+
+    deadline = time.monotonic() + bounded_timeout
     try:
         os.killpg(process.pid, signal.SIGTERM)
-        process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired:
+    except ProcessLookupError:
         try:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=timeout)
+            process.wait(timeout=0)
         except (OSError, subprocess.TimeoutExpired):
-            return
+            pass
+        return
     except OSError:
         return
+    try:
+        process.wait(timeout=max(0.001, deadline - time.monotonic()))
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    while time.monotonic() < deadline:
+        try:
+            os.killpg(process.pid, 0)
+        except ProcessLookupError:
+            return
+        except OSError:
+            break
+        time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except OSError:
+        return
+    try:
+        process.wait(timeout=bounded_timeout)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def terminal_execution_permission_snapshot(
@@ -1147,7 +1221,7 @@ def build_context_markdown(
             sections.append(_markdown_file_section(workspace, path, MAX_FILE_READ_CHARS))
 
     if (workspace / ".git").exists():
-        status = _run_capture(["git", "status", "--short"], workspace, timeout=10)
+        status = _filtered_git_status(workspace)
         if status.strip():
             sections.append("## Existing working tree\n\n```text\n" + status.strip() + "\n```\n")
 
@@ -1176,32 +1250,293 @@ def build_context_markdown(
         break
 
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_bytes(b"".join(encoded_parts))
-    destination.chmod(0o600)
-    return destination, destination.stat().st_size
+    try:
+        destination.write_bytes(b"".join(encoded_parts))
+        destination.chmod(0o600)
+        byte_count = destination.stat().st_size
+    except Exception:
+        try:
+            destination.unlink(missing_ok=True)
+        except OSError:
+            LOGGER.exception(
+                "Could not remove a partially prepared Agent context: %s",
+                destination,
+            )
+        raise
+    return destination, byte_count
 
 
 def _utf8_prefix(value: bytes, maximum: int) -> bytes:
     return value[: max(0, maximum)].decode("utf-8", errors="ignore").encode("utf-8")
 
 
+def _filtered_git_status(
+    workspace: Path,
+    *,
+    should_stop: Callable[[], bool] | None = None,
+    process_changed: Callable[[subprocess.Popen[str] | None], None] | None = None,
+) -> str:
+    """Return porcelain status rows after excluding every protected path."""
+    output, truncated = _bounded_git_status_output(
+        workspace,
+        should_stop=should_stop,
+        process_changed=process_changed,
+    )
+    if truncated and not output.endswith("\x00"):
+        output = output.rsplit("\x00", 1)[0] + "\x00" if "\x00" in output else ""
+    values = output.split("\x00")
+    rows: list[str] = []
+    index = 0
+    while index < len(values):
+        record = values[index]
+        index += 1
+        if len(record) < 4 or record[2] != " ":
+            continue
+        status = record[:2]
+        paths = [record[3:]]
+        if ("R" in status or "C" in status) and index < len(values):
+            paths.append(values[index])
+            index += 1
+        normalized_paths: list[str] = []
+        safe = True
+        for value in paths:
+            candidate = Path(value)
+            if (
+                not value
+                or candidate.is_absolute()
+                or ".." in candidate.parts
+                or _path_has_ignored_part(candidate)
+                or _path_has_sensitive_part(candidate)
+            ):
+                safe = False
+                break
+            normalized_paths.append(candidate.as_posix())
+        if not safe:
+            continue
+        rendered_paths = [json.dumps(path, ensure_ascii=False) for path in normalized_paths]
+        if len(rendered_paths) == 2:
+            rows.append(f"{status} {rendered_paths[1]} -> {rendered_paths[0]}")
+        else:
+            rows.append(f"{status} {rendered_paths[0]}")
+        if len(rows) >= 12_000:
+            break
+    if truncated:
+        rows.append("!! [status truncated at the controller output limit]")
+    return "\n".join(rows)
+
+
+def _bounded_git_status_output(
+    workspace: Path,
+    *,
+    should_stop: Callable[[], bool] | None = None,
+    process_changed: Callable[[subprocess.Popen[str] | None], None] | None = None,
+) -> tuple[str, bool]:
+    """Stream a fixed Git porcelain command with a global memory and time limit."""
+    stop_requested = should_stop or (lambda: False)
+    publish_process = process_changed or (lambda _process: None)
+    git = _trusted_system_executable("git", forbidden_root=workspace)
+    if git is None:
+        raise RuntimeError("Git is unavailable for bounded working-tree inspection.")
+    command = [
+        str(git),
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "core.untrackedCache=false",
+        "status",
+        "--porcelain=v1",
+        "-z",
+        "--untracked-files=normal",
+    ]
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=workspace,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            **_process_group_options(),
+        )
+    except OSError as exc:
+        raise RuntimeError("Could not inspect the bounded Git working-tree status.") from exc
+    if process.stdout is None:
+        _stop_process(process, timeout=1)
+        raise RuntimeError("Could not open the bounded Git status stream.")
+
+    chunks: list[str] = []
+    used = 0
+    truncated = False
+    timed_out = False
+    stopped = False
+    stream_failed = False
+    loop_completed = False
+    discard_output: Event | None = None
+    reader: Thread | None = None
+    deadline = time.monotonic() + GIT_STATUS_TIMEOUT_SECONDS
+    try:
+        output_queue: Queue[Any] = Queue(maxsize=SEARCH_STDOUT_QUEUE_SIZE)
+        discard_output = Event()
+        reader = Thread(
+            target=_queue_text_chunks,
+            args=(process.stdout, output_queue, discard_output),
+            daemon=True,
+        )
+        publish_process(process)
+        reader.start()
+        while True:
+            if stop_requested():
+                stopped = True
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            try:
+                remaining_time = max(0.001, deadline - time.monotonic())
+                chunk = output_queue.get(timeout=min(0.05, remaining_time))
+            except Empty:
+                if not reader.is_alive() and output_queue.empty():
+                    break
+                continue
+            if chunk is _STREAM_READ_FAILED:
+                stream_failed = True
+                break
+            if chunk is None:
+                break
+            if not isinstance(chunk, str):
+                stream_failed = True
+                break
+            remaining_chars = GIT_STATUS_MAX_RAW_CHARS - used
+            if len(chunk) >= remaining_chars:
+                if remaining_chars > 0:
+                    chunks.append(chunk[:remaining_chars])
+                used += max(0, remaining_chars)
+                truncated = True
+                break
+            chunks.append(chunk)
+            used += len(chunk)
+        loop_completed = True
+    finally:
+        if (
+            truncated
+            or timed_out
+            or stopped
+            or stream_failed
+            or not loop_completed
+        ):
+            if discard_output is not None:
+                discard_output.set()
+            _stop_process(process, timeout=1)
+        try:
+            process.wait(timeout=1)
+        except (OSError, subprocess.TimeoutExpired):
+            if discard_output is not None:
+                discard_output.set()
+            _stop_process(process, timeout=1)
+        if isinstance(process, _SUBPROCESS_POPEN_TYPE):
+            _stop_process(process, timeout=0.25)
+        if discard_output is not None:
+            discard_output.set()
+        if reader is not None and reader.ident is not None:
+            reader.join(timeout=1)
+        if reader is None or not reader.is_alive():
+            try:
+                process.stdout.close()
+            except (OSError, ValueError):
+                pass
+        publish_process(None)
+
+    if stopped:
+        raise RuntimeError("Stop requested.")
+    if stream_failed:
+        raise RuntimeError("Could not read the bounded Git status stream safely.")
+    if timed_out:
+        raise RuntimeError(
+            f"Git status exceeded the {GIT_STATUS_TIMEOUT_SECONDS}-second controller limit."
+        )
+    if not truncated and process.returncode != 0:
+        raise RuntimeError(
+            f"Git status failed with exit code {process.returncode}."
+        )
+    return "".join(chunks), truncated
+
+
+def _is_safe_context_file(workspace: Path, path: Path) -> bool:
+    """Return whether one context source is a regular in-workspace non-secret file."""
+    try:
+        relative = path.relative_to(workspace)
+        if (
+            _path_is_link_like(path)
+            or not path.is_file()
+            or _path_has_ignored_part(relative)
+            or _path_has_sensitive_part(relative)
+        ):
+            return False
+        path.resolve(strict=True).relative_to(workspace.resolve(strict=True))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _path_is_link_like(path: Path) -> bool:
+    """Reject symbolic, junction, and hard-linked files at trust boundaries."""
+    try:
+        is_junction = getattr(path, "is_junction", None)
+        if path.is_symlink() or bool(callable(is_junction) and is_junction()):
+            return True
+        path_stat = path.stat()
+        return stat_module.S_ISREG(path_stat.st_mode) and path_stat.st_nlink != 1
+    except FileNotFoundError:
+        return False
+    except OSError:
+        return True
+
+
+def _is_safe_context_directory(workspace: Path, path: Path) -> bool:
+    """Return whether traversal may enter one real directory inside the workspace."""
+    try:
+        relative = path.relative_to(workspace)
+        if (
+            _path_is_link_like(path)
+            or not path.is_dir()
+            or _path_has_ignored_part(relative)
+            or _path_has_sensitive_part(relative)
+        ):
+            return False
+        path.resolve(strict=True).relative_to(workspace.resolve(strict=True))
+    except (OSError, ValueError):
+        return False
+    return True
+
+
 def _collect_instruction_files(workspace: Path) -> list[Path]:
     candidates: list[Path] = []
     for name in ("AGENTS.md", "CLAUDE.md", "CODEX.md"):
         root_file = workspace / name
-        if root_file.is_file():
+        if _is_safe_context_file(workspace, root_file):
             candidates.append(root_file)
-    try:
-        nested = sorted(
-            (
-                path
-                for path in workspace.rglob("AGENTS.md")
-                if not _path_has_ignored_part(path.relative_to(workspace))
-            ),
-            key=lambda path: (len(path.relative_to(workspace).parts), path.as_posix()),
-        )
-    except OSError:
-        nested = []
+    nested: list[Path] = []
+    pending = deque([workspace])
+    inspected_directories = 0
+    while pending and inspected_directories < 12_000 and len(nested) < 256:
+        directory = pending.popleft()
+        inspected_directories += 1
+        try:
+            entries = sorted(directory.iterdir(), key=lambda item: item.name.casefold())
+        except OSError:
+            continue
+        child_directories: list[Path] = []
+        for path in entries:
+            if path.name == "AGENTS.md" and _is_safe_context_file(workspace, path):
+                nested.append(path)
+                if len(nested) >= 256:
+                    break
+            elif _is_safe_context_directory(workspace, path):
+                child_directories.append(path)
+        pending.extend(child_directories)
     for path in nested:
         if path not in candidates:
             candidates.append(path)
@@ -1209,44 +1544,37 @@ def _collect_instruction_files(workspace: Path) -> list[Path]:
 
 
 def _project_file_index(workspace: Path) -> list[str]:
-    command = [
-        "rg",
-        "--files",
-        "--hidden",
-        "-g",
-        "!.git",
-        "-g",
-        "!node_modules",
-        "-g",
-        "!.venv",
-        "-g",
-        "!venv",
-        "-g",
-        "!local_store",
-        "-g",
-        "!logs",
-    ]
+    """Build a deterministic, bounded file index without subprocess buffering."""
+    paths: list[str] = []
+    inspected_directories = 0
     try:
-        output = _run_capture(command, workspace, timeout=15)
-        return [
-            value
-            for value in output.splitlines()
-            if value and not _path_has_sensitive_part(Path(value))
-        ][:12_000]
-    except (OSError, RuntimeError):
-        paths: list[str] = []
-        for path in workspace.rglob("*"):
-            relative = path.relative_to(workspace)
-            if (
-                path.is_file()
-                and not path.is_symlink()
-                and not _path_has_ignored_part(relative)
-                and not _path_has_sensitive_part(relative)
-            ):
-                paths.append(relative.as_posix())
-            if len(paths) >= 12_000:
+        for raw_directory, directory_names, file_names in os.walk(
+            workspace,
+            topdown=True,
+            followlinks=False,
+        ):
+            inspected_directories += 1
+            if inspected_directories > 12_000:
                 break
-        return sorted(paths)
+            directory = Path(raw_directory)
+            allowed_directories: list[str] = []
+            for name in sorted(directory_names, key=str.casefold):
+                candidate = directory / name
+                if not _is_safe_context_directory(workspace, candidate):
+                    continue
+                allowed_directories.append(name)
+            directory_names[:] = allowed_directories
+            for name in sorted(file_names, key=str.casefold):
+                path = directory / name
+                relative = path.relative_to(workspace)
+                if not _is_safe_context_file(workspace, path):
+                    continue
+                paths.append(relative.as_posix())
+                if len(paths) >= 12_000:
+                    return paths
+    except OSError:
+        return paths
+    return paths
 
 
 def _priority_context_files(workspace: Path, instructions: list[Path]) -> list[Path]:
@@ -1254,14 +1582,20 @@ def _priority_context_files(workspace: Path, instructions: list[Path]) -> list[P
     files: list[Path] = []
     for name in _CONTEXT_PRIORITY_NAMES:
         candidate = workspace / name
-        if candidate.is_file() and candidate not in instruction_set:
+        if (
+            _is_safe_context_file(workspace, candidate)
+            and candidate not in instruction_set
+        ):
             files.append(candidate)
     return files[:12]
 
 
 def _markdown_file_section(workspace: Path, path: Path, maximum_chars: int) -> str:
+    if not _is_safe_context_file(workspace, path):
+        return ""
     try:
-        content = path.read_text(encoding="utf-8", errors="replace")[:maximum_chars]
+        with path.open(encoding="utf-8", errors="replace") as handle:
+            content = handle.read(maximum_chars)
     except OSError as exc:
         content = f"[Could not read file: {exc}]"
     suffix = path.suffix.lstrip(".") or "text"
@@ -1270,7 +1604,7 @@ def _markdown_file_section(workspace: Path, path: Path, maximum_chars: int) -> s
 
 
 def _path_has_ignored_part(relative: Path) -> bool:
-    return any(part in _IGNORED_DIRECTORY_NAMES for part in relative.parts)
+    return any(part.casefold() in _IGNORED_DIRECTORY_NAMES for part in relative.parts)
 
 
 def _path_has_sensitive_part(relative: Path) -> bool:
@@ -1286,6 +1620,266 @@ def _path_has_sensitive_part(relative: Path) -> bool:
     return False
 
 
+def _search_exclusion_globs() -> tuple[str, ...]:
+    """Return case-insensitive command-layer exclusions for every forbidden path."""
+    names = _IGNORED_DIRECTORY_NAMES | _SENSITIVE_PATH_NAMES
+    patterns = {
+        pattern
+        for name in names
+        for pattern in (
+            f"!{name}",
+            f"!{name}/**",
+            f"!**/{name}",
+            f"!**/{name}/**",
+        )
+    }
+    patterns.update({"!.env.*", "!**/.env.*"})
+    for suffix in _SENSITIVE_PATH_SUFFIXES:
+        patterns.update({f"!*{suffix}", f"!**/*{suffix}"})
+    return tuple(sorted(patterns, key=str.casefold))
+
+
+def _search_include_globs(
+    glob: str,
+    root: Path,
+    workspace: Path,
+) -> tuple[str, ...]:
+    """Translate controller glob candidates into conservative rg include globs."""
+    if not glob:
+        return ()
+    normalized = (
+        glob.replace("\\", "/")
+        if is_windows_host()
+        else glob.replace("\\", "\\\\")
+    )
+    patterns = {normalized}
+    if root.is_dir():
+        try:
+            root_relative = root.relative_to(workspace).as_posix()
+        except ValueError:
+            root_relative = "."
+        if root_relative not in {"", "."}:
+            patterns.add(f"{root_relative}/{normalized}")
+    return tuple(sorted(patterns, key=str.casefold))
+
+
+def _queue_text_lines(
+    stream: Any,
+    output: Queue[Any],
+    discard: Event,
+) -> None:
+    """Drain a text stream into a bounded queue without retaining excess output."""
+    terminal_event: object | None = None
+    try:
+        for line in stream:
+            while not discard.is_set():
+                try:
+                    output.put(line, timeout=0.05)
+                    break
+                except Full:
+                    continue
+            if discard.is_set():
+                break
+    except (OSError, UnicodeError, ValueError):
+        terminal_event = _STREAM_READ_FAILED
+    finally:
+        while not discard.is_set():
+            try:
+                output.put(terminal_event, timeout=0.05)
+                break
+            except Full:
+                continue
+
+
+def _queue_text_chunks(
+    stream: Any,
+    output: Queue[Any],
+    discard: Event,
+) -> None:
+    """Drain fixed-size text chunks into a bounded queue."""
+    terminal_event: object | None = None
+    try:
+        while not discard.is_set():
+            chunk = stream.read(4_096)
+            if not chunk:
+                break
+            while not discard.is_set():
+                try:
+                    output.put(chunk, timeout=0.05)
+                    break
+                except Full:
+                    continue
+    except (OSError, UnicodeError, ValueError):
+        terminal_event = _STREAM_READ_FAILED
+    finally:
+        while not discard.is_set():
+            try:
+                output.put(terminal_event, timeout=0.05)
+                break
+            except Full:
+                continue
+
+
+def _bounded_verification_process_output(
+    process: subprocess.Popen[str],
+    *,
+    timeout_seconds: int,
+    should_stop: Callable[[], bool],
+) -> tuple[str, int, bool, bool, bool]:
+    """Drain one verification process with fixed memory, time, and Stop bounds."""
+    if process.stdout is None:
+        _stop_process(process, timeout=1)
+        raise RuntimeError("Verification could not open a bounded output stream.")
+
+    chunks: list[str] = []
+    retained_characters = 0
+    truncated = False
+    stopped = False
+    timed_out = False
+    stream_failed = False
+    stream_done = False
+    loop_completed = False
+    discard_output: Event | None = None
+    reader: Thread | None = None
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        output_queue: Queue[Any] = Queue(maxsize=RUN_OUTPUT_QUEUE_SIZE)
+        discard_output = Event()
+        reader = Thread(
+            target=_queue_text_chunks,
+            args=(process.stdout, output_queue, discard_output),
+            daemon=True,
+        )
+        reader.start()
+        while True:
+            if should_stop():
+                stopped = True
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            if stream_done:
+                if process.poll() is not None:
+                    break
+                time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
+                continue
+            try:
+                remaining_time = max(0.001, deadline - time.monotonic())
+                value = output_queue.get(timeout=min(0.05, remaining_time))
+            except Empty:
+                if not reader.is_alive() and output_queue.empty():
+                    stream_done = True
+                continue
+            if value is _STREAM_READ_FAILED:
+                stream_failed = True
+                break
+            if value is None:
+                stream_done = True
+                continue
+            if not isinstance(value, str):
+                stream_failed = True
+                break
+            remaining_characters = MAX_ACTION_OUTPUT_CHARS - retained_characters
+            if remaining_characters > 0:
+                retained = value[:remaining_characters]
+                chunks.append(retained)
+                retained_characters += len(retained)
+            if len(value) > remaining_characters:
+                truncated = True
+        loop_completed = True
+    finally:
+        if stopped or timed_out or stream_failed or not loop_completed:
+            if discard_output is not None:
+                discard_output.set()
+            _stop_process(process, timeout=1)
+        try:
+            process.wait(timeout=1)
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            if discard_output is not None:
+                discard_output.set()
+            _stop_process(process, timeout=1)
+        if isinstance(process, _SUBPROCESS_POPEN_TYPE):
+            _stop_process(process, timeout=0.25)
+        if discard_output is not None:
+            discard_output.set()
+        if reader is not None and reader.ident is not None:
+            reader.join(timeout=1)
+        if reader is None or not reader.is_alive():
+            try:
+                process.stdout.close()
+            except (OSError, ValueError):
+                pass
+
+    if stream_failed:
+        raise RuntimeError("Verification output could not be read safely.")
+    output = "".join(chunks)
+    if truncated:
+        marker = f"\n[output truncated at {MAX_ACTION_OUTPUT_CHARS:,} characters]"
+        output = output[: max(0, MAX_ACTION_OUTPUT_CHARS - len(marker))] + marker
+    returncode = process.returncode if isinstance(process.returncode, int) else -1
+    return output, returncode, truncated, stopped, timed_out
+
+
+def _bounded_devnull_process(
+    command: list[str],
+    *,
+    workspace: Path,
+    timeout_seconds: float,
+    should_stop: Callable[[], bool],
+    process_changed: Callable[[subprocess.Popen[str] | None], None],
+) -> tuple[int, bool, bool]:
+    """Run one no-output check with bounded time, Stop, and process cleanup."""
+    try:
+        process = subprocess.Popen(
+            command,
+            cwd=workspace,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **_process_group_options(),
+        )
+    except OSError as exc:
+        raise RuntimeError("Verification process could not be started.") from exc
+
+    stopped = False
+    timed_out = False
+    loop_completed = False
+    deadline = time.monotonic() + timeout_seconds
+    try:
+        process_changed(process)
+        while process.poll() is None:
+            if should_stop():
+                stopped = True
+                break
+            if time.monotonic() >= deadline:
+                timed_out = True
+                break
+            time.sleep(min(0.05, max(0.001, deadline - time.monotonic())))
+        loop_completed = True
+    finally:
+        if stopped or timed_out or not loop_completed:
+            _stop_process(process, timeout=1)
+        try:
+            process.wait(timeout=1)
+        except (OSError, subprocess.TimeoutExpired, ValueError):
+            _stop_process(process, timeout=1)
+        if isinstance(process, _SUBPROCESS_POPEN_TYPE):
+            _stop_process(process, timeout=0.25)
+        process_changed(None)
+
+    returncode = process.returncode if isinstance(process.returncode, int) else -1
+    return returncode, stopped, timed_out
+
+
+def _discard_text_stream(stream: Any) -> None:
+    """Drain subprocess diagnostics without exposing or retaining path-bearing text."""
+    try:
+        for _chunk in iter(lambda: stream.read(4_096), ""):
+            pass
+    except (OSError, ValueError):
+        return
+
+
 def _path_matches_search_glob(
     path: Path,
     root: Path,
@@ -1296,6 +1890,7 @@ def _path_matches_search_glob(
     """Match glob against basename, workspace-relative path, and root-relative path."""
     if not glob:
         return True
+    normalized_glob = glob.replace("\\", "/") if is_windows_host() else glob
     candidates = [path.name]
     try:
         workspace_relative = path.relative_to(workspace).as_posix()
@@ -1310,7 +1905,98 @@ def _path_matches_search_glob(
                 candidates.append(root_relative)
         except ValueError:
             pass
-    return any(fnmatch(candidate, glob) for candidate in candidates)
+    translated_glob = translate_glob(
+        normalized_glob,
+        recursive=True,
+        include_hidden=True,
+        seps="/",
+    )
+    flags = re.IGNORECASE if is_windows_host() else 0
+    return any(
+        re.fullmatch(translated_glob, candidate, flags=flags) is not None
+        for candidate in candidates
+    )
+
+
+def _is_confined_search_match(
+    workspace: Path,
+    root: Path,
+    relative_path: Path,
+) -> bool:
+    """Confirm an rg-reported file resolves inside both workspace and search root."""
+    candidate = workspace / relative_path
+    try:
+        current = workspace
+        for part in relative_path.parts:
+            current /= part
+            if _path_is_link_like(current):
+                return False
+        if not candidate.is_file():
+            return False
+        resolved_candidate = candidate.resolve(strict=True)
+        resolved_workspace = workspace.resolve(strict=True)
+        resolved_relative = resolved_candidate.relative_to(resolved_workspace)
+        if (
+            _path_has_ignored_part(resolved_relative)
+            or _path_has_sensitive_part(resolved_relative)
+        ):
+            return False
+        resolved_root = root.resolve(strict=True)
+        if root.is_file():
+            return resolved_candidate == resolved_root
+        resolved_candidate.relative_to(resolved_root)
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def _parse_rg_search_match(value: str) -> tuple[Path, str] | None:
+    """Parse one structured ripgrep match in fallback-compatible form."""
+    try:
+        payload = json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("type") != "match":
+        return None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    path_data = data.get("path")
+    lines_data = data.get("lines")
+    line_number = data.get("line_number")
+    if (
+        not isinstance(path_data, dict)
+        or not isinstance(lines_data, dict)
+        or not isinstance(path_data.get("text"), str)
+        or not isinstance(lines_data.get("text"), str)
+        or not isinstance(line_number, int)
+        or isinstance(line_number, bool)
+        or line_number < 1
+    ):
+        return None
+    raw_path = path_data["text"]
+    if not raw_path.strip() or any(character in raw_path for character in "\x00\r\n"):
+        return None
+    native_path = raw_path.replace("\\", "/") if is_windows_host() else raw_path
+    relative = Path(native_path)
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+    normalized_path = relative.as_posix()
+    if normalized_path in {"", "."}:
+        return None
+    line_text = _truncate_search_match_text(lines_data["text"].rstrip("\r\n"))
+    return relative, f"{normalized_path}:{line_number}:{line_text}"
+
+
+def _truncate_search_match_text(value: str) -> str:
+    """Bound one search line without introducing a second observation line."""
+    if len(value) <= SEARCH_MAX_MATCH_TEXT_CHARS:
+        return value
+    omitted = len(value) - SEARCH_MAX_MATCH_TEXT_CHARS
+    return (
+        value[:SEARCH_MAX_MATCH_TEXT_CHARS]
+        + f" [truncated {omitted:,} characters]"
+    )
 
 
 def _fallback_search_matches(
@@ -1320,34 +2006,37 @@ def _fallback_search_matches(
     query: str,
     glob: str,
     max_results: int,
+    should_stop: Callable[[], bool] | None = None,
 ) -> list[str]:
     """Search text files in Python when ripgrep is unavailable to the service."""
-    try:
-        pattern = re.compile(query)
-    except re.error as exc:
-        raise ValueError(
-            f"The search query is not a valid regular expression: {exc}"
-        ) from exc
-
     matches: list[str] = []
     inspected_files = 0
+    deadline = time.monotonic() + SEARCH_TIMEOUT_SECONDS
     try:
         root_is_file = root.is_file()
         candidates = (root,) if root_is_file else root.rglob("*")
         for path in candidates:
+            if callable(should_stop) and should_stop():
+                break
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    f"Search exceeded the {SEARCH_TIMEOUT_SECONDS}-second controller limit."
+                )
             if inspected_files >= 12_000 or len(matches) >= max_results:
                 break
             try:
                 relative_to_workspace = path.relative_to(workspace)
                 if (
-                    path.is_symlink()
-                    or not path.is_file()
-                    or _path_has_ignored_part(relative_to_workspace)
+                    _path_has_ignored_part(relative_to_workspace)
                     or _path_has_sensitive_part(relative_to_workspace)
+                    or not _is_confined_search_match(
+                        workspace,
+                        root,
+                        relative_to_workspace,
+                    )
                     or path.stat().st_size > SEARCH_MAX_FILE_BYTES
                 ):
                     continue
-                path.resolve(strict=True).relative_to(workspace)
             except (OSError, ValueError):
                 continue
 
@@ -1360,10 +2049,18 @@ def _fallback_search_matches(
             except OSError:
                 continue
             for line_number, line in enumerate(lines, start=1):
-                if not pattern.search(line):
+                if callable(should_stop) and should_stop():
+                    break
+                if time.monotonic() >= deadline:
+                    raise RuntimeError(
+                        f"Search exceeded the {SEARCH_TIMEOUT_SECONDS}-second controller limit."
+                    )
+                if query not in line:
                     continue
                 relative = path.relative_to(workspace).as_posix()
-                matches.append(f"{relative}:{line_number}:{line}")
+                matches.append(
+                    f"{relative}:{line_number}:{_truncate_search_match_text(line)}"
+                )
                 if len(matches) >= max_results:
                     break
     except OSError:
@@ -1550,6 +2247,22 @@ class WorkspaceController:
 
     def _resolve_path(self, raw_path: Any, *, allow_missing: bool = False) -> Path:
         candidate = Path(str(raw_path or "."))
+        lexical = candidate.expanduser() if candidate.is_absolute() else self.workspace / candidate
+        try:
+            lexical_relative = lexical.relative_to(self.workspace)
+        except ValueError:
+            lexical_relative = Path()
+        if ".." in lexical_relative.parts:
+            raise ValueError("Controller paths must stay inside the selected project.")
+        current = self.workspace
+        for part in lexical_relative.parts:
+            current /= part
+            if _path_is_link_like(current):
+                raise ValueError(
+                    "Controller paths cannot traverse linked files or directories."
+                )
+            if not current.exists():
+                break
         if candidate.is_absolute():
             resolved = candidate.expanduser().resolve(strict=not allow_missing)
         else:
@@ -1559,7 +2272,10 @@ class WorkspaceController:
         except ValueError as exc:
             raise ValueError("Controller paths must stay inside the selected project.") from exc
         relative = resolved.relative_to(self.workspace)
-        if any(part in {".git", ".computer-use-agent"} for part in relative.parts):
+        if any(
+            part.casefold() in {".git", ".computer-use-agent"}
+            for part in relative.parts
+        ):
             raise ValueError("Controller access to internal metadata is not allowed.")
         if _path_has_sensitive_part(relative):
             raise ValueError(
@@ -1573,22 +2289,46 @@ class WorkspaceController:
             raise ValueError("The list action requires a directory.")
         depth = max(1, min(6, int(payload.get("depth", 2))))
         rows: list[str] = []
-        for path in sorted(
-            root.rglob("*"), key=lambda item: item.as_posix().casefold()
-        ):
-            relative_to_root = path.relative_to(root)
-            relative_to_workspace = path.relative_to(self.workspace)
-            if (
-                len(relative_to_root.parts) > depth
-                or _path_has_ignored_part(relative_to_workspace)
-                or _path_has_sensitive_part(relative_to_workspace)
-            ):
-                continue
-            suffix = "/" if path.is_dir() else ""
-            rows.append(path.relative_to(self.workspace).as_posix() + suffix)
-            if len(rows) >= 2_000:
+        pending = deque([(root, 0)])
+        inspected_directories = 0
+        scan_truncated = False
+        while pending and len(rows) < 2_000:
+            directory, directory_depth = pending.popleft()
+            inspected_directories += 1
+            if inspected_directories > 12_000:
+                scan_truncated = True
                 break
-        return {"ok": True, "action": "list", "entries": rows, "truncated": len(rows) >= 2_000}
+            try:
+                entries = sorted(
+                    directory.iterdir(),
+                    key=lambda item: item.name.casefold(),
+                )
+            except OSError:
+                continue
+            for path in entries:
+                relative_to_workspace = path.relative_to(self.workspace)
+                if (
+                    _path_has_ignored_part(relative_to_workspace)
+                    or _path_has_sensitive_part(relative_to_workspace)
+                    or _path_is_link_like(path)
+                ):
+                    continue
+                if _is_safe_context_directory(self.workspace, path):
+                    rows.append(relative_to_workspace.as_posix() + "/")
+                    if directory_depth + 1 < depth:
+                        pending.append((path, directory_depth + 1))
+                elif _is_safe_context_file(self.workspace, path):
+                    rows.append(relative_to_workspace.as_posix())
+                if len(rows) >= 2_000:
+                    scan_truncated = True
+                    break
+        rows.sort(key=str.casefold)
+        return {
+            "ok": True,
+            "action": "list",
+            "entries": rows,
+            "truncated": scan_truncated or bool(pending),
+        }
 
     def _read(self, payload: dict[str, Any]) -> dict[str, Any]:
         path = self._resolve_path(payload.get("path"))
@@ -1615,45 +2355,93 @@ class WorkspaceController:
         query = str(payload.get("query") or "").strip()
         if not query:
             raise ValueError("The search action requires a query.")
+        if (
+            len(query) > MAX_SEARCH_QUERY_CHARS
+            or "\x00" in query
+            or "\n" in query
+            or "\r" in query
+        ):
+            raise ValueError(
+                "The search query is invalid or exceeds the controller limit."
+            )
         root = self._resolve_path(payload.get("path", "."))
         max_results = max(1, min(300, int(payload.get("max_results", 80))))
+        glob = str(payload.get("glob") or "").strip()
+        if len(glob) > 1_000 or "\x00" in glob or "\n" in glob or "\r" in glob:
+            raise ValueError("The search glob is invalid or exceeds the controller limit.")
+        if glob.startswith("!"):
+            raise ValueError("The search glob must be an inclusive pattern.")
+        if any(character in glob for character in "{}[]"):
+            raise ValueError(
+                "The search glob supports literals, path separators, *, ?, and ** only."
+            )
+        ripgrep = _trusted_system_executable("rg", forbidden_root=self.workspace)
+        if ripgrep is None:
+            matches = _fallback_search_matches(
+                workspace=self.workspace,
+                root=root,
+                query=query,
+                glob=glob,
+                max_results=max_results,
+                should_stop=self.should_stop,
+            )
+            if self.should_stop():
+                return {
+                    "ok": False,
+                    "action": "search",
+                    "stopped": True,
+                    "error": "Stop requested.",
+                }
+            return {
+                "ok": True,
+                "action": "search",
+                "matches": matches,
+                "truncated": len(matches) >= max_results,
+                "engine": "python-fallback",
+            }
         command = [
-            "rg",
+            str(ripgrep),
+            "--no-config",
+            "--json",
             "--line-number",
             "--with-filename",
+            "--fixed-strings",
             "--color",
             "never",
+            "--hidden",
+            "--no-ignore",
+            "--no-follow",
+            "--no-messages",
             "--max-count",
             str(max_results),
             "--max-filesize",
             str(SEARCH_MAX_FILE_BYTES),
         ]
-        for excluded_glob in (
-            "!.env",
-            "!.env.*",
-            "!*.key",
-            "!*.p12",
-            "!*.pem",
-            "!*.pfx",
-            "!.aws/**",
-            "!.ssh/**",
-            "!credentials.json",
-            "!secrets.json",
-            *(f"!{directory_name}/**" for directory_name in sorted(_IGNORED_DIRECTORY_NAMES)),
-        ):
-            command.extend(["--glob", excluded_glob])
-        glob = str(payload.get("glob") or "").strip()
-        if glob:
-            command.extend(["--glob", glob])
-        command.extend([query, str(root.relative_to(self.workspace) or ".")])
+        include_glob_option = "--iglob" if is_windows_host() else "--glob"
+        for included_glob in _search_include_globs(glob, root, self.workspace):
+            command.extend([include_glob_option, included_glob])
+        for excluded_glob in _search_exclusion_globs():
+            command.extend(["--iglob", excluded_glob])
+        command.extend(["--", query, str(root.relative_to(self.workspace) or ".")])
+        if self.should_stop():
+            return {
+                "ok": False,
+                "action": "search",
+                "stopped": True,
+                "error": "Stop requested.",
+            }
         try:
-            process = subprocess.run(
+            process = subprocess.Popen(
                 command,
                 cwd=self.workspace,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                capture_output=True,
-                check=False,
-                timeout=30,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                **_process_group_options(),
             )
         except FileNotFoundError:
             matches = _fallback_search_matches(
@@ -1662,7 +2450,15 @@ class WorkspaceController:
                 query=query,
                 glob=glob,
                 max_results=max_results,
+                should_stop=self.should_stop,
             )
+            if self.should_stop():
+                return {
+                    "ok": False,
+                    "action": "search",
+                    "stopped": True,
+                    "error": "Stop requested.",
+                }
             return {
                 "ok": True,
                 "action": "search",
@@ -1670,26 +2466,161 @@ class WorkspaceController:
                 "truncated": len(matches) >= max_results,
                 "engine": "python-fallback",
             }
-        if process.returncode not in {0, 1}:
-            raise RuntimeError((process.stderr or process.stdout or "Search failed.").strip())
-        matches = []
-        output = process.stdout or ""
-        if root.is_file() and not _path_matches_search_glob(
-            root, root, glob, workspace=self.workspace
-        ):
-            output = ""
-        for value in output.splitlines():
-            relative_text = value.split(":", 1)[0]
-            if _path_has_sensitive_part(Path(relative_text)):
-                continue
-            matches.append(value)
-            if len(matches) >= max_results:
-                break
+
+        if process.stdout is None or process.stderr is None:
+            _stop_process(process, timeout=1)
+            raise RuntimeError("Search could not open bounded ripgrep output streams.")
+        matches: list[str] = []
+        raw_events = 0
+        truncated = False
+        stopped = False
+        timed_out = False
+        stream_failed = False
+        terminated_early = False
+        loop_completed = False
+        discard_output: Event | None = None
+        stdout_thread: Thread | None = None
+        stderr_thread: Thread | None = None
+        deadline = time.monotonic() + SEARCH_TIMEOUT_SECONDS
+        try:
+            output_queue: Queue[Any] = Queue(maxsize=SEARCH_STDOUT_QUEUE_SIZE)
+            discard_output = Event()
+            stdout_thread = Thread(
+                target=_queue_text_lines,
+                args=(process.stdout, output_queue, discard_output),
+                daemon=True,
+            )
+            stderr_thread = Thread(
+                target=_discard_text_stream,
+                args=(process.stderr,),
+                daemon=True,
+            )
+            self.process_changed(process)
+            stdout_thread.start()
+            stderr_thread.start()
+            while True:
+                if self.should_stop():
+                    stopped = True
+                    terminated_early = True
+                    break
+                if time.monotonic() >= deadline:
+                    timed_out = True
+                    terminated_early = True
+                    break
+                try:
+                    remaining = max(0.001, deadline - time.monotonic())
+                    value = output_queue.get(timeout=min(0.05, remaining))
+                except Empty:
+                    if not stdout_thread.is_alive() and output_queue.empty():
+                        break
+                    continue
+                if value is _STREAM_READ_FAILED:
+                    stream_failed = True
+                    terminated_early = True
+                    break
+                if value is None:
+                    break
+                if not isinstance(value, str):
+                    stream_failed = True
+                    terminated_early = True
+                    break
+                raw_events += 1
+                if raw_events > SEARCH_MAX_RAW_EVENTS:
+                    truncated = True
+                    terminated_early = True
+                    break
+                normalized = _parse_rg_search_match(value)
+                if normalized is None:
+                    continue
+                relative_path, normalized_value = normalized
+                candidate_path = self.workspace / relative_path
+                if (
+                    _path_has_ignored_part(relative_path)
+                    or _path_has_sensitive_part(relative_path)
+                ):
+                    continue
+                try:
+                    if root.is_file():
+                        if candidate_path != root:
+                            continue
+                    else:
+                        candidate_path.relative_to(root)
+                except ValueError:
+                    continue
+                if (
+                    not _path_matches_search_glob(
+                        candidate_path,
+                        root,
+                        glob,
+                        workspace=self.workspace,
+                    )
+                    or not _is_confined_search_match(
+                        self.workspace,
+                        root,
+                        relative_path,
+                    )
+                ):
+                    continue
+                matches.append(normalized_value)
+                if len(matches) >= max_results:
+                    truncated = True
+                    terminated_early = True
+                    break
+            loop_completed = True
+        finally:
+            if terminated_early or stream_failed or not loop_completed:
+                if discard_output is not None:
+                    discard_output.set()
+                _stop_process(process, timeout=1)
+            try:
+                process.wait(timeout=1)
+            except (OSError, subprocess.TimeoutExpired, ValueError):
+                if discard_output is not None:
+                    discard_output.set()
+                _stop_process(process, timeout=1)
+            if isinstance(process, _SUBPROCESS_POPEN_TYPE):
+                _stop_process(process, timeout=0.25)
+            if discard_output is not None:
+                discard_output.set()
+            if stdout_thread is not None and stdout_thread.ident is not None:
+                stdout_thread.join(timeout=1)
+            if stderr_thread is not None and stderr_thread.ident is not None:
+                stderr_thread.join(timeout=1)
+            streams_and_readers = (
+                (process.stdout, stdout_thread),
+                (process.stderr, stderr_thread),
+            )
+            for stream, reader_thread in streams_and_readers:
+                if reader_thread is not None and reader_thread.is_alive():
+                    continue
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
+            self.process_changed(None)
+
+        if stopped:
+            return {
+                "ok": False,
+                "action": "search",
+                "stopped": True,
+                "error": "Stop requested.",
+            }
+        if timed_out:
+            raise RuntimeError(
+                f"Search exceeded the {SEARCH_TIMEOUT_SECONDS}-second controller limit."
+            )
+        if stream_failed:
+            raise RuntimeError("Search output could not be read safely.")
+        if not terminated_early and process.returncode not in {0, 1}:
+            raise RuntimeError(
+                f"Search failed with ripgrep exit code {process.returncode}."
+            )
         return {
             "ok": True,
             "action": "search",
             "matches": matches,
-            "truncated": len(matches) >= max_results,
+            "truncated": truncated,
             "engine": "rg",
         }
 
@@ -1786,68 +2717,197 @@ class WorkspaceController:
     def _run(self, payload: dict[str, Any]) -> dict[str, Any]:
         command = str(payload.get("command") or "").strip()
         command_parts = inspection_command_parts(command, workspace=self.workspace)
-        before_fingerprint = _workspace_mutation_fingerprint(self.workspace)
+        if command_parts[:2] == ["git", "status"]:
+            started = time.monotonic()
+            try:
+                output = _filtered_git_status(
+                    self.workspace,
+                    should_stop=self.should_stop,
+                    process_changed=self.process_changed,
+                )
+            except RuntimeError:
+                if self.should_stop():
+                    return {
+                        "ok": False,
+                        "action": "run",
+                        "stopped": True,
+                        "error": "Stop requested.",
+                    }
+                raise
+            return {
+                "ok": True,
+                "action": "run",
+                "exit_code": 0,
+                "duration_seconds": round(time.monotonic() - started, 2),
+                "output": _truncate_text(output, MAX_ACTION_OUTPUT_CHARS),
+                "mutated_workspace": False,
+                "error": "",
+            }
+        before_fingerprint, before_scan_complete = (
+            _workspace_mutation_fingerprint(
+                self.workspace,
+                should_stop=self.should_stop,
+            )
+        )
+        if self.should_stop():
+            return {
+                "ok": False,
+                "action": "run",
+                "stopped": True,
+                "error": "Stop requested.",
+            }
+        if not before_scan_complete:
+            raise RuntimeError(
+                "The verification command was not started because the controller could not "
+                "create a complete bounded workspace fingerprint. Narrow the selected "
+                "workspace before continuing."
+            )
         started = time.monotonic()
         process = subprocess.Popen(
             command_parts,
             cwd=self.workspace,
+            stdin=subprocess.DEVNULL,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
+            bufsize=1,
             **_process_group_options(),
         )
-        self.process_changed(process)
+        output = ""
+        returncode = -1
+        output_truncated = False
+        stopped = False
+        timed_out = False
+        run_error: OSError | RuntimeError | ValueError | None = None
         try:
-            output, _ = process.communicate(timeout=self.settings.command_timeout_seconds)
-        except subprocess.TimeoutExpired:
-            _stop_process(process, timeout=5)
-            output, _ = process.communicate(timeout=3)
-            raise RuntimeError(
-                f"Command timed out after {self.settings.command_timeout_seconds:,} seconds.\n"
-                + _truncate_text(output or "", MAX_ACTION_OUTPUT_CHARS)
+            self.process_changed(process)
+            output, returncode, output_truncated, stopped, timed_out = (
+                _bounded_verification_process_output(
+                    process,
+                    timeout_seconds=self.settings.command_timeout_seconds,
+                    should_stop=self.should_stop,
+                )
             )
+        except (OSError, RuntimeError, ValueError) as exc:
+            run_error = exc
         finally:
             self.process_changed(None)
-        after_fingerprint = _workspace_mutation_fingerprint(self.workspace)
+        after_fingerprint, after_scan_complete = (
+            _workspace_mutation_fingerprint(
+                self.workspace,
+                should_stop=self.should_stop,
+            )
+        )
+        workspace_scan_complete = before_scan_complete and after_scan_complete
         mutated_workspace = after_fingerprint != before_fingerprint
-        if mutated_workspace:
+        if mutated_workspace or not workspace_scan_complete:
             self.state.edit_generation += 1
-        elif process.returncode == 0:
+        elif run_error is None and not stopped and not timed_out and returncode == 0:
             self.state.verification_generation = self.state.edit_generation
             self.state.successful_checks.append(command)
+        if run_error is not None:
+            raise run_error
+        if stopped:
+            return {
+                "ok": False,
+                "action": "run",
+                "stopped": True,
+                "error": "Stop requested.",
+                "output": output,
+                "output_truncated": output_truncated,
+                "mutated_workspace": mutated_workspace,
+                "workspace_scan_complete": workspace_scan_complete,
+            }
+        if timed_out:
+            raise RuntimeError(
+                f"Command timed out after {self.settings.command_timeout_seconds:,} seconds.\n"
+                + output
+            )
         return {
-            "ok": process.returncode == 0 and not mutated_workspace,
+            "ok": returncode == 0 and not mutated_workspace and workspace_scan_complete,
             "action": "run",
-            "exit_code": process.returncode,
+            "exit_code": returncode,
             "duration_seconds": round(time.monotonic() - started, 2),
-            "output": _truncate_text(output or "", MAX_ACTION_OUTPUT_CHARS),
+            "output": output,
+            "output_truncated": output_truncated,
             "mutated_workspace": mutated_workspace,
+            "workspace_scan_complete": workspace_scan_complete,
             "error": (
                 "The verification command changed project files; the prior bodycheck is stale. "
                 "Inspect those changes before continuing."
                 if mutated_workspace
-                else ""
+                else (
+                    "The controller could not prove that the verification command left the "
+                    "project unchanged within its bounded workspace scan; the prior bodycheck "
+                    "is stale. Narrow the selected workspace before continuing."
+                    if not workspace_scan_complete
+                    else ""
+                )
             ),
         }
 
     def _bodycheck(self, _payload: dict[str, Any]) -> dict[str, Any]:
         checks: list[dict[str, Any]] = []
         if (self.workspace / ".git").exists():
-            status = _run_capture(["git", "status", "--short"], self.workspace, timeout=20)
-            diff_check = subprocess.run(
-                ["git", "diff", "--check"],
-                cwd=self.workspace,
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=30,
+            try:
+                status = _filtered_git_status(
+                    self.workspace,
+                    should_stop=self.should_stop,
+                    process_changed=self.process_changed,
+                )
+            except RuntimeError:
+                if self.should_stop():
+                    return {
+                        "ok": False,
+                        "action": "bodycheck",
+                        "stopped": True,
+                        "error": "Stop requested.",
+                    }
+                raise
+            git = _trusted_system_executable("git", forbidden_root=self.workspace)
+            if git is None:
+                raise RuntimeError("Git is unavailable for bounded diff inspection.")
+            diff_returncode, diff_stopped, diff_check_timed_out = (
+                _bounded_devnull_process(
+                    [
+                        str(git),
+                        "-c",
+                        "core.fsmonitor=false",
+                        "-c",
+                        "core.untrackedCache=false",
+                        "diff",
+                        "--check",
+                    ],
+                    workspace=self.workspace,
+                    timeout_seconds=30,
+                    should_stop=self.should_stop,
+                    process_changed=self.process_changed,
+                )
             )
+            if diff_stopped:
+                return {
+                    "ok": False,
+                    "action": "bodycheck",
+                    "stopped": True,
+                    "error": "Stop requested.",
+                }
+            diff_check_ok = diff_returncode == 0 and not diff_check_timed_out
             checks.append({"name": "git status --short", "ok": True, "output": _truncate_text(status, 16_000)})
             checks.append(
                 {
                     "name": "git diff --check",
-                    "ok": diff_check.returncode == 0,
-                    "output": _truncate_text(diff_check.stdout + diff_check.stderr, 16_000),
+                    "ok": diff_check_ok,
+                    "output": (
+                        ""
+                        if diff_check_ok
+                        else (
+                            "Git diff checking exceeded the 30-second controller limit."
+                            if diff_check_timed_out
+                            else "Git found whitespace errors in the current project diff."
+                        )
+                    ),
                 }
             )
         instructions = [path.relative_to(self.workspace).as_posix() for path in _collect_instruction_files(self.workspace)]
@@ -1865,33 +2925,123 @@ class WorkspaceController:
         }
 
 
-def _workspace_mutation_fingerprint(workspace: Path) -> str:
-    """Return a metadata fingerprint that detects command-side project writes."""
+def _workspace_mutation_fingerprint(
+    workspace: Path,
+    *,
+    should_stop: Callable[[], bool] | None = None,
+) -> tuple[str, bool]:
+    """Return a bounded content fingerprint and whether its scan was complete."""
     digest = hashlib.sha256()
-    inspected = 0
+    inspected_files = 0
+    inspected_directories = 0
+    inspected_bytes = 0
+    pending = deque([workspace])
+    deadline = time.monotonic() + WORKSPACE_FINGERPRINT_TIMEOUT_SECONDS
+    stop_requested = should_stop or (lambda: False)
     try:
-        candidates = sorted(workspace.rglob("*"), key=lambda path: path.as_posix())
-    except OSError:
-        candidates = []
-    for path in candidates:
-        if inspected >= 12_000:
-            break
+        resolved_workspace = workspace.resolve(strict=True)
+    except (OSError, ValueError):
+        return digest.hexdigest(), False
+
+    while pending:
+        if (
+            inspected_directories >= WORKSPACE_FINGERPRINT_MAX_DIRECTORIES
+            or time.monotonic() >= deadline
+            or stop_requested()
+        ):
+            return digest.hexdigest(), False
+        directory = pending.popleft()
         try:
-            relative = path.relative_to(workspace)
-            if (
-                path.is_symlink()
-                or not path.is_file()
-                or _path_has_ignored_part(relative)
-            ):
-                continue
-            stat = path.stat()
+            entries = sorted(
+                os.scandir(directory),
+                key=lambda entry: entry.name.casefold(),
+            )
         except OSError:
-            continue
-        digest.update(relative.as_posix().encode("utf-8", errors="replace"))
-        digest.update(f"\0{stat.st_size}\0{stat.st_mtime_ns}\0".encode())
-        inspected += 1
-    digest.update(f"files:{inspected}".encode())
-    return digest.hexdigest()
+            return digest.hexdigest(), False
+        inspected_directories += 1
+        for entry in entries:
+            if time.monotonic() >= deadline or stop_requested():
+                return digest.hexdigest(), False
+            path = Path(entry.path)
+            try:
+                relative = path.relative_to(workspace)
+            except ValueError:
+                return digest.hexdigest(), False
+            if _path_has_ignored_part(relative):
+                continue
+            try:
+                initial_stat = entry.stat(follow_symlinks=False)
+            except OSError:
+                return digest.hexdigest(), False
+            relative_bytes = relative.as_posix().encode(
+                "utf-8",
+                errors="replace",
+            )
+            digest.update(relative_bytes)
+            digest.update(
+                f"\0mode:{initial_stat.st_mode}\0size:{initial_stat.st_size}\0".encode()
+            )
+            if stat_module.S_ISLNK(initial_stat.st_mode) or (
+                stat_module.S_ISREG(initial_stat.st_mode)
+                and initial_stat.st_nlink != 1
+            ):
+                return digest.hexdigest(), False
+            if stat_module.S_ISDIR(initial_stat.st_mode) and _path_is_link_like(path):
+                return digest.hexdigest(), False
+            try:
+                path.resolve(strict=True).relative_to(resolved_workspace)
+            except (OSError, ValueError):
+                return digest.hexdigest(), False
+            if stat_module.S_ISDIR(initial_stat.st_mode):
+                digest.update(b"directory\0")
+                pending.append(path)
+                continue
+            if not stat_module.S_ISREG(initial_stat.st_mode):
+                return digest.hexdigest(), False
+            if inspected_files >= WORKSPACE_FINGERPRINT_MAX_FILES:
+                return digest.hexdigest(), False
+            if (
+                inspected_bytes + initial_stat.st_size
+                > WORKSPACE_FINGERPRINT_MAX_BYTES
+            ):
+                return digest.hexdigest(), False
+            digest.update(b"file\0")
+            try:
+                with path.open("rb") as handle:
+                    while True:
+                        if time.monotonic() >= deadline or stop_requested():
+                            return digest.hexdigest(), False
+                        chunk = handle.read(64 * 1_024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                final_stat = path.stat()
+            except OSError:
+                return digest.hexdigest(), False
+            if (
+                initial_stat.st_dev,
+                initial_stat.st_ino,
+                initial_stat.st_mode,
+                initial_stat.st_size,
+                initial_stat.st_mtime_ns,
+            ) != (
+                final_stat.st_dev,
+                final_stat.st_ino,
+                final_stat.st_mode,
+                final_stat.st_size,
+                final_stat.st_mtime_ns,
+            ):
+                return digest.hexdigest(), False
+            inspected_files += 1
+            inspected_bytes += initial_stat.st_size
+
+    digest.update(
+        (
+            f"files:{inspected_files}\0directories:{inspected_directories}"
+            f"\0bytes:{inspected_bytes}"
+        ).encode()
+    )
+    return digest.hexdigest(), True
 
 
 def _inspection_argument_path_value(argument: str) -> str:
@@ -1901,13 +3051,248 @@ def _inspection_argument_path_value(argument: str) -> str:
     return value.split("::", 1)[0]
 
 
+def _ruff_subcommand(arguments: list[str]) -> str:
+    """Return Ruff's subcommand after the small approved global-option subset."""
+    index = 0
+    value_options = {"--config", "--cache-dir"}
+    standalone_options = {
+        "--isolated",
+        "--no-cache",
+        "--quiet",
+        "--silent",
+        "--verbose",
+    }
+    while index < len(arguments):
+        normalized = arguments[index].casefold()
+        if normalized in standalone_options:
+            index += 1
+            continue
+        if normalized in value_options:
+            index += 2
+            continue
+        if any(normalized.startswith(f"{option}=") for option in value_options):
+            index += 1
+            continue
+        return normalized
+    return ""
+
+
+def _portable_executable_names(value: str) -> tuple[str, str]:
+    """Return the portable filename and normalized tool name for one argv token."""
+    executable_name = value.replace("\\", "/").rsplit("/", 1)[-1]
+    if not executable_name:
+        raise ValueError("Run requires a named executable.")
+    executable = (
+        executable_name[:-4]
+        if executable_name.casefold().endswith(".exe")
+        else executable_name
+    )
+    return executable_name, executable.casefold()
+
+
+def _trusted_system_executable(
+    executable_name: str,
+    *,
+    forbidden_root: Path | None = None,
+) -> Path | None:
+    """Resolve one PATH tool once so workspace cwd cannot replace it at launch."""
+    located = shutil.which(executable_name)
+    if not located:
+        return None
+    try:
+        resolved = Path(located).resolve(strict=True)
+    except (OSError, ValueError):
+        return None
+    if not resolved.is_file():
+        return None
+    if forbidden_root is not None:
+        try:
+            resolved.relative_to(forbidden_root.resolve(strict=True))
+        except (OSError, ValueError):
+            pass
+        else:
+            return None
+    return resolved
+
+
+def _trusted_windows_taskkill() -> Path | None:
+    """Resolve taskkill only from the Windows system directory."""
+    system_root = os.environ.get("SystemRoot", "").strip()
+    if not system_root:
+        return None
+    try:
+        candidate = (Path(system_root) / "System32" / "taskkill.exe").resolve(
+            strict=True
+        )
+    except (OSError, ValueError):
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def _canonical_inspection_executable(
+    token: str,
+    executable_name: str,
+    workspace: Path | None,
+    *,
+    trusted_override: Path | None = None,
+) -> str:
+    """Return a trusted absolute executable and reject basename path aliases."""
+    trusted = trusted_override or _trusted_system_executable(
+        executable_name, forbidden_root=workspace
+    )
+    if trusted is None:
+        raise ValueError(
+            f"The approved verification executable {executable_name} is unavailable."
+        )
+    portable_token = token.replace("\\", "/")
+    if "/" not in portable_token:
+        return str(trusted)
+    candidate = Path(portable_token)
+    if not candidate.is_absolute():
+        candidate = (workspace or Path.cwd()) / candidate
+    try:
+        if not candidate.resolve(strict=True).samefile(trusted):
+            raise ValueError(
+                "Run executable paths must resolve to the trusted PATH executable."
+            )
+    except OSError as exc:
+        raise ValueError(
+            "Run executable paths must resolve to the trusted PATH executable."
+        ) from exc
+    return str(trusted)
+
+
+def _safe_workspace_script(
+    token: str,
+    workspace: Path | None,
+) -> tuple[Path, str] | None:
+    """Resolve one real non-linked verification script under workspace/scripts."""
+    if workspace is None:
+        return None
+    portable_token = token.replace("\\", "/")
+    relative = Path(portable_token)
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or not relative.parts
+        or relative.parts[0].casefold() != "scripts"
+        or not _SAFE_SCRIPT_NAME.fullmatch(relative.name)
+    ):
+        return None
+    try:
+        resolved_workspace = workspace.resolve(strict=True)
+        scripts_root = (workspace / "scripts").resolve(strict=True)
+        scripts_root.relative_to(resolved_workspace)
+        candidate = workspace / relative
+        current = workspace
+        for part in relative.parts:
+            current /= part
+            if _path_is_link_like(current):
+                return None
+        resolved_candidate = candidate.resolve(strict=True)
+        resolved_candidate.relative_to(scripts_root)
+        if not candidate.is_file():
+            return None
+    except (OSError, ValueError):
+        return None
+    suffix = resolved_candidate.suffix.casefold()
+    if is_windows_host():
+        return (
+            (resolved_candidate, "powershell")
+            if suffix == ".ps1"
+            else None
+        )
+    if suffix not in {".bash", ".py", ".sh", ".zsh"}:
+        return None
+    if not os.access(resolved_candidate, os.X_OK):
+        return None
+    return resolved_candidate, "direct"
+
+
 def _validate_inspection_arguments(
     parts: list[str],
     workspace: Path | None = None,
 ) -> None:
     """Reject mutating flags, network targets, and paths outside the workspace."""
+    _executable_name, executable = _portable_executable_names(parts[0])
+    effective_tool = executable
+    effective_arguments = parts[1:]
+    if (
+        re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable)
+        or executable == "py"
+    ) and len(parts) >= 3 and parts[1] == "-m":
+        effective_tool = parts[2].casefold()
+        effective_arguments = parts[3:]
+    if effective_tool in {"eslint", "pytest"} and any(
+        argument.casefold() == "-c"
+        or (
+            argument.casefold().startswith("-c")
+            and not argument.casefold().startswith("--")
+        )
+        for argument in parts[1:]
+    ):
+        raise ValueError(
+            f"Run does not allow custom {effective_tool} configuration files."
+        )
+    if effective_tool == "pytest" and any(
+        argument.casefold() == "-o"
+        or (
+            argument.casefold().startswith("-o")
+            and not argument.casefold().startswith("--")
+        )
+        or argument.casefold() == "--override-ini"
+        or argument.casefold().startswith("--override-ini=")
+        for argument in effective_arguments
+    ):
+        raise ValueError("Run does not allow pytest configuration overrides.")
+    if effective_tool == "pytest" and any(
+        argument.casefold() == "--pyargs"
+        or argument.casefold().startswith("--pyargs=")
+        or argument.casefold() == "-p"
+        or (
+            argument.casefold().startswith("-p")
+            and not argument.casefold().startswith("--")
+        )
+        for argument in effective_arguments
+    ):
+        raise ValueError("Run does not allow pytest package or plugin loading.")
+    if effective_tool == "mypy" and any(
+        argument.casefold() in {"-m", "-p", "--module", "--package"}
+        or argument.casefold().startswith(("--module=", "--package="))
+        or (
+            argument.casefold().startswith(("-m", "-p"))
+            and not argument.casefold().startswith("--")
+        )
+        for argument in effective_arguments
+    ):
+        raise ValueError("Run does not allow mypy targets outside project paths.")
+    if effective_tool == "compileall" and any(
+        (
+            argument.casefold().startswith("-i")
+            and not argument.casefold().startswith("--")
+        )
+        or argument.casefold() == "-b"
+        for argument in effective_arguments
+    ):
+        raise ValueError("Run does not allow unsafe compileall output or file lists.")
+    if effective_tool == "cargo" and any(
+        argument.casefold() == "--config"
+        or argument.casefold().startswith("--config=")
+        for argument in effective_arguments
+    ):
+        raise ValueError("Run does not allow Cargo command-line configuration overrides.")
+    if effective_tool == "ruff" and any(
+        argument.casefold() in {"--cache-dir", "--config"}
+        or argument.casefold().startswith(("--cache-dir=", "--config="))
+        for argument in effective_arguments
+    ):
+        raise ValueError("Run does not allow Ruff path or inline configuration overrides.")
+    if effective_tool == "ruff" and _ruff_subcommand(effective_arguments) != "check":
+        raise ValueError("Run allows only the non-mutating ruff check command.")
     for argument in parts[1:]:
         normalized = argument.casefold()
+        if argument.startswith("@"):
+            raise ValueError("Run does not allow external response files.")
         flag = normalized.split("=", 1)[0]
         if flag in _MUTATING_OR_UNBOUNDED_RUN_FLAGS:
             raise ValueError(
@@ -1920,22 +3305,71 @@ def _validate_inspection_arguments(
         portable_value = path_value.replace("\\", "/")
         if "://" in portable_value:
             raise ValueError("Run cannot access network targets.")
+        portable_path = Path(portable_value)
         if (
             portable_value.startswith(("/", "//"))
             or re.match(r"^[a-zA-Z]:/", portable_value)
-            or ".." in Path(portable_value).parts
+            or ".." in portable_path.parts
         ):
             raise ValueError("Run arguments must stay inside the selected project.")
+        if (
+            any(
+                part.casefold() in {".git", ".computer-use-agent"}
+                for part in portable_path.parts
+            )
+            or _path_has_sensitive_part(portable_path)
+        ):
+            raise ValueError(
+                "Run arguments cannot target credentials or internal Agent metadata."
+            )
         if workspace is None:
             continue
         candidate = workspace / portable_value
         try:
-            if candidate.exists():
-                candidate.resolve(strict=True).relative_to(workspace)
+            current = workspace
+            for part in portable_path.parts:
+                current /= part
+                if _path_is_link_like(current):
+                    raise ValueError(
+                        "Run arguments cannot traverse symlinks or junctions."
+                    )
+                if not current.exists():
+                    break
+            resolved_workspace = workspace.resolve(strict=True)
+            resolved_candidate = candidate.resolve(strict=False)
+            resolved_relative = resolved_candidate.relative_to(resolved_workspace)
+            if (
+                _path_has_ignored_part(resolved_relative)
+                or _path_has_sensitive_part(resolved_relative)
+            ):
+                raise ValueError(
+                    "Run arguments cannot target credentials or internal Agent metadata."
+                )
         except (OSError, ValueError) as exc:
+            if isinstance(exc, ValueError) and str(exc).startswith("Run arguments"):
+                raise
             raise ValueError(
                 "Run arguments must stay inside the selected project."
             ) from exc
+
+
+def _split_inspection_command(command: str) -> list[str]:
+    """Split one direct command and remove Windows-only outer token quotes."""
+    windows_host = is_windows_host()
+    try:
+        parts = shlex.split(command, posix=not windows_host)
+    except ValueError as exc:
+        raise ValueError("Run contains invalid shell quoting.") from exc
+    if not windows_host:
+        return parts
+    normalized: list[str] = []
+    for part in parts:
+        if len(part) >= 2 and part[0] == part[-1] and part[0] in {"'", '"'}:
+            part = part[1:-1]
+        if '"' in part:
+            raise ValueError("Run contains unsupported Windows command quoting.")
+        normalized.append(part)
+    return normalized
 
 
 def validate_inspection_command(command: str) -> None:
@@ -1954,10 +3388,7 @@ def validate_inspection_command(command: str) -> None:
         raise ValueError("Run accepts one direct command without shell operators.")
     if re.search(r"\b(?:env|printenv|set)\b", command, flags=re.IGNORECASE):
         raise ValueError("Commands that enumerate the environment are not allowed.")
-    try:
-        parts = shlex.split(command, posix=not is_windows_host())
-    except ValueError as exc:
-        raise ValueError("Run contains invalid shell quoting.") from exc
+    parts = _split_inspection_command(command)
     _validate_inspection_arguments(parts)
 
 
@@ -1968,37 +3399,96 @@ def inspection_command_parts(
 ) -> list[str]:
     """Parse one direct command and enforce the controller executable allowlist."""
     validate_inspection_command(command)
-    try:
-        parts = shlex.split(command, posix=not is_windows_host())
-    except ValueError as exc:
-        raise ValueError("Run contains invalid shell quoting.") from exc
+    parts = _split_inspection_command(command)
     if not parts:
         raise ValueError("Run requires a command.")
     _validate_inspection_arguments(parts, workspace)
 
-    executable_name = Path(parts[0]).name
-    executable = Path(executable_name).stem.casefold() if executable_name.casefold().endswith(".exe") else executable_name.casefold()
+    executable_name, executable = _portable_executable_names(parts[0])
     arguments = parts[1:]
+    python_executable = bool(
+        re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable)
+        or executable == "py"
+    )
     if executable in _UNSAFE_WRAPPER_EXECUTABLES:
         raise ValueError("Run cannot invoke a nested shell or command interpreter.")
+    safe_script = _safe_workspace_script(parts[0], workspace)
+    canonical_executable = ""
+    if safe_script is None:
+        trusted_override: Path | None = None
+        if python_executable:
+            allowed_python_names = {
+                "py",
+                "python",
+                "python3",
+                f"python{sys.version_info.major}.{sys.version_info.minor}",
+            }
+            if executable not in allowed_python_names:
+                raise ValueError(
+                    "Python run actions must use the controller runtime version."
+                )
+            try:
+                trusted_override = Path(sys.executable).resolve(strict=True)
+                if workspace is not None:
+                    trusted_override.relative_to(workspace.resolve(strict=True))
+            except ValueError:
+                pass
+            except OSError as exc:
+                raise ValueError(
+                    "The controller Python runtime is unavailable."
+                ) from exc
+            else:
+                if workspace is not None:
+                    raise ValueError(
+                        "The controller Python runtime cannot be inside the selected project."
+                    )
+        canonical_executable = _canonical_inspection_executable(
+            parts[0],
+            executable_name,
+            workspace,
+            trusted_override=trusted_override,
+        )
     if executable == "git":
         if not arguments or arguments[0].casefold() not in _SAFE_GIT_SUBCOMMANDS:
-            raise ValueError("Git run actions are limited to read-only inspection subcommands.")
-        return parts
+            raise ValueError("Git run actions are limited to filtered status inspection.")
+        if any(
+            argument.casefold() not in _SAFE_GIT_STATUS_FLAGS
+            for argument in arguments[1:]
+        ):
+            raise ValueError("Git status run actions contain an unsupported argument.")
+        return ["git", "status", "--short"]
     if executable == "rg":
         raise ValueError(
             "Use the project-confined search action instead of running ripgrep directly."
         )
+    if executable == "tsc":
+        normalized_arguments = [argument.casefold() for argument in arguments]
+        no_emit_positions = [
+            index
+            for index, argument in enumerate(normalized_arguments)
+            if argument == "--noemit"
+        ]
+        no_emit_has_boolean_value = bool(
+            no_emit_positions
+            and no_emit_positions[0] + 1 < len(normalized_arguments)
+            and normalized_arguments[no_emit_positions[0] + 1] in {"false", "true"}
+        )
+        if len(no_emit_positions) != 1 or no_emit_has_boolean_value:
+            raise ValueError("TypeScript verification must use one standalone --noEmit.")
     if executable in {"pytest", "ruff", "mypy", "pyright", "eslint", "tsc"}:
-        return parts
-    if re.fullmatch(r"python(?:3(?:\.\d+)?)?", executable) or executable == "py":
+        return [canonical_executable, *arguments]
+    if python_executable:
         if len(arguments) < 2 or arguments[0] != "-m" or arguments[1] not in _SAFE_PYTHON_MODULES:
             raise ValueError("Python run actions must use an approved verification module.")
-        return parts
+        return [canonical_executable, *arguments]
     if executable == "node":
-        if not arguments or arguments[0] != "--check":
+        if (
+            len(arguments) != 2
+            or arguments[0] != "--check"
+            or arguments[1].startswith("-")
+        ):
             raise ValueError("Node run actions are limited to syntax checks.")
-        return parts
+        return [canonical_executable, *arguments]
     if executable in {"npm", "pnpm", "yarn", "bun"}:
         normalized = [argument.casefold() for argument in arguments]
         if normalized == ["test"] or (
@@ -2006,34 +3496,37 @@ def inspection_command_parts(
             and normalized[0] == "run"
             and _SAFE_PACKAGE_SCRIPTS.fullmatch(arguments[1])
         ):
-            return parts
+            return [canonical_executable, *arguments]
         raise ValueError("Package-manager run actions are limited to existing check scripts.")
     if executable == "go" and arguments and arguments[0] in {"test", "vet"}:
-        return parts
+        return [canonical_executable, *arguments]
     if executable == "cargo" and arguments and arguments[0] in {"check", "clippy", "test"}:
-        return parts
+        return [canonical_executable, *arguments]
     if executable == "make" and arguments and all(
-        _SAFE_PACKAGE_SCRIPTS.fullmatch(argument) for argument in arguments if not argument.startswith("-")
+        _SAFE_PACKAGE_SCRIPTS.fullmatch(argument) for argument in arguments
     ):
-        return parts
-    normalized_script_path = parts[0].replace("\\", "/")
-    if (
-        normalized_script_path.startswith(("./scripts/", "scripts/"))
-        and _SAFE_SCRIPT_NAME.fullmatch(Path(normalized_script_path).name)
-    ):
-        if is_windows_host() and normalized_script_path.casefold().endswith(".ps1"):
-            powershell = shutil.which("pwsh") or shutil.which("powershell")
-            if not powershell:
+        return [canonical_executable, *arguments]
+    if safe_script is not None:
+        script_path, launch_kind = safe_script
+        if launch_kind == "powershell":
+            powershell = _trusted_system_executable(
+                "pwsh",
+                forbidden_root=workspace,
+            ) or _trusted_system_executable(
+                "powershell",
+                forbidden_root=workspace,
+            )
+            if powershell is None:
                 raise ValueError("Windows PowerShell is required to run a .ps1 verification script.")
             return [
-                powershell,
+                str(powershell),
                 "-NoProfile",
                 "-NonInteractive",
                 "-File",
-                parts[0],
+                str(script_path),
                 *parts[1:],
             ]
-        return parts
+        return [str(script_path), *parts[1:]]
     raise ValueError("Run executable is outside the inspection and verification allowlist.")
 
 
@@ -2043,20 +3536,6 @@ def _truncate_text(value: str, maximum: int) -> str:
         return text
     omitted = len(text) - maximum
     return text[:maximum] + f"\n[truncated {omitted:,} characters]"
-
-
-def _run_capture(command: list[str], cwd: Path, timeout: int) -> str:
-    process = subprocess.run(
-        command,
-        cwd=cwd,
-        text=True,
-        capture_output=True,
-        check=False,
-        timeout=timeout,
-    )
-    if process.returncode != 0:
-        raise RuntimeError((process.stderr or process.stdout or "Command failed.").strip())
-    return process.stdout or ""
 
 
 def _start_macos_idle_sleep_assertion(
@@ -2081,17 +3560,21 @@ def _start_macos_idle_sleep_assertion(
 
 
 def _stop_macos_idle_sleep_assertion(process: subprocess.Popen[Any] | None) -> None:
-    """Release one task-scoped macOS idle-sleep assertion."""
-    if process is None or process.poll() is not None:
+    """Release one task-scoped macOS idle-sleep assertion without blocking completion."""
+    if process is None:
         return
     try:
+        if process.poll() is not None:
+            return
         process.terminate()
-        process.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        process.kill()
-        process.wait(timeout=3)
-    except OSError:
-        return
+        try:
+            process.wait(timeout=3)
+            return
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+    except Exception as exc:
+        LOGGER.warning("Could not fully release the Agent idle-sleep assertion: %s", exc)
 
 
 def _agent_history_key(
@@ -2140,6 +3623,7 @@ class ComputerUseAgentService:
         self._worker: Thread | None = None
         self._active_process: subprocess.Popen[str] | None = None
         self._sleep_assertion: subprocess.Popen[Any] | None = None
+        self._completion_started = False
         self._conversation_histories: dict[str, list[dict[str, str]]] = {}
         self._conversation_titles: dict[str, str] = {}
         if self._snapshot.phase == "interrupted":
@@ -2192,6 +3676,8 @@ class ComputerUseAgentService:
             "model_verified",
             "actual_model",
             "context_attached",
+            "context_file",
+            "context_bytes",
         )
         payload = {
             field_name: getattr(self._snapshot, field_name) for field_name in fields
@@ -2214,6 +3700,44 @@ class ComputerUseAgentService:
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return asdict(self._snapshot)
+
+    def _require_resolved_context_cleanup_locked(self) -> None:
+        """Retry one recorded cleanup and block a new run while context remains."""
+        raw_path = str(self._snapshot.context_file or "").strip()
+        if not raw_path:
+            return
+        runtime_root = self._runtime_root.expanduser().resolve()
+        context_path = Path(raw_path).expanduser().resolve(strict=False)
+        try:
+            context_path.relative_to(runtime_root)
+        except ValueError as exc:
+            raise RuntimeError(
+                "The previous Agent context cleanup record is outside the runtime root; "
+                "resolve it before starting another production run."
+            ) from exc
+        if context_path.name != "context.md":
+            raise RuntimeError(
+                "The previous Agent context cleanup record is invalid; resolve it before "
+                "starting another production run."
+            )
+        try:
+            context_path.unlink(missing_ok=True)
+            context_removed = not context_path.exists()
+        except OSError as exc:
+            raise RuntimeError(
+                f"Temporary Agent context cleanup is still pending for {context_path}."
+            ) from exc
+        if not context_removed:
+            raise RuntimeError(
+                f"Temporary Agent context cleanup is still pending for {context_path}."
+            )
+        try:
+            context_path.parent.rmdir()
+        except OSError:
+            pass
+        self._snapshot.context_file = ""
+        self._snapshot.context_bytes = 0
+        self._persist_snapshot_locked()
 
     def start(
         self,
@@ -2268,9 +3792,11 @@ class ComputerUseAgentService:
         with self._lock:
             if self._snapshot.running:
                 raise RuntimeError("An Agent request is already running.")
+            self._require_resolved_context_cleanup_locked()
             self._settings_store.update(settings)
             self._stop_requested.clear()
             self._resume_requested.clear()
+            self._completion_started = False
             history_key = _agent_history_key(target_url, settings.platform)
             existing_history = (
                 []
@@ -2321,7 +3847,7 @@ class ComputerUseAgentService:
 
     def request_stop(self) -> bool:
         with self._lock:
-            if not self._snapshot.running:
+            if not self._snapshot.running or self._completion_started:
                 return False
             self._stop_requested.set()
             self._snapshot.phase = "stopping"
@@ -2375,20 +3901,63 @@ class ComputerUseAgentService:
     ) -> None:
         """Release runtime resources, then publish running=false as the completion barrier."""
         self._set_active_process(None)
-        _stop_macos_idle_sleep_assertion(sleep_assertion)
-        self._set_sleep_assertion(None)
+        context_removed = True
+        context_cleanup_error = ""
         if context_path is not None:
             try:
                 context_path.unlink(missing_ok=True)
-                context_path.parent.rmdir()
-            except OSError:
-                pass
+            except OSError as exc:
+                context_cleanup_error = str(exc)
+            try:
+                context_removed = not context_path.exists()
+            except OSError as exc:
+                context_removed = False
+                context_cleanup_error = context_cleanup_error or str(exc)
+            if context_removed:
+                try:
+                    context_path.parent.rmdir()
+                except OSError:
+                    pass
+            else:
+                LOGGER.warning(
+                    "Temporary Agent context cleanup failed for %s: %s",
+                    context_path,
+                    context_cleanup_error or "the file still exists",
+                )
+        try:
+            _stop_macos_idle_sleep_assertion(sleep_assertion)
+        except Exception:
+            LOGGER.exception("Unexpected failure while releasing the Agent idle-sleep assertion.")
+        finally:
+            self._set_sleep_assertion(None)
         with self._lock:
             for key, value in completion.items():
                 if hasattr(self._snapshot, key):
                     setattr(self._snapshot, key, value)
-            self._snapshot.context_file = ""
-            self._snapshot.context_bytes = 0
+            if context_removed:
+                self._snapshot.context_file = ""
+                self._snapshot.context_bytes = 0
+            else:
+                self._snapshot.context_file = str(context_path or "")
+                if self._snapshot.context_bytes <= 0 and context_path is not None:
+                    try:
+                        self._snapshot.context_bytes = context_path.stat().st_size
+                    except OSError:
+                        self._snapshot.context_bytes = 0
+                cleanup_message = (
+                    "Agent task ended, but temporary context cleanup failed; "
+                    f"remove {context_path} before the next production run."
+                )
+                self._snapshot.phase = "failed"
+                self._snapshot.message = cleanup_message
+                self._snapshot.last_error = "\n".join(
+                    part
+                    for part in (
+                        self._snapshot.last_error,
+                        context_cleanup_error or cleanup_message,
+                    )
+                    if part
+                )
             self._snapshot.running = False
             self._persist_snapshot_locked()
 
@@ -2409,11 +3978,18 @@ class ComputerUseAgentService:
         completion: dict[str, Any] = {}
         try:
             run_directory = self._runtime_root / time.strftime("%Y%m%d-%H%M%S")
+            context_path = run_directory / "context.md"
+            self._update(
+                phase="preparing",
+                message="Preparing the task-scoped Markdown context bundle.",
+                context_file=str(context_path),
+                context_bytes=0,
+            )
             context_path, context_bytes = build_context_markdown(
                 workspace,
                 prompt,
                 settings,
-                run_directory / "context.md",
+                context_path,
             )
             self._update(
                 phase="preparing",
@@ -2445,6 +4021,7 @@ class ComputerUseAgentService:
                     process_changed=self._set_active_process,
                 )
             with self._lock:
+                self._completion_started = True
                 stopped = self._stop_requested.is_set()
                 finished_at = utc_now()
                 final_history_key = _agent_history_key(
@@ -2490,6 +4067,7 @@ class ComputerUseAgentService:
         except Exception as exc:
             LOGGER.exception("Computer Use web-agent request failed.")
             with self._lock:
+                self._completion_started = True
                 recorded_conversation_url = str(self._snapshot.conversation_url or "")
             handoff_url = normalize_agent_conversation_url(
                 settings.platform,
@@ -2910,9 +4488,29 @@ def _run_web_action_loop(
     should_resume: Callable[[], bool] | None = None,
 ) -> tuple[str, str, int, bool]:
     """Exchange JSON actions and compact observations in one Web AI conversation."""
-    _verify_agent_page(page, browser_kind, platform, selected_target_url)
+    verified = _verify_agent_page(
+        page,
+        browser_kind,
+        platform,
+        selected_target_url,
+        should_stop,
+    )
+    if verified is False or should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, selected_target_url),
+            0,
+            False,
+        )
     if platform == "chatgpt":
         _select_chat_mode(page, browser_kind)
+    if should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, selected_target_url),
+            0,
+            False,
+        )
 
     session_type = session_type_for_mode(session_mode)
     page_url = str(getattr(page, "url", "") or "").strip()
@@ -2989,8 +4587,34 @@ def _run_web_action_loop(
             ),
             session_type=session_type,
         )
-    attached = _attach_context_file(page, browser_kind, context_path)
+    if should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, page_url or selected_target_url),
+            0,
+            False,
+        )
+    attached = _attach_context_file(
+        page,
+        browser_kind,
+        context_path,
+        should_stop,
+    )
+    if should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, page_url or selected_target_url),
+            0,
+            False,
+        )
     update(context_attached=attached)
+    if should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, page_url or selected_target_url),
+            0,
+            False,
+        )
     update(
         phase="submitting",
         message=(
@@ -3002,6 +4626,13 @@ def _run_web_action_loop(
             )
         ),
     )
+    if should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, page_url or selected_target_url),
+            0,
+            False,
+        )
     response = _submit_and_wait(
         page,
         browser_kind,
@@ -3257,16 +4888,24 @@ def _verify_chatgpt_page(
     page: Any,
     browser_kind: str,
     selected_target_url: str | None = None,
-) -> None:
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
+    if callable(should_stop) and should_stop():
+        return False
     if browser_kind == "safari":
         page.locator("#prompt-textarea").inner_text(timeout=60_000)
     else:
-        _wait_for_chromium_composer(page)
+        if not _wait_for_chromium_composer(page, should_stop=should_stop):
+            return False
+    if callable(should_stop) and should_stop():
+        return False
     current_url = str(page.url or "")
     if (urlsplit(current_url).hostname or "").lower() not in CHATGPT_HOSTS:
         raise RuntimeError("The selected browser did not reach ChatGPT Web.")
     if selected_target_url and not _chatgpt_target_is_open(selected_target_url, current_url):
         raise RuntimeError("The selected ChatGPT session did not finish opening in the browser.")
+    if callable(should_stop) and should_stop():
+        return False
     signed_out = bool(
         page.evaluate(
             """() => Array.from(document.querySelectorAll('a,button')).some((element) => {
@@ -3275,8 +4914,11 @@ def _verify_chatgpt_page(
             })"""
         )
     )
+    if callable(should_stop) and should_stop():
+        return False
     if signed_out:
         raise RuntimeError(f"{settings_browser_label(browser_kind)} is not signed in to ChatGPT Web.")
+    return True
 
 
 def _web_composer_selector(platform: str) -> str:
@@ -3326,22 +4968,71 @@ def _web_target_is_open(platform: str, target_url: str, current_url: str) -> boo
     return current_path == target_path or current_path.startswith(f"{target_path}/")
 
 
-def _wait_for_web_composer(page: Any, platform: str) -> None:
+class _ComposerReadinessTimeout(TimeoutError):
+    """Signal that retryable composer waits exhausted their bounded deadline."""
+
+
+def _is_composer_wait_timeout(exc: Exception) -> bool:
+    """Recognize built-in and Playwright timeout errors without importing Playwright eagerly."""
+    return isinstance(exc, TimeoutError) or exc.__class__.__name__ == "TimeoutError"
+
+
+def _wait_for_visible_composer(
+    target: Any,
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
+    """Poll one composer locator so Stop can interrupt the initial readiness gate."""
+    deadline = time.monotonic() + CHATGPT_COMPOSER_TIMEOUT_SECONDS
+    last_error: Exception | None = None
+    while time.monotonic() < deadline:
+        if callable(should_stop) and should_stop():
+            return False
+        remaining_ms = max(1, int((deadline - time.monotonic()) * 1_000))
+        try:
+            target.wait_for(
+                state="visible",
+                timeout=min(WEB_SEND_BUTTON_POLL_MILLISECONDS, remaining_ms),
+            )
+            if callable(should_stop) and should_stop():
+                return False
+            return True
+        except Exception as exc:
+            if not _is_composer_wait_timeout(exc):
+                raise
+            last_error = exc
+    raise _ComposerReadinessTimeout(
+        "The provider composer readiness wait expired."
+    ) from last_error
+
+
+def _wait_for_web_composer(
+    page: Any,
+    platform: str,
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
     """Wait for a provider's composer without bringing its background window forward."""
     selector = _web_composer_selector(platform)
     last_error: Exception | None = None
     for attempt in range(1, CHATGPT_COMPOSER_RELOAD_ATTEMPTS + 1):
         try:
-            page.locator(selector).first.wait_for(
-                state="visible",
-                timeout=CHATGPT_COMPOSER_TIMEOUT_SECONDS * 1_000,
-            )
-            return
-        except Exception as exc:
+            if not _wait_for_visible_composer(
+                page.locator(selector).first,
+                should_stop=should_stop,
+            ):
+                return False
+            return True
+        except _ComposerReadinessTimeout as exc:
             last_error = exc
+            if callable(should_stop) and should_stop():
+                return False
             if attempt >= CHATGPT_COMPOSER_RELOAD_ATTEMPTS:
                 break
-            page.reload(wait_until="domcontentloaded", timeout=90_000)
+            page.reload(
+                wait_until="commit",
+                timeout=CHATGPT_COMPOSER_RELOAD_TIMEOUT_SECONDS * 1_000,
+            )
+            if callable(should_stop) and should_stop():
+                return False
     platform_label = AGENT_PLATFORM_BY_KEY.get(platform, AGENT_PLATFORM_BY_KEY[DEFAULT_AGENT_PLATFORM])["label"]
     raise RuntimeError(
         f"The Chromium browser loaded {platform_label}, but its message composer did not become ready after one reload."
@@ -3353,14 +5044,22 @@ def _verify_agent_page(
     browser_kind: str,
     platform: str,
     selected_target_url: str | None = None,
-) -> None:
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
     """Verify one provider's authenticated composer before any project content is sent."""
     if platform == "chatgpt":
-        _verify_chatgpt_page(page, browser_kind, selected_target_url)
-        return
+        return _verify_chatgpt_page(
+            page,
+            browser_kind,
+            selected_target_url,
+            should_stop,
+        )
     if browser_kind == "safari":
         raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Agent sessions require Edge or Chrome.")
-    _wait_for_web_composer(page, platform)
+    if not _wait_for_web_composer(page, platform, should_stop=should_stop):
+        return False
+    if callable(should_stop) and should_stop():
+        return False
     current_url = str(page.url or "")
     if (urlsplit(current_url).hostname or "").lower() not in _platform_hosts(platform):
         raise RuntimeError(f"The selected browser did not reach {AGENT_PLATFORM_BY_KEY[platform]['label']} Web.")
@@ -3368,6 +5067,8 @@ def _verify_agent_page(
         raise RuntimeError(
             f"The selected {AGENT_PLATFORM_BY_KEY[platform]['label']} session did not finish opening in the browser."
         )
+    if callable(should_stop) and should_stop():
+        return False
     signed_out = bool(
         page.evaluate(
             r"""() => {
@@ -3388,27 +5089,41 @@ def _verify_agent_page(
             }"""
         )
     )
+    if callable(should_stop) and should_stop():
+        return False
     if signed_out:
         raise RuntimeError(
             f"{settings_browser_label(browser_kind)} is not signed in to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web."
         )
+    return True
 
 
-def _wait_for_chromium_composer(page: Any) -> None:
+def _wait_for_chromium_composer(
+    page: Any,
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
     """Wait for ChatGPT's composer, reloading a stalled authenticated page once."""
     last_error: Exception | None = None
     for attempt in range(1, CHATGPT_COMPOSER_RELOAD_ATTEMPTS + 1):
         try:
-            page.locator("#prompt-textarea").wait_for(
-                state="visible",
-                timeout=CHATGPT_COMPOSER_TIMEOUT_SECONDS * 1_000,
-            )
-            return
-        except Exception as exc:
+            if not _wait_for_visible_composer(
+                page.locator("#prompt-textarea"),
+                should_stop=should_stop,
+            ):
+                return False
+            return True
+        except _ComposerReadinessTimeout as exc:
             last_error = exc
+            if callable(should_stop) and should_stop():
+                return False
             if attempt >= CHATGPT_COMPOSER_RELOAD_ATTEMPTS:
                 break
-            page.reload(wait_until="domcontentloaded", timeout=90_000)
+            page.reload(
+                wait_until="commit",
+                timeout=CHATGPT_COMPOSER_RELOAD_TIMEOUT_SECONDS * 1_000,
+            )
+            if callable(should_stop) and should_stop():
+                return False
     raise RuntimeError(
         "The Chromium browser loaded ChatGPT, but the message composer did not become ready after one reload."
     ) from last_error
@@ -3511,7 +5226,9 @@ def _wait_for_chatgpt_composer_if_available(
             try:
                 wait_for(state="visible", timeout=min(250.0, remaining_ms))
                 return
-            except Exception:
+            except Exception as exc:
+                if not _is_composer_wait_timeout(exc):
+                    return
                 if callable(should_stop) and should_stop():
                     return
     except Exception:
@@ -3703,22 +5420,23 @@ def _select_chatgpt_model_chromium(
 ) -> bool:
     """Use trusted Playwright clicks, then read back the remote Chromium model."""
     wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
-    _wait_for_chatgpt_composer_if_available(page, should_stop=should_stop)
-    if callable(should_stop) and should_stop():
+
+    def stop_requested() -> bool:
+        if not callable(should_stop) or not should_stop():
+            return False
         _record_model_observation(
             observation,
             reason="stop-requested",
             attempted_labels=remote_labels,
         )
+        return True
+
+    _wait_for_chatgpt_composer_if_available(page, should_stop=should_stop)
+    if stop_requested():
         return False
     power_button = None
     for attempt in range(CHATGPT_MODEL_VERIFICATION_ATTEMPTS):
-        if callable(should_stop) and should_stop():
-            _record_model_observation(
-                observation,
-                reason="stop-requested",
-                attempted_labels=remote_labels,
-            )
+        if stop_requested():
             return False
         power_button = _first_visible_role_control(
             page,
@@ -3730,6 +5448,8 @@ def _select_chatgpt_model_chromium(
             break
         if attempt + 1 < CHATGPT_MODEL_VERIFICATION_ATTEMPTS:
             wait_for_timeout(1_000)
+            if stop_requested():
+                return False
     if power_button is None:
         controls = _chatgpt_visible_model_controls(page)
         LOGGER.warning(
@@ -3746,16 +5466,26 @@ def _select_chatgpt_model_chromium(
         )
         return False
 
+    if stop_requested():
+        return False
     if power_button.get_attribute("aria-expanded") != "true":
         power_button.click()
+    if stop_requested():
+        return False
     result: dict[str, Any] = {"ok": False, "diagnostic": {}}
     for _attempt in range(10):
+        if stop_requested():
+            return False
         page.wait_for_timeout(200)
+        if stop_requested():
+            return False
         result = _read_chatgpt_model_menu(page)
         if result.get("ok"):
             break
     current = str(result.get("current") or "")
     if result.get("ok") and _chatgpt_model_text_matches(current, remote_labels):
+        if stop_requested():
+            return False
         if power_button.get_attribute("aria-expanded") == "true":
             power_button.click()
         _record_model_observation(
@@ -3770,6 +5500,8 @@ def _select_chatgpt_model_chromium(
     model_item = None
     role_items = page.get_by_role("menuitem")
     for index in range(role_items.count()):
+        if stop_requested():
+            return False
         candidate = role_items.nth(index)
         if candidate.is_visible() and " ".join(
             candidate.inner_text().split()
@@ -3777,25 +5509,47 @@ def _select_chatgpt_model_chromium(
             model_item = candidate
             break
     if model_item is not None:
+        if stop_requested():
+            return False
         model_item.click()
+        if stop_requested():
+            return False
         page.wait_for_timeout(350)
+        if stop_requested():
+            return False
         for role in ("menuitem", "option"):
             choices = page.get_by_role(role)
             for index in range(choices.count()):
+                if stop_requested():
+                    return False
                 choice = choices.nth(index)
                 if not choice.is_visible():
                     continue
                 if _chatgpt_model_text_matches(choice.inner_text(), remote_labels):
+                    if stop_requested():
+                        return False
                     choice.click()
+                    if stop_requested():
+                        return False
                     page.wait_for_timeout(500)
+                    if stop_requested():
+                        return False
                     if power_button.get_attribute("aria-expanded") != "true":
                         power_button.click()
+                    if stop_requested():
+                        return False
                     for _attempt in range(10):
+                        if stop_requested():
+                            return False
                         page.wait_for_timeout(200)
+                        if stop_requested():
+                            return False
                         result = _read_chatgpt_model_menu(page)
                         if result.get("ok"):
                             break
                     current = str(result.get("current") or "")
+                    if stop_requested():
+                        return False
                     if power_button.get_attribute("aria-expanded") == "true":
                         power_button.click()
                     matched = bool(
@@ -3812,6 +5566,8 @@ def _select_chatgpt_model_chromium(
                     )
                     return matched
 
+    if stop_requested():
+        return False
     if power_button.get_attribute("aria-expanded") == "true":
         power_button.click()
     controls = _chatgpt_visible_model_controls(page)
@@ -4133,23 +5889,36 @@ def _select_web_model(
     return False
 
 
-def _attach_context_file(page: Any, browser_kind: str, context_path: Path) -> bool:
+def _attach_context_file(
+    page: Any,
+    browser_kind: str,
+    context_path: Path,
+    should_stop: Callable[[], bool] | None = None,
+) -> bool:
     """Attach Markdown and require a visible composer readback before claiming success."""
-    if browser_kind == "safari":
+    if browser_kind == "safari" or (callable(should_stop) and should_stop()):
         return False
     file_input = page.locator('input[type="file"]')
     if file_input.count() == 0:
         attach_button = page.locator(
             'button[aria-label*="Attach" i], button[aria-label*="Upload" i], button[data-testid*="attach" i]'
         )
-        if attach_button.count() and attach_button.first.is_visible():
+        if (
+            not (callable(should_stop) and should_stop())
+            and attach_button.count()
+            and attach_button.first.is_visible()
+        ):
             attach_button.first.click()
-    if file_input.count() == 0:
+    if file_input.count() == 0 or (callable(should_stop) and should_stop()):
         return False
     try:
+        if callable(should_stop) and should_stop():
+            return False
         file_input.first.set_input_files(str(context_path))
         expected_name = context_path.name
         for _attempt in range(40):
+            if callable(should_stop) and should_stop():
+                return False
             state = page.evaluate(
                 r"""({expectedName}) => {
                     const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -4202,6 +5971,8 @@ def _attach_context_file(page: Any, browser_kind: str, context_path: Path) -> bo
                 return True
             if isinstance(state, dict) and state.get("failed"):
                 return False
+            if callable(should_stop) and should_stop():
+                return False
             _web_wait(page, browser_kind, 250)
         LOGGER.info(
             "Web context attachment did not expose a visible %s chip; using on-demand reads.",
@@ -4222,9 +5993,13 @@ def _submit_and_wait(
     platform: str = DEFAULT_AGENT_PLATFORM,
 ) -> str:
     """Submit one message and wait for one stable provider response."""
+    if should_stop():
+        return ""
     selector = _web_assistant_selector(platform)
     baseline = _platform_web_count(page, browser_kind, platform, selector)
     baseline_response = _platform_web_last_text(page, browser_kind, platform, selector)
+    if should_stop():
+        return ""
     if browser_kind == "safari":
         if platform != "chatgpt":
             raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Agent sessions require Edge or Chrome.")
@@ -4283,10 +6058,18 @@ def _submit_chromium_web_prompt(
     should_stop: Callable[[], bool],
 ) -> None:
     """Fill a non-ChatGPT Chromium composer and click its enabled semantic send control."""
+    if should_stop():
+        return
     user_selector = _web_user_selector(platform)
     baseline_user_count = _web_count(page, "chromium", user_selector, platform)
+    if should_stop():
+        return
     composer = page.locator(_web_composer_selector(platform)).first
+    if should_stop():
+        return
     composer.fill(message)
+    if should_stop():
+        return
 
     deadline = time.monotonic() + CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS
     keyboard_fallback_at = (
@@ -4478,10 +6261,18 @@ def _submit_chromium_prompt(
     should_stop: Callable[[], bool],
 ) -> None:
     """Fill Chromium's composer and click Send after any attachment is ready."""
+    if should_stop():
+        return
     user_selector = '[data-message-author-role="user"]'
     baseline_user_count = _web_count(page, "chromium", user_selector)
+    if should_stop():
+        return
     composer = page.locator("#prompt-textarea")
+    if should_stop():
+        return
     composer.fill(message)
+    if should_stop():
+        return
 
     deadline = time.monotonic() + CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS
     last_state: dict[str, Any] = {}

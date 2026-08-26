@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.20.0-codex.1`
+Documentation version: `v3.23.0-codex.1`
 
 ## Purpose
 
@@ -71,6 +71,12 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
    without attaching the context or sending the prompt. Gemini, Grok, and Claude retain their
    best-effort boundary: when their compatible model control is not exposed, the controller keeps
    the selected session's current remote model and reports that limitation.
+   Chromium composer readiness is polled in 250 ms slices so Stop can terminate the initial page
+   verification before model selection, context attachment, or prompt submission. Its single
+   recovery reload waits only for navigation commit and is capped at five seconds. Stop is checked
+   again before and throughout context attachment, after attachment state publication, and before
+   prompt submission; Chromium submitters also return before reading or filling a composer when a
+   stop is already pending.
 5. The service builds one owner-readable Markdown context package containing the request,
    repository instruction files, a bounded file index, dirty-worktree status, and project entry
    files. Credential locations, environment files, cookie stores, and private-key formats are
@@ -90,12 +96,26 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
    `run`, `bodycheck`, and `final`. If a provider emits multiple complete
    candidates with the same action name in one response, the controller uses the final candidate in textual
    response order; mixed action types remain rejected as ambiguous.
-   `search` uses project-confined `rg` when available, with a 2 MiB file-size cap and the same
-   ignored-directory globs as the Python fallback. Explicit file globs match basename and
-   workspace-relative paths so `path=docs/AGENTS.md` plus `glob=docs/*.md` stays consistent across
-   engines. If the service cannot launch `rg`, a bounded Python regular-expression fallback skips
-   ignored, symlinked, sensitive, and oversized files and still enforces the requested path, glob,
-   and result limit.
+   `search` uses project-confined `rg` when available, with structured UTF-8 JSON output, a 2 MiB
+   file-size cap, an 8,000-character single-line literal-query cap, and case-insensitive root and
+   recursive command-layer exclusions for ignored,
+   runtime-internal, and sensitive paths. Ripgrep's external config and symlink following are
+   explicitly disabled, an end-of-options marker keeps option-shaped queries literal, and raw
+   diagnostics are never returned to the Web provider. A second output filter applies the same
+   ignored, sensitive, path, and glob rules as the Python fallback. Structured path fields avoid
+   delimiter ambiguity in legal filenames containing colons. Ripgrep searches hidden and normally
+   ignored safe project files while symlinks remain unfollowed.
+   Native paths, including ripgrep's leading `./`, are normalized to the fallback's workspace-relative
+   output form without rewriting legal POSIX backslashes. Explicit file globs match basename,
+   workspace-relative paths, and search-root-relative paths, so `path=app` plus `glob=core/*.py`
+   stays consistent across engines. The controller accepts the common literal, separator, `*`, `?`,
+   and `**` glob subset and rejects negated, brace-expansion, and character-class patterns whose
+   ripgrep and Python meanings can diverge. Windows glob matching normalizes separators and case;
+   POSIX keeps a literal backslash literal. Ripgrep output is consumed through a bounded queue and the
+   process is stopped on Stop, after the global result or raw-event limit, or after 30 seconds;
+   individual returned lines are also bounded. If the service cannot launch `rg`, a bounded Python
+   literal-text fallback skips ignored, symlinked, sensitive, and oversized files and still
+   enforces the requested path, glob, result, file-count, and time limits.
 8. A malformed non-JSON reply receives up to three strict-format corrections that repeat the fenced JSON and
    escaping contract without spending the
    configured controller-action budget. This keeps a recoverable web-model formatting lapse from
@@ -124,20 +144,44 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
 
 ## Safety boundary
 
-- Every controller path resolves below the selected project. `.git` and Agent runtime internals are
+- Every file action and returned observation resolves below the selected project. `.git` and Agent runtime internals are
   inaccessible. Environment files, credential stores, cookies, and private keys are excluded from
   context indexes and from `list`, `read`, and `search` observations.
 - Existing files change only through an exact, single-match replacement. New files use an
   explicit write action.
-- Shell commands are restricted to bounded inspection, build, lint, and test work. The command
-  layer rejects direct `rg` execution in favor of `search`, paths or network targets outside the
-  selected project, mutating or unbounded flags, file-writing redirection, deletion, moving,
-  installation, downloads, publishing, environment enumeration, and Git-history mutation. A
-  bounded before-and-after project metadata fingerprint detects writes made by an otherwise allowed
-  verification command; such a run is reported as failed and invalidates the prior bodycheck.
-- Stop ends Web-provider generation and terminates the current local process group.
-  macOS idle-sleep assertions are released only after temporary context cleanup publishes
-  `running=false`.
+- Shell commands are restricted to bounded inspection, build, lint, and test work. Approved PATH
+  tools are resolved once to an absolute executable outside the workspace before launch; Python
+  verification is pinned to the service's own Python runtime. A workspace script must be a real,
+  platform-compatible executable below `scripts/`, with no symbolic link, junction, or hard-linked
+  regular file in its path.
+  `git status` is filtered inspection only and never satisfies the post-edit verification gate. The
+  command layer rejects direct `rg` execution in favor of `search`, paths or network targets outside
+  the selected project, linked or sensitive path arguments, pytest configuration/package/plugin
+  overrides, non-check Ruff modes, mutating or unbounded flags, file-writing redirection, deletion, moving,
+  installation, downloads, publishing, environment enumeration, and Git-history mutation.
+  A bounded before-and-after content fingerprint covers up to 12,000 files, 12,000 directories,
+  512 MiB, and 15 seconds per scan while excluding the documented ignored/runtime directories.
+  An incomplete initial fingerprint prevents launch; a changed or incomplete final fingerprint
+  fails the run, advances the edit generation, and invalidates both verification and bodycheck.
+  Verification output is decoded with replacement for invalid UTF-8, retained to 48,000 characters,
+  and drained through a bounded queue. Stop, timeout, stream failure, and normal completion all
+  perform a process-group cleanup before the final fingerprint on POSIX.
+- This controller is not an operating-system sandbox. Pytest, package scripts, Make targets, and
+  approved workspace scripts execute code from the selected repository and can have side effects
+  that a path parser or after-the-fact fingerprint cannot prevent outside that repository. Production
+  use therefore assumes a trusted local repository and a cooperative Web model. Use an OS sandbox
+  when the repository or generated test code is untrusted.
+- Stop is honored during the initial Chromium composer gate, ends Web-provider generation, and
+  terminates the current local process group. Completion first clears the active process and removes
+  the temporary context, then releases the macOS idle-sleep assertion and clears context metadata;
+  only after those cleanup steps does it persist `running=false` as the completion barrier. A context
+  deletion failure instead publishes a failed phase, persists the context path and size as bounded
+  recovery metadata, and logs the cleanup error. The next production run retries only that exact
+  runtime-local cleanup and remains blocked if the file still exists. Sleep-assertion release
+  failures cannot prevent the final barrier.
+  Initial synchronous browser navigation and local context-package construction are not fully
+  preemptible; Stop can wait for those bounded operations, but later gates still prevent context
+  attachment or prompt submission.
 - The Flask control routes accept host-loopback traffic directly. Private-network requests must
   first unlock `/agent` with the six-digit password gate; the successful signed session also
   authorizes same-origin `/api/agent/*` requests. Public and host-rebinding requests are rejected.
@@ -149,13 +193,16 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
   when a task is sent. Selecting a ChatGPT session reads its existing conversation history for
   display and does not write those remote messages to the local cache.
 - The service atomically persists only bounded run metadata, including phase, provider, model
-  verification, attachment confirmation, timestamps, conversation target, and bodycheck state. It does not persist prompt
+  verification, attachment confirmation, timestamps, conversation target, bodycheck state, and a
+  temporary context cleanup path and byte count while a run is active or cleanup recovery is pending. It does not persist prompt
   bodies, responses, conversation history, source text, or error stacks in that snapshot. The
   runtime directory is owner-only, and the snapshot file uses mode `0600`. If a persisted run was
   still marked active when the service exited, the next process restores it as `interrupted`
   instead of claiming that it is still running or completed.
-- The generated context package is task-scoped and is deleted after success, stop, or failure,
-  including a task that opened a new Web session. Structured log formatters redact recognized
+- The generated context package is task-scoped and is normally deleted after success, stop, or
+  failure, including a task that opened a new Web session. A deletion failure is visible as a failed
+  run and blocks the next task until the exact runtime-local file can be removed. Structured log
+  formatters redact recognized
   browser credentials from messages, structured fields, exceptions, and stack traces. Active and
   rotated JSON-line logs use owner-only mode `0600`.
 
@@ -180,9 +227,12 @@ applicable boundary and keeps the local byte ceiling configurable. Gemini, Grok,
 different limits or attachment behavior, so the controller requires a visible exact-filename
 readback before claiming an attachment and otherwise falls back to bounded controller observations.
 
-Windows uses the same project-confined controller with native Windows paths, PowerShell process
-groups, and Edge or Chrome Chromium sessions. Safari remains macOS-only. The selected operating
-system must match the host running the local service.
+Windows uses the same file-action boundary with native Windows paths, a new process group, an
+absolute System32 `taskkill /T /F` fallback, and Edge or Chrome Chromium sessions. This round's
+Windows process-tree contract is covered statically and by mocks, not by a real Windows end-to-end
+run. If a Windows group leader exits before its descendants, `taskkill` is best effort rather than
+the strict Job Object completion barrier required for hostile child processes. Safari remains
+macOS-only. The selected operating system must match the host running the local service.
 
 Edge and Chrome run through an isolated clone of the selected signed-in profile and operate the
 selected provider's DOM directly. Agent Edge and Chrome tasks use offscreen, minimized temporary
@@ -216,9 +266,11 @@ Grok, and Claude remain best-effort: if their remote UI does not expose a matchi
 the controller leaves that selected session's current remote model unchanged and reports the
 limitation rather than claiming model-selection success.
 
-While an Agent task is running on macOS, the service holds an idle-sleep assertion and releases it
-as soon as the task finishes or fails. On Windows, the controller isolates the active process in a
-new process group and uses a cooperative stop before terminating it. Closing a MacBook lid,
+While an Agent task is running on macOS, the service holds an idle-sleep assertion until it has
+attempted task-scoped context removal during success, stop, or failure cleanup. A failed removal is
+published as a recoverable failed state rather than keeping an orphan worker marked active. On
+Windows, the controller isolates the active process in a new process group and uses a cooperative
+stop before terminating it. Closing a MacBook lid,
 choosing Sleep, restarting, losing network access, or ending the local service can still suspend or
 interrupt a task.
 
@@ -231,6 +283,14 @@ contract is covered by mocked readiness, URL, source, and route checks in this c
 probe was not possible because the selected account is currently restricted. The probes did not
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
+
+On 26 Aug 2026, 280 focused controller/hardening tests passed. The production-hardening suite
+covered recursive search parity, Stop propagation, completion cleanup, explicit session reuse,
+verification-gate ordering, canonical executable and argument confinement, hard-link rejection,
+bounded content fingerprints, and real POSIX leader-exited descendant processes. The complete
+project gate passed 825 tests and 357 subtests with 67.23% overall coverage and branch measurement
+enabled. This verification did not restart the user-owned service or send a new Web-provider task;
+Windows received static and mock validation only.
 
 On 19 Aug 2026, the named `08.19 Agentic` Edge tasks completed a 38-turn ChatGPT audit and a
 9-turn Gemini audit with `bodycheck`. Grok completed its first read action and the live Submit/Enter
