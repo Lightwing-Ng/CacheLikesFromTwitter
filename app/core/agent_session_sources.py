@@ -1,6 +1,6 @@
 """Provider-neutral Web Agent Project and session discovery.
 
-Code version: v1.7.0-codex.1
+Code version: v1.9.0-codex.1
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ CLAUDE_HOME_URL = "https://claude.ai/new"
 CLAUDE_HOSTS = frozenset({"claude.ai", "www.claude.ai"})
 GEMINI_HOSTS = frozenset({"gemini.google.com"})
 GEMINI_PROJECT_PATH_PATTERN = re.compile(r"^/(?:app|notebook|notebooks)/[A-Za-z0-9_-]+/?$")
+GEMINI_RESERVED_PROJECT_IDS = frozenset({"create", "new"})
 GROK_HOSTS = frozenset({"grok.com", "www.grok.com"})
 GROK_CONVERSATION_PATH_PATTERN = re.compile(r"^/c/[A-Za-z0-9_-]+/?$")
 GROK_PROJECT_PATH_PATTERN = re.compile(r"^/project/[A-Za-z0-9_-]+/?$")
@@ -98,7 +99,26 @@ def normalize_gemini_project_url(value: str) -> str:
     ):
         return ""
     project_id = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    if project_id.casefold() in GEMINI_RESERVED_PROJECT_IDS:
+        return ""
     return f"https://gemini.google.com/app/{project_id}"
+
+
+def normalize_agent_source_catalog_payload(
+    platform: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """Revalidate cached Project rows through the current provider URL contract."""
+    platform_key = str(platform or "").strip().lower()
+    if platform_key not in SUPPORTED_AGENT_SOURCE_PLATFORMS:
+        raise ValueError("Choose ChatGPT, Gemini, Grok, or Claude for the Web Agent.")
+    normalized = dict(payload) if isinstance(payload, dict) else {}
+    normalized["platform"] = platform_key
+    normalized["projects"] = _normalize_project_rows(
+        platform_key,
+        normalized.get("projects", []),
+    )[:AGENT_SOURCE_LIMIT]
+    return normalized
 
 
 def normalize_claude_conversation_url(value: str) -> str:
@@ -755,6 +775,8 @@ def _read_gemini_project_links(page: Any) -> list[dict[str, str]]:
                     if (url.protocol !== 'https:' || url.hostname !== 'gemini.google.com') continue;
                     const path = url.pathname.replace(/\/+$/, '');
                     if (!/^\/(?:notebook|notebooks)\/[A-Za-z0-9_-]+$/.test(path)) continue;
+                    const projectId = path.split('/').at(-1).toLowerCase();
+                    if (['create', 'new'].includes(projectId)) continue;
                     rows.push({href: url.href, title: textOf(element)});
                 }
                 return rows;

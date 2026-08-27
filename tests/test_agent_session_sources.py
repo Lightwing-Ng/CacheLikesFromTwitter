@@ -1,6 +1,6 @@
 """Focused tests for the provider-neutral Agent session source adapter.
 
-Code version: v1.5.1-codex.1
+Code version: v1.7.0-codex.1
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from app.core.agent_session_sources import (
     list_agent_project_sessions,
     list_agent_sources,
     normalize_agent_conversation_url,
+    normalize_agent_source_catalog_payload,
     normalize_agent_project_url,
     probe_and_collect_grok_sources,
 )
@@ -71,6 +72,14 @@ def test_agent_project_url_normalization_hides_provider_specific_routes() -> Non
         "https://gemini.google.com/notebooks/notebook-1",
     ) == "https://gemini.google.com/app/notebook-1"
     assert normalize_agent_project_url(
+        "gemini",
+        "https://gemini.google.com/notebook/create",
+    ) == ""
+    assert normalize_agent_project_url(
+        "gemini",
+        "https://gemini.google.com/notebooks/NEW",
+    ) == ""
+    assert normalize_agent_project_url(
         "grok",
         "https://www.grok.com/project/project-1?tab=conversations",
     ) == "https://grok.com/project/project-1?tab=conversations"
@@ -79,6 +88,41 @@ def test_agent_project_url_normalization_hides_provider_specific_routes() -> Non
         "https://www.claude.ai/project/project-1/?tab=chats",
     ) == "https://claude.ai/project/project-1"
     assert normalize_agent_project_url("grok", "https://example.com/project/project-1") == ""
+
+
+def test_cached_gemini_project_rows_are_revalidated_before_replay() -> None:
+    payload = normalize_agent_source_catalog_payload(
+        "gemini",
+        {
+            "platform": "gemini",
+            "browser_label": "Edge",
+            "recent_sessions": [{"id": "session-1"}],
+            "projects": [
+                {
+                    "id": "create",
+                    "title": "New notebook",
+                    "url": "https://gemini.google.com/app/create",
+                },
+                {
+                    "id": "notebook-1",
+                    "title": "Research notebook",
+                    "url": "https://gemini.google.com/app/notebook-1",
+                },
+            ],
+            "cache": {"status": "hit", "layer": "parquet"},
+        },
+    )
+
+    assert payload["recent_sessions"] == [{"id": "session-1"}]
+    assert payload["projects"] == [
+        {
+            "id": "notebook-1",
+            "title": "Research notebook",
+            "url": "https://gemini.google.com/app/notebook-1",
+            "updated_at": "",
+        }
+    ]
+    assert payload["cache"] == {"status": "hit", "layer": "parquet"}
 
 
 def test_claude_sources_use_the_shared_chromium_source_collection() -> None:
@@ -514,6 +558,14 @@ def test_gemini_project_reader_ignores_recent_app_links_in_a_notebook_nav() -> N
         {
             "href": "https://gemini.google.com/app/recent-chat",
             "title": "Ordinary recent chat",
+        },
+        {
+            "href": "https://gemini.google.com/notebook/create",
+            "title": "New notebook",
+        },
+        {
+            "href": "https://gemini.google.com/notebooks/new",
+            "title": "Create notebook",
         },
     )
 

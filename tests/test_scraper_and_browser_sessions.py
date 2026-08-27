@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.6-codex.1
+Code version: v1.6.7-codex.1
 """
 
 from __future__ import annotations
@@ -211,6 +211,26 @@ def test_gemini_browser_probe_routes_through_the_shared_browser_registry(macos_h
     assert result["logged_in"] is True
     assert result["can_download"] is True
     assert result["browser"] == "safari"
+    probe.assert_called_once()
+
+
+def test_gemini_browser_probe_fails_closed_when_the_current_region_is_unsupported(
+    macos_host,
+) -> None:
+    with patch(
+        "app.core.browser_sessions._probe_gemini_session",
+        side_effect=RuntimeError(
+            "Gemini Web is not available in the selected browser's current region."
+        ),
+    ) as probe:
+        result = probe_browser_session("gemini", "edge", CrawlConfig())
+
+    assert result["logged_in"] is False
+    assert result["can_download"] is False
+    assert result["account_name"] == ""
+    assert result["message"] == (
+        "Gemini Web is not available in the selected browser's current region."
+    )
     probe.assert_called_once()
 
 

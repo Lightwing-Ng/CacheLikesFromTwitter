@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.33.0-codex.1
+Code version: v3.35.1-codex.1
 """
 
 from __future__ import annotations
@@ -145,7 +145,7 @@ CLAUDE_MODEL_OPTIONS = (
         "key": "claude-auto",
         "label": "Auto",
         "ui_label": "Auto",
-        "remote_labels": ("Auto", "Default", "Claude"),
+        "remote_labels": ("Auto",),
         "strength": 100,
     },
 )
@@ -5455,7 +5455,8 @@ def _run_web_action_loop(
             actual_model=actual_model,
             session_type=session_type,
         )
-    elif platform == "chatgpt":
+    else:
+        provider_label = AGENT_PLATFORM_BY_KEY[platform]["label"]
         observed = str(model_observation.get("observed") or "").strip() or "none"
         menu_text = str(model_observation.get("menu_text") or "").strip() or "none"
         available = model_observation.get("available") or []
@@ -5468,9 +5469,13 @@ def _run_web_action_loop(
             for item in recorded_attempted_labels
             if str(item).strip()
         ] or list(attempted_labels)
+        attempt_summary = (
+            f" after {CHATGPT_MODEL_VERIFICATION_ATTEMPTS} attempt(s)"
+            if platform == "chatgpt"
+            else ""
+        )
         raise RuntimeError(
-            f"ChatGPT Web could not verify {expected_label} after "
-            f"{CHATGPT_MODEL_VERIFICATION_ATTEMPTS} attempt(s). "
+            f"{provider_label} Web could not verify {expected_label}{attempt_summary}. "
             "No project context or prompt was sent. "
             f"URL={page_url}, session_mode={session_mode}, session_type={session_type}, "
             f"expected_model={expected_label}, observed_model={observed}, "
@@ -5478,15 +5483,6 @@ def _run_web_action_loop(
             f"visible_buttons={model_observation.get('visible_buttons') or []}, "
             f"menu_roles={model_observation.get('menu_roles') or []}, "
             f"attempted_labels={verified_attempted_labels}."
-        )
-    else:
-        update(
-            phase="preparing",
-            message=(
-                f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Web did not expose a model selector; "
-                "keeping the selected session's current model."
-            ),
-            session_type=session_type,
         )
     if should_stop():
         return (
@@ -6152,7 +6148,7 @@ def _web_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
             continue
         escaped = re.escape(target)
         if normalized == target or re.fullmatch(
-            rf"(?:(?:current|selected) )?(?:model|mode)(?: selector| picker)? "
+            rf"(?:(?:current|selected) )?(?:model|mode)(?: select| selector| picker)? "
             rf"{escaped}(?: selected)?",
             normalized,
         ):
@@ -6807,8 +6803,18 @@ def _select_web_model(
     if option is None:
         raise ValueError(f"Choose a supported {AGENT_PLATFORM_BY_KEY[platform]['label']} model.")
     remote_labels = tuple(option.get("remote_labels") or (option.get("label", ""),))
-    result = page.evaluate(
-        r"""async ({remoteLabels, platform}) => {
+    stop_requested = should_stop or (lambda: False)
+    if stop_requested():
+        _record_model_observation(
+            observation,
+            reason="stop-requested",
+            attempted_labels=remote_labels,
+        )
+        return False
+    executed, result = _run_browser_action_unless_stopped(
+        stop_requested,
+        lambda: page.evaluate(
+            r"""async ({remoteLabels, platform}) => {
             const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
             const isVisible = (element) => {
                 const style = window.getComputedStyle(element);
@@ -6823,7 +6829,7 @@ def _select_web_model(
                     if (!target) return false;
                     const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                     return normalized === target
-                        || new RegExp(`^(?:(?:current|selected) )?(?:model|mode)(?: selector| picker)? ${escaped}(?: selected)?$`, 'iu').test(normalized)
+                        || new RegExp(`^(?:(?:current|selected) )?(?:model|mode)(?: select| selector| picker)? ${escaped}(?: selected)?$`, 'iu').test(normalized)
                         || new RegExp(`^${escaped} (?:model|mode)(?: selected)?$`, 'iu').test(normalized);
                 });
             };
@@ -6837,14 +6843,19 @@ def _select_web_model(
                 const popup = normalize(element.getAttribute('aria-haspopup') || '');
                 const expanded = element.getAttribute('aria-expanded');
                 const metadata = normalize([
+                    labelFor(element),
                     element.getAttribute('aria-label') || '',
                     element.getAttribute('data-testid') || '',
                     element.getAttribute('id') || '',
                     element.getAttribute('aria-controls') || '',
                 ].join(' '));
-                return ['menu', 'listbox', 'dialog', 'true'].includes(popup)
-                    || expanded === 'true' || expanded === 'false'
-                    || /model|mode|模式|模型/.test(metadata);
+                const popupSemantic = ['menu', 'listbox', 'dialog', 'true'].includes(popup)
+                    || expanded === 'true' || expanded === 'false';
+                const providerSemantic = /model|mode|模式|模型/.test(metadata)
+                    || (platform === 'gemini' && /gemini|pro|flash|thinking/.test(metadata))
+                    || (platform === 'grok' && /grok|expert|fast|heavy|thinking/.test(metadata))
+                    || (platform === 'claude' && /sonnet|opus|haiku/.test(metadata));
+                return popupSemantic && providerSemantic;
             };
             const triggerCandidates = () => [...document.querySelectorAll('button, [role="button"]')]
                 .filter(isVisible)
@@ -6905,9 +6916,17 @@ def _select_web_model(
                 reason: 'model-not-exposed',
                 available: candidates.map(labelFor).filter(Boolean),
             };
-        }""",
-        {"remoteLabels": list(remote_labels), "platform": platform},
+            }""",
+            {"remoteLabels": list(remote_labels), "platform": platform},
+        ),
     )
+    if not executed:
+        _record_model_observation(
+            observation,
+            reason="stop-requested",
+            attempted_labels=remote_labels,
+        )
+        return False
     selected_model = str(result.get("selected") or "") if isinstance(result, dict) else ""
     if (
         isinstance(result, dict)
@@ -6930,8 +6949,8 @@ def _select_web_model(
             result.get("reason")
             or ("model-readback-mismatch" if result.get("ok") else reason)
         )
-    LOGGER.info(
-        "%s Web did not expose model %s (%s; available: %s); retaining the current remote model.",
+    LOGGER.warning(
+        "%s Web could not verify model %s (%s; available: %s); project data transfer remains blocked.",
         AGENT_PLATFORM_BY_KEY[platform]["label"],
         remote_labels[0],
         reason,
@@ -6939,7 +6958,9 @@ def _select_web_model(
     )
     _record_model_observation(
         observation,
-        observed=str(result.get("selected") or "") if isinstance(result, dict) else "",
+        observed=str(result.get("selected") or result.get("current") or "")
+        if isinstance(result, dict)
+        else "",
         available=available,
         attempted_labels=remote_labels,
         menu_text=", ".join(dict.fromkeys(available)),

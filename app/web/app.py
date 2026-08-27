@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.51.0-codex.1
+# Code version: v1.52.0-codex.1
 
 from __future__ import annotations
 
@@ -34,6 +34,7 @@ from app.core.agent import (
     launch_terminal_authorization,
     list_agent_project_sessions,
     list_agent_sources,
+    normalize_agent_source_catalog_payload,
     normalize_agent_project_url,
     open_agent_in_browser,
     probe_and_collect_claude_sources,
@@ -972,7 +973,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     ) -> dict[str, Any]:
         """Route every Agent catalog request through the shared cache policy."""
         force_refresh = request.args.get("refresh", "").strip().lower() in {"1", "true", "yes"}
-        return agent_source_cache.get_or_collect(
+        payload = agent_source_cache.get_or_collect(
             platform=platform,
             browser=browser,
             source_kind=source_kind,
@@ -980,6 +981,9 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             collector=collector,
             force_refresh=force_refresh,
         )
+        if source_kind == "sources":
+            return normalize_agent_source_catalog_payload(platform, payload)
+        return payload
 
     def build_agent_snapshot() -> dict[str, Any]:
         """Add safe rendered Markdown to the Agent status payload."""
@@ -2026,6 +2030,10 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             except ValueError as exc:
                 return browser_session_response({"error": str(exc)}, 400)
             if source_payload is not None:
+                source_payload = normalize_agent_source_catalog_payload(
+                    platform_name,
+                    source_payload,
+                )
                 agent_source_cache.store(
                     platform=platform_name,
                     browser=browser_name,

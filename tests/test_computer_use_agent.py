@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.33.0-codex.1
+Code version: v3.35.1-codex.1
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
-from threading import Event
+from threading import Event, Thread
 import time
 
 import pytest
@@ -741,6 +741,128 @@ def test_grok_model_selection_accepts_auto_on_a_label_boundary() -> None:
             return {"ok": True, "selected": "model auto", "available": ["Model Auto"]}
 
     assert _select_web_model(_Page(), "chromium", "grok", "grok-auto") is True
+
+
+@pytest.mark.parametrize("decoy", ("Claude", "Default"))
+def test_claude_auto_model_selection_rejects_brand_and_default_decoys(
+    decoy: str,
+) -> None:
+    class _Page:
+        def evaluate(self, _expression: str, argument: dict[str, object]) -> dict[str, object]:
+            assert argument["remoteLabels"] == ["Auto"]
+            return {"ok": True, "selected": decoy, "available": [decoy]}
+
+    observation: dict[str, object] = {}
+
+    assert (
+        _select_web_model(
+            _Page(),
+            "chromium",
+            "claude",
+            "claude-auto",
+            observation,
+        )
+        is False
+    )
+    assert observation["observed"] == decoy
+    assert observation["reason"] == "model-readback-mismatch"
+
+
+def test_non_chatgpt_model_selection_honors_stop_before_remote_dom_actions() -> None:
+    class _Page:
+        def evaluate(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("A stopped selector must not inspect or mutate the provider page.")
+
+    stop_requested = _LinearizedStopSignal()
+    stop_requested.set()
+    observation: dict[str, object] = {}
+
+    assert (
+        _select_web_model(
+            _Page(),
+            "chromium",
+            "gemini",
+            "gemini-3.1-pro",
+            observation,
+            should_stop=stop_requested.is_set,
+        )
+        is False
+    )
+    assert observation["reason"] == "stop-requested"
+
+
+def test_non_chatgpt_model_selection_linearizes_a_concurrent_stop() -> None:
+    selection_started = Event()
+    allow_selection_to_finish = Event()
+    stop_attempted = Event()
+    stop_finished = Event()
+    stop_requested = _LinearizedStopSignal()
+    result: list[bool] = []
+
+    class _Page:
+        def evaluate(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            selection_started.set()
+            assert allow_selection_to_finish.wait(timeout=2)
+            return {"ok": True, "selected": "3.1 Pro", "available": ["3.1 Pro"]}
+
+    selection_thread = Thread(
+        target=lambda: result.append(
+            _select_web_model(
+                _Page(),
+                "chromium",
+                "gemini",
+                "gemini-3.1-pro",
+                should_stop=stop_requested.is_set,
+            )
+        )
+    )
+
+    def request_stop() -> None:
+        stop_attempted.set()
+        stop_requested.set()
+        stop_finished.set()
+
+    stop_thread = Thread(target=request_stop)
+    selection_thread.start()
+    assert selection_started.wait(timeout=2)
+    stop_thread.start()
+    assert stop_attempted.wait(timeout=2)
+    assert not stop_finished.wait(timeout=0.05)
+    allow_selection_to_finish.set()
+    selection_thread.join(timeout=2)
+    stop_thread.join(timeout=2)
+
+    assert not selection_thread.is_alive()
+    assert not stop_thread.is_alive()
+    assert stop_finished.is_set()
+    assert stop_requested.is_set()
+    assert result == [True]
+
+
+def test_non_chatgpt_model_failure_records_the_current_trigger_readback() -> None:
+    class _Page:
+        def evaluate(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            return {
+                "ok": False,
+                "reason": "model-readback-mismatch",
+                "current": "Fast",
+                "available": ["Fast", "3.1 Pro"],
+            }
+
+    observation: dict[str, object] = {}
+
+    assert (
+        _select_web_model(
+            _Page(),
+            "chromium",
+            "gemini",
+            "gemini-3.1-pro",
+            observation,
+        )
+        is False
+    )
+    assert observation["observed"] == "Fast"
+    assert observation["reason"] == "model-readback-mismatch"
 
 
 @pytest.mark.parametrize(
@@ -3456,22 +3578,61 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
     assert {"conversation_url": "https://chatgpt.com/c/example"} in updates
 
 
-def test_chatgpt_action_loop_fails_closed_before_context_or_prompt_when_model_is_unverified(
+@pytest.mark.parametrize(
+    ("platform", "model", "provider_label", "expected_model", "target_url"),
+    (
+        (
+            "chatgpt",
+            "gpt-5.6-sol",
+            "ChatGPT",
+            "GPT-5.6 Sol",
+            "https://chatgpt.com/c/model-check",
+        ),
+        (
+            "gemini",
+            "gemini-3.1-pro",
+            "Gemini",
+            "Gemini 3.1 Pro",
+            "https://gemini.google.com/app/model-check",
+        ),
+        (
+            "grok",
+            "grok-auto",
+            "Grok",
+            "Auto",
+            "https://grok.com/c/model-check",
+        ),
+        (
+            "claude",
+            "claude-auto",
+            "Claude",
+            "Auto",
+            "https://claude.ai/chat/model-check",
+        ),
+    ),
+)
+def test_web_action_loop_fails_closed_before_context_or_prompt_when_model_is_unverified(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    model: str,
+    provider_label: str,
+    expected_model: str,
+    target_url: str,
 ) -> None:
     import app.core.computer_use_agent as computer_use_agent
 
     class _Page:
-        url = "https://chatgpt.com/c/model-check"
+        url = target_url
 
     workspace = tmp_path / "project"
     workspace.mkdir()
-    controller = WorkspaceController(
-        workspace,
-        ComputerUseSettings(workspace_path=str(workspace)),
-        lambda: False,
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace),
+        platform=platform,
+        model=model,
     )
+    controller = WorkspaceController(workspace, settings, lambda: False)
     calls = {"attach": 0, "submit": 0}
 
     def attach(*_args: object, **_kwargs: object) -> bool:
@@ -3488,21 +3649,26 @@ def test_chatgpt_action_loop_fails_closed_before_context_or_prompt_when_model_is
     monkeypatch.setattr(computer_use_agent, "_attach_context_file", attach)
     monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
 
-    with pytest.raises(RuntimeError, match="could not verify GPT-5.6 Sol"):
+    with pytest.raises(
+        RuntimeError,
+        match=f"{provider_label} Web could not verify {expected_model}",
+    ) as error:
         _run_web_action_loop(
             page=_Page(),
             browser_kind="chromium",
             initial_message="Inspect the project.",
             controller=controller,
             context_path=tmp_path / "context.md",
-            settings=ComputerUseSettings(workspace_path=str(workspace)),
+            settings=settings,
+            platform=platform,
             session_mode="recent",
-            selected_target_url="https://chatgpt.com/c/model-check",
+            selected_target_url=target_url,
             should_stop=lambda: False,
             update=lambda **_changes: None,
         )
 
     assert calls == {"attach": 0, "submit": 0}
+    assert "No project context or prompt was sent." in str(error.value)
 
 
 @pytest.mark.parametrize("stop_stage", ("model", "attach", "context-update"))

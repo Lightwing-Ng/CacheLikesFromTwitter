@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.85.0-codex.1
+# Code version: v1.87.0-codex.1
 
 from __future__ import annotations
 
@@ -372,7 +372,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.1-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.5.0-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -802,7 +802,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.1-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.5.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
         self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.22.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -1528,6 +1528,56 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(refreshed_response.get_json()["cache"]["status"], "refreshed")
         self.assertEqual(sources.call_count, 2)
 
+    def test_agent_source_route_filters_a_persisted_gemini_creation_alias(self) -> None:
+        cached_payload = {
+            "platform": "gemini",
+            "browser_label": "Edge",
+            "recent_sessions": [],
+            "projects": [
+                {
+                    "id": "create",
+                    "title": "New notebook",
+                    "url": "https://gemini.google.com/app/create",
+                    "updated_at": "",
+                },
+                {
+                    "id": "notebook-1",
+                    "title": "Research notebook",
+                    "url": "https://gemini.google.com/app/notebook-1",
+                    "updated_at": "",
+                },
+            ],
+            "limit": 20,
+        }
+        with TemporaryDirectory() as raw_root:
+            app = create_app(Path(raw_root) / "local_store")
+            app.extensions["agent_source_cache"].store(
+                platform="gemini",
+                browser="edge",
+                source_kind="sources",
+                payload=cached_payload,
+            )
+            with patch("app.web.app.list_agent_sources") as sources:
+                with app.test_client() as client:
+                    response = client.get(
+                        "/api/agent/sources?platform=gemini&browser=edge"
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["cache"]["status"], "hit")
+        self.assertEqual(
+            response.get_json()["projects"],
+            [
+                {
+                    "id": "notebook-1",
+                    "title": "Research notebook",
+                    "url": "https://gemini.google.com/app/notebook-1",
+                    "updated_at": "",
+                }
+            ],
+        )
+        sources.assert_not_called()
+
     def test_agent_project_route_reuses_one_project_session_contract(self) -> None:
         project_url = "https://grok.com/project/project-1?tab=conversations"
         payload = {
@@ -1932,8 +1982,12 @@ class WebAppTests(unittest.TestCase):
             'const SESSION_CACHE_TTL_MS = 300_000;',
             'const SESSION_STALE_MAX_AGE_MS = 1_800_000;',
             'const statusRequests = new Map();',
+            'async function load(browserId, options = {})',
+            'const forceRefresh = options.force === true;',
             'setStatus(cachedStatus.payload, activeBrowser);',
+            'if (cachedStatus.payload.can_download && cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;',
             'setRefreshingState(activeBrowser);',
+            'return load(activeBrowser, {force: true});',
             'if (statusRequests.has(requestKey)) return statusRequests.get(requestKey);',
             'statusCard.setAttribute("aria-busy", "true");',
             'showStatusCheckmark(isReady ? "ready" : "error");',

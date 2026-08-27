@@ -1,6 +1,6 @@
 """Focused tests for Gemini session history Parquet persistence."""
 
-# Code version: v1.10.0-codex.1
+# Code version: v1.10.1-codex.1
 
 from __future__ import annotations
 
@@ -25,6 +25,7 @@ from app.core.gemini_downloader import (
     _prepare_gemini_page_for_rendering,
     _read_gemini_conversation_links,
     _scroll_gemini_conversation_navigation,
+    _wait_for_gemini_ready,
     build_gemini_initial_snapshot,
     gemini_discovery_checkpoint_path,
     gemini_conversation_id,
@@ -473,3 +474,23 @@ def test_gemini_collection_keeps_virtualized_loading_after_a_scroll_without_pixe
         links = collect_gemini_conversation_links(page, config, lambda: False)
 
     assert len(links) == 6
+
+
+def test_gemini_ready_gate_rejects_an_authenticated_region_unavailable_page() -> None:
+    class Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            raise AssertionError("Region unavailability must fail without another readiness wait.")
+
+    with patch(
+        "app.core.gemini_downloader.inspect_gemini_session",
+        return_value={
+            "href": "https://gemini.google.com/",
+            "accountLabel": "Google Account: Demo",
+            "conversationLinks": 0,
+            "hasComposer": False,
+            "signedOut": False,
+            "unsupportedRegion": True,
+        },
+    ):
+        with pytest.raises(RuntimeError, match="not available.*current region"):
+            _wait_for_gemini_ready(Page(), timeout_seconds=1)

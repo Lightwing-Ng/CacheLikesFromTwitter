@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.29.0-codex.1`
+Documentation version: `v3.31.1-codex.1`
 
 ## Purpose
 
@@ -83,14 +83,16 @@ older task cannot be submitted accidentally through a different Web session.
    selected browser profile. When a request switches away from the persisted provider, the service
    resets a stale previous-provider target URL to the new provider's official home before
    validation.
-4. Before attaching project data or submitting a prompt, ChatGPT must expose its visible Model
-   submenu and read back `GPT-5.6 Sol` or `5.6 Sol`. If that verification fails, the run stops
-   without attaching the context or sending the prompt. Gemini, Grok, and Claude retain their
-   best-effort boundary: when their compatible model control is not exposed, the controller keeps
-   the selected session's current remote model and reports that limitation. When a selector is
-   exposed, only exact model labels and explicit selector wrappers are accepted; compound controls
-   such as `Auto-play` are rejected. After a click, the selector itself must read back the chosen
-   model before the run can publish `model_verified=true`.
+4. Before attaching project data or submitting a prompt, every provider must expose a compatible
+   model control and visibly read back the configured model. ChatGPT must prove `GPT-5.6 Sol` or
+   `5.6 Sol`, Gemini must prove `Gemini 3.1 Pro`, and Grok and Claude must prove `Auto`. A missing,
+   changed, localized, or ambiguous selector fails closed without attaching context or sending a
+   prompt. Only exact model labels and explicit model or mode selector wrappers are accepted;
+   compound controls such as `Auto-play` and unrelated popup buttons whose text happens to be
+   `Auto` are rejected. An `Auto` trigger must expose popup semantics plus model, mode, or
+   provider-model metadata. The current Grok `Model select` trigger is an accepted explicit model
+   wrapper. After a click, the selector itself must read back the chosen model
+   before the run can publish `model_verified=true`.
    Chromium composer readiness is polled in 250 ms slices so Stop can terminate the initial page
    verification before model selection, context attachment, or prompt submission. Its single
    recovery reload waits only for navigation commit and is capped at five seconds. Stop is checked
@@ -323,12 +325,21 @@ Stage Manager places the Edge window in the background. Clicking the handoff pil
 URL in Edge normally.
 
 The model selector is provider-specific: ChatGPT exposes `5.6 Sol`, Gemini exposes `3.1 Pro`, and
-Grok and Claude expose `Auto`. ChatGPT is fail-closed: the controller must select or observe and
-then visibly read back GPT-5.6 Sol before any attachment or send. A localized or changed ChatGPT
-menu that cannot prove that selection stops the run without transferring project context. Gemini,
-Grok, and Claude remain best-effort: if their remote UI does not expose a matching model option,
-the controller leaves that selected session's current remote model unchanged and reports the
-limitation rather than claiming model-selection success.
+Grok and Claude expose `Auto`. Each provider is fail-closed: the controller must select or observe
+and then visibly read back the exact configured model before any attachment or send. A localized
+or changed menu that cannot prove the selection stops the run without transferring project data.
+For an `Auto` readback, a generic popup wrapper is insufficient: the trigger must also identify
+itself as a model or mode control, or expose provider-specific model metadata.
+
+Browser readiness uses a short session cache only for a positive authenticated result. A fresh
+negative result is rendered immediately but also re-probed, so completing login or a provider
+security check does not leave Ask blocked for five minutes. An explicit controller refresh always
+bypasses the cache. A signed-in Gemini page that states the service is unavailable in the browser's
+current region is not an authenticated-ready result: the probe reports the provider condition,
+keeps Ask disabled, and transfers no project data. Gemini Notebook discovery rejects provider-owned creation aliases such as
+`/notebook/create` and `/notebooks/new`. Every source-catalog API response revalidates cached Project
+URLs through the current provider contract, so those aliases cannot appear as selectable Projects
+even when an older in-memory or Parquet catalog contains them.
 
 While an Agent task is running on macOS, the service holds an idle-sleep assertion bound to the
 service PID until it has attempted task-scoped context removal during success, stop, or failure

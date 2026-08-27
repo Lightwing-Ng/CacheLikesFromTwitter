@@ -1,4 +1,4 @@
-/* Code version: v1.4.1-codex.1 */
+/* Code version: v1.5.0-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v5:";
@@ -166,7 +166,7 @@
             notify(null, "", "cleared");
         }
 
-        async function load(browserId) {
+        async function load(browserId, options = {}) {
             activeBrowser = browserId || "";
             if (!activeBrowser) {
                 clearStatus();
@@ -176,9 +176,10 @@
             const requestPlatform = platform;
             const cacheKey = `${SESSION_CACHE_PREFIX}${scope || "default"}:${requestPlatform}:${activeBrowser}`;
             const cachedStatus = readCachedStatus(cacheKey);
-            if (cachedStatus && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
+            const forceRefresh = options.force === true;
+            if (!forceRefresh && cachedStatus && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
                 setStatus(cachedStatus.payload, activeBrowser);
-                if (cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;
+                if (cachedStatus.payload.can_download && cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;
                 setRefreshingState(activeBrowser);
             } else {
                 setLoadingState(activeBrowser);
@@ -214,7 +215,7 @@
                 void load(activeBrowser);
             },
             refresh() {
-                return load(activeBrowser);
+                return load(activeBrowser, {force: true});
             },
             getBrowser() {
                 return activeBrowser;

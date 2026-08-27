@@ -1,6 +1,34 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.8.0-codex.1`
+Documentation version: `v1.10.1-codex.1`
+
+## Four-provider Agent pre-transfer hardening on 27 Aug 2026
+
+- ChatGPT, Gemini, Grok, and Claude now all fail closed when the configured remote model cannot be
+  read back. The failure occurs before context attachment and prompt submission, and the diagnostic
+  explicitly states that no project data was sent. Regression coverage proves zero attachment and
+  zero submission for ChatGPT `GPT-5.6 Sol`, Gemini `Gemini 3.1 Pro`, Grok `Auto`, and Claude
+  `Auto` failures. Claude accepts only the literal `Auto` label; `Default` and the brand name
+  `Claude` are not model readbacks.
+- An `Auto` model readback now requires both popup behavior and explicit model, mode, or
+  provider-model metadata. An unrelated popup button whose visible text is merely `Auto` cannot
+  satisfy Grok or Claude model verification; the real Grok `Model select` trigger remains accepted.
+- Gemini readiness distinguishes account authentication from provider availability. If the signed-in
+  page reports that Gemini is unavailable in the selected browser's current region, both the direct
+  readiness helper and the shared browser-status API fail closed, Ask remains disabled, and no
+  project context is transferred.
+- Gemini Notebook discovery rejects the provider's `create` and `new` route aliases while reading
+  the live DOM and at the source-catalog API boundary. Even a fresh in-memory or Parquet cache hit is
+  revalidated before response, so those actions cannot be relabeled as Projects or normalized to
+  invalid `/app/create` and `/app/new` targets.
+- Non-ChatGPT model selection runs through the same linearized Stop gate as other browser side
+  effects. A Stop already accepted prevents DOM inspection or clicks; a concurrent Stop is ordered
+  against the bounded selector operation before it is published. Failed readback diagnostics retain
+  the observed trigger text and no longer imply that an unverified remote model will be used.
+- The browser-status cache is terminal only for a fresh positive authenticated result. A fresh
+  negative result is displayed while a new probe runs, and an explicit refresh always bypasses the
+  cache. Chromium coverage starts with a fresh signed-out Gemini cache row, proves an immediate
+  authenticated retry enables Ask, and proves a subsequent forced refresh starts another request.
 
 ## Grok Agent session binding and readiness hardening on 26 Aug 2026
 
@@ -43,10 +71,10 @@ Documentation version: `v1.8.0-codex.1`
 
 ## Agent Web execution safety contract established on 24 Aug 2026
 
-- ChatGPT now fails closed before project-data transfer: its visible Model submenu must read back
-  `GPT-5.6 Sol` or `5.6 Sol` before the controller attaches context or sends a prompt. Gemini, Grok,
-  and Claude retain their best-effort model-selection behavior; a missing compatible selector keeps
-  the selected session's current remote model and reports the limitation.
+- Every provider now fails closed before project-data transfer: the visible compatible model
+  control must read back the configured model before the controller attaches context or sends a
+  prompt. A missing or ambiguous selector stops the run instead of retaining an unverified remote
+  model.
 - A Chromium attachment is accepted only when the composer visibly exposes the exact context
   filename. A missing filename or reported upload failure falls back to bounded on-demand reads
   instead of claiming that the package was attached.

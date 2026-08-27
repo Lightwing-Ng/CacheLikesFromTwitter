@@ -1,6 +1,6 @@
 """Browser-backed Gemini session history caching."""
 
-# Code version: v1.10.0-codex.1
+# Code version: v1.10.1-codex.1
 
 from __future__ import annotations
 
@@ -386,6 +386,8 @@ def inspect_gemini_session(page) -> dict[str, Any]:
             const hasComposer = Boolean(document.querySelector('textarea, [contenteditable="true"]'));
             const signedOut = /(?:^|\n)\s*(?:Sign in|Log in)\s*(?:\n|$)/i.test(bodyText)
                 && !account && !conversationLinks && !hasComposer;
+            const unsupportedRegion = /gemini (?:isn['’]t|is not) (?:currently )?(?:supported|available) in your country/i
+                .test(bodyText);
             return {
                 href: location.href,
                 title: document.title || "",
@@ -393,6 +395,7 @@ def inspect_gemini_session(page) -> dict[str, Any]:
                 conversationLinks,
                 hasComposer,
                 signedOut,
+                unsupportedRegion,
             };
         }"""
     )
@@ -463,6 +466,10 @@ def _wait_for_gemini_ready(page, timeout_seconds: float = GEMINI_READY_TIMEOUT_S
     last_snapshot: dict[str, Any] = {}
     for _attempt in range(remaining_checks):
         last_snapshot = inspect_gemini_session(page)
+        if last_snapshot.get("unsupportedRegion"):
+            raise RuntimeError(
+                "Gemini Web is not available in the selected browser's current region."
+            )
         if last_snapshot.get("signedOut"):
             raise RuntimeError("The selected browser is not signed in to Gemini.")
         if (

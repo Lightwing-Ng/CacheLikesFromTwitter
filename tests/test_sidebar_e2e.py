@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.14.0-codex.1
+Code version: v1.16.1-codex.1
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from app.core.computer_use_agent import (
     _select_web_model,
     _submit_chromium_web_prompt,
 )
+from app.core.gemini_downloader import inspect_gemini_session
 
 
 OVERLAY_VIEWPORTS = (
@@ -1585,6 +1586,145 @@ def _chatgpt_catalog_sessions(*sessions: dict[str, str]) -> dict[str, object]:
 
 
 @pytest.mark.integration
+def test_gemini_session_dom_marks_a_signed_in_region_unavailable_page(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button aria-label="Google Account: Demo account">Account</button>
+            <main>Gemini isn’t currently supported in your country. Stay tuned!</main>
+            """
+        )
+
+        snapshot = inspect_gemini_session(page)
+
+        assert snapshot["accountLabel"] == "Google Account: Demo account"
+        assert snapshot["signedOut"] is False
+        assert snapshot["unsupportedRegion"] is True
+        assert snapshot["hasComposer"] is False
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("updates_readback", [True, False])
+def test_gemini_model_dom_selection_requires_verified_trigger_readback(
+    disposable_browser: Browser,
+    updates_readback: bool,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            f"""
+            <button
+                id="mode-picker"
+                aria-label="Mode picker"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="mode-options"
+            >Fast</button>
+            <div id="mode-options" role="listbox" hidden>
+                <button id="pro-option" role="option">3.1 Pro</button>
+            </div>
+            <script>
+                window.selectionAudit = {{optionClicks: 0}};
+                const trigger = document.querySelector('#mode-picker');
+                const surface = document.querySelector('#mode-options');
+                trigger.addEventListener('click', () => {{
+                    trigger.setAttribute('aria-expanded', 'true');
+                    surface.hidden = false;
+                }});
+                document.querySelector('#pro-option').addEventListener('click', () => {{
+                    window.selectionAudit.optionClicks += 1;
+                    if ({str(updates_readback).lower()}) trigger.textContent = '3.1 Pro';
+                }});
+            </script>
+            """
+        )
+        assert (
+            _select_web_model(page, "chromium", "gemini", "gemini-3.1-pro")
+            is updates_readback
+        )
+        assert page.evaluate("window.selectionAudit.optionClicks") == 1
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("platform", "model"),
+    (("grok", "grok-auto"), ("claude", "claude-auto")),
+)
+def test_auto_model_dom_selection_accepts_a_semantic_model_trigger(
+    disposable_browser: Browser,
+    platform: str,
+    model: str,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                id="model-selector"
+                aria-label="Model select"
+                aria-haspopup="menu"
+                aria-expanded="false"
+            >Auto</button>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", platform, model) is True
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("platform", "model"),
+    (("grok", "grok-auto"), ("claude", "claude-auto")),
+)
+def test_auto_model_dom_selection_rejects_an_unrelated_auto_popup(
+    disposable_browser: Browser,
+    platform: str,
+    model: str,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                id="playback-trigger"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="playback-options"
+            >Auto</button>
+            <div id="playback-options" role="menu" hidden>
+                <button role="menuitem">Auto</button>
+                <button role="menuitem">1×</button>
+            </div>
+            <script>
+                window.unrelatedAutoClicks = 0;
+                document.querySelector('#playback-trigger').addEventListener('click', () => {
+                    window.unrelatedAutoClicks += 1;
+                    document.querySelector('#playback-options').hidden = false;
+                });
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", platform, model) is False
+        assert page.evaluate("window.unrelatedAutoClicks") == 0
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("surface_role", ["listbox", "menu"])
 @pytest.mark.parametrize("updates_readback", [True, False])
 def test_grok_model_dom_selection_requires_semantic_trigger_and_verified_readback(
@@ -1928,6 +2068,86 @@ def test_finished_snapshot_does_not_auto_select_recent_chatgpt_session(
         expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("recent")
         expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value("")
         expect(page.locator("[data-agent-recent-session-url]")).to_have_value("")
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_browser_status_retries_a_fresh_negative_cache_and_force_refreshes(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    browser_status_requests: list[str] = []
+    negative_status = {
+        "platform": "gemini",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": False,
+        "can_download": False,
+        "account_name": "",
+        "message": "Edge is not signed in to Gemini.",
+    }
+    ready_status = {
+        **negative_status,
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "Gemini account",
+        "message": "Edge verified an authenticated Gemini Web session.",
+    }
+
+    def fulfill_browser_status(route) -> None:
+        browser_status_requests.append(route.request.url)
+        route.fulfill(json=ready_status)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    cache_key = "cachelikes:browser-session:v5:agent:gemini:edge"
+    page.add_init_script(
+        f"sessionStorage.setItem({json.dumps(cache_key)}, JSON.stringify({{"
+        f"cached_at: Date.now(), payload: {json.dumps(negative_status)}}}));"
+    )
+    page.route(
+        "**/api/agent/status",
+        lambda route: route.fulfill(json=_finished_chatgpt_agent_payload()),
+    )
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route(
+        "**/api/agent/sources**",
+        lambda route: route.fulfill(
+            json={
+                "platform": "gemini",
+                "browser_label": "Edge",
+                "recent_sessions": [],
+                "projects": [],
+                "limit": 20,
+            }
+        ),
+    )
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/gemini", wait_until="domcontentloaded")
+        expect(page.locator(".agent-readiness")).to_have_attribute("data-ready", "true")
+        expect(page.locator("#agent_readiness_message")).to_have_text(ready_status["message"])
+        expect(page.locator("#agent_ask_button")).to_be_enabled()
+        assert len(browser_status_requests) == 1
+
+        page.evaluate(
+            """async () => {
+                const root = document.querySelector('[data-agent-browser-session]');
+                const controller = window.CACHELIKES_BROWSER_SESSION_STATUS.init(root, {
+                    platform: 'gemini',
+                    browserId: 'edge',
+                    scope: 'agent',
+                });
+                await controller.refresh();
+            }"""
+        )
+        assert len(browser_status_requests) == 2
     finally:
         context.close()
 
