@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.12-codex.17
+Code version: v1.47.12-codex.18
 """
 
 from pathlib import Path
@@ -1555,7 +1555,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.82.17-codex.67 */",
+            "/* Code version: v2.82.17-codex.68 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1681,6 +1681,51 @@ def test_agent_prompt_uses_the_dedicated_sixteen_pixel_type_token() -> None:
     prompt_start = stylesheet.index(".agent-prompt-input {")
     prompt_rule = stylesheet[prompt_start:stylesheet.index("\n}", prompt_start)]
     assert "font-size: var(--font-agent-prompt);" in prompt_rule
+
+
+def test_agent_composer_uses_one_frosted_surface_and_an_invisible_vertical_scrollbar() -> None:
+    """Keep the Composer shell frosted while the prompt area stays immersive and scrollable."""
+    stylesheet = _stylesheet()
+
+    shell_start = stylesheet.index(".agent-composer-shell {")
+    shell_rule = stylesheet[shell_start:stylesheet.index("\n}", shell_start)]
+    prompt_start = stylesheet.index(".agent-prompt-input {")
+    prompt_rule = stylesheet[prompt_start:stylesheet.index("\n}", prompt_start)]
+    input_state_selector = ".agent-composer-shell .agent-prompt-input,"
+    input_state_start = stylesheet.index(input_state_selector)
+    input_state_rule = stylesheet[
+        input_state_start:stylesheet.index("\n}", input_state_start)
+    ]
+    scrollbar_selector = ".agent-composer-shell .agent-prompt-input::-webkit-scrollbar {"
+    scrollbar_start = stylesheet.index(scrollbar_selector)
+    scrollbar_rule = stylesheet[scrollbar_start:stylesheet.index("\n}", scrollbar_start)]
+
+    for token in (
+        "border: var(--frosted-glass-border);",
+        "background: var(--frosted-glass-background);",
+        "box-shadow: var(--frosted-glass-shadow);",
+        "backdrop-filter: var(--frosted-glass-blur);",
+        "-webkit-backdrop-filter: var(--frosted-glass-blur);",
+    ):
+        assert token in shell_rule
+    for token in (
+        "border: 0;",
+        "background: transparent;",
+        "overflow-y: auto;",
+        "scrollbar-width: none;",
+        "-ms-overflow-style: none;",
+    ):
+        assert token in prompt_rule
+    for token in (
+        "border: 0;",
+        "background: transparent;",
+        "box-shadow: none;",
+        "outline: none;",
+    ):
+        assert token in input_state_rule
+    assert "var(--frosted-glass" not in prompt_rule
+    assert "width: 0;" in scrollbar_rule
+    assert "height: 0;" in scrollbar_rule
 
 
 def test_agent_session_lists_open_above_the_sidebar_trigger() -> None:

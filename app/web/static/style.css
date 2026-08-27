@@ -1,4 +1,4 @@
-/* Code version: v2.82.17-codex.67 */
+/* Code version: v2.82.17-codex.68 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -3481,12 +3481,16 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     min-height: 120px;
     padding: 12px;
     resize: vertical;
-    border: var(--frosted-glass-border);
-    border-radius: var(--radius-soft);
-    background: var(--glass-surface-background-soft);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
     box-shadow: none;
     font-size: var(--font-agent-prompt);
     line-height: 1.5;
+    overflow-x: hidden;
+    overflow-y: auto;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
 }
 
 .agent-composer-shell {
@@ -3495,14 +3499,33 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     padding: 12px;
     border: var(--frosted-glass-border);
     border-radius: var(--radius-panel);
-    background: var(--glass-surface-background-soft);
+    background: var(--frosted-glass-background);
     box-shadow: var(--frosted-glass-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
     transition: background 220ms var(--motion-standard), box-shadow 220ms var(--motion-standard), border-color 220ms var(--motion-standard);
 }
 
 .agent-composer-shell:focus-within {
-    background: var(--glass-surface-background);
+    background: var(--frosted-glass-background-hover);
     box-shadow: var(--frosted-glass-shadow-hover);
+}
+
+.agent-composer-shell .agent-prompt-input,
+.agent-composer-shell .agent-prompt-input:hover,
+.agent-composer-shell .agent-prompt-input:focus,
+.agent-composer-shell .agent-prompt-input:focus-visible {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    outline: none;
+}
+
+.agent-composer-shell .agent-prompt-input::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    background: transparent;
 }
 
 .agent-composer-footer,
