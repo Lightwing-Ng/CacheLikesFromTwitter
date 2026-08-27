@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.12-codex.16
+Code version: v1.47.12-codex.17
 """
 
 from pathlib import Path
@@ -1555,7 +1555,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.82.17-codex.66 */",
+            "/* Code version: v2.82.17-codex.67 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1661,6 +1661,16 @@ def test_agent_combobox_trigger_labels_share_typography_contract() -> None:
     model_start = stylesheet.index(model_selector)
     model_rule = stylesheet[model_start:stylesheet.index("\n}", model_start)]
     assert "font-weight: var(--font-weight-medium);" in model_rule
+
+
+def test_agent_model_trigger_uses_fifteen_pixel_type_token() -> None:
+    """Keep the selected Agent model label at the requested 15px size."""
+    stylesheet = _stylesheet()
+    selector = ".agent-model-trigger .trade-strategy-trigger-label {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "font-size: var(--font-size-5);" in selector_rule
 
 
 def test_agent_prompt_uses_the_dedicated_sixteen_pixel_type_token() -> None:
