@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.39.0-codex.1
+Code version: v3.40.0-codex.1
 """
 
 from __future__ import annotations
@@ -4999,12 +4999,21 @@ class _ProviderSessionBinding:
             and self.session_mode in {"new", "project_new"}
             and self.bound_conversation_url
             and not self.initial_transition_confirmed
-            and _provider_pre_submit_target_is_open(
-                self.platform,
-                self.selected_target_url,
-                current_url,
-                self.session_mode,
-            )
+            and self._chatgpt_initial_bounce_target_is_open(current_url)
+        )
+
+    def _chatgpt_initial_bounce_target_is_open(self, current_url: str) -> bool:
+        """Accept only the selected landing or ChatGPT root during first-session recovery."""
+        if _provider_pre_submit_target_is_open(
+            "chatgpt",
+            self.selected_target_url,
+            current_url,
+            self.session_mode,
+        ):
+            return True
+        return bool(
+            self.session_mode == "project_new"
+            and _chatgpt_target_is_open(CHATGPT_HOME_URL, current_url)
         )
 
     def _record_initial_chatgpt_landing_bounce(self) -> None:
@@ -5034,12 +5043,7 @@ class _ProviderSessionBinding:
                 receipt_url,
                 self.session_mode,
             )
-            and _provider_pre_submit_target_is_open(
-                "chatgpt",
-                self.selected_target_url,
-                current_url,
-                self.session_mode,
-            )
+            and self._chatgpt_initial_bounce_target_is_open(current_url)
         )
 
     def prepare_fresh_session(
@@ -5156,6 +5160,42 @@ class _ProviderSessionBinding:
                 )
         return current_url, current_title, False
 
+    def _latch_fresh_conversation_from_receipt(self, receipt_url: str) -> str:
+        """Bind one fresh conversation only after its current transfer receipt is revalidated."""
+        current_url, current_title, landing_race = self._revalidated_submission_receipt(
+            receipt_url
+        )
+        transition_url = receipt_url if landing_race else current_url
+        if not _provider_new_session_transition_allowed(
+            self.platform,
+            self.selected_target_url,
+            transition_url,
+            self.session_mode,
+        ):
+            raise RuntimeError(
+                "The selected provider tab navigated away while the first submission "
+                "was being verified."
+            )
+        conversation = normalize_agent_conversation_url(
+            self.platform,
+            transition_url,
+        )
+        if not conversation:
+            return ""
+        if (
+            self.platform == "grok"
+            and conversation in self.existing_conversation_urls
+        ):
+            raise RuntimeError(
+                "The selected Grok conversation existed before this New session run."
+            )
+        self.bound_conversation_url = conversation
+        self.expected_title = current_title
+        if landing_race:
+            self.initial_receipt_revalidation_required = True
+            self._record_initial_chatgpt_landing_bounce()
+        return conversation
+
     def check(self, allow_transition: bool = False) -> str:
         """Validate the tab and optionally latch its one legal new-session transition."""
         tab_id, current_url, current_title = _provider_tab_identity(self.page)
@@ -5202,11 +5242,31 @@ class _ProviderSessionBinding:
             )
             self.expected_title = current_title
             return self.bound_conversation_url
-        if _provider_pre_submit_target_is_open(
+        pre_submit_target_open = _provider_pre_submit_target_is_open(
             self.platform,
             self.selected_target_url,
             current_url,
             self.session_mode,
+        )
+        fresh_chatgpt_bounce_target_open = bool(
+            self.platform == "chatgpt"
+            and self.session_mode in {"new", "project_new"}
+            and self._chatgpt_initial_bounce_target_is_open(current_url)
+        )
+        if (
+            fresh_chatgpt_bounce_target_open
+            and allow_transition
+        ):
+            receipt_url = self._current_submission_receipt_url()
+            if receipt_url and _provider_new_session_transition_allowed(
+                "chatgpt",
+                self.selected_target_url,
+                receipt_url,
+                self.session_mode,
+            ):
+                return self._latch_fresh_conversation_from_receipt(receipt_url)
+        if pre_submit_target_open or (
+            allow_transition and fresh_chatgpt_bounce_target_open
         ):
             return ""
         if allow_transition and _provider_new_session_transition_allowed(
@@ -5218,36 +5278,8 @@ class _ProviderSessionBinding:
             receipt_url = self._current_submission_receipt_url()
             if not receipt_url:
                 return ""
-            current_url, current_title, landing_race = self._revalidated_submission_receipt(
-                receipt_url
-            )
-            if not _provider_new_session_transition_allowed(
-                self.platform,
-                self.selected_target_url,
-                current_url,
-                self.session_mode,
-            ):
-                raise RuntimeError(
-                    "The selected provider tab navigated away while the first submission "
-                    "was being verified."
-                )
-            conversation = normalize_agent_conversation_url(
-                self.platform,
-                current_url,
-            )
+            conversation = self._latch_fresh_conversation_from_receipt(receipt_url)
             if conversation:
-                if (
-                    self.platform == "grok"
-                    and conversation in self.existing_conversation_urls
-                ):
-                    raise RuntimeError(
-                        "The selected Grok conversation existed before this New session run."
-                    )
-                self.bound_conversation_url = conversation
-                self.expected_title = current_title
-                if landing_race:
-                    self.initial_receipt_revalidation_required = True
-                    self._record_initial_chatgpt_landing_bounce()
                 return conversation
         raise RuntimeError(
             "The selected provider tab navigated away from the chosen session before "
@@ -5259,6 +5291,9 @@ class _ProviderSessionBinding:
         should_stop: Callable[[], bool] | None = None,
     ) -> str:
         """Return only a current response session, restoring one fresh ChatGPT bounce."""
+        stop_requested = should_stop or (lambda: False)
+        if stop_requested():
+            return ""
         conversation = self.check(allow_transition=True)
         if not conversation:
             return ""
@@ -5282,19 +5317,22 @@ class _ProviderSessionBinding:
                     "ChatGPT repeatedly returned the fresh conversation to its landing page."
                 )
             self.initial_landing_recovery_attempted = True
-            goto_with_retry(
-                self.page,
-                conversation,
-                attempts=2,
-                timeout_ms=90_000,
-                should_stop=should_stop,
+            executed, _result = _run_browser_action_unless_stopped(
+                stop_requested,
+                lambda: goto_with_retry(
+                    self.page,
+                    conversation,
+                    attempts=2,
+                    timeout_ms=90_000,
+                    should_stop=stop_requested,
+                ),
             )
-            if callable(should_stop) and should_stop():
+            if not executed or stop_requested():
                 return ""
 
         deadline = time.monotonic() + PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
         while True:
-            if callable(should_stop) and should_stop():
+            if stop_requested():
                 return ""
             tab_id, current_url, current_title = _provider_tab_identity(self.page)
             if tab_id != self.expected_tab_id:
@@ -5323,7 +5361,12 @@ class _ProviderSessionBinding:
                             self.session_mode,
                         )
                         return conversation
-            elif not self._initial_chatgpt_landing_recovery_allowed(current_url):
+            elif self._initial_chatgpt_landing_recovery_allowed(current_url):
+                if self.initial_landing_recovery_attempted:
+                    raise RuntimeError(
+                        "ChatGPT repeatedly returned the fresh conversation to its landing page."
+                    )
+            else:
                 raise RuntimeError(
                     "The selected provider tab navigated away from the newly created session."
                 )
@@ -7676,10 +7719,16 @@ def _submit_and_wait(
             expected_target_url=atomic_target_url,
             session_mode=session_mode,
         )
+    if should_stop():
+        _stop_web_generation(page, browser_kind)
+        return ""
     if session_recover is not None:
         session_recover(should_stop)
     elif session_check is not None:
         session_check(True)
+    if should_stop():
+        _stop_web_generation(page, browser_kind)
+        return ""
     if on_submitted is not None and not should_stop():
         on_submitted()
 
@@ -7702,6 +7751,7 @@ def _submit_and_wait(
         elif session_check is not None:
             checked_response_session = session_check(True)
         if should_stop():
+            _stop_web_generation(page, browser_kind)
             return response
         response_session_url_after_check = str(
             getattr(page, "url", "") or ""
@@ -7735,6 +7785,9 @@ def _submit_and_wait(
             count = int(response_snapshot.get("count") or 0)
             latest_response = str(response_snapshot.get("text") or "")
             generating = bool(response_snapshot.get("generating"))
+            assistant_after_latest_user = bool(
+                response_snapshot.get("assistantAfterLatestUser")
+            )
         else:
             count = _platform_web_count(page, browser_kind, platform, selector)
             latest_response = _platform_web_last_text(
@@ -7744,7 +7797,11 @@ def _submit_and_wait(
                 selector,
             )
             generating = _web_is_generating(page, browser_kind)
-        if count > baseline or (latest_response and latest_response != baseline_response):
+            assistant_after_latest_user = True
+        if assistant_after_latest_user and (
+            count > baseline
+            or (latest_response and latest_response != baseline_response)
+        ):
             response = latest_response
         now = time.monotonic()
         if response != previous:
@@ -8109,6 +8166,8 @@ def _submit_chromium_prompt(
     """Fill Chromium's composer and click Send after any attachment is ready."""
     if should_stop():
         return
+    if not str(expected_target_url or "").strip():
+        raise RuntimeError("ChatGPT submission requires a verified target URL.")
     if session_check is not None:
         session_check(False)
     user_selector = '[data-message-author-role="user"]'
@@ -8118,8 +8177,17 @@ def _submit_chromium_prompt(
     composer = page.locator("#prompt-textarea")
     if should_stop():
         return
-    composer.fill(message)
-    if should_stop():
+
+    def fill_checked_composer() -> None:
+        if session_check is not None:
+            session_check(False)
+        composer.fill(message)
+
+    filled, _result = _run_browser_action_unless_stopped(
+        should_stop,
+        fill_checked_composer,
+    )
+    if not filled or should_stop():
         return
 
     deadline = time.monotonic() + CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS
@@ -8322,6 +8390,16 @@ def _chatgpt_response_snapshot(page: Any, selector: str) -> dict[str, Any]:
         r"""({selector}) => {
             const elements = Array.from(document.querySelectorAll(selector));
             const latest = elements.at(-1);
+            const transcript = Array.from(document.querySelectorAll(
+                '[data-message-author-role="user"], [data-message-author-role="assistant"]'
+            ));
+            let latestUserIndex = -1;
+            let latestAssistantIndex = -1;
+            transcript.forEach((element, index) => {
+                const role = (element.getAttribute('data-message-author-role') || '').toLowerCase();
+                if (role === 'user') latestUserIndex = index;
+                if (role === 'assistant') latestAssistantIndex = index;
+            });
             let text = '';
             if (latest) {
                 const codeBlocks = Array.from(latest.querySelectorAll('pre code'));
@@ -8349,6 +8427,8 @@ def _chatgpt_response_snapshot(page: Any, selector: str) -> dict[str, Any]:
                 count: elements.length,
                 text,
                 generating,
+                assistantAfterLatestUser: latestUserIndex >= 0
+                    && latestAssistantIndex > latestUserIndex,
             };
         }""",
         {"selector": selector},
@@ -8360,6 +8440,7 @@ def _chatgpt_response_snapshot(page: Any, selector: str) -> dict[str, Any]:
         "count": int(result.get("count") or 0),
         "text": str(result.get("text") or ""),
         "generating": bool(result.get("generating")),
+        "assistantAfterLatestUser": bool(result.get("assistantAfterLatestUser")),
     }
 
 

@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.39.0-codex.1
+Code version: v3.40.0-codex.1
 """
 
 from __future__ import annotations
@@ -5085,11 +5085,66 @@ def test_fresh_chatgpt_binding_restores_created_conversation_after_landing_bounc
     assert "event=chatgpt_initial_landing_bounce_recovered" in caplog.text
 
 
-def test_fresh_chatgpt_binding_never_confirms_a_second_landing_after_restore(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize(
+    ("session_mode", "selected_target", "bounce_target", "created_url"),
+    (
+        (
+            "new",
+            "https://chatgpt.com/",
+            "https://chatgpt.com/",
+            "https://chatgpt.com/c/fresh-session",
+        ),
+        (
+            "project_new",
+            "https://chatgpt.com/g/g-p-demo/project",
+            "https://chatgpt.com/",
+            "https://chatgpt.com/g/g-p-demo/c/fresh-session",
+        ),
+    ),
+)
+def test_fresh_chatgpt_binding_recovers_receipt_before_first_url_observation(
+    session_mode: str,
+    selected_target: str,
+    bounce_target: str,
+    created_url: str,
 ) -> None:
-    import app.core.computer_use_agent as computer_use_agent
+    class _Page:
+        url = bounce_target
 
+        def __init__(self) -> None:
+            self.goto_calls: list[str] = []
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": created_url}
+
+        def goto(self, url: str, **_kwargs: object) -> None:
+            self.goto_calls.append(url)
+            self.url = url
+
+        def title(self) -> str:
+            return "Fresh session"
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        selected_target,
+        session_mode,
+    )
+    binding.arm_first_submission("Inspect the project")
+
+    assert binding.check(allow_transition=True) == created_url
+    assert binding.bound_conversation_url == created_url
+    assert binding.initial_receipt_revalidation_required is True
+    assert binding.ensure_response_session() == created_url
+    assert page.goto_calls == [created_url]
+
+
+def test_fresh_chatgpt_binding_never_confirms_a_second_landing_after_restore() -> None:
     created_url = "https://chatgpt.com/c/fresh-session"
 
     class _Page:
@@ -5122,14 +5177,144 @@ def test_fresh_chatgpt_binding_never_confirms_a_second_landing_after_restore(
     binding.arm_first_submission("Inspect the project")
     assert binding.check(allow_transition=True) == created_url
     page.url = "https://chatgpt.com/"
-    clock = iter((0, 0, 6))
-    monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: next(clock))
-
-    with pytest.raises(RuntimeError, match="did not restore the verified fresh conversation"):
+    with pytest.raises(RuntimeError, match="repeatedly returned"):
         binding.require_created_conversation()
 
     assert page.goto_calls == [created_url]
     assert binding.initial_transition_confirmed is False
+
+
+def test_fresh_chatgpt_binding_rejects_an_already_attempted_second_recovery() -> None:
+    created_url = "https://chatgpt.com/c/fresh-session"
+
+    class _Page:
+        url = created_url
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+        def goto(self, _url: str, **_kwargs: object) -> None:
+            raise AssertionError("A second recovery must fail before navigation.")
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+    assert binding.check(allow_transition=True) == created_url
+    page.url = "https://chatgpt.com/"
+    binding.initial_landing_recovery_attempted = True
+
+    with pytest.raises(RuntimeError, match="repeatedly returned"):
+        binding.ensure_response_session()
+
+
+@pytest.mark.parametrize(
+    ("session_mode", "selected_target", "landing_target"),
+    (
+        (
+            "recent",
+            "https://chatgpt.com/c/selected-session",
+            "https://chatgpt.com/",
+        ),
+        (
+            "project_session",
+            "https://chatgpt.com/g/g-p-demo/c/selected-session",
+            "https://chatgpt.com/g/g-p-demo/project",
+        ),
+    ),
+)
+def test_reused_chatgpt_binding_rejects_landing_bounce_without_recovery(
+    session_mode: str,
+    selected_target: str,
+    landing_target: str,
+) -> None:
+    class _Page:
+        url = selected_target
+
+        def goto(self, _url: str, **_kwargs: object) -> None:
+            raise AssertionError("Reused sessions must never enter fresh-session recovery.")
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        selected_target,
+        session_mode,
+    )
+    page.url = landing_target
+
+    with pytest.raises(RuntimeError, match="navigated away"):
+        binding.ensure_response_session()
+
+
+def test_chatgpt_binding_rejects_a_changed_playwright_tab_identity() -> None:
+    class _Page:
+        _guid = "tab-before"
+        url = "https://chatgpt.com/"
+
+        def evaluate(self, _expression: str, _argument: object = None) -> object:
+            raise AssertionError("A changed tab must fail before reading a receipt.")
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+    page._guid = "tab-after"
+
+    with pytest.raises(RuntimeError, match="tab identity changed"):
+        binding.check(allow_transition=True)
+
+
+def test_chatgpt_recovery_navigation_is_linearized_with_stop_signal() -> None:
+    created_url = "https://chatgpt.com/c/fresh-session"
+    stop_requested = _LinearizedStopSignal()
+    original_gate = stop_requested.run_unless_set
+
+    class _Page:
+        url = created_url
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+        def goto(self, _url: str, **_kwargs: object) -> None:
+            raise AssertionError("Stop must win before recovery navigation.")
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+    assert binding.check(allow_transition=True) == created_url
+    page.url = "https://chatgpt.com/"
+
+    def stop_at_recovery_gate(action: object) -> tuple[bool, object]:
+        stop_requested.set()
+        assert callable(action)
+        return original_gate(action)
+
+    stop_requested.run_unless_set = stop_at_recovery_gate  # type: ignore[method-assign]
+
+    assert binding.ensure_response_session(stop_requested.is_set) == ""
+    assert stop_requested.is_set()
 
 
 def test_fresh_chatgpt_binding_recovers_receipt_to_landing_race() -> None:
@@ -8651,6 +8836,60 @@ def test_chromium_submission_stop_before_entry_does_not_fill_or_click() -> None:
     _submit_chromium_prompt(_Page(), "Inspect the project", lambda: True)
 
 
+def test_chatgpt_submission_requires_a_verified_target_before_composer_access() -> None:
+    class _Page:
+        def locator(self, _selector: str) -> object:
+            raise AssertionError("An unverified target must fail before composer access.")
+
+    with pytest.raises(RuntimeError, match="requires a verified target URL"):
+        _submit_chromium_prompt(
+            _Page(),
+            "Inspect the project",
+            lambda: False,
+        )
+
+
+def test_chatgpt_composer_fill_is_linearized_with_stop_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop_requested = _LinearizedStopSignal()
+    original_gate = stop_requested.run_unless_set
+
+    class _Composer:
+        def fill(self, _value: str) -> None:
+            raise AssertionError("Stop must win before filling the composer.")
+
+    class _Page:
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "#prompt-textarea"
+            return _Composer()
+
+        def evaluate(self, _expression: str, _argument: object = None) -> object:
+            raise AssertionError("Stop must return before clicking Send.")
+
+    gate_calls = 0
+
+    def stop_at_fill_gate(action: object) -> tuple[bool, object]:
+        nonlocal gate_calls
+        gate_calls += 1
+        stop_requested.set()
+        assert callable(action)
+        return original_gate(action)
+
+    stop_requested.run_unless_set = stop_at_fill_gate  # type: ignore[method-assign]
+    monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
+
+    _submit_chromium_prompt(
+        _Page(),
+        "Inspect the project",
+        stop_requested.is_set,
+        expected_target_url="https://chatgpt.com/",
+    )
+
+    assert gate_calls == 1
+    assert stop_requested.is_set()
+
+
 def test_chromium_submission_waits_for_attachment_then_clicks_send() -> None:
     class _Composer:
         def __init__(self) -> None:
@@ -8699,7 +8938,12 @@ def test_chromium_submission_waits_for_attachment_then_clicks_send() -> None:
     with pytest.MonkeyPatch.context() as monkeypatch:
         monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 4)
 
-        _submit_chromium_prompt(page, "Inspect the project", lambda: False)
+        _submit_chromium_prompt(
+            page,
+            "Inspect the project",
+            lambda: False,
+            expected_target_url="https://chatgpt.com/",
+        )
 
     assert page.composer.value == "Inspect the project"
     assert page.send_attempts == 2
@@ -8742,7 +8986,12 @@ def test_chromium_submission_reports_when_attachment_never_enables_send() -> Non
         )
 
         with pytest.raises(RuntimeError, match="context attachment"):
-            _submit_chromium_prompt(_Page(), "Inspect the project", lambda: False)
+            _submit_chromium_prompt(
+                _Page(),
+                "Inspect the project",
+                lambda: False,
+                expected_target_url="https://chatgpt.com/",
+            )
 
 
 @pytest.mark.parametrize(
@@ -8807,7 +9056,7 @@ def test_chatgpt_send_target_check_is_atomic_and_rejects_url_drift(
 
     assert page.composer.value == "Inspect the project"
     assert page.evaluate_calls == 1
-    assert session_checks == [False, False]
+    assert session_checks == [False, False, False]
 
 
 def test_chatgpt_send_click_is_linearized_with_stop_signal(
@@ -8836,7 +9085,8 @@ def test_chatgpt_send_click_is_linearized_with_stop_signal(
     def stop_at_send_gate(action: object) -> tuple[bool, object]:
         nonlocal gate_calls
         gate_calls += 1
-        stop_requested.set()
+        if gate_calls == 2:
+            stop_requested.set()
         assert callable(action)
         return original_gate(action)
 
@@ -8850,7 +9100,7 @@ def test_chatgpt_send_click_is_linearized_with_stop_signal(
         expected_target_url="https://chatgpt.com/",
     )
 
-    assert gate_calls == 1
+    assert gate_calls == 2
     assert stop_requested.is_set()
 
 
@@ -9127,6 +9377,120 @@ def test_submit_and_wait_prefers_bound_session_for_atomic_target_guard(
     assert all(session_checks[index] for index in range(1, len(session_checks)))
 
 
+def test_chatgpt_post_submit_stop_skips_recovery_and_stops_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    stop_requested = Event()
+    stopped: list[tuple[object, str]] = []
+    page = object()
+    target_url = "https://chatgpt.com/c/fresh-session"
+
+    def submit(*_args: object, **_kwargs: object) -> None:
+        stop_requested.set()
+
+    def recover(_should_stop: object) -> str:
+        raise AssertionError("Stop must prevent post-submit recovery.")
+
+    monkeypatch.setattr(computer_use_agent, "_submit_chromium_prompt", submit)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_chatgpt_response_snapshot",
+        lambda *_args: {
+            "url": target_url,
+            "count": 0,
+            "text": "",
+            "generating": False,
+            "assistantAfterLatestUser": False,
+        },
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_stop_web_generation",
+        lambda stopped_page, browser_kind: stopped.append(
+            (stopped_page, browser_kind)
+        ),
+    )
+
+    assert (
+        _submit_and_wait(
+            page,
+            "chromium",
+            "Inspect the project",
+            stop_requested.is_set,
+            platform="chatgpt",
+            session_check=lambda _allow_transition: target_url,
+            session_recover=recover,
+            submission_target_url=target_url,
+            session_mode="new",
+        )
+        == ""
+    )
+    assert stopped == [(page, "chromium")]
+
+
+def test_chatgpt_stop_during_response_recovery_stops_generation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    stop_requested = Event()
+    stopped: list[tuple[object, str]] = []
+    page = object()
+    target_url = "https://chatgpt.com/c/fresh-session"
+    recovery_calls = 0
+
+    def recover(_should_stop: object) -> str:
+        nonlocal recovery_calls
+        recovery_calls += 1
+        if recovery_calls == 2:
+            stop_requested.set()
+        return target_url
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_chromium_prompt",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_chatgpt_response_snapshot",
+        lambda *_args: {
+            "url": target_url,
+            "count": 0,
+            "text": "",
+            "generating": True,
+            "assistantAfterLatestUser": False,
+        },
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_stop_web_generation",
+        lambda stopped_page, browser_kind: stopped.append(
+            (stopped_page, browser_kind)
+        ),
+    )
+    monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: 0)
+
+    assert (
+        _submit_and_wait(
+            page,
+            "chromium",
+            "Inspect the project",
+            stop_requested.is_set,
+            platform="chatgpt",
+            session_check=lambda _allow_transition: target_url,
+            session_recover=recover,
+            submission_target_url=target_url,
+            session_mode="new",
+        )
+        == ""
+    )
+    assert recovery_calls == 2
+    assert stopped == [(page, "chromium")]
+
+
 def test_chatgpt_submit_and_wait_restores_landing_before_reading_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -9181,6 +9545,7 @@ def test_chatgpt_submit_and_wait_restores_landing_before_reading_response(
                 "count": 0,
                 "text": "",
                 "generating": False,
+                "assistantAfterLatestUser": False,
             }
         response_snapshot_calls += 1
         if response_snapshot_calls == 1:
@@ -9190,6 +9555,7 @@ def test_chatgpt_submit_and_wait_restores_landing_before_reading_response(
                 "count": 1,
                 "text": '{"action":"list"',
                 "generating": False,
+                "assistantAfterLatestUser": True,
             }
         assert page.url == created_url
         return {
@@ -9197,6 +9563,7 @@ def test_chatgpt_submit_and_wait_restores_landing_before_reading_response(
             "count": 1,
             "text": '{"action":"list","path":".","depth":2}',
             "generating": False,
+            "assistantAfterLatestUser": True,
         }
 
     def response_complete(response: str, **_kwargs: object) -> bool:
@@ -9477,11 +9844,13 @@ def test_chatgpt_response_snapshot_keeps_url_text_count_and_generation_atomic() 
             assert "count: elements.length" in expression
             assert "text," in expression
             assert "generating," in expression
+            assert "assistantAfterLatestUser:" in expression
             return {
                 "url": "https://chatgpt.com/c/fresh-session",
                 "count": 2,
                 "text": '{"action":"bodycheck"}',
                 "generating": True,
+                "assistantAfterLatestUser": True,
             }
 
     assert _chatgpt_response_snapshot(_Page(), selector) == {
@@ -9489,7 +9858,87 @@ def test_chatgpt_response_snapshot_keeps_url_text_count_and_generation_atomic() 
         "count": 2,
         "text": '{"action":"bodycheck"}',
         "generating": True,
+        "assistantAfterLatestUser": True,
     }
+
+
+def test_chatgpt_waiter_ignores_assistant_text_before_the_latest_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    target_url = "https://chatgpt.com/c/selected-session"
+
+    class _Page:
+        url = target_url
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    snapshots = iter(
+        (
+            {
+                "url": target_url,
+                "count": 1,
+                "text": "old response",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+            },
+            {
+                "url": target_url,
+                "count": 1,
+                "text": "stale response changed",
+                "generating": False,
+                "assistantAfterLatestUser": False,
+            },
+            {
+                "url": target_url,
+                "count": 2,
+                "text": "current response",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+            },
+        )
+    )
+    completion_candidates: list[str] = []
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_chromium_prompt",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_chatgpt_response_snapshot",
+        lambda *_args: next(snapshots),
+    )
+
+    def response_complete(response: str, **_kwargs: object) -> bool:
+        completion_candidates.append(response)
+        return response == "current response"
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_is_web_response_complete",
+        response_complete,
+    )
+    monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: 0)
+
+    assert (
+        _submit_and_wait(
+            _Page(),
+            "chromium",
+            "Inspect the project",
+            lambda: False,
+            platform="chatgpt",
+            session_check=lambda _allow_transition: target_url,
+            submission_target_url=target_url,
+            session_mode="recent",
+        )
+        == "current response"
+    )
+    assert "stale response changed" not in completion_candidates
+    assert completion_candidates[-1] == "current response"
 
 
 def test_chromium_composer_reloads_once_after_a_stalled_page(
