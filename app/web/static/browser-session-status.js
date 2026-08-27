@@ -1,4 +1,4 @@
-/* Code version: v1.5.0-codex.1 */
+/* Code version: v1.6.0-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v5:";
@@ -71,6 +71,7 @@
         const statusMessage = root.querySelector('[data-role="browser-session-message"]');
         const statusSpinner = root.querySelector('[data-role="browser-session-spinner"]');
         const statusCheckmark = root.querySelector('[data-role="browser-session-checkmark"]');
+        const hideReadyMessage = statusCard?.dataset.browserSessionHideReadyMessage === "true";
         const startButtonSelector = root.dataset.startButtonSelector || "";
         const requiresDownloadReady = root.dataset.requireDownloadReady === "true";
         const startButton = startButtonSelector ? document.querySelector(startButtonSelector) : null;
@@ -119,7 +120,7 @@
             statusAccount.textContent = accountLabel(payload);
             if (statusMessage) {
                 statusMessage.textContent = payload.message || "";
-                statusMessage.hidden = !payload.message;
+                statusMessage.hidden = (hideReadyMessage && isReady) || !payload.message;
             }
             if (statusSpinner) statusSpinner.hidden = true;
             showStatusCheckmark(isReady ? "ready" : "error");

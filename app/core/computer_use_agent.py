@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.38.1-codex.1
+Code version: v3.39.0-codex.1
 """
 
 from __future__ import annotations
@@ -4983,6 +4983,9 @@ class _ProviderSessionBinding:
         self.existing_conversation_urls: set[str] = set()
         self.freshness_baseline_captured = False
         self.initial_transition_confirmed = False
+        self.initial_landing_bounce_detected = False
+        self.initial_landing_recovery_attempted = False
+        self.initial_receipt_revalidation_required = False
         self.bound_conversation_url = (
             normalize_agent_conversation_url(platform, selected_target_url)
             if self.session_mode in {"recent", "project_session"}
@@ -4998,6 +5001,41 @@ class _ProviderSessionBinding:
             and not self.initial_transition_confirmed
             and _provider_pre_submit_target_is_open(
                 self.platform,
+                self.selected_target_url,
+                current_url,
+                self.session_mode,
+            )
+        )
+
+    def _record_initial_chatgpt_landing_bounce(self) -> None:
+        """Record one content-free diagnostic when a fresh ChatGPT session bounces."""
+        if self.initial_landing_bounce_detected:
+            return
+        LOGGER.warning(
+            "event=chatgpt_initial_landing_bounce_detected session_mode=%s",
+            self.session_mode,
+        )
+        self.initial_landing_bounce_detected = True
+
+    def _chatgpt_receipt_landing_race_allowed(
+        self,
+        receipt_url: str,
+        current_url: str,
+    ) -> bool:
+        """Recognize only a fresh ChatGPT receipt racing back to its selected landing."""
+        return bool(
+            self.platform == "chatgpt"
+            and self.session_mode in {"new", "project_new"}
+            and not self.bound_conversation_url
+            and normalize_agent_conversation_url("chatgpt", receipt_url)
+            and _provider_new_session_transition_allowed(
+                "chatgpt",
+                self.selected_target_url,
+                receipt_url,
+                self.session_mode,
+            )
+            and _provider_pre_submit_target_is_open(
+                "chatgpt",
                 self.selected_target_url,
                 current_url,
                 self.session_mode,
@@ -5078,7 +5116,7 @@ class _ProviderSessionBinding:
     def _revalidated_submission_receipt(
         self,
         receipt_url: str,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, bool]:
         """Recheck the same tab and canonical URL after reading one DOM receipt."""
         tab_id, current_url, current_title = _provider_tab_identity(self.page)
         if tab_id != self.expected_tab_id:
@@ -5095,6 +5133,11 @@ class _ProviderSessionBinding:
         )
         if receipt_conversation or current_conversation:
             if not receipt_conversation or receipt_conversation != current_conversation:
+                if self._chatgpt_receipt_landing_race_allowed(
+                    receipt_url,
+                    current_url,
+                ):
+                    return receipt_url, current_title, True
                 raise RuntimeError(
                     "The provider URL changed while the first submitted message was being verified."
                 )
@@ -5111,7 +5154,7 @@ class _ProviderSessionBinding:
                 raise RuntimeError(
                     "The provider URL changed while the first submitted message was being verified."
                 )
-        return current_url, current_title
+        return current_url, current_title, False
 
     def check(self, allow_transition: bool = False) -> str:
         """Validate the tab and optionally latch its one legal new-session transition."""
@@ -5127,6 +5170,7 @@ class _ProviderSessionBinding:
                 current_url,
             ):
                 if self._initial_chatgpt_landing_recovery_allowed(current_url):
+                    self._record_initial_chatgpt_landing_bounce()
                     return self.bound_conversation_url
                 raise RuntimeError(
                     "The selected provider tab navigated away from the newly created session."
@@ -5140,7 +5184,7 @@ class _ProviderSessionBinding:
             receipt_url = self._current_submission_receipt_url()
             if not receipt_url:
                 return ""
-            current_url, current_title = self._revalidated_submission_receipt(
+            current_url, current_title, _landing_race = self._revalidated_submission_receipt(
                 receipt_url
             )
             if not _web_target_is_open(
@@ -5174,7 +5218,7 @@ class _ProviderSessionBinding:
             receipt_url = self._current_submission_receipt_url()
             if not receipt_url:
                 return ""
-            current_url, current_title = self._revalidated_submission_receipt(
+            current_url, current_title, landing_race = self._revalidated_submission_receipt(
                 receipt_url
             )
             if not _provider_new_session_transition_allowed(
@@ -5201,10 +5245,97 @@ class _ProviderSessionBinding:
                     )
                 self.bound_conversation_url = conversation
                 self.expected_title = current_title
+                if landing_race:
+                    self.initial_receipt_revalidation_required = True
+                    self._record_initial_chatgpt_landing_bounce()
                 return conversation
         raise RuntimeError(
             "The selected provider tab navigated away from the chosen session before "
             "the controller transfer completed."
+        )
+
+    def ensure_response_session(
+        self,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> str:
+        """Return only a current response session, restoring one fresh ChatGPT bounce."""
+        conversation = self.check(allow_transition=True)
+        if not conversation:
+            return ""
+        if not (
+            self.platform == "chatgpt"
+            and self.session_mode in {"new", "project_new"}
+            and not self.initial_transition_confirmed
+        ):
+            return conversation
+
+        current_url = str(getattr(self.page, "url", "") or "").strip()
+        recovery_needed = bool(
+            self.initial_landing_bounce_detected
+            or self.initial_receipt_revalidation_required
+        )
+        if not recovery_needed:
+            return conversation
+        if self._initial_chatgpt_landing_recovery_allowed(current_url):
+            if self.initial_landing_recovery_attempted:
+                raise RuntimeError(
+                    "ChatGPT repeatedly returned the fresh conversation to its landing page."
+                )
+            self.initial_landing_recovery_attempted = True
+            goto_with_retry(
+                self.page,
+                conversation,
+                attempts=2,
+                timeout_ms=90_000,
+                should_stop=should_stop,
+            )
+            if callable(should_stop) and should_stop():
+                return ""
+
+        deadline = time.monotonic() + PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
+        while True:
+            if callable(should_stop) and should_stop():
+                return ""
+            tab_id, current_url, current_title = _provider_tab_identity(self.page)
+            if tab_id != self.expected_tab_id:
+                raise RuntimeError(
+                    "The selected provider tab identity changed before the controller transfer completed."
+                )
+            if _web_target_is_open("chatgpt", conversation, current_url):
+                receipt_url = self._current_submission_receipt_url()
+                if normalize_agent_conversation_url("chatgpt", receipt_url) == conversation:
+                    validated_url, validated_title, landing_race = (
+                        self._revalidated_submission_receipt(receipt_url)
+                    )
+                    if (
+                        not landing_race
+                        and normalize_agent_conversation_url(
+                            "chatgpt",
+                            validated_url,
+                        )
+                        == conversation
+                    ):
+                        self.expected_title = validated_title or current_title
+                        self.initial_landing_bounce_detected = False
+                        self.initial_receipt_revalidation_required = False
+                        LOGGER.info(
+                            "event=chatgpt_initial_landing_bounce_recovered session_mode=%s",
+                            self.session_mode,
+                        )
+                        return conversation
+            elif not self._initial_chatgpt_landing_recovery_allowed(current_url):
+                raise RuntimeError(
+                    "The selected provider tab navigated away from the newly created session."
+                )
+            if time.monotonic() >= deadline:
+                break
+            wait_for_timeout = getattr(self.page, "wait_for_timeout", None)
+            if callable(wait_for_timeout):
+                wait_for_timeout(PROVIDER_SESSION_BIND_POLL_MILLISECONDS)
+            else:
+                time.sleep(PROVIDER_SESSION_BIND_POLL_MILLISECONDS / 1_000)
+        raise RuntimeError(
+            "ChatGPT did not restore the verified fresh conversation and transfer receipt."
         )
 
     def require_created_conversation(
@@ -5214,20 +5345,8 @@ class _ProviderSessionBinding:
         """Wait briefly for a canonical first-session URL and its submission receipt."""
         deadline = time.monotonic() + PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
         while True:
-            conversation = self.check(allow_transition=True)
+            conversation = self.ensure_response_session(should_stop)
             if conversation:
-                current_url = str(getattr(self.page, "url", "") or "").strip()
-                if self._initial_chatgpt_landing_recovery_allowed(current_url):
-                    goto_with_retry(
-                        self.page,
-                        conversation,
-                        attempts=2,
-                        timeout_ms=90_000,
-                        should_stop=should_stop,
-                    )
-                    if callable(should_stop) and should_stop():
-                        return ""
-                    conversation = self.check(allow_transition=True)
                 self.initial_transition_confirmed = True
                 return conversation
             if callable(should_stop) and should_stop():
@@ -5583,6 +5702,7 @@ def _run_web_action_loop(
         should_stop,
         platform=platform,
         session_check=session_binding.check,
+        session_recover=session_binding.ensure_response_session,
         submission_target_url=selected_target_url,
         session_mode=session_binding.session_mode,
         on_submitted=lambda: update(
@@ -5714,6 +5834,7 @@ def _run_web_action_loop(
                 should_stop,
                 platform=platform,
                 session_check=session_binding.check,
+                session_recover=session_binding.ensure_response_session,
                 submission_target_url=selected_target_url,
                 session_mode=session_binding.session_mode,
                 on_submitted=lambda: update(
@@ -5754,6 +5875,7 @@ def _run_web_action_loop(
                     should_stop,
                     platform=platform,
                     session_check=session_binding.check,
+                    session_recover=session_binding.ensure_response_session,
                     submission_target_url=selected_target_url,
                     session_mode=session_binding.session_mode,
                     on_submitted=lambda: update(
@@ -5815,6 +5937,7 @@ def _run_web_action_loop(
             should_stop,
             platform=platform,
             session_check=session_binding.check,
+            session_recover=session_binding.ensure_response_session,
             submission_target_url=selected_target_url,
             session_mode=session_binding.session_mode,
             on_submitted=lambda: update(
@@ -7499,6 +7622,7 @@ def _submit_and_wait(
     on_submitted: Callable[[], None] | None = None,
     platform: str = DEFAULT_AGENT_PLATFORM,
     session_check: Callable[[bool], str] | None = None,
+    session_recover: Callable[[Callable[[], bool] | None], str] | None = None,
     submission_target_url: str = "",
     session_mode: str = "",
 ) -> str:
@@ -7506,18 +7630,42 @@ def _submit_and_wait(
     if should_stop():
         return ""
     selector = _web_assistant_selector(platform)
-    baseline = _platform_web_count(page, browser_kind, platform, selector)
-    baseline_response = _platform_web_last_text(page, browser_kind, platform, selector)
-    if should_stop():
-        return ""
     checked_target_url = session_check(False) if session_check is not None else ""
     atomic_target_url = checked_target_url or str(submission_target_url or "").strip()
+    if platform == "chatgpt" and browser_kind != "safari":
+        baseline_snapshot = _chatgpt_response_snapshot(page, selector)
+        if atomic_target_url and not _web_target_is_open(
+            "chatgpt",
+            atomic_target_url,
+            str(baseline_snapshot.get("url") or ""),
+        ):
+            raise RuntimeError(
+                "The selected ChatGPT tab changed before the response baseline was captured."
+            )
+        baseline = int(baseline_snapshot.get("count") or 0)
+        baseline_response = str(baseline_snapshot.get("text") or "")
+    else:
+        baseline = _platform_web_count(page, browser_kind, platform, selector)
+        baseline_response = _platform_web_last_text(
+            page,
+            browser_kind,
+            platform,
+            selector,
+        )
+    if should_stop():
+        return ""
     if browser_kind == "safari":
         if platform != "chatgpt":
             raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Agent sessions require Edge or Chrome.")
         _submit_safari_prompt(page, message, should_stop)
     elif platform == "chatgpt":
-        _submit_chromium_prompt(page, message, should_stop)
+        _submit_chromium_prompt(
+            page,
+            message,
+            should_stop,
+            session_check=session_check,
+            expected_target_url=atomic_target_url,
+        )
     else:
         _submit_chromium_web_prompt(
             page,
@@ -7528,12 +7676,15 @@ def _submit_and_wait(
             expected_target_url=atomic_target_url,
             session_mode=session_mode,
         )
-    if session_check is not None:
+    if session_recover is not None:
+        session_recover(should_stop)
+    elif session_check is not None:
         session_check(True)
     if on_submitted is not None and not should_stop():
         on_submitted()
 
     submitted_at = time.monotonic()
+    session_bind_deadline = submitted_at + PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
     stable_since = submitted_at
     previous = ""
     response = ""
@@ -7542,17 +7693,63 @@ def _submit_and_wait(
         if should_stop():
             _stop_web_generation(page, browser_kind)
             return response
-        if session_check is not None:
-            session_check(True)
-        count = _platform_web_count(page, browser_kind, platform, selector)
-        latest_response = _platform_web_last_text(page, browser_kind, platform, selector)
+        response_session_url_before_check = str(
+            getattr(page, "url", "") or ""
+        ).strip()
+        checked_response_session = ""
+        if session_recover is not None:
+            checked_response_session = session_recover(should_stop)
+        elif session_check is not None:
+            checked_response_session = session_check(True)
+        if should_stop():
+            return response
+        response_session_url_after_check = str(
+            getattr(page, "url", "") or ""
+        ).strip()
+        if response_session_url_after_check != response_session_url_before_check:
+            previous = ""
+            stable_since = time.monotonic()
+        if (
+            session_check is not None
+            and str(session_mode or "").strip().lower() in {"new", "project_new"}
+            and not checked_response_session
+        ):
+            if time.monotonic() >= session_bind_deadline:
+                raise RuntimeError(
+                    "The provider did not prove a fresh conversation URL after submission."
+                )
+            _web_wait(page, browser_kind, 500)
+            continue
+        if platform == "chatgpt" and browser_kind != "safari":
+            response_snapshot = _chatgpt_response_snapshot(page, selector)
+            response_target_url = checked_response_session or atomic_target_url
+            if response_target_url and not _web_target_is_open(
+                "chatgpt",
+                response_target_url,
+                str(response_snapshot.get("url") or ""),
+            ):
+                previous = ""
+                stable_since = time.monotonic()
+                _web_wait(page, browser_kind, 500)
+                continue
+            count = int(response_snapshot.get("count") or 0)
+            latest_response = str(response_snapshot.get("text") or "")
+            generating = bool(response_snapshot.get("generating"))
+        else:
+            count = _platform_web_count(page, browser_kind, platform, selector)
+            latest_response = _platform_web_last_text(
+                page,
+                browser_kind,
+                platform,
+                selector,
+            )
+            generating = _web_is_generating(page, browser_kind)
         if count > baseline or (latest_response and latest_response != baseline_response):
             response = latest_response
         now = time.monotonic()
         if response != previous:
             previous = response
             stable_since = now
-        generating = _web_is_generating(page, browser_kind)
         if _is_web_response_complete(
             response,
             is_generating=generating,
@@ -7906,10 +8103,14 @@ def _submit_chromium_prompt(
     page: Any,
     message: str,
     should_stop: Callable[[], bool],
+    session_check: Callable[[bool], str] | None = None,
+    expected_target_url: str = "",
 ) -> None:
     """Fill Chromium's composer and click Send after any attachment is ready."""
     if should_stop():
         return
+    if session_check is not None:
+        session_check(False)
     user_selector = '[data-message-author-role="user"]'
     baseline_user_count = _web_count(page, "chromium", user_selector)
     if should_stop():
@@ -7926,14 +8127,41 @@ def _submit_chromium_prompt(
     while time.monotonic() < deadline:
         if should_stop():
             return
-        result = page.evaluate(
-            r"""() => {
+        def scan_and_submit() -> Any:
+            if session_check is not None:
+                session_check(False)
+            return page.evaluate(
+                r"""({expectedTargetUrl}) => {
                 const isVisible = (element) => {
                     const style = window.getComputedStyle(element);
                     return element.getClientRects().length > 0
                         && style.visibility !== 'hidden'
                         && style.display !== 'none';
                 };
+                const targetMatches = () => {
+                    if (!expectedTargetUrl) return true;
+                    let expected;
+                    let current;
+                    try {
+                        expected = new URL(expectedTargetUrl);
+                        current = new URL(location.href);
+                    } catch (_) {
+                        return false;
+                    }
+                    const allowedHosts = new Set(['chatgpt.com', 'www.chatgpt.com']);
+                    const normalizedPath = (url) => url.pathname.replace(/\/+$/, '') || '/';
+                    return expected.protocol === 'https:'
+                        && current.protocol === 'https:'
+                        && allowedHosts.has(expected.hostname.toLowerCase())
+                        && allowedHosts.has(current.hostname.toLowerCase())
+                        && normalizedPath(expected) === normalizedPath(current);
+                };
+                if (!targetMatches()) {
+                    return {
+                        clicked: false,
+                        targetMismatch: true,
+                    };
+                }
                 const labelFor = (button) => `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`.trim();
                 const controls = Array.from(document.querySelectorAll('button')).filter(isVisible);
                 const sendButtons = controls.filter((button) => {
@@ -7960,10 +8188,22 @@ def _submit_chromium_prompt(
                         disabled: Boolean(button.disabled || button.getAttribute('aria-disabled') === 'true'),
                     })),
                 };
-            }"""
+                }""",
+                {"expectedTargetUrl": expected_target_url},
+            )
+
+        executed, result = _run_browser_action_unless_stopped(
+            should_stop,
+            scan_and_submit,
         )
+        if not executed:
+            return
         if isinstance(result, dict):
             last_state = result
+            if result.get("targetMismatch"):
+                raise RuntimeError(
+                    "The selected ChatGPT tab changed before the prompt could be sent."
+                )
             if result.get("clicked"):
                 break
         page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
@@ -7978,6 +8218,8 @@ def _submit_chromium_prompt(
     while time.monotonic() < accepted_deadline:
         if should_stop():
             return
+        if session_check is not None:
+            session_check(True)
         composer_empty = bool(
             page.evaluate(
                 """() => {
@@ -8072,6 +8314,53 @@ def _platform_web_last_text(page: Any, browser_kind: str, platform: str, selecto
     if platform == "chatgpt":
         return _web_last_text(page, browser_kind, selector)
     return _web_last_text(page, browser_kind, selector, platform)
+
+
+def _chatgpt_response_snapshot(page: Any, selector: str) -> dict[str, Any]:
+    """Read ChatGPT URL, response text, count, and generation state atomically."""
+    result = page.evaluate(
+        r"""({selector}) => {
+            const elements = Array.from(document.querySelectorAll(selector));
+            const latest = elements.at(-1);
+            let text = '';
+            if (latest) {
+                const codeBlocks = Array.from(latest.querySelectorAll('pre code'));
+                const actionBlock = codeBlocks.slice(-8).reverse().find((block) =>
+                    /[\"']action[\"']\s*:/.test(block.innerText || block.textContent || '')
+                );
+                text = actionBlock
+                    ? (actionBlock.innerText || actionBlock.textContent || '').trim()
+                    : (latest.innerText || latest.textContent || '').trim();
+            }
+            const generating = Array.from(document.querySelectorAll('button')).some((button) => {
+                const buttonText = `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`.toLowerCase();
+                const testId = (button.getAttribute('data-testid') || '').toLowerCase();
+                return button.offsetParent !== null
+                    && !button.disabled
+                    && button.getAttribute('aria-disabled') !== 'true'
+                    && (
+                        /stop\s+(generating|response|answering|streaming)/.test(buttonText)
+                        || /停止(?:生成|回答|串流|流式传输|流式傳輸)?/.test(buttonText)
+                        || /stop-(button|generating|response|streaming)/.test(testId)
+                    );
+            });
+            return {
+                url: location.href,
+                count: elements.length,
+                text,
+                generating,
+            };
+        }""",
+        {"selector": selector},
+    )
+    if not isinstance(result, dict):
+        raise RuntimeError("ChatGPT returned an invalid atomic response snapshot.")
+    return {
+        "url": str(result.get("url") or "").strip(),
+        "count": int(result.get("count") or 0),
+        "text": str(result.get("text") or ""),
+        "generating": bool(result.get("generating")),
+    }
 
 
 def _web_is_generating(page: Any, browser_kind: str) -> bool:

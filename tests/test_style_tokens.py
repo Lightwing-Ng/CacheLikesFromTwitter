@@ -195,6 +195,7 @@ def test_cache_status_message_hangs_under_the_account_label() -> None:
 
     item_start = stylesheet.index(".browser-session-status-item {")
     item_rule = stylesheet[item_start:stylesheet.index("\n}", item_start)]
+    assert "align-items: center;" in item_rule
     assert "gap: var(--browser-session-status-item-gap);" in item_rule
 
     checkmark_start = stylesheet.index(

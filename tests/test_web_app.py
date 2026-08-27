@@ -322,7 +322,10 @@ class WebAppTests(unittest.TestCase):
             'chatgpt-page.js?v=chatgpt-page-v1.2.1-codex.1',
             chatgpt_body,
         )
-        self.assertIn("The ChatGPT account in the selected browser is ready.", chatgpt_body)
+        self.assertIn('data-browser-session-account-label="ChatGPT"', chatgpt_body)
+        self.assertIn('data-browser-session-hide-ready-message="true"', chatgpt_body)
+        self.assertIn(">ChatGPT account</strong>", chatgpt_body)
+        self.assertNotIn("The ChatGPT account in the selected browser is ready.", chatgpt_body)
         self.assertIn('data-chatgpt-content-mode-input', chatgpt_body)
         self.assertIn('data-chatgpt-media-config', chatgpt_body)
         self.assertIn('name="chatgpt_project_url"', chatgpt_body)
@@ -372,7 +375,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.5.0-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.6.0-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -802,7 +805,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.5.0-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.6.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
         self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.22.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -1994,6 +1997,8 @@ class WebAppTests(unittest.TestCase):
             'function hideStatusCheckmark()',
             'if (statusSpinner) statusSpinner.hidden = false;',
             'if (activeBrowser !== browserId || platform !== requestPlatform) return;',
+            'const hideReadyMessage = statusCard?.dataset.browserSessionHideReadyMessage === "true";',
+            'statusMessage.hidden = (hideReadyMessage && isReady) || !payload.message;',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)

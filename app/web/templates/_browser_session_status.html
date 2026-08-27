@@ -1,10 +1,11 @@
-{# Code version: v1.2.1-codex.2 #}
+{# Code version: v1.3.0-codex.1 #}
 
-{% macro render_browser_session_status(empty_message="No signed-in account detected", ready_label="Ready", terminal_execution=none, account_label="", compact=false) -%}
+{% macro render_browser_session_status(empty_message="No signed-in account detected", ready_label="Ready", terminal_execution=none, account_label="", compact=false, hide_ready_message=false) -%}
 <div
     class="browser-session-status-card{% if compact %} browser-session-status-card-compact{% endif %}"
     data-role="browser-session-status"
     data-browser-session-account-label="{{ account_label }}"
+    data-browser-session-hide-ready-message="{{ 'true' if hide_ready_message else 'false' }}"
     hidden
 >
     <div class="browser-session-status-row">
