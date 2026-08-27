@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.38.0-codex.1
+Code version: v3.38.1-codex.1
 """
 
 from __future__ import annotations
@@ -4982,10 +4982,26 @@ class _ProviderSessionBinding:
         self.submission_marker = ""
         self.existing_conversation_urls: set[str] = set()
         self.freshness_baseline_captured = False
+        self.initial_transition_confirmed = False
         self.bound_conversation_url = (
             normalize_agent_conversation_url(platform, selected_target_url)
             if self.session_mode in {"recent", "project_session"}
             else ""
+        )
+
+    def _initial_chatgpt_landing_recovery_allowed(self, current_url: str) -> bool:
+        """Allow one proven fresh ChatGPT conversation to recover from its landing page."""
+        return bool(
+            self.platform == "chatgpt"
+            and self.session_mode in {"new", "project_new"}
+            and self.bound_conversation_url
+            and not self.initial_transition_confirmed
+            and _provider_pre_submit_target_is_open(
+                self.platform,
+                self.selected_target_url,
+                current_url,
+                self.session_mode,
+            )
         )
 
     def prepare_fresh_session(
@@ -5110,6 +5126,8 @@ class _ProviderSessionBinding:
                 self.bound_conversation_url,
                 current_url,
             ):
+                if self._initial_chatgpt_landing_recovery_allowed(current_url):
+                    return self.bound_conversation_url
                 raise RuntimeError(
                     "The selected provider tab navigated away from the newly created session."
                 )
@@ -5198,6 +5216,19 @@ class _ProviderSessionBinding:
         while True:
             conversation = self.check(allow_transition=True)
             if conversation:
+                current_url = str(getattr(self.page, "url", "") or "").strip()
+                if self._initial_chatgpt_landing_recovery_allowed(current_url):
+                    goto_with_retry(
+                        self.page,
+                        conversation,
+                        attempts=2,
+                        timeout_ms=90_000,
+                        should_stop=should_stop,
+                    )
+                    if callable(should_stop) and should_stop():
+                        return ""
+                    conversation = self.check(allow_transition=True)
+                self.initial_transition_confirmed = True
                 return conversation
             if callable(should_stop) and should_stop():
                 return ""

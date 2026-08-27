@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.38.0-codex.1
+Code version: v3.38.1-codex.1
 """
 
 from __future__ import annotations
@@ -5012,6 +5012,112 @@ def test_submission_receipt_url_drift_fails_closed(
     page.url = "https://grok.com/c/current-session"
 
     with pytest.raises(RuntimeError, match="URL changed while"):
+        binding.check(allow_transition=True)
+
+
+def test_fresh_chatgpt_binding_restores_created_conversation_after_landing_bounce() -> None:
+    created_url = "https://chatgpt.com/c/fresh-session"
+
+    class _Page:
+        url = "https://chatgpt.com/"
+
+        def __init__(self) -> None:
+            self.goto_calls: list[tuple[str, dict[str, object]]] = []
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+        def goto(self, url: str, **kwargs: object) -> None:
+            self.goto_calls.append((url, kwargs))
+            self.url = url
+
+        def title(self) -> str:
+            return "Fresh session"
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+    page.url = created_url
+
+    assert binding.check(allow_transition=True) == created_url
+    page.url = "https://chatgpt.com/"
+
+    assert binding.check(allow_transition=True) == created_url
+    assert binding.require_created_conversation() == created_url
+    assert page.goto_calls == [
+        (
+            created_url,
+            {"wait_until": "domcontentloaded", "timeout": 90_000},
+        )
+    ]
+    assert binding.initial_transition_confirmed is True
+
+
+def test_fresh_chatgpt_binding_rejects_landing_after_initial_confirmation() -> None:
+    created_url = "https://chatgpt.com/c/fresh-session"
+
+    class _Page:
+        url = created_url
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+
+    assert binding.check(allow_transition=True) == created_url
+    assert binding.require_created_conversation() == created_url
+    page.url = "https://chatgpt.com/"
+
+    with pytest.raises(RuntimeError, match="navigated away from the newly created session"):
+        binding.check(allow_transition=True)
+
+
+def test_fresh_chatgpt_binding_rejects_a_different_conversation() -> None:
+    created_url = "https://chatgpt.com/c/fresh-session"
+
+    class _Page:
+        url = created_url
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+
+    assert binding.check(allow_transition=True) == created_url
+    page.url = "https://chatgpt.com/c/different-session"
+
+    with pytest.raises(RuntimeError, match="navigated away from the newly created session"):
         binding.check(allow_transition=True)
 
 
