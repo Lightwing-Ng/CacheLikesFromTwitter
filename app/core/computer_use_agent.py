@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.37.2-codex.1
+Code version: v3.38.0-codex.1
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ from .browser_sessions import (
     browser_descriptors,
     goto_with_retry,
     launch_chromium_context,
+    select_provider_tab,
     sync_playwright_or_error,
 )
 from .config import (
@@ -50,6 +51,7 @@ from .config import (
     is_windows_host,
     resolve_runtime_root,
 )
+from .gemini_downloader import inspect_gemini_session
 from .grok_history import _grok_api_json
 from .safari_automation import SafariContext
 from .state import utc_now
@@ -84,6 +86,8 @@ MAX_FILE_READ_CHARS = 120_000
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
 CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
+WEB_MODEL_CONTROL_WAIT_ATTEMPTS = 61
+WEB_MODEL_CONTROL_POLL_SECONDS = 0.25
 MAX_BASE64_DECODED_BYTES = MAX_FILE_READ_CHARS
 BROWSER_INTERRUPTION_TIMEOUT_SECONDS = 300
 BROWSER_INTERRUPTION_POLL_SECONDS = 1.0
@@ -4663,7 +4667,11 @@ def run_web_computer_use(
         ) as context:
             if should_stop():
                 return stopped_result
-            page = context.pages[0] if context.pages else context.new_page()
+            page = select_provider_tab(
+                context,
+                home_url=selected_target_url,
+                hosts=_platform_hosts(settings.platform),
+            )
             goto_with_retry(
                 page,
                 selected_target_url,
@@ -5482,6 +5490,7 @@ def _run_web_action_loop(
             f"menu_text={available_text}, "
             f"visible_buttons={model_observation.get('visible_buttons') or []}, "
             f"menu_roles={model_observation.get('menu_roles') or []}, "
+            f"page_diagnostic={model_observation.get('diagnostic') or {}}, "
             f"attempted_labels={verified_attempted_labels}."
         )
     if should_stop():
@@ -5925,6 +5934,7 @@ def _is_composer_wait_timeout(exc: Exception) -> bool:
 def _wait_for_visible_composer(
     target: Any,
     should_stop: Callable[[], bool] | None = None,
+    readiness_check: Callable[[], None] | None = None,
 ) -> bool:
     """Poll one composer locator so Stop can interrupt the initial readiness gate."""
     deadline = time.monotonic() + CHATGPT_COMPOSER_TIMEOUT_SECONDS
@@ -5932,6 +5942,8 @@ def _wait_for_visible_composer(
     while time.monotonic() < deadline:
         if callable(should_stop) and should_stop():
             return False
+        if callable(readiness_check):
+            readiness_check()
         remaining_ms = max(1, int((deadline - time.monotonic()) * 1_000))
         try:
             target.wait_for(
@@ -5940,6 +5952,8 @@ def _wait_for_visible_composer(
             )
             if callable(should_stop) and should_stop():
                 return False
+            if callable(readiness_check):
+                readiness_check()
             return True
         except Exception as exc:
             if not _is_composer_wait_timeout(exc):
@@ -5950,6 +5964,21 @@ def _wait_for_visible_composer(
     ) from last_error
 
 
+def _require_gemini_agent_availability(page: Any) -> None:
+    """Fail before transfer when Gemini reports a terminal account or region state."""
+    snapshot = inspect_gemini_session(page)
+    if snapshot.get("unsupportedRegion"):
+        raise RuntimeError(
+            "Gemini Web is not available in the selected browser's current region. "
+            "No project context or prompt was sent."
+        )
+    if snapshot.get("signedOut"):
+        raise RuntimeError(
+            "The selected browser is not signed in to Gemini Web. "
+            "No project context or prompt was sent."
+        )
+
+
 def _wait_for_web_composer(
     page: Any,
     platform: str,
@@ -5958,11 +5987,17 @@ def _wait_for_web_composer(
     """Wait for a provider's composer without bringing its background window forward."""
     selector = _web_composer_selector(platform)
     last_error: Exception | None = None
+    readiness_check = (
+        (lambda: _require_gemini_agent_availability(page))
+        if platform == "gemini"
+        else None
+    )
     for attempt in range(1, CHATGPT_COMPOSER_RELOAD_ATTEMPTS + 1):
         try:
             if not _wait_for_visible_composer(
                 page.locator(selector).first,
                 should_stop=should_stop,
+                readiness_check=readiness_check,
             ):
                 return False
             return True
@@ -6012,6 +6047,8 @@ def _verify_agent_page(
         raise RuntimeError(
             f"The selected {AGENT_PLATFORM_BY_KEY[platform]['label']} session did not finish opening in the browser."
         )
+    if platform == "gemini":
+        _require_gemini_agent_availability(page)
     if callable(should_stop) and should_stop():
         return False
     signed_out = bool(
@@ -6354,6 +6391,7 @@ def _record_model_observation(
     menu_text: str = "",
     visible_buttons: list[str] | tuple[str, ...] | None = None,
     menu_roles: list[str] | tuple[str, ...] | None = None,
+    diagnostic: dict[str, Any] | None = None,
 ) -> None:
     if observation is None:
         return
@@ -6366,6 +6404,7 @@ def _record_model_observation(
             "menu_text": str(menu_text or observed or "").strip(),
             "visible_buttons": [str(item).strip() for item in (visible_buttons or []) if str(item).strip()],
             "menu_roles": [str(item).strip() for item in (menu_roles or []) if str(item).strip()],
+            "diagnostic": dict(diagnostic or {}),
         }
     )
 
@@ -6817,9 +6856,9 @@ def _select_web_model(
             attempted_labels=remote_labels,
         )
         return False
-    executed, result = _run_browser_action_unless_stopped(
-        stop_requested,
-        lambda: page.evaluate(
+
+    def evaluate_model_control() -> Any:
+        return page.evaluate(
             r"""async ({remoteLabels, platform, uiLabel}) => {
             const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
             const isVisible = (element) => {
@@ -6945,7 +6984,29 @@ def _select_web_model(
                 ))
                 .filter((element) => !/send|submit|attach|upload|dictate/i.test(labelFor(element)));
             const trigger = findTrigger();
-            if (!trigger) return {ok: false, reason: 'model-control-not-found', available: []};
+            if (!trigger) {
+                const visibleButtons = [...document.querySelectorAll('button, [role="button"]')]
+                    .filter(isVisible);
+                const visibleComposers = [...document.querySelectorAll(
+                    'textarea, [contenteditable="true"]'
+                )].filter(isVisible);
+                return {
+                    ok: false,
+                    reason: 'model-control-not-found',
+                    available: [],
+                    menuRoles: visibleSurfaces()
+                        .map((surface) => normalize(surface.getAttribute('role') || ''))
+                        .filter(Boolean)
+                        .slice(0, 20),
+                    diagnostic: {
+                        ready_state: document.readyState,
+                        visible_button_count: visibleButtons.length,
+                        visible_composer_count: visibleComposers.length,
+                        semantic_trigger_count: triggerCandidates().length,
+                        visible_menu_count: visibleSurfaces().length,
+                    },
+                };
+            }
             const controlledId = (trigger.getAttribute('aria-controls') || '').trim();
             const exactGeminiPrimary = normalize(uiLabel);
             const geminiPrimaryLabel = (element) => {
@@ -7166,8 +7227,30 @@ def _select_web_model(
                 "platform": platform,
                 "uiLabel": str(option.get("ui_label") or option.get("label") or ""),
             },
-        ),
-    )
+        )
+
+    result: Any = None
+    executed = False
+    for attempt in range(WEB_MODEL_CONTROL_WAIT_ATTEMPTS):
+        executed, result = _run_browser_action_unless_stopped(
+            stop_requested,
+            evaluate_model_control,
+        )
+        if not executed:
+            break
+        retryable = bool(
+            isinstance(result, dict)
+            and result.get("reason") == "model-control-not-found"
+        )
+        if not retryable or attempt + 1 >= WEB_MODEL_CONTROL_WAIT_ATTEMPTS:
+            break
+        if stop_requested():
+            executed = False
+            break
+        time.sleep(WEB_MODEL_CONTROL_POLL_SECONDS)
+        if stop_requested():
+            executed = False
+            break
     if not executed:
         _record_model_observation(
             observation,
@@ -7197,12 +7280,40 @@ def _select_web_model(
             result.get("reason")
             or ("model-readback-mismatch" if result.get("ok") else reason)
         )
+    if platform == "gemini" and reason == "model-control-not-found":
+        _require_gemini_agent_availability(page)
+    diagnostic: dict[str, Any] = {}
+    raw_diagnostic = result.get("diagnostic") if isinstance(result, dict) else None
+    if isinstance(raw_diagnostic, dict):
+        ready_state = str(raw_diagnostic.get("ready_state") or "").strip().lower()
+        if ready_state in {"loading", "interactive", "complete"}:
+            diagnostic["ready_state"] = ready_state
+        for key in (
+            "visible_button_count",
+            "visible_composer_count",
+            "semantic_trigger_count",
+            "visible_menu_count",
+        ):
+            value = raw_diagnostic.get(key)
+            if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100_000:
+                diagnostic[key] = value
+    safe_menu_roles: list[str] = []
+    if isinstance(result, dict):
+        safe_menu_roles = list(
+            dict.fromkeys(
+                normalized
+                for value in result.get("menuRoles", [])
+                if (normalized := str(value or "").strip().lower())
+                in {"menu", "listbox", "dialog"}
+            )
+        )[:20]
     LOGGER.warning(
-        "%s Web could not verify model %s (%s; available: %s); project data transfer remains blocked.",
+        "%s Web could not verify model %s (%s; available: %s; diagnostic: %s); project data transfer remains blocked.",
         AGENT_PLATFORM_BY_KEY[platform]["label"],
         remote_labels[0],
         reason,
         ", ".join(dict.fromkeys(available)) or "none",
+        diagnostic,
     )
     _record_model_observation(
         observation,
@@ -7213,6 +7324,8 @@ def _select_web_model(
         attempted_labels=remote_labels,
         menu_text=", ".join(dict.fromkeys(available)),
         reason=reason,
+        menu_roles=safe_menu_roles,
+        diagnostic=diagnostic,
     )
     return False
 

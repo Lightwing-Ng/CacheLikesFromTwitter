@@ -1,6 +1,6 @@
 """Focused tests for Gemini session history Parquet persistence."""
 
-# Code version: v1.10.1-codex.1
+# Code version: v1.10.2-codex.1
 
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ from urllib.parse import parse_qs, urlencode
 import pyarrow.parquet as pq
 import pytest
 
+from app.core.browser_sessions import TRANSIENT_BROWSER_ERROR_MARKERS
 from app.core.gemini_downloader import (
+    GEMINI_TRANSIENT_NAVIGATION_MARKERS,
     GeminiConversationLink,
     GeminiHistoryStore,
     GeminiNoCacheableMessagesError,
@@ -41,6 +43,11 @@ from app.core.gemini_downloader import (
 from app.core.config import CrawlConfig
 from app.core.state import TaskSnapshot, TaskState
 from app.core.resource_persistence import GEMINI_HISTORY_SCHEMA
+
+
+def test_gemini_navigation_reuses_the_shared_transient_error_contract() -> None:
+    assert GEMINI_TRANSIENT_NAVIGATION_MARKERS is TRANSIENT_BROWSER_ERROR_MARKERS
+    assert "ERR_CONNECTION_TIMED_OUT" in GEMINI_TRANSIENT_NAVIGATION_MARKERS
 
 
 def _messages(user_text: str = "Hello", assistant_text: str = "Hi there") -> list[dict[str, object]]:

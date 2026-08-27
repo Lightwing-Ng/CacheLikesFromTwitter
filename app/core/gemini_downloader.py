@@ -1,6 +1,6 @@
 """Browser-backed Gemini session history caching."""
 
-# Code version: v1.10.1-codex.1
+# Code version: v1.10.2-codex.1
 
 from __future__ import annotations
 
@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from .browser_sessions import (
+    TRANSIENT_BROWSER_ERROR_MARKERS,
     browser_descriptors,
     goto_with_retry,
     launch_chromium_context,
@@ -51,12 +52,7 @@ GEMINI_HISTORY_RPC_READY_WAIT_MILLISECONDS = 60_000
 GEMINI_DISCOVERY_CHECKPOINT_MAX_AGE_SECONDS = 24 * 60 * 60
 GEMINI_TRANSIENT_NAVIGATION_RETRY_BASE_MILLISECONDS = 5_000
 GEMINI_TRANSIENT_NAVIGATION_COOLDOWN_MILLISECONDS = 30_000
-GEMINI_TRANSIENT_NAVIGATION_MARKERS = (
-    "ERR_TUNNEL_CONNECTION_FAILED",
-    "ERR_NETWORK_CHANGED",
-    "ERR_TIMED_OUT",
-    "ERR_CONNECTION_RESET",
-)
+GEMINI_TRANSIENT_NAVIGATION_MARKERS = TRANSIENT_BROWSER_ERROR_MARKERS
 GEMINI_BOT_CHECK_MARKERS = (
     "unusual traffic",
     "verify you are human",
@@ -386,8 +382,15 @@ def inspect_gemini_session(page) -> dict[str, Any]:
             const hasComposer = Boolean(document.querySelector('textarea, [contenteditable="true"]'));
             const signedOut = /(?:^|\n)\s*(?:Sign in|Log in)\s*(?:\n|$)/i.test(bodyText)
                 && !account && !conversationLinks && !hasComposer;
-            const unsupportedRegion = /gemini (?:isn['’]t|is not) (?:currently )?(?:supported|available) in your country/i
-                .test(bodyText);
+            const unsupportedCopy = (
+                /gemini (?:isn['’]t|is not) (?:currently )?(?:supported|available) in your country/i
+                    .test(bodyText)
+                || /gemini\s*(?:目前)?(?:不支持|不支援)(?:你|您)?所在的(?:国家(?:或|\/)?|國家(?:或|\/)?)?(?:地区|地區)/i
+                    .test(bodyText)
+                || /gemini\s*(?:目前)?(?:无法|無法)在(?:你|您)?所在的(?:国家(?:或|\/)?|國家(?:或|\/)?)?(?:地区|地區)(?:使用|提供服务|提供服務)/i
+                    .test(bodyText)
+            );
+            const unsupportedRegion = unsupportedCopy && !hasComposer && conversationLinks === 0;
             return {
                 href: location.href,
                 title: document.title || "",

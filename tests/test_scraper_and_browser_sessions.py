@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.7-codex.1
+Code version: v1.6.8-codex.1
 """
 
 from __future__ import annotations
@@ -71,6 +71,33 @@ def test_goto_with_retry_does_not_navigate_again_after_stop(stop_stage: str) -> 
 
     assert goto_calls == ([] if stop_stage == "before_navigation" else ["https://chatgpt.com/"])
     assert waits == ([1_500] if stop_stage == "during_retry_wait" else [])
+
+
+def test_goto_with_retry_retries_an_exact_connection_timeout() -> None:
+    goto_calls: list[str] = []
+    waits: list[int] = []
+
+    class Page:
+        def goto(self, url: str, **_kwargs: object) -> None:
+            goto_calls.append(url)
+            if len(goto_calls) == 1:
+                raise RuntimeError("Page.goto: net::ERR_CONNECTION_TIMED_OUT")
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            waits.append(milliseconds)
+
+    goto_with_retry(
+        Page(),
+        "https://gemini.google.com/app",
+        attempts=2,
+        timeout_ms=90_000,
+    )
+
+    assert goto_calls == [
+        "https://gemini.google.com/app",
+        "https://gemini.google.com/app",
+    ]
+    assert waits == [1_500]
 
 
 def _tweet_entry(status_id: str, handle: str) -> dict[str, object]:

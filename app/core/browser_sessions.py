@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.19.1-codex.1
+# Code version: v1.19.2-codex.1
 
 from __future__ import annotations
 
@@ -50,6 +50,7 @@ TRANSIENT_BROWSER_ERROR_MARKERS = (
     "ERR_TUNNEL_CONNECTION_FAILED",
     "ERR_NETWORK_CHANGED",
     "ERR_TIMED_OUT",
+    "ERR_CONNECTION_TIMED_OUT",
     "ERR_CONNECTION_RESET",
 )
 IDEMPOTENT_CHROMIUM_CONTEXT_CLOSE_ERROR_MARKERS = (

@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.37.2-codex.1
+Code version: v3.38.0-codex.1
 """
 
 from __future__ import annotations
@@ -789,6 +789,122 @@ def test_non_chatgpt_model_selection_honors_stop_before_remote_dom_actions() -> 
         is False
     )
     assert observation["reason"] == "stop-requested"
+
+
+def test_non_chatgpt_model_selection_honors_stop_during_control_hydration_wait() -> None:
+    stop_requested = Event()
+    evaluations = 0
+
+    class _Page:
+        def evaluate(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            nonlocal evaluations
+            evaluations += 1
+            stop_requested.set()
+            return {
+                "ok": False,
+                "reason": "model-control-not-found",
+                "diagnostic": {"ready_state": "interactive"},
+            }
+
+    observation: dict[str, object] = {}
+
+    assert (
+        _select_web_model(
+            _Page(),
+            "chromium",
+            "gemini",
+            "gemini-3.1-pro",
+            observation,
+            should_stop=stop_requested.is_set,
+        )
+        is False
+    )
+    assert evaluations == 1
+    assert observation["reason"] == "stop-requested"
+
+
+def test_non_chatgpt_model_control_hydration_wait_is_bounded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    evaluations = 0
+
+    class _Page:
+        def evaluate(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            nonlocal evaluations
+            evaluations += 1
+            return {
+                "ok": False,
+                "reason": "model-control-not-found",
+                "visibleButtons": ["Project confidential-alpha"],
+                "menuRoles": ["menu", "MENU", "malicious-role"],
+                "diagnostic": {
+                    "ready_state": "interactive",
+                    "title": "Confidential project title",
+                    "visible_button_count": 0,
+                    "visible_composer_count": 1,
+                    "untrusted": "must not persist",
+                },
+            }
+
+    monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_WAIT_ATTEMPTS", 3)
+    monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_POLL_SECONDS", 0)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "inspect_gemini_session",
+        lambda _page: {"unsupportedRegion": False, "signedOut": False},
+    )
+    observation: dict[str, object] = {}
+
+    assert (
+        _select_web_model(
+            _Page(),
+            "chromium",
+            "gemini",
+            "gemini-3.1-pro",
+            observation,
+        )
+        is False
+    )
+    assert evaluations == 3
+    assert observation["reason"] == "model-control-not-found"
+    assert observation["visible_buttons"] == []
+    assert observation["menu_roles"] == ["menu"]
+    assert observation["diagnostic"] == {
+        "ready_state": "interactive",
+        "visible_button_count": 0,
+        "visible_composer_count": 1,
+    }
+
+
+def test_non_chatgpt_model_selection_does_not_retry_ambiguous_controls() -> None:
+    evaluations = 0
+
+    class _Page:
+        def evaluate(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            nonlocal evaluations
+            evaluations += 1
+            return {
+                "ok": False,
+                "reason": "model-control-ambiguous",
+                "retryable": True,
+            }
+
+    observation: dict[str, object] = {}
+
+    assert (
+        _select_web_model(
+            _Page(),
+            "chromium",
+            "gemini",
+            "gemini-3.1-pro",
+            observation,
+        )
+        is False
+    )
+    assert evaluations == 1
+    assert observation["reason"] == "model-control-ambiguous"
 
 
 def test_non_chatgpt_model_selection_linearizes_a_concurrent_stop() -> None:
@@ -1913,6 +2029,108 @@ def test_stop_during_browser_startup_never_enters_the_action_loop(
     assert result == ("", "https://chatgpt.com/", 0, False)
     assert navigation_calls == ([] if stop_stage == "context" else [engine])
     assert context_exited == [True]
+
+
+def test_chromium_agent_selects_the_provider_tab_before_navigation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Descriptor:
+        engine = "chromium"
+
+    class _Page:
+        def __init__(self, url: str, title: str) -> None:
+            self.url = url
+            self._title = title
+
+        def is_closed(self) -> bool:
+            return False
+
+        def title(self) -> str:
+            return self._title
+
+    blank_page = _Page("about:blank", "")
+    extension_page = _Page("edge-extension://demo/index.html", "Extension")
+    provider_page = _Page("https://gemini.google.com/app", "Gemini")
+
+    class _BrowserContext:
+        pages = [blank_page, extension_page, provider_page]
+
+        def __enter__(self) -> "_BrowserContext":
+            return self
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+        def new_page(self) -> _Page:
+            raise AssertionError("The matching Gemini tab must be reused.")
+
+    class _PlaywrightContext:
+        def __enter__(self) -> object:
+            return object()
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    browser_context = _BrowserContext()
+    navigated_pages: list[_Page] = []
+    action_loop_pages: list[_Page] = []
+    expected_result = ("done", "https://gemini.google.com/app", 1, True)
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    context_path = tmp_path / "context.md"
+    context_path.write_text("context", encoding="utf-8")
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace),
+        browser="edge",
+        platform="gemini",
+        model="gemini-3.1-pro",
+        target_url="https://gemini.google.com/app",
+    )
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "browser_descriptors",
+        lambda _config: {"edge": _Descriptor()},
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "sync_playwright_or_error",
+        lambda: _PlaywrightContext(),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "launch_chromium_context",
+        lambda *_args, **_kwargs: browser_context,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "goto_with_retry",
+        lambda page, *_args, **_kwargs: navigated_pages.append(page),
+    )
+
+    def run_action_loop(**kwargs: object) -> tuple[str, str, int, bool]:
+        action_loop_pages.append(kwargs["page"])
+        return expected_result
+
+    monkeypatch.setattr(computer_use_agent, "_run_web_action_loop", run_action_loop)
+
+    result = run_web_computer_use(
+        prompt="Inspect the project.",
+        workspace=workspace,
+        context_path=context_path,
+        config=CrawlConfig(),
+        settings=settings,
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+        process_changed=lambda _process: None,
+    )
+
+    assert result == expected_result
+    assert navigated_pages == [provider_page]
+    assert action_loop_pages == [provider_page]
 
 
 def test_running_false_is_published_after_context_cleanup_and_sleep_release(
@@ -8871,6 +9089,137 @@ def test_stop_interrupts_initial_chromium_composer_verification_before_any_send(
     assert result == ("", page.url, 0, False)
     assert page.composer.attempts == 1
     assert page.reload_calls == []
+
+
+def test_gemini_runtime_rejects_region_unavailability_before_composer_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            raise AssertionError("A terminal Gemini region state must preempt composer waiting.")
+
+    class _Page:
+        url = "https://gemini.google.com/app"
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == 'textarea, [contenteditable="true"]'
+            return _Composer()
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "inspect_gemini_session",
+        lambda _page: {
+            "unsupportedRegion": True,
+            "signedOut": False,
+        },
+    )
+
+    with pytest.raises(RuntimeError, match="not available.*current region") as error:
+        _verify_agent_page(
+            _Page(),
+            "chromium",
+            "gemini",
+            "https://gemini.google.com/app",
+        )
+
+    assert "No project context or prompt was sent." in str(error.value)
+
+
+def test_gemini_composer_wait_rechecks_a_late_region_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    inspections = 0
+    composer_waits = 0
+
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **kwargs: object) -> None:
+            nonlocal composer_waits
+            composer_waits += 1
+            assert (
+                kwargs["timeout"]
+                == computer_use_agent.WEB_SEND_BUTTON_POLL_MILLISECONDS
+            )
+            raise TimeoutError("composer not ready")
+
+    class _Page:
+        url = "https://gemini.google.com/app"
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == 'textarea, [contenteditable="true"]'
+            return _Composer()
+
+        def reload(self, **_kwargs: object) -> None:
+            raise AssertionError("A terminal region transition must preempt reload.")
+
+    def inspect(_page: object) -> dict[str, bool]:
+        nonlocal inspections
+        inspections += 1
+        return {
+            "unsupportedRegion": inspections >= 2,
+            "signedOut": False,
+        }
+
+    monkeypatch.setattr(computer_use_agent, "inspect_gemini_session", inspect)
+
+    with pytest.raises(RuntimeError, match="not available.*current region"):
+        _verify_agent_page(
+            _Page(),
+            "chromium",
+            "gemini",
+            "https://gemini.google.com/app",
+        )
+
+    assert inspections == 2
+    assert composer_waits == 1
+
+
+def test_gemini_model_wait_reclassifies_a_late_region_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    evaluations = 0
+
+    class _Page:
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            nonlocal evaluations
+            evaluations += 1
+            if "unsupportedCopy" in expression:
+                return {
+                    "unsupportedRegion": True,
+                    "signedOut": False,
+                }
+            return {
+                "ok": False,
+                "reason": "model-control-not-found",
+                "diagnostic": {"ready_state": "complete"},
+            }
+
+    monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
+    monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_POLL_SECONDS", 0)
+
+    with pytest.raises(RuntimeError, match="not available.*current region") as error:
+        _select_web_model(
+            _Page(),
+            "chromium",
+            "gemini",
+            "gemini-3.1-pro",
+        )
+
+    assert evaluations == 2
+    assert "No project context or prompt was sent." in str(error.value)
 
 
 def test_grok_runtime_rejects_a_visible_login_action_even_with_a_composer() -> None:

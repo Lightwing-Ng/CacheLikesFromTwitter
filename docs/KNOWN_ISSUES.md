@@ -1,6 +1,6 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.12.2-codex.1`
+Documentation version: `v1.13.0-codex.1`
 
 ## Four-provider Agent pre-transfer hardening on 27 Aug 2026
 
@@ -18,7 +18,10 @@ Documentation version: `v1.12.2-codex.1`
 - Gemini readiness distinguishes account authentication from provider availability. If the signed-in
   page reports that Gemini is unavailable in the selected browser's current region, both the direct
   readiness helper and the shared browser-status API fail closed, Ask remains disabled, and no
-  project context is transferred.
+  project context is transferred. English, Simplified Chinese, and Traditional Chinese landing-page
+  copy are recognized. The Agent rechecks this terminal state while waiting for the composer and after
+  a missing-model-control wait, closing the skeleton-composer race without treating conversation text
+  as a region failure.
 - Gemini's current menu renders `3.1 Pro` with an `Advanced reasoning` subtitle and shortens the
   closed trigger to `Pro`. Selection therefore resolves only the exact controlled menu, matches the
   visible primary `.label` to the sole UI value `3.1 Pro` rather than a brand-prefixed alias, observes
@@ -29,6 +32,13 @@ Documentation version: `v1.12.2-codex.1`
   before the menu is closed and confirmed hidden. A bare `Pro` trigger, duplicate trigger, subtitle
   or wrapper match, hidden proof, nested popup, unselected option, or unconfirmed close remains
   fail-closed.
+- Gemini may render a usable composer several seconds before its model control finishes hydrating.
+  The Chromium controller now selects the matching provider tab first and retries only a missing
+  model control for about 15 seconds in Stop-aware 250 ms slices. A fully loaded page with unrelated
+  visible buttons no longer causes a premature failure. All ambiguous or invalid control states,
+  readback mismatches, and closure failures still fail immediately before data transfer. Persisted
+  missing-control diagnostics contain only bounded state and element counts plus fixed menu-role
+  values; remote page titles and arbitrary visible button text are excluded.
 - Gemini Notebook discovery rejects the provider's `create` and `new` route aliases while reading
   the live DOM and at the source-catalog API boundary. Even a fresh in-memory or Parquet cache hit is
   revalidated before response, so those actions cannot be relabeled as Projects or normalized to
@@ -41,6 +51,12 @@ Documentation version: `v1.12.2-codex.1`
   negative result is displayed while a new probe runs, and an explicit refresh always bypasses the
   cache. Chromium coverage starts with a fresh signed-out Gemini cache row, proves an immediate
   authenticated retry enables Ask, and proves a subsequent forced refresh starts another request.
+- The 27 Aug 2026 host Edge validation first reproduced `ERR_CONNECTION_TIMED_OUT`, then reached
+  Gemini's Simplified Chinese current-region-unavailable landing page after refresh. The exact
+  connection-timeout marker is now included in the shared bounded navigation retry contract. The
+  provider-region state remains an external operating constraint: the controller must keep Ask
+  disabled and must not attach project context or submit a prompt until that same Edge session can
+  access Gemini normally.
 
 ## Grok Agent session binding and readiness hardening on 26 Aug 2026
 

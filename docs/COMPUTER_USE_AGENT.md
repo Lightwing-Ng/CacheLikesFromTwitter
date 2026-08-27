@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.33.2-codex.1`
+Documentation version: `v3.34.0-codex.1`
 
 ## Purpose
 
@@ -104,6 +104,17 @@ older task cannot be submitted accidentally through a different Web session.
    original `aria-controls` value before every click and readback. Nested popups, duplicate triggers,
    subtitles, wrappers, hidden labels or markers, and the shortened trigger alone never prove the
    configured model. Every exit either confirms that the controlled menu is closed or fails the run.
+   Chromium first reuses the matching official provider tab, without focusing it, before navigation.
+   Some provider shells expose a composer before their model picker has hydrated. A missing
+   non-ChatGPT model control is therefore rechecked up to 61 times in 250 ms Stop-aware slices, for a
+   maximum wait of about 15 seconds. Only `model-control-not-found` is eligible for this outer wait;
+   an ambiguous control, invalid surface, unavailable option, failed readback, or unproved menu close
+   still fails immediately. The wait changes only when proof is attempted, not what counts as proof.
+   Gemini's account and region state is rechecked throughout composer readiness and after a missing
+   model-control wait, so a late English, Simplified Chinese, or Traditional Chinese region-unavailable
+   landing page is reported as a provider availability failure rather than a model mismatch.
+   Missing-control hydration diagnostics retain enumerated readiness and element counts, but never
+   persist the remote page title or arbitrary visible DOM text.
    Chromium composer readiness is polled in 250 ms slices so Stop can terminate the initial page
    verification before model selection, context attachment, or prompt submission. Its single
    recovery reload waits only for navigation commit and is capped at five seconds. Stop is checked
@@ -371,6 +382,15 @@ contract is covered by mocked readiness, URL, source, and route checks in this c
 probe was not possible because the selected account is currently restricted. The probes did not
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
+
+On 27 Aug 2026, delayed Gemini hydration, Stop interruption, strict model proof, bounded diagnostic
+privacy, localized region gating, and transient navigation retry coverage passed 307 controller
+tests, 89 complete Chromium E2E tests, 20 Gemini tests, and 70 hardening tests. The complete project
+gate passed 994 tests and 370 subtests with 68.56% branch coverage. A live Edge check reproduced
+`ERR_CONNECTION_TIMED_OUT`; the shared transient marker now retries that exact error. The refreshed
+host tab then returned Gemini's Simplified Chinese current-region-unavailable landing page. The
+controller treated that as a terminal provider condition before context attachment or prompt
+submission, so the interrupted external task was not represented as completed.
 
 On 26 Aug 2026, 315 focused controller/hardening tests passed with the bundled ripgrep available.
 The same suite passed 314 tests with only its real-ripgrep integration test skipped under an explicit

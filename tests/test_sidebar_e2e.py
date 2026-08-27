@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.18.2-codex.1
+Code version: v1.19.0-codex.1
 """
 
 from __future__ import annotations
@@ -459,8 +459,11 @@ def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
         main_typography, sidebar_typography = typography
         assert main_typography is not None
         assert sidebar_typography is not None
-        for property_name in ("fontFamily", "fontSize", "lineHeight"):
-            assert main_typography[property_name] == sidebar_typography[property_name]
+        assert main_typography["fontFamily"] == sidebar_typography["fontFamily"]
+        assert main_typography["fontSize"] == "15px"
+        assert main_typography["lineHeight"] == "21.75px"
+        assert sidebar_typography["fontSize"] == "13px"
+        assert sidebar_typography["lineHeight"] == "18.85px"
         assert main_typography["fontWeight"] == "500"
         assert sidebar_typography["fontWeight"] == "400"
     finally:
@@ -1586,16 +1589,25 @@ def _chatgpt_catalog_sessions(*sessions: dict[str, str]) -> dict[str, object]:
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    "unsupported_copy",
+    (
+        "Gemini isn’t currently supported in your country. Stay tuned!",
+        "Gemini 目前不支持你所在的地区。敬请期待！",
+        "Gemini 目前不支援你所在的地區。敬請期待！",
+    ),
+)
 def test_gemini_session_dom_marks_a_signed_in_region_unavailable_page(
     disposable_browser: Browser,
+    unsupported_copy: str,
 ) -> None:
     context = disposable_browser.new_context()
     page = context.new_page()
     try:
         page.set_content(
-            """
+            f"""
             <button aria-label="Google Account: Demo account">Account</button>
-            <main>Gemini isn’t currently supported in your country. Stay tuned!</main>
+            <main>{unsupported_copy}</main>
             """
         )
 
@@ -1605,6 +1617,29 @@ def test_gemini_session_dom_marks_a_signed_in_region_unavailable_page(
         assert snapshot["signedOut"] is False
         assert snapshot["unsupportedRegion"] is True
         assert snapshot["hasComposer"] is False
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_gemini_session_dom_does_not_treat_conversation_copy_as_a_region_failure(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button aria-label="Google Account: Demo account">Account</button>
+            <main>Gemini 目前不支持你所在的地区。敬请期待！</main>
+            <textarea placeholder="Ask Gemini"></textarea>
+            """
+        )
+
+        snapshot = inspect_gemini_session(page)
+
+        assert snapshot["hasComposer"] is True
+        assert snapshot["unsupportedRegion"] is False
     finally:
         context.close()
 
@@ -1728,6 +1763,142 @@ def test_gemini_model_dom_selection_requires_exact_controlled_selected_proof(
         assert page.evaluate("window.selectionAudit.optionClicks") == expected_option_clicks
         assert page.locator("#mode-picker").get_attribute("aria-expanded") == "false"
         assert page.locator("#mode-menu").is_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_gemini_model_dom_selection_waits_for_delayed_hydration(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <textarea placeholder="Ask Gemini"></textarea>
+            <button aria-label="Navigation">Navigation</button>
+            <script>
+                window.selectionAudit = {
+                    mounted: false,
+                    triggerClicks: 0,
+                    optionClicks: 0,
+                };
+                const mountModelControl = () => {
+                    const trigger = document.createElement('button');
+                    trigger.id = 'mode-picker';
+                    trigger.setAttribute('aria-label', 'Open mode picker, currently Flash');
+                    trigger.setAttribute('aria-haspopup', 'true');
+                    trigger.setAttribute('aria-expanded', 'false');
+                    trigger.setAttribute('aria-controls', 'mode-menu');
+                    trigger.textContent = 'Flash';
+
+                    const menu = document.createElement('div');
+                    menu.id = 'mode-menu';
+                    menu.setAttribute('role', 'menu');
+                    menu.hidden = true;
+
+                    const option = document.createElement('button');
+                    option.id = 'pro-option';
+                    option.setAttribute('role', 'menuitem');
+                    option.innerHTML = `
+                        <span class="label">3.1 Pro</span>
+                        <span class="sublabel">Advanced reasoning</span>
+                    `;
+                    menu.append(option);
+
+                    trigger.addEventListener('click', () => {
+                        window.selectionAudit.triggerClicks += 1;
+                        const opening = menu.hidden;
+                        menu.hidden = !opening;
+                        trigger.setAttribute('aria-expanded', String(opening));
+                    });
+                    option.addEventListener('click', () => {
+                        window.selectionAudit.optionClicks += 1;
+                        option.classList.add('selected');
+                        const marker = document.createElement('span');
+                        marker.setAttribute('aria-label', 'Selected');
+                        marker.textContent = '✓';
+                        option.prepend(marker);
+                        trigger.setAttribute('aria-label', 'Open mode picker, currently Pro');
+                        trigger.textContent = 'Pro';
+                        menu.hidden = true;
+                        trigger.setAttribute('aria-expanded', 'false');
+                    });
+
+                    document.body.append(trigger, menu);
+                    window.selectionAudit.mounted = true;
+                };
+                window.setTimeout(mountModelControl, 500);
+            </script>
+            """
+        )
+
+        observation: dict[str, object] = {}
+        assert (
+            _select_web_model(
+                page,
+                "chromium",
+                "gemini",
+                "gemini-3.1-pro",
+                observation,
+            )
+            is True
+        )
+        assert page.evaluate("window.selectionAudit") == {
+            "mounted": True,
+            "triggerClicks": 3,
+            "optionClicks": 1,
+        }
+        assert observation["observed"] == "3.1 pro"
+        assert page.locator("#mode-picker").get_attribute("aria-expanded") == "false"
+        assert page.locator("#mode-menu").is_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_web_model_failure_diagnostic_excludes_dom_text(
+    disposable_browser: Browser,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <title>Confidential flight acquisition</title>
+            <textarea placeholder="Ask Gemini"></textarea>
+            <button>Project confidential-alpha</button>
+            """
+        )
+        monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
+        monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_POLL_SECONDS", 0)
+        observation: dict[str, object] = {}
+
+        assert (
+            _select_web_model(
+                page,
+                "chromium",
+                "gemini",
+                "gemini-3.1-pro",
+                observation,
+            )
+            is False
+        )
+        serialized = json.dumps(observation, ensure_ascii=False)
+        assert "Confidential" not in serialized
+        assert "confidential" not in serialized
+        assert observation["visible_buttons"] == []
+        assert observation["diagnostic"] == {
+            "ready_state": "complete",
+            "visible_button_count": 1,
+            "visible_composer_count": 1,
+            "semantic_trigger_count": 0,
+            "visible_menu_count": 0,
+        }
     finally:
         context.close()
 
@@ -2073,9 +2244,12 @@ def test_auto_model_dom_selection_accepts_a_semantic_model_trigger(
 )
 def test_auto_model_dom_selection_rejects_an_unrelated_auto_popup(
     disposable_browser: Browser,
+    monkeypatch: pytest.MonkeyPatch,
     platform: str,
     model: str,
 ) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
     context = disposable_browser.new_context()
     page = context.new_page()
     try:
@@ -2100,6 +2274,7 @@ def test_auto_model_dom_selection_rejects_an_unrelated_auto_popup(
             </script>
             """
         )
+        monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
 
         assert _select_web_model(page, "chromium", platform, model) is False
         assert page.evaluate("window.unrelatedAutoClicks") == 0
@@ -2119,10 +2294,13 @@ def test_auto_model_dom_selection_rejects_an_unrelated_auto_popup(
 )
 def test_auto_model_dom_selection_rejects_metadata_substring_decoys(
     disposable_browser: Browser,
+    monkeypatch: pytest.MonkeyPatch,
     platform: str,
     model: str,
     decoy_id: str,
 ) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
     context = disposable_browser.new_context()
     page = context.new_page()
     try:
@@ -2135,6 +2313,7 @@ def test_auto_model_dom_selection_rejects_metadata_substring_decoys(
             >Auto</button>
             """
         )
+        monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
 
         assert _select_web_model(page, "chromium", platform, model) is False
     finally:
@@ -2151,11 +2330,14 @@ def test_auto_model_dom_selection_rejects_metadata_substring_decoys(
 )
 def test_auto_model_dom_selection_rejects_label_substring_decoys(
     disposable_browser: Browser,
+    monkeypatch: pytest.MonkeyPatch,
     platform: str,
     model: str,
     decoy_id: str,
     decoy_label: str,
 ) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
     context = disposable_browser.new_context()
     page = context.new_page()
     try:
@@ -2183,6 +2365,7 @@ def test_auto_model_dom_selection_rejects_label_substring_decoys(
             </script>
             """
         )
+        monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
 
         assert _select_web_model(page, "chromium", platform, model) is False
         assert page.evaluate("window.decoyClicks") == 0
