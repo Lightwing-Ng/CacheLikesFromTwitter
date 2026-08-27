@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.35.1-codex.1
+Code version: v3.37.2-codex.1
 """
 
 from __future__ import annotations
@@ -6606,10 +6606,16 @@ def _select_chatgpt_model(
     model_control_script = r"""({labels, phase}) => {
             const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
             const isVisible = (element) => {
-                const style = window.getComputedStyle(element);
-                return element.getClientRects().length > 0
-                    && style.visibility !== 'hidden'
-                    && style.display !== 'none';
+                if (!element || element.getClientRects().length === 0) return false;
+                for (let current = element; current; current = current.parentElement) {
+                    const style = window.getComputedStyle(current);
+                    const opacity = Number.parseFloat(style.opacity || '1');
+                    if (style.visibility === 'hidden'
+                        || style.visibility === 'collapse'
+                        || style.display === 'none'
+                        || (Number.isFinite(opacity) && opacity <= 0)) return false;
+                }
+                return true;
             };
             const visibleMenus = () => Array.from(document.querySelectorAll('[role="menu"]')).filter(isVisible);
             const matches = (value) => {
@@ -6814,13 +6820,19 @@ def _select_web_model(
     executed, result = _run_browser_action_unless_stopped(
         stop_requested,
         lambda: page.evaluate(
-            r"""async ({remoteLabels, platform}) => {
+            r"""async ({remoteLabels, platform, uiLabel}) => {
             const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
             const isVisible = (element) => {
-                const style = window.getComputedStyle(element);
-                return element.getClientRects().length > 0
-                    && style.visibility !== 'hidden'
-                    && style.display !== 'none';
+                if (!element || element.getClientRects().length === 0) return false;
+                for (let current = element; current; current = current.parentElement) {
+                    const style = window.getComputedStyle(current);
+                    const opacity = Number.parseFloat(style.opacity || '1');
+                    if (style.visibility === 'hidden'
+                        || style.visibility === 'collapse'
+                        || style.display === 'none'
+                        || (Number.isFinite(opacity) && opacity <= 0)) return false;
+                }
+                return true;
             };
             const matches = (value) => {
                 const normalized = normalize(value).replace(/[,:()]+/g, ' ').replace(/\s+/g, ' ').trim();
@@ -6839,6 +6851,9 @@ def _select_web_model(
                 const text = (element.innerText || element.textContent || '').trim();
                 return normalize(aria) === normalize(text) ? (aria || text) : `${aria} ${text}`.trim();
             };
+            const hasEnglishToken = (value, tokens) => tokens.some((token) => (
+                new RegExp(`(?:^|[^a-z0-9])${token}(?:$|[^a-z0-9])`, 'u').test(value)
+            ));
             const hasTriggerSemantics = (element) => {
                 const popup = normalize(element.getAttribute('aria-haspopup') || '');
                 const expanded = element.getAttribute('aria-expanded');
@@ -6851,34 +6866,242 @@ def _select_web_model(
                 ].join(' '));
                 const popupSemantic = ['menu', 'listbox', 'dialog', 'true'].includes(popup)
                     || expanded === 'true' || expanded === 'false';
-                const providerSemantic = /model|mode|模式|模型/.test(metadata)
-                    || (platform === 'gemini' && /gemini|pro|flash|thinking/.test(metadata))
-                    || (platform === 'grok' && /grok|expert|fast|heavy|thinking/.test(metadata))
-                    || (platform === 'claude' && /sonnet|opus|haiku/.test(metadata));
+                const providerSemantic = /模式|模型/.test(metadata)
+                    || hasEnglishToken(metadata, ['model', 'mode'])
+                    || (platform === 'gemini'
+                        && hasEnglishToken(metadata, ['gemini', 'pro', 'flash', 'thinking']))
+                    || (platform === 'grok'
+                        && hasEnglishToken(metadata, ['grok', 'expert', 'fast', 'heavy', 'thinking']))
+                    || (platform === 'claude'
+                        && hasEnglishToken(metadata, ['sonnet', 'opus', 'haiku']));
                 return popupSemantic && providerSemantic;
             };
             const triggerCandidates = () => [...document.querySelectorAll('button, [role="button"]')]
                 .filter(isVisible)
                 .filter((element) => !element.closest('[role="menu"], [role="listbox"], [role="dialog"]'))
                 .filter(hasTriggerSemantics);
-            const findTrigger = () => triggerCandidates().find((element) => {
+            const triggerLabelMatches = (element) => {
                 const label = labelFor(element);
                 const normalized = normalize(label);
                 if (matches(label)) return true;
-                if (platform === 'gemini' && /mode picker|model|模式|模型|选择|選擇/i.test(normalized)) return true;
-                if (platform === 'grok' && /model|mode|模式|模型|选择|選擇/i.test(normalized)) return true;
-                return platform === 'claude' && /model|mode|sonnet|opus/i.test(normalized);
-            });
-            const trigger = findTrigger();
-            if (!trigger) return {ok: false, reason: 'model-control-not-found', available: []};
-            if (matches(labelFor(trigger))) return {ok: true, selected: normalize(labelFor(trigger)), available: []};
+                const localizedSelector = /模式|模型|选择|選擇/.test(normalized);
+                if (platform === 'gemini') {
+                    return localizedSelector || hasEnglishToken(normalized, ['model', 'mode']);
+                }
+                if (platform === 'grok') {
+                    return localizedSelector || hasEnglishToken(normalized, ['model', 'mode']);
+                }
+                return platform === 'claude' && (
+                    localizedSelector
+                    || hasEnglishToken(normalized, ['model', 'mode', 'sonnet', 'opus'])
+                );
+            };
+            const findTrigger = () => triggerCandidates().find(triggerLabelMatches);
             const visibleSurfaces = () => [...document.querySelectorAll(
                 '[role="menu"], [role="listbox"], [role="dialog"]'
             )].filter(isVisible);
+            const waitUntil = async (predicate, attempts = 15) => {
+                for (let attempt = 0; attempt < attempts; attempt += 1) {
+                    if (predicate()) return true;
+                    await new Promise((resolve) => window.setTimeout(resolve, 100));
+                }
+                return predicate();
+            };
+            const openAndConfirm = async (triggerElement, surface) => {
+                if (!triggerElement || !surface || isVisible(surface)) return false;
+                if (triggerElement.getAttribute('aria-expanded') === 'true') return false;
+                triggerElement.click();
+                const opened = await waitUntil(() => (
+                    isVisible(surface)
+                    && triggerElement.getAttribute('aria-expanded') === 'true'
+                ));
+                if (opened) return true;
+                await closeAndConfirm(triggerElement, surface);
+                return false;
+            };
+            const closeAndConfirm = async (triggerElement, surface) => {
+                if (!triggerElement || !surface) return false;
+                if (!isVisible(surface)
+                    && triggerElement.getAttribute('aria-expanded') !== 'true') return true;
+                triggerElement.click();
+                return waitUntil(() => (
+                    !isVisible(surface)
+                    && triggerElement.getAttribute('aria-expanded') !== 'true'
+                ));
+            };
+            const closeExpandedTrigger = async (triggerElement) => {
+                if (!triggerElement) return false;
+                if (triggerElement.getAttribute('aria-expanded') !== 'true') return true;
+                triggerElement.click();
+                return waitUntil(() => triggerElement.getAttribute('aria-expanded') !== 'true');
+            };
+            const surfaceCandidates = (surface, activeTrigger) => [...surface.querySelectorAll(
+                '[role="menuitem"], [role="option"], button'
+            )]
+                .filter(isVisible)
+                .filter((element) => element !== activeTrigger)
+                .filter((element) => (
+                    element.closest('[role="menu"], [role="listbox"], [role="dialog"]') === surface
+                ))
+                .filter((element) => !/send|submit|attach|upload|dictate/i.test(labelFor(element)));
+            const trigger = findTrigger();
+            if (!trigger) return {ok: false, reason: 'model-control-not-found', available: []};
+            const controlledId = (trigger.getAttribute('aria-controls') || '').trim();
+            const exactGeminiPrimary = normalize(uiLabel);
+            const geminiPrimaryLabel = (element) => {
+                const primary = element ? element.querySelector('.label') : null;
+                if (!primary || !isVisible(primary)) return '';
+                return normalize(primary.innerText || primary.textContent || '');
+            };
+            const geminiSelectedProof = (element) => {
+                if (!element || !element.classList.contains('selected')) return false;
+                return [...element.querySelectorAll('[aria-label]')].some((marker) => (
+                    normalize(marker.getAttribute('aria-label')) === 'selected' && isVisible(marker)
+                ));
+            };
+            if (platform === 'gemini') {
+                const rawControlledSurface = () => (
+                    controlledId ? document.getElementById(controlledId) : null
+                );
+                const controlledTriggers = () => triggerCandidates().filter((element) => (
+                    (element.getAttribute('aria-controls') || '').trim() === controlledId
+                    && triggerLabelMatches(element)
+                ));
+                const findControlledTrigger = () => {
+                    const candidates = controlledTriggers();
+                    return candidates.length === 1 ? candidates[0] : null;
+                };
+                const getControlledSurface = () => {
+                    const surface = rawControlledSurface();
+                    const role = normalize(surface ? surface.getAttribute('role') : '');
+                    return surface && ['menu', 'listbox', 'dialog'].includes(role)
+                        ? surface
+                        : null;
+                };
+                const controlledSurfaceIsClosed = () => {
+                    const surface = rawControlledSurface();
+                    const liveTrigger = findControlledTrigger();
+                    return (!surface || !isVisible(surface))
+                        && liveTrigger
+                        && liveTrigger.getAttribute('aria-expanded') !== 'true';
+                };
+                const closeControlledSurface = async () => {
+                    if (controlledSurfaceIsClosed()) return true;
+                    const liveTrigger = findControlledTrigger();
+                    if (!liveTrigger) return false;
+                    liveTrigger.click();
+                    return waitUntil(controlledSurfaceIsClosed);
+                };
+                const openControlledSurface = async () => {
+                    if (!controlledId || !controlledSurfaceIsClosed()) return null;
+                    const liveTrigger = findControlledTrigger();
+                    if (!liveTrigger) return null;
+                    liveTrigger.click();
+                    const opened = await waitUntil(() => {
+                        const surface = getControlledSurface();
+                        const currentTrigger = findControlledTrigger();
+                        return Boolean(
+                            surface
+                            && isVisible(surface)
+                            && currentTrigger
+                            && currentTrigger.getAttribute('aria-expanded') === 'true'
+                        );
+                    });
+                    if (!opened) {
+                        await closeControlledSurface();
+                        return null;
+                    }
+                    return getControlledSurface();
+                };
+                const initialRawSurface = rawControlledSurface();
+                if (!controlledId || (initialRawSurface && !getControlledSurface())) {
+                    return {ok: false, reason: 'model-controlled-surface-invalid', available: []};
+                }
+                if (initialRawSurface
+                    && isVisible(initialRawSurface)
+                    && !await closeControlledSurface()) {
+                    return {ok: false, reason: 'model-menu-close-failed', available: []};
+                }
+                const selectionSurface = await openControlledSurface();
+                if (!selectionSurface) {
+                    return {ok: false, reason: 'model-menu-open-failed', available: []};
+                }
+                const selectionTrigger = findControlledTrigger();
+                if (!selectionTrigger) {
+                    await closeControlledSurface();
+                    return {ok: false, reason: 'model-control-ambiguous', available: []};
+                }
+                const candidates = surfaceCandidates(selectionSurface, selectionTrigger);
+                const available = candidates.map(geminiPrimaryLabel).filter(Boolean);
+                const choice = candidates.find((element) => (
+                    geminiPrimaryLabel(element) === exactGeminiPrimary
+                ));
+                if (!choice) {
+                    const closed = await closeControlledSurface();
+                    return {
+                        ok: false,
+                        reason: closed ? 'model-not-exposed' : 'model-menu-close-failed',
+                        available,
+                    };
+                }
+                const exactPrimary = geminiPrimaryLabel(choice);
+                if (geminiSelectedProof(choice)) {
+                    const closed = await closeControlledSurface();
+                    return closed
+                        ? {ok: true, selected: exactPrimary, available}
+                        : {ok: false, reason: 'model-menu-close-failed', available};
+                }
+                choice.click();
+                const selectionClosed = await waitUntil(controlledSurfaceIsClosed);
+                const verificationTrigger = findControlledTrigger();
+                if (!selectionClosed || !verificationTrigger) {
+                    const currentSurface = rawControlledSurface();
+                    if ((currentSurface && isVisible(currentSurface))
+                        || (verificationTrigger
+                            && verificationTrigger.getAttribute('aria-expanded') === 'true')) {
+                        await closeControlledSurface();
+                    }
+                    return {
+                        ok: false,
+                        reason: selectionClosed
+                            ? 'model-control-not-found-after-selection'
+                            : 'model-menu-did-not-close-after-selection',
+                        available,
+                    };
+                }
+                const verificationSurface = await openControlledSurface();
+                if (!verificationSurface) {
+                    return {ok: false, reason: 'model-menu-reopen-failed', available};
+                }
+                const reopenedTrigger = findControlledTrigger();
+                if (!reopenedTrigger) {
+                    await closeControlledSurface();
+                    return {ok: false, reason: 'model-control-ambiguous', available};
+                }
+                const selectedChoice = surfaceCandidates(verificationSurface, reopenedTrigger)
+                    .find((element) => (
+                        geminiPrimaryLabel(element) === exactGeminiPrimary
+                        && geminiSelectedProof(element)
+                    ));
+                const selected = selectedChoice ? geminiPrimaryLabel(selectedChoice) : '';
+                const closed = await closeControlledSurface();
+                if (!closed) {
+                    return {ok: false, reason: 'model-menu-close-failed', available};
+                }
+                return selected
+                    ? {ok: true, selected, available}
+                    : {ok: false, reason: 'model-readback-mismatch', available};
+            }
+            if (matches(labelFor(trigger))) {
+                const closed = await closeExpandedTrigger(trigger);
+                return closed
+                    ? {ok: true, selected: normalize(labelFor(trigger)), available: []}
+                    : {ok: false, reason: 'model-menu-close-failed', available: []};
+            }
             const surfacesBefore = new Set(visibleSurfaces());
-            const controlledId = trigger.getAttribute('aria-controls') || '';
             trigger.click();
             let candidates = [];
+            let openedSurface = null;
             for (let attempt = 0; attempt < 10; attempt += 1) {
                 await new Promise((resolve) => window.setTimeout(resolve, 100));
                 const controlledSurface = controlledId ? document.getElementById(controlledId) : null;
@@ -6887,10 +7110,8 @@ def _select_web_model(
                     ? controlledSurface
                     : surfaces.find((element) => !surfacesBefore.has(element)) || surfaces.at(-1);
                 if (!surface) continue;
-                candidates = [...surface.querySelectorAll('[role="menuitem"], [role="option"], button')]
-                    .filter(isVisible)
-                    .filter((element) => element !== trigger)
-                    .filter((element) => !/send|submit|attach|upload|dictate/i.test(labelFor(element)));
+                openedSurface = surface;
+                candidates = surfaceCandidates(surface, trigger);
                 const choice = candidates.find((element) => matches(labelFor(element)));
                 if (choice) {
                     choice.click();
@@ -6900,24 +7121,51 @@ def _select_web_model(
                         const currentTrigger = findTrigger();
                         const selected = normalize(labelFor(currentTrigger));
                         if (matches(selected)) {
-                            return {ok: true, selected, available};
+                            let closed = true;
+                            if (openedSurface && isVisible(openedSurface)) {
+                                closed = await closeAndConfirm(currentTrigger, openedSurface);
+                            } else if (currentTrigger) {
+                                closed = await closeExpandedTrigger(currentTrigger);
+                            }
+                            return closed
+                                ? {ok: true, selected, available}
+                                : {ok: false, reason: 'model-menu-close-failed', available};
                         }
+                    }
+                    const currentTrigger = findTrigger();
+                    const current = normalize(labelFor(currentTrigger));
+                    let closed = true;
+                    if (openedSurface && isVisible(openedSurface)) {
+                        closed = await closeAndConfirm(currentTrigger, openedSurface);
+                    } else if (currentTrigger) {
+                        closed = await closeExpandedTrigger(currentTrigger);
                     }
                     return {
                         ok: false,
-                        reason: 'model-readback-mismatch',
-                        current: normalize(labelFor(findTrigger())),
+                        reason: closed ? 'model-readback-mismatch' : 'model-menu-close-failed',
+                        current,
                         available,
                     };
                 }
             }
+            const currentTrigger = findTrigger();
+            let closed = true;
+            if (openedSurface && isVisible(openedSurface)) {
+                closed = await closeAndConfirm(currentTrigger, openedSurface);
+            } else if (currentTrigger) {
+                closed = await closeExpandedTrigger(currentTrigger);
+            }
             return {
                 ok: false,
-                reason: 'model-not-exposed',
+                reason: closed ? 'model-not-exposed' : 'model-menu-close-failed',
                 available: candidates.map(labelFor).filter(Boolean),
             };
             }""",
-            {"remoteLabels": list(remote_labels), "platform": platform},
+            {
+                "remoteLabels": list(remote_labels),
+                "platform": platform,
+                "uiLabel": str(option.get("ui_label") or option.get("label") or ""),
+            },
         ),
     )
     if not executed:

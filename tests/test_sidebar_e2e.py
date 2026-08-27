@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.16.1-codex.1
+Code version: v1.18.2-codex.1
 """
 
 from __future__ import annotations
@@ -1610,10 +1610,377 @@ def test_gemini_session_dom_marks_a_signed_in_region_unavailable_page(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("updates_readback", [True, False])
-def test_gemini_model_dom_selection_requires_verified_trigger_readback(
+@pytest.mark.parametrize(
+    (
+        "primary_text",
+        "primary_style",
+        "sublabel_text",
+        "add_selected_class",
+        "marker_style",
+        "nested_popup",
+        "expected",
+        "expected_option_clicks",
+    ),
+    (
+        pytest.param(
+            "3.1 Pro", "", "Advanced reasoning", True, "", False, True, 1, id="exact-proof"
+        ),
+        pytest.param(
+            "3.1 Pro", "", "Advanced reasoning", True, None, False, False, 1, id="class-only"
+        ),
+        pytest.param(
+            "3.1 Pro", "", "Advanced reasoning", False, "", False, False, 1, id="marker-only"
+        ),
+        pytest.param(
+            "3.1 Pro", "", "Advanced reasoning", True, "opacity: 0", False, False, 1, id="hidden-marker"
+        ),
+        pytest.param(
+            "", "", "3.1 Pro", True, "", False, False, 0, id="subtitle-only"
+        ),
+        pytest.param(
+            "3.1 Pro", "display: none", "Advanced reasoning", True, "", False, False, 0, id="hidden-primary"
+        ),
+        pytest.param(
+            "Mode picker 3.1 Pro", "", "Advanced reasoning", True, "", False, False, 0, id="wrapper-primary"
+        ),
+        pytest.param(
+            "Gemini 3.1 Pro", "", "Advanced reasoning", True, "", False, False, 0, id="full-brand-primary"
+        ),
+        pytest.param(
+            "3.1 Pro", "", "Advanced reasoning", True, "", True, False, 0, id="nested-popup"
+        ),
+    ),
+)
+def test_gemini_model_dom_selection_requires_exact_controlled_selected_proof(
     disposable_browser: Browser,
-    updates_readback: bool,
+    primary_text: str,
+    primary_style: str,
+    sublabel_text: str,
+    add_selected_class: bool,
+    marker_style: str | None,
+    nested_popup: bool,
+    expected: bool,
+    expected_option_clicks: int,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        option_markup = f"""
+            <button id="pro-option" role="menuitem">
+                <span class="label" style="{primary_style}">{primary_text}</span>
+                <span class="sublabel">{sublabel_text}</span>
+            </button>
+        """
+        if nested_popup:
+            option_markup = f'<div role="menu">{option_markup}</div>'
+        page.set_content(
+            f"""
+            <button
+                id="mode-picker"
+                aria-label="Open mode picker, currently Flash"
+                aria-haspopup="true"
+                aria-expanded="false"
+                aria-controls="mode-menu"
+            >Flash</button>
+            <div id="mode-menu" role="menu" hidden>
+                <button id="flash-option" role="menuitem">
+                    <span class="label">3.7 Flash</span>
+                    <span class="sublabel">All-around help</span>
+                </button>
+                {option_markup}
+            </div>
+            <script>
+                window.selectionAudit = {{triggerClicks: 0, optionClicks: 0}};
+                const trigger = document.querySelector('#mode-picker');
+                const menu = document.querySelector('#mode-menu');
+                const option = document.querySelector('#pro-option');
+                trigger.addEventListener('click', () => {{
+                    window.selectionAudit.triggerClicks += 1;
+                    const opening = menu.hidden;
+                    menu.hidden = !opening;
+                    trigger.setAttribute('aria-expanded', String(opening));
+                }});
+                option.addEventListener('click', () => {{
+                    window.selectionAudit.optionClicks += 1;
+                    trigger.setAttribute('aria-label', 'Open mode picker, currently Pro');
+                    trigger.textContent = 'Pro';
+                    menu.hidden = true;
+                    trigger.setAttribute('aria-expanded', 'false');
+                    if ({str(add_selected_class).lower()}) {{
+                        option.classList.add('selected');
+                    }}
+                    if ({str(marker_style is not None).lower()}) {{
+                        const marker = document.createElement('span');
+                        marker.setAttribute('aria-label', 'Selected');
+                        marker.setAttribute('style', {json.dumps(marker_style or '')});
+                        marker.textContent = '✓';
+                        option.prepend(marker);
+                    }}
+                }});
+            </script>
+            """
+        )
+
+        assert (
+            _select_web_model(page, "chromium", "gemini", "gemini-3.1-pro")
+            is expected
+        )
+        assert page.evaluate("window.selectionAudit.optionClicks") == expected_option_clicks
+        assert page.locator("#mode-picker").get_attribute("aria-expanded") == "false"
+        assert page.locator("#mode-menu").is_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_gemini_model_dom_selection_accepts_a_remounted_controlled_menu(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                id="mode-picker"
+                aria-label="Open mode picker, currently Flash"
+                aria-haspopup="true"
+                aria-expanded="false"
+                aria-controls="mode-menu"
+            >Flash</button>
+            <script>
+                window.selectionAudit = {mounts: 0, optionClicks: 0};
+                let selected = false;
+                const trigger = document.querySelector('#mode-picker');
+                const removeMenu = () => {
+                    document.querySelector('#mode-menu')?.remove();
+                    trigger.setAttribute('aria-expanded', 'false');
+                };
+                const mountMenu = () => {
+                    window.selectionAudit.mounts += 1;
+                    const menu = document.createElement('div');
+                    menu.id = 'mode-menu';
+                    menu.setAttribute('role', 'menu');
+                    const option = document.createElement('button');
+                    option.id = 'pro-option';
+                    option.setAttribute('role', 'menuitem');
+                    if (selected) option.classList.add('selected');
+                    option.innerHTML = `
+                        ${selected ? '<span aria-label="Selected">✓</span>' : ''}
+                        <span class="label">3.1 Pro</span>
+                        <span class="sublabel">Advanced reasoning</span>
+                    `;
+                    option.addEventListener('click', () => {
+                        window.selectionAudit.optionClicks += 1;
+                        selected = true;
+                        trigger.setAttribute('aria-label', 'Open mode picker, currently Pro');
+                        trigger.textContent = 'Pro';
+                        removeMenu();
+                    });
+                    menu.append(option);
+                    document.body.append(menu);
+                    trigger.setAttribute('aria-expanded', 'true');
+                };
+                trigger.addEventListener('click', () => {
+                    if (document.querySelector('#mode-menu')) removeMenu();
+                    else mountMenu();
+                });
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", "gemini", "gemini-3.1-pro") is True
+        assert page.evaluate("window.selectionAudit") == {"mounts": 2, "optionClicks": 1}
+        assert page.locator("#mode-menu").count() == 0
+        assert page.locator("#mode-picker").get_attribute("aria-expanded") == "false"
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_gemini_model_dom_selection_accepts_a_remounted_controlled_trigger(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <div id="trigger-host"></div>
+            <script>
+                window.selectionAudit = {
+                    triggerMounts: 0,
+                    triggerClicks: 0,
+                    menuMounts: 0,
+                    optionClicks: 0,
+                };
+                let selected = false;
+                const host = document.querySelector('#trigger-host');
+                const removeMenu = () => document.querySelector('#mode-menu')?.remove();
+                const mountTrigger = (expanded) => {
+                    window.selectionAudit.triggerMounts += 1;
+                    const trigger = document.createElement('button');
+                    trigger.id = 'mode-picker';
+                    trigger.setAttribute(
+                        'aria-label',
+                        `Open mode picker, currently ${selected ? 'Pro' : 'Flash'}`
+                    );
+                    trigger.setAttribute('aria-haspopup', 'true');
+                    trigger.setAttribute('aria-expanded', String(expanded));
+                    trigger.setAttribute('aria-controls', 'mode-menu');
+                    trigger.textContent = selected ? 'Pro' : 'Flash';
+                    trigger.addEventListener('click', () => {
+                        window.selectionAudit.triggerClicks += 1;
+                        if (document.querySelector('#mode-menu')) {
+                            removeMenu();
+                            mountTrigger(false);
+                        } else {
+                            mountMenu();
+                            mountTrigger(true);
+                        }
+                    });
+                    host.replaceChildren(trigger);
+                };
+                const mountMenu = () => {
+                    window.selectionAudit.menuMounts += 1;
+                    const menu = document.createElement('div');
+                    menu.id = 'mode-menu';
+                    menu.setAttribute('role', 'menu');
+                    const option = document.createElement('button');
+                    option.id = 'pro-option';
+                    option.setAttribute('role', 'menuitem');
+                    if (selected) option.classList.add('selected');
+                    option.innerHTML = `
+                        ${selected ? '<span aria-label="Selected">✓</span>' : ''}
+                        <span class="label">3.1 Pro</span>
+                        <span class="sublabel">Advanced reasoning</span>
+                    `;
+                    option.addEventListener('click', () => {
+                        window.selectionAudit.optionClicks += 1;
+                        selected = true;
+                        removeMenu();
+                        mountTrigger(false);
+                    });
+                    menu.append(option);
+                    document.body.append(menu);
+                };
+                mountTrigger(false);
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", "gemini", "gemini-3.1-pro") is True
+        assert page.evaluate("window.selectionAudit") == {
+            "triggerMounts": 5,
+            "triggerClicks": 3,
+            "menuMounts": 2,
+            "optionClicks": 1,
+        }
+        assert page.locator("#mode-menu").count() == 0
+        assert page.locator("#mode-picker").get_attribute("aria-expanded") == "false"
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_gemini_model_dom_selection_rejects_ambiguous_controlled_triggers(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                class="mode-picker"
+                aria-label="Open mode picker, currently Flash"
+                aria-haspopup="true"
+                aria-expanded="false"
+                aria-controls="mode-menu"
+            >Flash</button>
+            <button
+                class="mode-picker"
+                aria-label="Open mode picker, currently Flash"
+                aria-haspopup="true"
+                aria-expanded="false"
+                aria-controls="mode-menu"
+            >Flash</button>
+            <div id="mode-menu" role="menu" hidden>
+                <button role="menuitem">
+                    <span class="label">3.1 Pro</span>
+                </button>
+            </div>
+            <script>
+                window.triggerClicks = 0;
+                document.querySelectorAll('.mode-picker').forEach((trigger) => {
+                    trigger.addEventListener('click', () => {
+                        window.triggerClicks += 1;
+                    });
+                });
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", "gemini", "gemini-3.1-pro") is False
+        assert page.evaluate("window.triggerClicks") == 0
+        assert page.locator("#mode-menu").is_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("controls_id", "surface_id", "surface_role", "expected_trigger_clicks"),
+    (
+        ("", "mode-menu", "menu", 0),
+        ("missing-menu", "mode-menu", "menu", 1),
+        ("mode-menu", "mode-menu", "", 0),
+    ),
+)
+def test_gemini_model_dom_selection_rejects_an_invalid_controlled_surface(
+    disposable_browser: Browser,
+    controls_id: str,
+    surface_id: str,
+    surface_role: str,
+    expected_trigger_clicks: int,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        controls_attribute = f'aria-controls="{controls_id}"' if controls_id else ""
+        role_attribute = f'role="{surface_role}"' if surface_role else ""
+        page.set_content(
+            f"""
+            <button
+                id="mode-picker"
+                aria-label="Open mode picker, currently Flash"
+                aria-haspopup="true"
+                aria-expanded="false"
+                {controls_attribute}
+            >Flash</button>
+            <div id="{surface_id}" {role_attribute} hidden>
+                <button role="menuitem"><span class="label">3.1 Pro</span></button>
+            </div>
+            <script>
+                window.triggerClicks = 0;
+                document.querySelector('#mode-picker').addEventListener('click', () => {{
+                    window.triggerClicks += 1;
+                }});
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", "gemini", "gemini-3.1-pro") is False
+        assert page.evaluate("window.triggerClicks") == expected_trigger_clicks
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("failed_close_stage", ["selection", "verification"])
+def test_gemini_model_dom_selection_fails_closed_when_menu_closure_is_unproved(
+    disposable_browser: Browser,
+    failed_close_stage: str,
 ) -> None:
     context = disposable_browser.new_context()
     page = context.new_page()
@@ -1622,34 +1989,50 @@ def test_gemini_model_dom_selection_requires_verified_trigger_readback(
             f"""
             <button
                 id="mode-picker"
-                aria-label="Mode picker"
-                aria-haspopup="listbox"
+                aria-label="Open mode picker, currently Flash"
+                aria-haspopup="true"
                 aria-expanded="false"
-                aria-controls="mode-options"
-            >Fast</button>
-            <div id="mode-options" role="listbox" hidden>
-                <button id="pro-option" role="option">3.1 Pro</button>
+                aria-controls="mode-menu"
+            >Flash</button>
+            <div id="mode-menu" role="menu" hidden>
+                <button id="pro-option" role="menuitem">
+                    <span class="label">3.1 Pro</span>
+                    <span class="sublabel">Advanced reasoning</span>
+                </button>
             </div>
             <script>
-                window.selectionAudit = {{optionClicks: 0}};
+                const failedStage = {json.dumps(failed_close_stage)};
+                let selectionMade = false;
+                let verificationOpened = false;
                 const trigger = document.querySelector('#mode-picker');
-                const surface = document.querySelector('#mode-options');
+                const menu = document.querySelector('#mode-menu');
+                const option = document.querySelector('#pro-option');
                 trigger.addEventListener('click', () => {{
-                    trigger.setAttribute('aria-expanded', 'true');
-                    surface.hidden = false;
+                    if (failedStage === 'verification' && verificationOpened && !menu.hidden) return;
+                    const opening = menu.hidden;
+                    menu.hidden = !opening;
+                    trigger.setAttribute('aria-expanded', String(opening));
+                    if (opening && selectionMade) verificationOpened = true;
                 }});
-                document.querySelector('#pro-option').addEventListener('click', () => {{
-                    window.selectionAudit.optionClicks += 1;
-                    if ({str(updates_readback).lower()}) trigger.textContent = '3.1 Pro';
+                option.addEventListener('click', () => {{
+                    selectionMade = true;
+                    option.classList.add('selected');
+                    const marker = document.createElement('span');
+                    marker.setAttribute('aria-label', 'Selected');
+                    marker.textContent = '✓';
+                    option.prepend(marker);
+                    trigger.setAttribute('aria-label', 'Open mode picker, currently Pro');
+                    trigger.textContent = 'Pro';
+                    if (failedStage !== 'selection') {{
+                        menu.hidden = true;
+                        trigger.setAttribute('aria-expanded', 'false');
+                    }}
                 }});
             </script>
             """
         )
-        assert (
-            _select_web_model(page, "chromium", "gemini", "gemini-3.1-pro")
-            is updates_readback
-        )
-        assert page.evaluate("window.selectionAudit.optionClicks") == 1
+
+        assert _select_web_model(page, "chromium", "gemini", "gemini-3.1-pro") is False
     finally:
         context.close()
 
@@ -1725,6 +2108,89 @@ def test_auto_model_dom_selection_rejects_an_unrelated_auto_popup(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize(
+    ("platform", "model", "decoy_id"),
+    (
+        ("grok", "grok-auto", "modern-theme"),
+        ("grok", "grok-auto", "breakfast-options"),
+        ("claude", "claude-auto", "modern-theme"),
+        ("claude", "claude-auto", "octopus-picker"),
+    ),
+)
+def test_auto_model_dom_selection_rejects_metadata_substring_decoys(
+    disposable_browser: Browser,
+    platform: str,
+    model: str,
+    decoy_id: str,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            f"""
+            <button
+                id="{decoy_id}"
+                aria-haspopup="menu"
+                aria-expanded="false"
+            >Auto</button>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", platform, model) is False
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("platform", "model", "decoy_id", "decoy_label"),
+    (
+        ("grok", "grok-auto", "grok-options", "Modern theme"),
+        ("claude", "claude-auto", "claude-options", "Octopus picker"),
+    ),
+)
+def test_auto_model_dom_selection_rejects_label_substring_decoys(
+    disposable_browser: Browser,
+    platform: str,
+    model: str,
+    decoy_id: str,
+    decoy_label: str,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            f"""
+            <button
+                id="{decoy_id}"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="decoy-options"
+            >{decoy_label}</button>
+            <div id="decoy-options" role="menu" hidden>
+                <button id="decoy-auto" role="menuitem">Auto</button>
+            </div>
+            <script>
+                window.decoyClicks = 0;
+                const trigger = document.querySelector('#{decoy_id}');
+                trigger.addEventListener('click', () => {{
+                    window.decoyClicks += 1;
+                    document.querySelector('#decoy-options').hidden = false;
+                }});
+                document.querySelector('#decoy-auto').addEventListener('click', () => {{
+                    trigger.textContent = 'Auto';
+                }});
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", platform, model) is False
+        assert page.evaluate("window.decoyClicks") == 0
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize("surface_role", ["listbox", "menu"])
 @pytest.mark.parametrize("updates_readback", [True, False])
 def test_grok_model_dom_selection_requires_semantic_trigger_and_verified_readback(
@@ -1770,6 +2236,8 @@ def test_grok_model_dom_selection_requires_semantic_trigger_and_verified_readbac
                 }});
                 document.querySelector('#auto-option').addEventListener('click', () => {{
                     window.selectionAudit.optionClicks += 1;
+                    surface.hidden = true;
+                    trigger.setAttribute('aria-expanded', 'false');
                     if ({str(updates_readback).lower()}) {{
                         trigger.textContent = 'Auto';
                     }}

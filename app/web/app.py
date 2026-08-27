@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.52.0-codex.1
+# Code version: v1.52.1-codex.1
 
 from __future__ import annotations
 
@@ -432,15 +432,15 @@ def validate_local_directory_path(raw_path: str) -> tuple[bool, str, str]:
     if not candidate.is_absolute():
         return False, "The path must be absolute.", ""
     try:
-        resolved = candidate.resolve(strict=True)
-    except FileNotFoundError:
-        return False, "The path does not exist.", ""
+        resolved = candidate.resolve(strict=False)
     except OSError as exc:
         return False, str(exc)[:200], ""
-    if not resolved.is_dir():
-        return False, "The path is not a directory.", ""
     if is_excluded_system_directory(resolved):
         return False, "System directories cannot be selected.", ""
+    if not resolved.exists():
+        return False, "The path does not exist.", ""
+    if not resolved.is_dir():
+        return False, "The path is not a directory.", ""
     try:
         resolved.iterdir().__next__()
     except StopIteration:

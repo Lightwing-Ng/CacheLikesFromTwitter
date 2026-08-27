@@ -1,6 +1,6 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.10.1-codex.1`
+Documentation version: `v1.12.2-codex.1`
 
 ## Four-provider Agent pre-transfer hardening on 27 Aug 2026
 
@@ -12,11 +12,23 @@ Documentation version: `v1.10.1-codex.1`
   `Claude` are not model readbacks.
 - An `Auto` model readback now requires both popup behavior and explicit model, mode, or
   provider-model metadata. An unrelated popup button whose visible text is merely `Auto` cannot
-  satisfy Grok or Claude model verification; the real Grok `Model select` trigger remains accepted.
+  satisfy Grok or Claude model verification; English metadata uses token boundaries so strings such
+  as `modern`, `breakfast`, and `octopus` cannot impersonate `mode`, `fast`, and `opus`. The real
+  Grok `Model select` trigger remains accepted.
 - Gemini readiness distinguishes account authentication from provider availability. If the signed-in
   page reports that Gemini is unavailable in the selected browser's current region, both the direct
   readiness helper and the shared browser-status API fail closed, Ask remains disabled, and no
   project context is transferred.
+- Gemini's current menu renders `3.1 Pro` with an `Advanced reasoning` subtitle and shortens the
+  closed trigger to `Pro`. Selection therefore resolves only the exact controlled menu, matches the
+  visible primary `.label` to the sole UI value `3.1 Pro` rather than a brand-prefixed alias, observes
+  the menu close, and then supports the provider's normal
+  unmount/remount cycle by resolving the same controlled ID again. The trigger itself may also be
+  replaced; before each click or readback, exactly one live trigger must retain the original
+  `aria-controls` value. Readback requires both the `selected` class and a visible `Selected` marker
+  before the menu is closed and confirmed hidden. A bare `Pro` trigger, duplicate trigger, subtitle
+  or wrapper match, hidden proof, nested popup, unselected option, or unconfirmed close remains
+  fail-closed.
 - Gemini Notebook discovery rejects the provider's `create` and `new` route aliases while reading
   the live DOM and at the source-catalog API boundary. Even a fresh in-memory or Parquet cache hit is
   revalidated before response, so those actions cannot be relabeled as Projects or normalized to

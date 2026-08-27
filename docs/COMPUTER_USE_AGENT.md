@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.31.1-codex.1`
+Documentation version: `v3.33.2-codex.1`
 
 ## Purpose
 
@@ -90,9 +90,20 @@ older task cannot be submitted accidentally through a different Web session.
    prompt. Only exact model labels and explicit model or mode selector wrappers are accepted;
    compound controls such as `Auto-play` and unrelated popup buttons whose text happens to be
    `Auto` are rejected. An `Auto` trigger must expose popup semantics plus model, mode, or
-   provider-model metadata. The current Grok `Model select` trigger is an accepted explicit model
-   wrapper. After a click, the selector itself must read back the chosen model
-   before the run can publish `model_verified=true`.
+   provider-model metadata. English metadata is matched as complete tokens, so unrelated identifiers
+   such as `modern-theme`, `breakfast-options`, or `octopus-picker` cannot satisfy `mode`, `fast`,
+   or `opus`. The current Grok `Model select` trigger is an accepted explicit model
+   wrapper. After a click, the selector itself must read back the chosen model before the run can
+   publish `model_verified=true`. Gemini is the narrow exception because its current trigger shortens
+   `3.1 Pro` to `Pro`: the controller resolves only the exact `aria-controls` menu, requires a
+   visible primary `.label` equal only to the UI label `3.1 Pro` rather than a brand-prefixed alias,
+   observes that selection closed the menu, reopens a
+   freshly resolved node with the same ID, and requires both the provider's `selected` class and its
+   visible `Selected` marker. Both the controlled menu and its trigger may be replaced during normal
+   open and close transitions; the controller therefore resolves exactly one live trigger with the
+   original `aria-controls` value before every click and readback. Nested popups, duplicate triggers,
+   subtitles, wrappers, hidden labels or markers, and the shortened trigger alone never prove the
+   configured model. Every exit either confirms that the controlled menu is closed or fails the run.
    Chromium composer readiness is polled in 250 ms slices so Stop can terminate the initial page
    verification before model selection, context attachment, or prompt submission. Its single
    recovery reload waits only for navigation commit and is capped at five seconds. Stop is checked

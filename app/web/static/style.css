@@ -1,4 +1,4 @@
-/* Code version: v2.82.17-codex.65 */
+/* Code version: v2.82.17-codex.66 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -7000,6 +7000,18 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     overflow: auto;
     border-radius: var(--radius-soft);
     background: var(--glass-surface-background-dense);
+}
+
+.agent-response-answer-content pre {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.agent-response-answer-content pre code {
+    white-space: inherit;
+    overflow-wrap: inherit;
+    word-break: inherit;
 }
 
 .browser-media-prompt-markdown code {

@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.47.12-codex.15
+Code version: v1.47.12-codex.16
 """
 
 from pathlib import Path
@@ -1555,7 +1555,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.82.17-codex.65 */",
+            "/* Code version: v2.82.17-codex.66 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1781,6 +1781,29 @@ def test_agent_response_question_and_answer_use_requested_type_sizes() -> None:
     assert "font-size: var(--font-size-5);" in answer_rule
     assert ".agent-response-output h3" not in heading_rule
     assert ".agent-response-output h3" not in subheading_rule
+
+
+def test_agent_response_code_blocks_wrap_long_lines() -> None:
+    """Keep long rendered Agent code blocks within the answer column."""
+    stylesheet = _stylesheet()
+
+    pre_start = stylesheet.index(".agent-response-answer-content pre {")
+    pre_rule = stylesheet[pre_start:stylesheet.index("\n}", pre_start)]
+    code_start = stylesheet.index(".agent-response-answer-content pre code {")
+    code_rule = stylesheet[code_start:stylesheet.index("\n}", code_start)]
+
+    for token in (
+        "white-space: pre-wrap;",
+        "overflow-wrap: anywhere;",
+        "word-break: break-word;",
+    ):
+        assert token in pre_rule
+    for token in (
+        "white-space: inherit;",
+        "overflow-wrap: inherit;",
+        "word-break: inherit;",
+    ):
+        assert token in code_rule
 
 
 def test_agent_response_header_and_answer_pin_the_composer() -> None:
