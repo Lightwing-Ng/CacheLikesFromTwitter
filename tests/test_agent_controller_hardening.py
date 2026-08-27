@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.25.0-codex.1
+Code version: v3.26.1-codex.1
 """
 
 from __future__ import annotations
@@ -280,7 +280,7 @@ class TestModelVerificationFreshSession:
                 selected_target_url=(
                     "https://chatgpt.com/"
                     if session_mode in {"new", "project_new"}
-                    else "https://chatgpt.com/c/model-check"
+                    else "https://chatgpt.com/c/abc123"
                 ),
                 should_stop=lambda: False,
                 update=lambda **_changes: None,
@@ -710,6 +710,8 @@ class TestRecentSessionCatalog:
         assert "new AbortController()" in script
         assert 'query.set("refresh", "1")' in script
         assert "loadAgentSources({forceRefresh: true})" in script
+        assert 'catalogState === "error"' in script
+        assert "combobox === elements.recentSessionCombobox" in script
         assert "clearCatalogLoadingState" in script
         assert "Recent sessions timed out after 15 seconds." in script
 
@@ -754,6 +756,9 @@ class TestRecentSessionCatalog:
         bind_index = script.index("function bindCompletedAgentSession")
         bind_chunk = script[bind_index:bind_index + 1_800]
         assert "loadAgentSources({forceRefresh: true})" in bind_chunk
+        assert "if (!completedTransition" in bind_chunk
+        assert "lastRenderedAgentRunning === true && !running" in script
+        assert "bindCompletedAgentSession(agent, completedTransition)" in script
         assert 'query.set("refresh", "1")' in script
         assert 'elements.sessionMode.value = "recent"' not in bind_chunk
         assert 'elements.sessionMode.value = "project"' not in bind_chunk
@@ -841,6 +846,61 @@ class TestBrowserInterruption:
                 platform="chatgpt",
                 session_mode="new",
             )
+        assert interrupted is False
+        assert reason == ""
+
+    def test_fresh_grok_home_to_conversation_is_allowed(self) -> None:
+        page = MagicMock()
+        page.is_closed.return_value = False
+        page.url = "https://grok.com/c/new-session"
+        page.title.return_value = "Grok"
+        with patch("app.core.computer_use_agent._macos_screen_is_locked", return_value=False):
+            interrupted, reason = _detect_browser_interruption(
+                page,
+                "https://grok.com/",
+                "chromium",
+                platform="grok",
+                session_mode="new",
+            )
+        assert interrupted is False
+        assert reason == ""
+
+    def test_grok_project_session_switch_is_detected(self) -> None:
+        page = MagicMock()
+        page.is_closed.return_value = False
+        page.url = "https://grok.com/project/project-1?chat=session-2"
+        page.title.return_value = "Grok"
+        interrupted, reason = _detect_browser_interruption(
+            page,
+            "https://grok.com/project/project-1?chat=session-1",
+            "chromium",
+            platform="grok",
+            session_mode="project_session",
+        )
+        assert interrupted is True
+        assert "navigated" in reason.lower()
+
+    def test_canonical_grok_url_drift_does_not_turn_a_title_update_into_an_interruption(
+        self,
+    ) -> None:
+        page = MagicMock()
+        page.is_closed.return_value = False
+        page.url = "https://www.grok.com/c/session-1/?message=latest#response"
+        page.title.return_value = "Updated conversation title"
+
+        with patch(
+            "app.core.computer_use_agent._macos_screen_is_locked",
+            return_value=False,
+        ):
+            interrupted, reason = _detect_browser_interruption(
+                page,
+                "https://grok.com/c/session-1",
+                "chromium",
+                platform="grok",
+                session_mode="recent",
+                expected_title="Original conversation title",
+            )
+
         assert interrupted is False
         assert reason == ""
 

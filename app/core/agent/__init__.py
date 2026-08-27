@@ -1,6 +1,6 @@
 """Computer-use Agent boundary for access, source discovery, and execution."""
 
-# Code version: v1.1.0-codex.2
+# Code version: v1.2.0-codex.1
 
 from ..agent_access_security import (
     AGENT_ACCESS_SESSION_KEY,
@@ -12,6 +12,7 @@ from ..agent_session_sources import (
     list_agent_sources,
     normalize_agent_project_url,
     probe_and_collect_claude_sources,
+    probe_and_collect_grok_sources,
 )
 from ..agent_source_cache import AgentSourceCache
 from ..computer_use_agent import (
@@ -46,6 +47,7 @@ __all__ = [
     "normalize_agent_project_url",
     "open_agent_in_browser",
     "probe_and_collect_claude_sources",
+    "probe_and_collect_grok_sources",
     "validate_agent_access_password",
     "validate_computer_use_settings",
 ]

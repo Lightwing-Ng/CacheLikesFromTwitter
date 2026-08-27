@@ -1,6 +1,6 @@
 """Provider-neutral Web Agent Project and session discovery.
 
-Code version: v1.4.0-codex.1
+Code version: v1.7.0-codex.1
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from urllib.parse import parse_qs, quote, urlencode, urlsplit
 from .browser_sessions import (
     browser_descriptors,
     goto_with_retry,
+    is_grok_security_verification_page,
     launch_chromium_context,
     select_provider_tab,
     sync_playwright_or_error,
@@ -96,7 +97,8 @@ def normalize_gemini_project_url(value: str) -> str:
         or not GEMINI_PROJECT_PATH_PATTERN.fullmatch(parsed.path)
     ):
         return ""
-    return f"https://gemini.google.com{parsed.path.rstrip('/')}"
+    project_id = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+    return f"https://gemini.google.com/app/{project_id}"
 
 
 def normalize_claude_conversation_url(value: str) -> str:
@@ -229,12 +231,16 @@ def list_agent_project_sessions(
         payload["platform"] = platform_key
         return payload
     if platform_key == "gemini":
-        return _list_gemini_project_sessions(
-            browser_name,
-            normalized_project_url,
-            config,
-            silent=silent,
-        )
+        return {
+            "platform": "gemini",
+            "project_url": normalized_project_url,
+            "sessions": [],
+            "limit": AGENT_SOURCE_LIMIT,
+            "message": (
+                "Gemini Notebook session ownership cannot be verified; "
+                "use New session in project."
+            ),
+        }
     if platform_key == "claude":
         return _list_claude_project_sessions(
             browser_name,
@@ -272,7 +278,10 @@ def _list_gemini_agent_sources(
         silent=silent,
     )
     sessions = _normalize_session_rows("gemini", _snapshot_rows(snapshot, "recent_sessions"))
-    projects = _snapshot_rows(snapshot, "projects")
+    projects = _normalize_project_rows(
+        "gemini",
+        _snapshot_rows(snapshot, "projects"),
+    )
     return {
         "platform": "gemini",
         "browser_label": _browser_label(browser_name, config),
@@ -377,6 +386,189 @@ def probe_and_collect_claude_sources(
     )
 
 
+def probe_and_collect_grok_sources(
+    browser_name: str,
+    config: CrawlConfig,
+    *,
+    silent: bool = False,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Verify Grok Web and collect Agent sources in one Chromium context."""
+    descriptor = browser_descriptors(config).get(str(browser_name or "").strip().lower())
+    if descriptor is None:
+        raise ValueError(f"Unsupported browser: {browser_name}")
+    if descriptor.engine != "chromium":
+        raise ValueError(f"Grok Agent sessions require Edge or Chrome, not {descriptor.label}.")
+
+    def collect(page: Any) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        status = _grok_page_status(page, descriptor.label)
+        if not status["can_download"]:
+            return status, None
+        try:
+            snapshot = _collect_grok_sources(page)
+        except Exception:
+            return status, None
+        return status, {
+            "platform": "grok",
+            "browser_label": descriptor.label,
+            "recent_sessions": _normalize_session_rows(
+                "grok",
+                _snapshot_rows(snapshot, "recent_sessions"),
+            ),
+            "projects": _normalize_project_rows(
+                "grok",
+                _snapshot_rows(snapshot, "projects"),
+            )[:AGENT_SOURCE_LIMIT],
+            "limit": AGENT_SOURCE_LIMIT,
+        }
+
+    try:
+        return _run_chromium_source_collection(
+            browser_name,
+            config,
+            GROK_HOME_URL,
+            collect,
+            silent=silent,
+        )
+    except Exception as exc:  # pragma: no cover - depends on local browser state
+        return {
+            "platform": "grok",
+            "browser_label": descriptor.label,
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "",
+            "message": str(exc),
+        }, None
+
+
+def _grok_page_status(page: Any, browser_label: str) -> dict[str, Any]:
+    """Verify Grok Agent readiness from its actual message composer."""
+    page.wait_for_timeout(2_000)
+    title = ""
+    body_text = ""
+    html = ""
+    try:
+        title = str(page.title() or "")
+    except Exception:
+        pass
+    try:
+        body_text = str(page.locator("body").inner_text(timeout=5_000) or "")
+    except Exception:
+        pass
+    try:
+        html = str(page.content() or "")
+    except Exception:
+        pass
+    if is_grok_security_verification_page(title, body_text, html):
+        return {
+            "platform": "grok",
+            "browser_label": browser_label,
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "Security verification required",
+            "message": (
+                f"Grok showed a security verification page in {browser_label}, "
+                "so the signed-in account could not be verified."
+            ),
+        }
+
+    normalized_body = body_text.casefold()
+    restricted_markers = (
+        "account suspended",
+        "account disabled",
+        "account deactivated",
+        "access restricted",
+        "account is unavailable",
+    )
+    if any(marker in normalized_body for marker in restricted_markers):
+        return {
+            "platform": "grok",
+            "browser_label": browser_label,
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "Grok account restricted",
+            "message": f"{browser_label} reported that the Grok account is restricted or unavailable.",
+        }
+
+    signed_out = False
+    try:
+        signed_out = bool(
+            page.evaluate(
+                r"""() => {
+                    const visible = (element) => element && element.getClientRects().length > 0
+                        && getComputedStyle(element).visibility !== 'hidden'
+                        && getComputedStyle(element).display !== 'none';
+                    const authAction = [...document.querySelectorAll('a,button')].some((element) =>
+                        visible(element) && [
+                            element.getAttribute('aria-label') || '',
+                            element.innerText || element.textContent || '',
+                        ].some((value) => /^(?:sign in|log in|sign up|create account)(?:\s+to\s+grok)?$/i.test(
+                            value.replace(/\s+/g, ' ').trim()
+                        ))
+                    );
+                    return Boolean(authAction);
+                }"""
+            )
+        )
+    except Exception:
+        pass
+    if signed_out or re.search(
+        r"(?:^|\n)\s*(?:sign in|log in|sign up|create account)(?:\s+to\s+grok)?\s*(?:$|\n)",
+        normalized_body,
+    ):
+        return {
+            "platform": "grok",
+            "browser_label": browser_label,
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "",
+            "message": f"{browser_label} is not signed in to Grok.",
+        }
+
+    composer = page.locator("textarea").first
+    try:
+        composer.wait_for(state="visible", timeout=20_000)
+    except Exception:
+        if re.search(r"\b(?:sign in|log in|sign up|create account)\b", normalized_body):
+            message = f"{browser_label} is not signed in to Grok."
+        else:
+            message = f"{browser_label} could not verify an available Grok message composer."
+        return {
+            "platform": "grok",
+            "browser_label": browser_label,
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "",
+            "message": message,
+        }
+    try:
+        authenticated_payload = _grok_api_json(
+            page,
+            "/rest/app-chat/conversations?"
+            + urlencode({"pageSize": "1", "excludeProjects": "true"}),
+        )
+        if not isinstance(authenticated_payload.get("conversations"), list):
+            raise RuntimeError("Grok authentication probe returned an invalid payload.")
+    except Exception:
+        return {
+            "platform": "grok",
+            "browser_label": browser_label,
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "",
+            "message": (
+                f"{browser_label} could not verify an authenticated Grok account."
+            ),
+        }
+    return {
+        "platform": "grok",
+        "browser_label": browser_label,
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "Grok account",
+        "message": f"{browser_label} verified an authenticated Grok Web session.",
+    }
+
+
 def _claude_page_status(page: Any, browser_label: str) -> dict[str, Any]:
     """Return a bounded readiness result without reading account or credential data."""
     page.wait_for_timeout(2_000)
@@ -452,28 +644,6 @@ def _list_claude_project_sessions(
     )
     return {
         "platform": "claude",
-        "project_url": project_url,
-        "sessions": sessions[:AGENT_SOURCE_LIMIT],
-        "limit": AGENT_SOURCE_LIMIT,
-    }
-
-
-def _list_gemini_project_sessions(
-    browser_name: str,
-    project_url: str,
-    config: CrawlConfig,
-    *,
-    silent: bool = False,
-) -> dict[str, Any]:
-    sessions = _run_chromium_source_collection(
-        browser_name,
-        config,
-        project_url,
-        lambda page: _read_gemini_project_session_links(page, project_url),
-        silent=silent,
-    )
-    return {
-        "platform": "gemini",
         "project_url": project_url,
         "sessions": sessions[:AGENT_SOURCE_LIMIT],
         "limit": AGENT_SOURCE_LIMIT,
@@ -564,10 +734,13 @@ def _collect_claude_sources(page: Any) -> dict[str, Any]:
 
 
 def _read_gemini_project_links(page: Any) -> list[dict[str, str]]:
-    """Read Notebook links without exposing Notebook as an Agent concept."""
+    """Read only explicit Gemini Notebook routes as shared Projects."""
     try:
-        rows = page.evaluate(
-            r"""() => {
+        rows = page.locator(
+            'a[href*="/notebook/"], a[href*="/notebooks/"], '
+            '[role="link"][href*="/notebook/"], [role="link"][href*="/notebooks/"]'
+        ).evaluate_all(
+            r"""(elements) => {
                 const textOf = (element) => [
                     element?.innerText,
                     element?.textContent,
@@ -575,21 +748,13 @@ def _read_gemini_project_links(page: Any) -> list[dict[str, str]]:
                     element?.getAttribute?.('title'),
                 ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
                 const rows = [];
-                for (const element of document.querySelectorAll('a[href], [role="link"]')) {
+                for (const element of elements) {
                     const rawHref = element.href || element.getAttribute('href') || '';
                     let url;
                     try { url = new URL(rawHref, location.href); } catch (_) { continue; }
                     if (url.protocol !== 'https:' || url.hostname !== 'gemini.google.com') continue;
                     const path = url.pathname.replace(/\/+$/, '');
-                    const notebookPath = /^\/(?:notebook|notebooks)\/[A-Za-z0-9_-]+$/.test(path);
-                    const appPath = /^\/app\/[A-Za-z0-9_-]+$/.test(path);
-                    let parent = element;
-                    const context = [];
-                    for (let depth = 0; parent && depth < 8; depth += 1, parent = parent.parentElement) {
-                        context.push(textOf(parent));
-                        if (parent.tagName === 'NAV') break;
-                    }
-                    if (!notebookPath && !(appPath && /notebook/i.test(context.join(' ')))) continue;
+                    if (!/^\/(?:notebook|notebooks)\/[A-Za-z0-9_-]+$/.test(path)) continue;
                     rows.push({href: url.href, title: textOf(element)});
                 }
                 return rows;
@@ -693,10 +858,6 @@ def _read_grok_project_api_rows(page: Any) -> list[dict[str, str]]:
     return rows
 
 
-def _read_gemini_project_session_links(page: Any, project_url: str) -> list[dict[str, str]]:
-    return _read_project_session_links(page, "gemini", project_url)
-
-
 def _read_grok_project_session_links(page: Any, project_url: str) -> list[dict[str, str]]:
     try:
         project_id = urlsplit(project_url).path.rstrip("/").rsplit("/", 1)[-1]
@@ -729,6 +890,8 @@ def _read_grok_project_session_links(page: Any, project_url: str) -> list[dict[s
 
 
 def _read_project_session_links(page: Any, platform: str, project_url: str) -> list[dict[str, str]]:
+    if platform == "gemini":
+        return []
     try:
         rows = page.evaluate(
             r"""() => [...document.querySelectorAll('a[href], [role="link"]')].map((element) => ({
@@ -748,10 +911,28 @@ def _read_project_session_links(page: Any, platform: str, project_url: str) -> l
         normalized_url = normalize_agent_conversation_url(platform, raw_url)
         if not normalized_url or normalized_url == normalized_project or normalized_url in seen_urls:
             continue
+        if platform == "grok":
+            normalized_session_project = normalize_agent_project_url(
+                "grok",
+                normalized_url,
+            )
+            chat_id = str(
+                parse_qs(urlsplit(normalized_url).query).get("chat", [""])[0]
+                or ""
+            ).strip()
+            if (
+                not normalized_project
+                or normalized_session_project != normalized_project
+                or not re.fullmatch(r"[A-Za-z0-9_-]+", chat_id)
+            ):
+                continue
+            session_id = chat_id
+        else:
+            session_id = normalized_url.rsplit("/", 1)[-1]
         seen_urls.add(normalized_url)
         sessions.append(
             {
-                "id": normalized_url.rsplit("/", 1)[-1],
+                "id": session_id,
                 "title": str(row.get("title") or "").strip() or "Untitled session",
                 "url": normalized_url,
                 "updated_at": "",

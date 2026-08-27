@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.24.3-codex.1`
+Documentation version: `v3.29.0-codex.1`
 
 ## Purpose
 
@@ -11,8 +11,10 @@ Safari for the existing session flows. Edge is the default because its Chromium 
 not depend on desktop clicks; Chrome uses the same isolated controller.
 
 The default is a new root-level session. Every provider can also join one of the 20 most recent
-sessions, start a session in one of the 20 most recent Projects, or join one of that Project's 20
-most recent sessions. The adapter maps ChatGPT Projects, Gemini Notebooks, Grok Projects, and Claude
+sessions or start a session in one of the 20 most recent Projects. ChatGPT, Grok, and Claude can
+also join one of that Project's 20 most recent sessions. Gemini Notebook session ownership cannot
+be proved from its current Web routes, so Gemini Projects fail closed to `New session in project`.
+The adapter maps ChatGPT Projects, Gemini Notebooks, Grok Projects, and Claude
 Projects to the same Project contract, so the Agent UI and execution loop do not expose
 provider-specific container names. Claude source discovery reads rendered links only and does not
 call a Claude API or extract credentials. A run-scoped `session_title` is preserved as the local session label and included
@@ -29,13 +31,21 @@ serve the last catalog while one background refresh runs per key. Add `refresh=1
 is required. If that refresh fails and an older entry exists, the API returns the older catalog
 with `cache.status: "stale"` so the selector remains usable and the condition stays observable.
 
-On `/agent`, ChatGPT uses an agent-scoped bootstrap request: the selected Edge/Chrome/Safari
-context verifies the account and collects Recent sessions and Projects in one launch. The status
-payload carries that catalog directly to the selector, and the same payload seeds the shared L1 and
-Parquet L2 cache. The page therefore does not open a second browser for the Recent sessions step.
-Loading sessions inside a selected Project remains a later, separately keyed operation.
+On `/agent`, ChatGPT, Grok, and Claude use an agent-scoped bootstrap request: the selected browser
+context verifies the actual Web composer and collects Recent sessions and Projects in one launch.
+Grok readiness is verified on `https://grok.com/`; it does not depend on the separate `/files`
+download surface or account-label scraping. A visible composer is necessary but not sufficient:
+the same browser context must also complete one authenticated Grok conversations request, and any
+visible login, signup, or account-creation action fails closed. The status payload carries the
+catalog directly to the selector and seeds the shared L1 and Parquet L2 cache. A fresh bootstrap
+supersedes older in-memory or session-storage catalog state before loaded/loading guards run,
+aborting and invalidating any older request. The page therefore does not open a second browser for
+the Recent sessions step. Loading sessions inside a selected Project remains a later, separately
+keyed operation. Grok's DOM fallback exposes only same-Project `?chat=<id>` sessions.
 
-This route uses no API, command-line coding-agent runtime, MCP connection, or third-party agent bridge.
+This route uses no provider developer API, command-line coding-agent runtime, MCP connection, or
+third-party agent bridge. Readiness and catalog discovery may call the provider's own authenticated
+Web endpoints inside the cloned browser context.
 ChatGPT plan limits, file-upload limits, data controls, storage, and retention still apply.
 
 ## Canonical navigation
@@ -45,6 +55,13 @@ The Agent entrypoint is scoped by the selected browser and Web provider. The can
 is a browser-scoped compatibility alias, and the legacy `/agent` path redirects to
 the persisted selection. Changing either selector updates the canonical path without reloading the
 page, so a copied URL preserves the intended Edge/ChatGPT selection.
+
+Completed UI state is bound to both the provider and browser recorded by the run. Opening or
+switching to another canonical route renders an idle phase with an empty activity list, response,
+and composer instead of relabeling an older provider's result. The API keeps the global persisted
+snapshot for recovery, but the server-rendered first frame and subsequent client polling both apply
+the same provenance check. Changing the provider or browser also clears the current composer so an
+older task cannot be submitted accidentally through a different Web session.
 
 ## Execution loop
 
@@ -70,26 +87,47 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
    submenu and read back `GPT-5.6 Sol` or `5.6 Sol`. If that verification fails, the run stops
    without attaching the context or sending the prompt. Gemini, Grok, and Claude retain their
    best-effort boundary: when their compatible model control is not exposed, the controller keeps
-   the selected session's current remote model and reports that limitation.
+   the selected session's current remote model and reports that limitation. When a selector is
+   exposed, only exact model labels and explicit selector wrappers are accepted; compound controls
+   such as `Auto-play` are rejected. After a click, the selector itself must read back the chosen
+   model before the run can publish `model_verified=true`.
    Chromium composer readiness is polled in 250 ms slices so Stop can terminate the initial page
    verification before model selection, context attachment, or prompt submission. Its single
    recovery reload waits only for navigation commit and is capped at five seconds. Stop is checked
-   again before and throughout context attachment, after attachment state publication, and before
+   again before and throughout eligible reused-session context attachment, after attachment state publication, and before
    prompt submission; Chromium submitters also return before reading or filling a composer when a
-   stop is already pending.
+   stop is already pending. Grok's bounded Enter fallback is unavailable for an unbound fresh run;
+   a reused or already bound session rechecks Stop after its last DOM send-button scan and before
+   pressing Enter, so a Stop accepted during that scan cannot submit another controller observation.
 5. The service builds one owner-readable Markdown context package containing the request,
    repository instruction files, a bounded file index, dirty-worktree status, and project entry
    files. Credential locations, environment files, cookie stores, and private-key formats are
    excluded from the file index and controller access.
-6. Chromium browsers attach the package directly when the selected provider exposes a file input.
+6. Fresh root and Project runs do not attach the package before the new provider conversation is
+   bound; they stream bounded context through controller reads on demand. Reused sessions may attach
+   the package directly when the selected provider exposes a file input.
    The controller treats the upload as accepted only after the composer visibly reads back the
    exact context filename; a populated hidden file input alone is insufficient. If the filename
    never becomes visible or the page reports an upload failure, the run continues without claiming
    an attachment and requests only the bounded files needed for subsequent actions. After a
    confirmed attachment or that on-demand fallback, the controller clicks the semantic send
-   control and confirms that the provider accepted the prompt. Grok uses its live `textarea` and
+   control and confirms that the provider accepted the prompt. In the same browser evaluation that
+   clicks Send, the controller first checks the official host and exact selected landing or bound
+   conversation identity; a tab switch to an old conversation therefore cannot race the final click.
+   Grok uses its live `textarea` and
    `chat-submit`/`Submit` contract; if that control is briefly absent after a follow-up observation,
    the controller falls back to pressing Enter and still verifies prompt acceptance.
+   For every fresh root or Project run, the first prompt contains a high-entropy transfer ID. The
+   controller binds the new conversation only when the latest visible user message outside the
+   composer echoes that ID and the URL atomically observed with the receipt still matches a second
+   canonical URL read. Merely reaching a same-scope old conversation cannot bind it. The binding
+   wait is bounded and Stop-aware; no local controller action executes before it succeeds. Before a
+   fresh Grok submit, the controller also enumerates the complete root or selected-Project
+   conversation catalog. Pagination loops, malformed rows, repeated cursors, and incomplete schemas
+   fail closed, and a conversation present in that pre-submit baseline cannot be bound even if it
+   later displays the current transfer ID. Gemini
+   Notebook routes converge on their typed `/app/<id>` identity and use the same receipt gate even
+   when the provider remains on that URL.
 7. The selected Web provider returns exactly one JSON action at a time inside a fenced `json` code block so
    rendered Markdown cannot consume action quotes, backslashes, asterisks, or source-code delimiters. The
    controller prefers that code block's literal text and supports `list`, `read`, `search`, `replace`, `write`,
@@ -174,12 +212,21 @@ page, so a copied URL preserves the intended Edge/ChatGPT selection.
   when the repository or generated test code is untrusted.
 - Stop is honored during the initial Chromium composer gate, ends Web-provider generation, and
   terminates the current local process group. Completion first clears the active process and removes
-  the temporary context, then releases the macOS idle-sleep assertion and clears context metadata;
-  only after those cleanup steps does it persist `running=false` as the completion barrier. A context
-  deletion failure instead publishes a failed phase, persists the context path and size as bounded
+  the temporary context, then atomically claims the macOS idle-sleep assertion and attempts to
+  release it. Only after those cleanup steps does it clear context metadata and persist
+  `running=false` as the completion barrier. Worker completion and process shutdown cannot both
+  claim the same assertion.
+  During service exit, the shutdown hook requests Stop, waits up to eight seconds, and then claims
+  any assertion that the worker has not already claimed. A late worker registration after shutdown
+  immediately attempts to release its assertion instead of repopulating the shared slot. The
+  assertion also runs as `caffeinate -i -w <service PID>`, so termination of the service PID releases
+  it even when Python cleanup or the daemon worker cannot finish. A context deletion failure instead
+  publishes a failed phase, persists the context path and size as bounded
   recovery metadata, and logs the cleanup error. The next production run retries that exact
   runtime-local cleanup, sweeps every other unreferenced app-owned timestamp context, and remains
   blocked if any cleanup fails. Sleep-assertion release failures cannot prevent the final barrier.
+  Unexpected assertion startup or registration failures also pass through the failed completion
+  path, persist `running=false`, and do not prevent a later task from starting.
   Local context-package construction, Chromium profile cloning, and browser-context launch are
   synchronous and not fully preemptible; initial navigation can also remain in flight until its
   configured timeout. Stop can wait for those phases. Gates before browser startup, immediately
@@ -283,13 +330,15 @@ Grok, and Claude remain best-effort: if their remote UI does not expose a matchi
 the controller leaves that selected session's current remote model unchanged and reports the
 limitation rather than claiming model-selection success.
 
-While an Agent task is running on macOS, the service holds an idle-sleep assertion until it has
-attempted task-scoped context removal during success, stop, or failure cleanup. A failed removal is
-published as a recoverable failed state rather than keeping an orphan worker marked active. On
-Windows, the controller isolates the active process in a new process group and uses a cooperative
-stop before terminating it. Closing a MacBook lid,
-choosing Sleep, restarting, losing network access, or ending the local service can still suspend or
-interrupt a task.
+While an Agent task is running on macOS, the service holds an idle-sleep assertion bound to the
+service PID until it has attempted task-scoped context removal during success, stop, or failure
+cleanup. Worker completion and service shutdown use an atomic ownership transfer before attempting
+to terminate that assertion, while `caffeinate -w` is the final safeguard if the service exits
+before cleanup. A failed context removal is published as a recoverable failed state rather than
+keeping an orphan worker marked active. On Windows, the controller isolates the active process in a
+new process group and uses a cooperative stop before terminating it. Closing a MacBook lid, choosing
+Sleep, restarting, losing network access, or ending the local service can still suspend or interrupt
+a task.
 
 ## Verification
 
@@ -301,8 +350,8 @@ probe was not possible because the selected account is currently restricted. The
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
 
-On 26 Aug 2026, 308 focused controller/hardening tests passed with the bundled ripgrep available.
-The same suite passed 307 tests with only its real-ripgrep integration test skipped under an explicit
+On 26 Aug 2026, 315 focused controller/hardening tests passed with the bundled ripgrep available.
+The same suite passed 314 tests with only its real-ripgrep integration test skipped under an explicit
 no-`rg` PATH; all mocked ripgrep JSON, Stop, timeout, post-filter, and diagnostic-isolation cases still
 executed through a workspace-external trusted fixture. The production-hardening suite covered
 recursive search parity, Stop propagation, completion cleanup, explicit session reuse,
@@ -310,12 +359,15 @@ verification-gate ordering, canonical executable and argument confinement, hard-
 strict direct `tsc --noEmit` parsing, shared cross-platform action-schema migration, atomic settings
 replacement, unique atomic run-snapshot replacement, Safari submission Stop gates, Chromium retry
 Stop gates, linked-path-confined orphaned-context housekeeping, bounded content fingerprints, and
-real POSIX leader-exited descendant processes. Runtime regressions reject linked or junction-backed
+real POSIX leader-exited descendant processes. Sleep lifecycle regressions cover service-PID-bound
+`caffeinate`, shutdown-first and worker-first ownership races, join timeout takeover, late
+registration after shutdown, and assertion startup or registration exceptions followed by a clean
+second run. Runtime regressions reject linked or junction-backed
 runtime ancestors, timestamp directories, snapshot metadata, hard-linked context files, and
 non-regular persisted inputs without changing external content or permissions or blocking startup.
 A worker-thread launch failure is also published and persisted as `failed` with `running=false`, so
-Stop is not falsely accepted and a later task can start. The complete project gate passed 856 tests
-and 357 subtests with 67.52%
+Stop is not falsely accepted and a later task can start. The complete project gate passed 936 tests
+and 366 subtests with 68.40%
 overall coverage and branch measurement enabled. A protected runtime inventory also found and then
 removed 45 historical orphaned context bundles totaling 1,481,451 bytes; no timestamp context remained.
 This verification did not restart the user-owned service or send a new Web-provider task; Windows
@@ -326,3 +378,22 @@ On 19 Aug 2026, the named `08.19 Agentic` Edge tasks completed a 38-turn ChatGPT
 fallback was verified, but Grok Auto remained in a long second-turn thinking state during two
 bounded audits; this provider-specific runtime limitation remains observable and is not reported
 as a completed full audit.
+
+On 26 Aug 2026, production preparation for a new Grok task added receipt-correlated session binding.
+A fresh root run may bind only the `/c/<id>` conversation whose latest user message contains that
+run's transfer ID. Project-new runs add the same proof and may bind only inside the selected Project,
+while Project-session runs compare the Project ID and `chat` query exactly. Grok freshness now also
+requires a complete pre-submit conversation baseline, and Send performs its target check atomically
+with the click. Fresh runs transfer no attachment before binding. The pass also added positive
+authenticated-API readiness, semantic-menu-scoped and re-read model selection, same-Project catalog
+fallback filtering, Gemini Notebook Project-session fail-closed behavior, fresh-bootstrap
+reconciliation over stale catalog state, provider-aware stale-request suppression, and strict
+provider/browser provenance isolation for completed UI state and composer content. Focused
+controller/source/Web regressions passed 399 tests and 342 subtests; all 55 Chromium UI/E2E tests
+then passed. The full gate passed as recorded above. After the final 8666 restart, the live Edge
+Grok route loaded `computer-use-agent-v3.22.0-codex.1` and rendered `idle` with an empty response
+and composer even though the persisted global snapshot belonged to a completed ChatGPT run. Both the
+controller's isolated Edge probe and a fresh host Edge tab still showed Grok's Cloudflare
+`Verify you are human` security page. The local Agent kept Ask disabled. No CAPTCHA or security
+barrier was bypassed, and no project context or prompt was sent; the operator must complete that
+verification in Edge before the real project run can begin.

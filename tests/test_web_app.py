@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.81.4-codex.1
+# Code version: v1.85.0-codex.1
 
 from __future__ import annotations
 
@@ -372,7 +372,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.1-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -802,9 +802,9 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.0-codex.2', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.4.1-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.19.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.22.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -973,6 +973,60 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("<strong>History</strong>", history_html)
         self.assertNotIn("<script>", history_html)
         self.assertIn("&lt;script&gt;", history_html)
+
+    def test_agent_page_isolates_completed_snapshots_by_provider_and_browser(self) -> None:
+        app = create_app()
+        agent_service = app.extensions["computer_use_agent_service"]
+        snapshot = agent_service.snapshot()
+        snapshot.update(
+            {
+                "activity": [
+                    {
+                        "status": "complete",
+                        "label": "STALE_ACTIVITY_SENTINEL",
+                        "detail": "Old ChatGPT activity",
+                        "meta": "Earlier run",
+                    }
+                ],
+                "browser": "edge",
+                "history": [
+                    {
+                        "prompt": "STALE_HISTORY_PROMPT_SENTINEL",
+                        "response": "STALE_HISTORY_RESPONSE_SENTINEL",
+                    }
+                ],
+                "message": "STALE_MESSAGE_SENTINEL",
+                "phase": "finished",
+                "platform": "chatgpt",
+                "prompt": "STALE_PROMPT_SENTINEL",
+                "response": "STALE_RESPONSE_SENTINEL",
+                "running": False,
+            }
+        )
+
+        with patch.object(agent_service, "snapshot", return_value=snapshot):
+            with app.test_client() as client:
+                matching_body = client.get("/agent/edge/chatgpt").get_data(as_text=True)
+                provider_mismatch = client.get("/agent/edge/grok").get_data(as_text=True)
+                browser_mismatch = client.get("/agent/chrome/chatgpt").get_data(as_text=True)
+
+        self.assertIn("STALE_HISTORY_RESPONSE_SENTINEL", matching_body)
+        for body in (provider_mismatch, browser_mismatch):
+            with self.subTest(route_body=body[:80]):
+                self.assertNotIn("STALE_ACTIVITY_SENTINEL", body)
+                self.assertNotIn("STALE_HISTORY_PROMPT_SENTINEL", body)
+                self.assertNotIn("STALE_HISTORY_RESPONSE_SENTINEL", body)
+                self.assertNotIn("STALE_MESSAGE_SENTINEL", body)
+                self.assertNotIn("STALE_PROMPT_SENTINEL", body)
+                self.assertNotIn("STALE_RESPONSE_SENTINEL", body)
+                self.assertIn(
+                    '<span class="status-chip status-idle" id="agent_phase_chip">idle</span>',
+                    body,
+                )
+                self.assertIn(
+                    'data-agent-prompt-input required></textarea>',
+                    body,
+                )
 
     def test_agent_project_picker_uses_the_shared_directory_route(self) -> None:
         selected_path = Path("/tmp/Selected Agent Project")
@@ -1174,7 +1228,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.19.0-codex.1',
+            'computer-use-agent-v3.22.0-codex.1',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
@@ -1260,6 +1314,37 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()["agent_sources"], source_payload)
         probe.assert_called_once()
+
+    def test_grok_agent_browser_bootstrap_uses_home_composer_and_reuses_sources(self) -> None:
+        source_payload = {
+            "platform": "grok",
+            "recent_sessions": [{"id": "grok-1", "url": "https://grok.com/c/grok-1"}],
+            "projects": [],
+            "limit": 20,
+        }
+        status_payload = {
+            "platform": "grok",
+            "browser": "edge",
+            "browser_label": "Edge",
+            "logged_in": True,
+            "can_download": True,
+            "account_name": "Grok account",
+            "message": "Edge verified Grok.",
+        }
+        app = create_app()
+        with patch(
+            "app.web.app.probe_and_collect_grok_sources",
+            return_value=(status_payload, source_payload),
+        ) as probe, patch("app.web.app.probe_browser_session") as legacy_probe:
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/browser-session?platform=grok&browser=edge&scope=agent"
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["agent_sources"], source_payload)
+        probe.assert_called_once()
+        legacy_probe.assert_not_called()
 
     def test_agent_preferences_accept_gemini_and_grok_model_choices(self) -> None:
         with TemporaryDirectory() as raw_root:
@@ -1452,7 +1537,7 @@ class WebAppTests(unittest.TestCase):
                 {
                     "id": "grok-session",
                     "title": "Grok project task",
-                    "url": "https://grok.com/c/grok-session",
+                    "url": "https://grok.com/project/project-1?chat=grok-session",
                     "updated_at": "",
                 }
             ],
@@ -1511,10 +1596,17 @@ class WebAppTests(unittest.TestCase):
             'data-pagination-range-trigger',
             'data-pagination-range-menu',
             "paginationMotion?.capturePaginationAnimation(",
-            "bindCompletedAgentSession(agent)",
+            "bindCompletedAgentSession(agent, completedTransition)",
+            "function agentSnapshotMatchesSelection(agent)",
+            "const persistedAgent = lastPayload.agent || {};",
+            "running || agentSnapshotMatchesSelection(persistedAgent)",
             "function applyAgentSources(payload)",
             "lastBrowserStatus?.agent_sources",
             "lastBrowserStatus?.agent_sources_error",
+            'let appliedBootstrapSignature = ""',
+            "bootstrapSignature !== appliedBootstrapSignature",
+            "sourceRequestId += 1",
+            'const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"])',
             "loadSelectedSessionHistory(input.value)",
             "/api/agent/chatgpt-session-history?",
             "Loading the selected ChatGPT session history…",
@@ -1847,7 +1939,7 @@ class WebAppTests(unittest.TestCase):
             'showStatusCheckmark(isReady ? "ready" : "error");',
             'function hideStatusCheckmark()',
             'if (statusSpinner) statusSpinner.hidden = false;',
-            'if (activeBrowser !== browserId) return;',
+            'if (activeBrowser !== browserId || platform !== requestPlatform) return;',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)

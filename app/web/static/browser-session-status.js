@@ -1,4 +1,4 @@
-/* Code version: v1.4.0-codex.2 */
+/* Code version: v1.4.1-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v5:";
@@ -190,7 +190,7 @@
                 if (activeBrowser !== browserId || platform !== requestPlatform) return;
                 setStatus(payload, browserId);
             } catch (error) {
-                if (activeBrowser !== browserId) return;
+                if (activeBrowser !== browserId || platform !== requestPlatform) return;
                 setStatus({
                     browser_label: statusAccount.textContent,
                     account_name: "",

@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.29.4-codex.1
+Code version: v3.33.0-codex.1
 """
 
 from __future__ import annotations
@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 from queue import Empty, Full, Queue
 import re
+import secrets
 import shutil
 import shlex
 import signal
@@ -28,7 +29,7 @@ import tempfile
 from threading import Event, RLock, Thread, current_thread
 import time
 from typing import Any, Callable
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 from .agent_session_sources import (
     CLAUDE_HOME_URL,
@@ -49,6 +50,7 @@ from .config import (
     is_windows_host,
     resolve_runtime_root,
 )
+from .grok_history import _grok_api_json
 from .safari_automation import SafariContext
 from .state import utc_now
 
@@ -85,6 +87,7 @@ CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
 MAX_BASE64_DECODED_BYTES = MAX_FILE_READ_CHARS
 BROWSER_INTERRUPTION_TIMEOUT_SECONDS = 300
 BROWSER_INTERRUPTION_POLL_SECONDS = 1.0
+AGENT_EXIT_WORKER_JOIN_SECONDS = 8.0
 MAX_AGENT_SESSION_HISTORY = 100
 PERSISTED_AGENT_SNAPSHOT_FILENAME = "last-run.json"
 _AGENT_RUN_DIRECTORY_PATTERN = re.compile(r"^\d{8}-\d{6}$")
@@ -100,6 +103,9 @@ SAFARI_SEND_BUTTON_TIMEOUT_SECONDS = 15
 CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS = 180
 CHROMIUM_SUBMISSION_ACCEPT_TIMEOUT_SECONDS = 15
 WEB_SEND_BUTTON_POLL_MILLISECONDS = 250
+PROVIDER_SESSION_BIND_TIMEOUT_SECONDS = 5
+PROVIDER_SESSION_BIND_POLL_MILLISECONDS = 100
+GROK_SESSION_BASELINE_PAGE_LIMIT = 100
 WEB_PROGRESS_TEXT = {"thinking", "working", "searching", "analyzing", "generating"}
 SUPPORTED_BROWSERS = frozenset({"chrome", "edge", "safari"})
 SUPPORTED_OPERATING_SYSTEMS = frozenset({"macos", "windows"})
@@ -1241,6 +1247,10 @@ def resolve_agent_session_target(
         if not normalized_project_url:
             raise ValueError(f"Choose a {platform_label} Project before starting a new Project session.")
         return normalized_project_url
+    if mode == "project_session" and selected_platform == "gemini":
+        raise ValueError(
+            "Gemini Notebook session ownership cannot be verified; choose New session in Project."
+        )
 
     normalized_conversation_url = normalize_agent_conversation_url(selected_platform, conversation_url)
     if not normalized_conversation_url:
@@ -1258,6 +1268,15 @@ def resolve_agent_session_target(
             project_path = urlsplit(normalized_project_url).path.rstrip("/")
             conversation_path = urlsplit(normalized_conversation_url).path.rstrip("/")
             if not conversation_path.startswith(f"{project_path}/"):
+                raise ValueError("The selected session does not belong to the selected Project.")
+        elif selected_platform == "grok":
+            project_path = urlsplit(normalized_project_url).path.rstrip("/")
+            conversation = urlsplit(normalized_conversation_url)
+            conversation_path = conversation.path.rstrip("/")
+            if conversation_path != project_path or not normalize_agent_conversation_url(
+                "grok",
+                normalized_conversation_url,
+            ):
                 raise ValueError("The selected session does not belong to the selected Project.")
     return normalized_conversation_url
 
@@ -1296,6 +1315,10 @@ def build_context_markdown(
 ) -> tuple[Path, int]:
     """Build a bounded initial context bundle for a fresh Web Agent conversation."""
     byte_limit = settings.context_limit_mib * 1_024 * 1_024
+    platform_label = AGENT_PLATFORM_BY_KEY.get(
+        settings.platform,
+        AGENT_PLATFORM_BY_KEY[DEFAULT_AGENT_PLATFORM],
+    )["label"]
     sections = [
         "# Local Computer Use task\n",
         "## Request\n\n" + user_request.strip() + "\n",
@@ -1304,7 +1327,7 @@ def build_context_markdown(
         f"- Requested environment: {settings.operating_system}\n"
         f"- Project name: {workspace.name}\n"
         f"- Project root: `{workspace}`\n"
-        "- The local controller, not ChatGPT Web, performs every file and command action.\n"
+        f"- The local controller, not {platform_label} Web, performs every file and command action.\n"
         "- Treat each controller result as the only evidence that an action succeeded.\n",
         "## Controller contract\n\n" + settings.system_prompt + "\n",
     ]
@@ -3685,7 +3708,7 @@ def _start_macos_idle_sleep_assertion(
         return None
     try:
         return subprocess.Popen(
-            [str(executable), "-i"],
+            [str(executable), "-i", "-w", str(os.getpid())],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -3831,6 +3854,32 @@ def _require_orphaned_agent_context_cleanup(runtime_root: Path) -> None:
         )
 
 
+class _LinearizedStopSignal:
+    """Order an accepted Stop request against one final browser side effect."""
+
+    def __init__(self) -> None:
+        self._event = Event()
+        self._lock = RLock()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._event.clear()
+
+    def set(self) -> None:
+        with self._lock:
+            self._event.set()
+
+    def is_set(self) -> bool:
+        return self._event.is_set()
+
+    def run_unless_set(self, action: Callable[[], Any]) -> tuple[bool, Any]:
+        """Run one action only if Stop has not linearized first."""
+        with self._lock:
+            if self._event.is_set():
+                return False, None
+            return True, action()
+
+
 class ComputerUseAgentService:
     """Run a fresh Web Agent action loop for one selected local project."""
 
@@ -3847,11 +3896,13 @@ class ComputerUseAgentService:
         self._browser_opener = browser_opener or open_agent_in_browser
         self._lock = RLock()
         self._snapshot = self._load_persisted_snapshot()
-        self._stop_requested = Event()
+        self._stop_requested = _LinearizedStopSignal()
         self._resume_requested = Event()
         self._worker: Thread | None = None
         self._active_process: subprocess.Popen[str] | None = None
         self._sleep_assertion: subprocess.Popen[Any] | None = None
+        self._claimed_sleep_assertion: subprocess.Popen[Any] | None = None
+        self._shutdown_started = False
         self._completion_started = False
         self._conversation_histories: dict[str, list[dict[str, str]]] = {}
         self._conversation_titles: dict[str, str] = {}
@@ -4096,6 +4147,8 @@ class ComputerUseAgentService:
         clean_session_title = _clean_agent_session_title(session_title, "")
 
         with self._lock:
+            if self._shutdown_started:
+                raise RuntimeError("The Agent service is shutting down.")
             if self._snapshot.running:
                 raise RuntimeError("An Agent request is already running.")
             self._require_resolved_context_cleanup_locked()
@@ -4195,24 +4248,79 @@ class ComputerUseAgentService:
         return True
 
     def stop_at_exit(self) -> None:
-        self.request_stop()
         with self._lock:
+            self._shutdown_started = True
             worker = self._worker
+        self.request_stop()
         if worker is not None and worker is not current_thread() and worker.is_alive():
-            worker.join(timeout=8)
+            worker.join(timeout=AGENT_EXIT_WORKER_JOIN_SECONDS)
+        self._release_sleep_assertion(self._take_sleep_assertion())
 
     def _set_active_process(self, process: subprocess.Popen[str] | None) -> None:
         with self._lock:
             self._active_process = process
 
     def _set_sleep_assertion(self, process: subprocess.Popen[Any] | None) -> None:
+        release_after_shutdown = False
         with self._lock:
-            self._sleep_assertion = process
+            if self._shutdown_started:
+                release_after_shutdown = True
+                self._claimed_sleep_assertion = process
+            else:
+                self._sleep_assertion = process
+                self._claimed_sleep_assertion = None
+        if release_after_shutdown:
+            self._release_sleep_assertion(process)
+
+    def _take_sleep_assertion(
+        self,
+        *,
+        expected: subprocess.Popen[Any] | None = None,
+        require_match: bool = False,
+    ) -> subprocess.Popen[Any] | None:
+        """Atomically transfer ownership of the active sleep assertion."""
+        with self._lock:
+            process = self._sleep_assertion
+            if require_match and process is not expected:
+                return None
+            self._sleep_assertion = None
+            if process is not None:
+                self._claimed_sleep_assertion = process
+            return process
+
+    def _sleep_assertion_was_claimed(
+        self,
+        process: subprocess.Popen[Any] | None,
+    ) -> bool:
+        """Return whether another lifecycle owner already took this assertion."""
+        if process is None:
+            return False
+        with self._lock:
+            return self._claimed_sleep_assertion is process
+
+    def _forget_claimed_sleep_assertion(
+        self,
+        process: subprocess.Popen[Any] | None,
+    ) -> None:
+        """Discard one completed ownership tombstone before publishing completion."""
+        with self._lock:
+            if self._claimed_sleep_assertion is process:
+                self._claimed_sleep_assertion = None
+
+    def _release_sleep_assertion(self, process: subprocess.Popen[Any] | None) -> None:
+        """Release one claimed assertion without leaking cleanup exceptions."""
+        if process is None:
+            return
+        try:
+            _stop_macos_idle_sleep_assertion(process)
+        except Exception:
+            LOGGER.exception("Unexpected failure while releasing the Agent idle-sleep assertion.")
 
     def _publish_run_completion(
         self,
         *,
         sleep_assertion: subprocess.Popen[Any] | None,
+        sleep_assertion_registration_completed: bool,
         context_path: Path | None,
         completion: dict[str, Any],
     ) -> None:
@@ -4241,12 +4349,18 @@ class ComputerUseAgentService:
                     context_path,
                     context_cleanup_error or "the file still exists",
                 )
-        try:
-            _stop_macos_idle_sleep_assertion(sleep_assertion)
-        except Exception:
-            LOGGER.exception("Unexpected failure while releasing the Agent idle-sleep assertion.")
-        finally:
-            self._set_sleep_assertion(None)
+        owned_sleep_assertion = self._take_sleep_assertion(
+            expected=sleep_assertion,
+            require_match=True,
+        )
+        if (
+            not sleep_assertion_registration_completed
+            and owned_sleep_assertion is None
+            and not self._sleep_assertion_was_claimed(sleep_assertion)
+        ):
+            owned_sleep_assertion = sleep_assertion
+        self._release_sleep_assertion(owned_sleep_assertion)
+        self._forget_claimed_sleep_assertion(sleep_assertion)
         with self._lock:
             for key, value in completion.items():
                 if hasattr(self._snapshot, key):
@@ -4289,11 +4403,14 @@ class ComputerUseAgentService:
         session_title: str,
         read_only: bool,
     ) -> None:
-        sleep_assertion = _start_macos_idle_sleep_assertion()
-        self._set_sleep_assertion(sleep_assertion)
+        sleep_assertion: subprocess.Popen[Any] | None = None
+        sleep_assertion_registration_completed = False
         context_path: Path | None = None
         completion: dict[str, Any] = {}
         try:
+            sleep_assertion = _start_macos_idle_sleep_assertion()
+            self._set_sleep_assertion(sleep_assertion)
+            sleep_assertion_registration_completed = True
             run_directory = self._runtime_root / time.strftime("%Y%m%d-%H%M%S")
             context_path = run_directory / "context.md"
             self._update(
@@ -4454,6 +4571,9 @@ class ComputerUseAgentService:
         finally:
             self._publish_run_completion(
                 sleep_assertion=sleep_assertion,
+                sleep_assertion_registration_completed=(
+                    sleep_assertion_registration_completed
+                ),
                 context_path=context_path,
                 completion=completion,
             )
@@ -4681,6 +4801,413 @@ def _chatgpt_fresh_navigation_allowed(expected_url: str, current_url: str) -> bo
     return False
 
 
+def _grok_fresh_navigation_allowed(expected_url: str, current_url: str) -> bool:
+    """Permit only Grok's root home-to-root-conversation transition."""
+    expected = urlsplit(str(expected_url or ""))
+    if (expected.hostname or "").lower() not in GROK_HOSTS:
+        return False
+    if (expected.path.rstrip("/") or "/") != "/":
+        return False
+    conversation = normalize_agent_conversation_url("grok", current_url)
+    if not conversation:
+        return False
+    return bool(re.fullmatch(r"/c/[^/]+", urlsplit(conversation).path, re.IGNORECASE))
+
+
+def _provider_pre_submit_target_is_open(
+    platform: str,
+    expected_url: str,
+    current_url: str,
+    session_mode: str,
+) -> bool:
+    """Require the exact selected landing or conversation before first submit."""
+    if not _web_target_is_open(platform, expected_url, current_url):
+        return False
+    mode = str(session_mode or "new").strip().lower()
+    if mode == "project_new":
+        if platform == "gemini":
+            return True
+        return not normalize_agent_conversation_url(platform, current_url)
+    if mode == "new":
+        expected = urlsplit(str(expected_url or ""))
+        current = urlsplit(str(current_url or ""))
+        return (expected.path.rstrip("/") or "/") == (
+            current.path.rstrip("/") or "/"
+        )
+    return True
+
+
+def _provider_new_session_transition_allowed(
+    platform: str,
+    expected_url: str,
+    current_url: str,
+    session_mode: str,
+) -> bool:
+    """Allow only the selected landing's canonical post-submit conversation."""
+    mode = str(session_mode or "new").strip().lower()
+    if mode == "new":
+        if platform == "chatgpt":
+            return _chatgpt_fresh_navigation_allowed(expected_url, current_url)
+        if platform == "grok":
+            return _grok_fresh_navigation_allowed(expected_url, current_url)
+        conversation = normalize_agent_conversation_url(platform, current_url)
+        if not conversation:
+            return False
+        expected_path = urlsplit(str(expected_url or "")).path.rstrip("/") or "/"
+        current_path = urlsplit(conversation).path.rstrip("/") or "/"
+        if platform == "gemini":
+            return expected_path == "/app" and current_path.startswith("/app/")
+        if platform == "claude":
+            return expected_path == "/new" and current_path.startswith("/chat/")
+        return False
+    if mode != "project_new":
+        return False
+    conversation = normalize_agent_conversation_url(platform, current_url)
+    if not conversation:
+        return False
+    if platform == "chatgpt":
+        return _chatgpt_fresh_navigation_allowed(expected_url, current_url)
+    if platform == "grok":
+        return (
+            normalize_agent_project_url("grok", expected_url)
+            == normalize_agent_project_url("grok", current_url)
+        )
+    if platform == "claude":
+        project_path = urlsplit(
+            normalize_agent_project_url("claude", expected_url)
+        ).path.rstrip("/")
+        conversation_path = urlsplit(conversation).path.rstrip("/")
+        return bool(project_path) and conversation_path.startswith(f"{project_path}/")
+    return False
+
+
+def _grok_existing_conversation_urls(
+    page: Any,
+    selected_target_url: str,
+    session_mode: str,
+    should_stop: Callable[[], bool] | None = None,
+) -> set[str]:
+    """Snapshot every visible Grok conversation ID before a fresh run transfers data."""
+    mode = str(session_mode or "new").strip().lower()
+    normalized_project = (
+        normalize_agent_project_url("grok", selected_target_url)
+        if mode == "project_new"
+        else ""
+    )
+    if mode not in {"new", "project_new"}:
+        return set()
+    if mode == "project_new" and not normalized_project:
+        raise RuntimeError("Could not identify the selected Grok Project for freshness verification.")
+    project_id = (
+        urlsplit(normalized_project).path.rstrip("/").rsplit("/", 1)[-1]
+        if normalized_project
+        else ""
+    )
+    existing_urls: set[str] = set()
+    seen_tokens: set[str] = set()
+    page_token = ""
+    for _page_index in range(GROK_SESSION_BASELINE_PAGE_LIMIT):
+        if callable(should_stop) and should_stop():
+            raise RuntimeError("Grok freshness verification was stopped.")
+        query = {"pageSize": "100"}
+        if mode == "new":
+            query["excludeProjects"] = "true"
+        else:
+            query["workspaceId"] = project_id
+        if page_token:
+            query["pageToken"] = page_token
+        payload = _grok_api_json(
+            page,
+            "/rest/app-chat/conversations?" + urlencode(query),
+        )
+        if callable(should_stop) and should_stop():
+            raise RuntimeError("Grok freshness verification was stopped.")
+        conversations = payload.get("conversations")
+        if not isinstance(conversations, list):
+            raise RuntimeError("Grok freshness probe returned an invalid conversations payload.")
+        for item in conversations:
+            if not isinstance(item, dict):
+                raise RuntimeError("Grok freshness probe returned an invalid conversation row.")
+            raw_conversation_id = item.get("conversationId")
+            if not isinstance(raw_conversation_id, str):
+                raise RuntimeError("Grok freshness probe returned an invalid conversation ID.")
+            conversation_id = raw_conversation_id.strip()
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", conversation_id):
+                raise RuntimeError("Grok freshness probe returned an invalid conversation ID.")
+            candidate = (
+                f"https://grok.com/project/{project_id}?chat={conversation_id}"
+                if normalized_project
+                else f"https://grok.com/c/{conversation_id}"
+            )
+            normalized = normalize_agent_conversation_url("grok", candidate)
+            if not normalized:
+                raise RuntimeError("Grok freshness probe could not normalize a conversation URL.")
+            existing_urls.add(normalized)
+        raw_next_token = payload.get("nextPageToken")
+        if raw_next_token is not None and not isinstance(raw_next_token, str):
+            raise RuntimeError("Grok freshness probe returned an invalid page token.")
+        next_token = str(raw_next_token or "").strip()
+        if not next_token:
+            return existing_urls
+        if next_token in seen_tokens:
+            raise RuntimeError("Grok freshness probe repeated a page token.")
+        seen_tokens.add(next_token)
+        page_token = next_token
+    raise RuntimeError("Grok freshness probe exceeded its bounded conversation catalog.")
+
+
+class _ProviderSessionBinding:
+    """Linearize one selected provider tab across the first external transfer."""
+
+    def __init__(
+        self,
+        page: Any,
+        platform: str,
+        selected_target_url: str,
+        session_mode: str,
+    ) -> None:
+        self.page = page
+        self.platform = platform
+        self.selected_target_url = selected_target_url
+        self.session_mode = str(session_mode or "new").strip().lower()
+        self.expected_tab_id, _url, self.expected_title = _provider_tab_identity(page)
+        self.submission_marker = ""
+        self.existing_conversation_urls: set[str] = set()
+        self.freshness_baseline_captured = False
+        self.bound_conversation_url = (
+            normalize_agent_conversation_url(platform, selected_target_url)
+            if self.session_mode in {"recent", "project_session"}
+            else ""
+        )
+
+    def prepare_fresh_session(
+        self,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> bool:
+        """Capture Grok's pre-submit conversation set before attachment or prompt transfer."""
+        if self.freshness_baseline_captured:
+            return True
+        if callable(should_stop) and should_stop():
+            return False
+        if self.platform == "grok" and self.session_mode in {"new", "project_new"}:
+            self.existing_conversation_urls = _grok_existing_conversation_urls(
+                self.page,
+                self.selected_target_url,
+                self.session_mode,
+                should_stop,
+            )
+        if callable(should_stop) and should_stop():
+            return False
+        self.freshness_baseline_captured = True
+        return True
+
+    def arm_first_submission(self, message: str) -> str:
+        """Add a unique visible receipt used to prove one fresh-session transition."""
+        if self.bound_conversation_url or self.session_mode not in {"new", "project_new"}:
+            return message
+        if self.platform == "grok" and not self.freshness_baseline_captured:
+            raise RuntimeError(
+                "Grok freshness verification must finish before the first submission."
+            )
+        self.submission_marker = f"agent-transfer-{secrets.token_hex(16)}"
+        return f"{message}\n\nController transfer ID: {self.submission_marker}"
+
+    def _current_submission_receipt_url(self) -> str:
+        """Return the page URL atomically observed with this run's latest user receipt."""
+        if not self.submission_marker:
+            return ""
+        selector = _web_user_selector(self.platform)
+        try:
+            result = self.page.evaluate(
+                r"""({selector, marker}) => {
+                        const visible = (element) => {
+                            if (!element) return false;
+                            const style = getComputedStyle(element);
+                            return element.getClientRects().length > 0
+                                && style.visibility !== 'hidden'
+                                && style.display !== 'none';
+                        };
+                        const composer = document.querySelector(
+                            '#prompt-textarea, textarea, [contenteditable="true"]'
+                        );
+                        const messages = [...document.querySelectorAll(selector)].filter((element) =>
+                            visible(element)
+                            && element !== composer
+                            && !element.contains(composer)
+                            && !composer?.contains(element)
+                        );
+                        const latest = messages.at(-1);
+                        const markerEchoed = Boolean(
+                            latest
+                            && (latest.innerText || latest.textContent || '').includes(marker)
+                        );
+                        return {markerEchoed, url: location.href};
+                    }""",
+                    {"selector": selector, "marker": self.submission_marker},
+            )
+            if not isinstance(result, dict) or not result.get("markerEchoed"):
+                return ""
+            return str(result.get("url") or "").strip()
+        except Exception:
+            return ""
+
+    def _revalidated_submission_receipt(
+        self,
+        receipt_url: str,
+    ) -> tuple[str, str]:
+        """Recheck the same tab and canonical URL after reading one DOM receipt."""
+        tab_id, current_url, current_title = _provider_tab_identity(self.page)
+        if tab_id != self.expected_tab_id:
+            raise RuntimeError(
+                "The selected provider tab identity changed before the controller transfer completed."
+            )
+        receipt_conversation = normalize_agent_conversation_url(
+            self.platform,
+            receipt_url,
+        )
+        current_conversation = normalize_agent_conversation_url(
+            self.platform,
+            current_url,
+        )
+        if receipt_conversation or current_conversation:
+            if not receipt_conversation or receipt_conversation != current_conversation:
+                raise RuntimeError(
+                    "The provider URL changed while the first submitted message was being verified."
+                )
+        else:
+            receipt_project = normalize_agent_project_url(
+                self.platform,
+                receipt_url,
+            )
+            current_project = normalize_agent_project_url(
+                self.platform,
+                current_url,
+            )
+            if not receipt_project or receipt_project != current_project:
+                raise RuntimeError(
+                    "The provider URL changed while the first submitted message was being verified."
+                )
+        return current_url, current_title
+
+    def check(self, allow_transition: bool = False) -> str:
+        """Validate the tab and optionally latch its one legal new-session transition."""
+        tab_id, current_url, current_title = _provider_tab_identity(self.page)
+        if tab_id != self.expected_tab_id:
+            raise RuntimeError(
+                "The selected provider tab identity changed before the controller transfer completed."
+            )
+        if self.bound_conversation_url:
+            if not _web_target_is_open(
+                self.platform,
+                self.bound_conversation_url,
+                current_url,
+            ):
+                raise RuntimeError(
+                    "The selected provider tab navigated away from the newly created session."
+                )
+            return self.bound_conversation_url
+        if (
+            allow_transition
+            and self.platform == "gemini"
+            and self.session_mode == "project_new"
+        ):
+            receipt_url = self._current_submission_receipt_url()
+            if not receipt_url:
+                return ""
+            current_url, current_title = self._revalidated_submission_receipt(
+                receipt_url
+            )
+            if not _web_target_is_open(
+                self.platform,
+                self.selected_target_url,
+                current_url,
+            ):
+                raise RuntimeError(
+                    "The selected provider tab navigated away from the chosen Project while "
+                    "the first submission was being verified."
+                )
+            self.bound_conversation_url = normalize_agent_project_url(
+                "gemini",
+                current_url,
+            )
+            self.expected_title = current_title
+            return self.bound_conversation_url
+        if _provider_pre_submit_target_is_open(
+            self.platform,
+            self.selected_target_url,
+            current_url,
+            self.session_mode,
+        ):
+            return ""
+        if allow_transition and _provider_new_session_transition_allowed(
+            self.platform,
+            self.selected_target_url,
+            current_url,
+            self.session_mode,
+        ):
+            receipt_url = self._current_submission_receipt_url()
+            if not receipt_url:
+                return ""
+            current_url, current_title = self._revalidated_submission_receipt(
+                receipt_url
+            )
+            if not _provider_new_session_transition_allowed(
+                self.platform,
+                self.selected_target_url,
+                current_url,
+                self.session_mode,
+            ):
+                raise RuntimeError(
+                    "The selected provider tab navigated away while the first submission "
+                    "was being verified."
+                )
+            conversation = normalize_agent_conversation_url(
+                self.platform,
+                current_url,
+            )
+            if conversation:
+                if (
+                    self.platform == "grok"
+                    and conversation in self.existing_conversation_urls
+                ):
+                    raise RuntimeError(
+                        "The selected Grok conversation existed before this New session run."
+                    )
+                self.bound_conversation_url = conversation
+                self.expected_title = current_title
+                return conversation
+        raise RuntimeError(
+            "The selected provider tab navigated away from the chosen session before "
+            "the controller transfer completed."
+        )
+
+    def require_created_conversation(
+        self,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> str:
+        """Wait briefly for a canonical first-session URL and its submission receipt."""
+        deadline = time.monotonic() + PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
+        while True:
+            conversation = self.check(allow_transition=True)
+            if conversation:
+                return conversation
+            if callable(should_stop) and should_stop():
+                return ""
+            if time.monotonic() >= deadline:
+                break
+            wait_for_timeout = getattr(self.page, "wait_for_timeout", None)
+            if callable(wait_for_timeout):
+                wait_for_timeout(PROVIDER_SESSION_BIND_POLL_MILLISECONDS)
+            else:
+                time.sleep(PROVIDER_SESSION_BIND_POLL_MILLISECONDS / 1_000)
+        if self.session_mode in {"new", "project_new"}:
+            raise RuntimeError(
+                "The provider returned a first response without proving that the current "
+                "submission created the selected conversation."
+            )
+        return ""
+
+
 def _provider_url_still_on_selected_target(
     platform: str,
     expected_url: str,
@@ -4693,6 +5220,8 @@ def _provider_url_still_on_selected_target(
     mode = str(session_mode or "new").strip().lower()
     if platform == "chatgpt" and mode in {"new", "project_new"}:
         return _chatgpt_fresh_navigation_allowed(expected_url, current_url)
+    if platform == "grok" and mode == "new":
+        return _grok_fresh_navigation_allowed(expected_url, current_url)
     return False
 
 
@@ -4760,7 +5289,11 @@ def _detect_browser_interruption(
         ):
             return True, "The selected provider tab navigated away from the chosen session."
     if expected_title and current_title and expected_title != current_title:
-        if current_url and expected_url and current_url.rstrip("/") != str(expected_url).rstrip("/"):
+        if current_url and expected_url and not _web_target_is_open(
+            platform,
+            expected_url,
+            current_url,
+        ):
             return True, "The selected provider tab title no longer matches the chosen session."
 
     if callable(is_closed):
@@ -4841,6 +5374,12 @@ def _run_web_action_loop(
     should_resume: Callable[[], bool] | None = None,
 ) -> tuple[str, str, int, bool]:
     """Exchange JSON actions and compact observations in one Web AI conversation."""
+    session_binding = _ProviderSessionBinding(
+        page,
+        platform,
+        selected_target_url,
+        session_mode,
+    )
     verified = _verify_agent_page(
         page,
         browser_kind,
@@ -4855,6 +5394,15 @@ def _run_web_action_loop(
             0,
             False,
         )
+    session_binding.check()
+    if not session_binding.prepare_fresh_session(should_stop) or should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, selected_target_url),
+            0,
+            False,
+        )
+    session_binding.check()
     if platform == "chatgpt":
         _select_chat_mode(page, browser_kind)
     if should_stop():
@@ -4867,7 +5415,6 @@ def _run_web_action_loop(
 
     session_type = session_type_for_mode(session_mode)
     page_url = str(getattr(page, "url", "") or "").strip()
-    expected_tab_id, _expected_url, expected_title = _provider_tab_identity(page)
     model_observation: dict[str, Any] = {}
     model_selected = _select_web_model(
         page,
@@ -4877,6 +5424,7 @@ def _run_web_action_loop(
         model_observation,
         should_stop=should_stop,
     )
+    session_binding.check()
     if should_stop():
         return (
             "",
@@ -4947,12 +5495,17 @@ def _run_web_action_loop(
             0,
             False,
         )
-    attached = _attach_context_file(
-        page,
-        browser_kind,
-        context_path,
-        should_stop,
-    )
+    session_binding.check()
+    attached = False
+    if session_binding.session_mode not in {"new", "project_new"}:
+        attached = _attach_context_file(
+            page,
+            browser_kind,
+            context_path,
+            should_stop,
+            session_binding.check,
+        )
+    session_binding.check()
     if should_stop():
         return (
             "",
@@ -4986,20 +5539,44 @@ def _run_web_action_loop(
             0,
             False,
         )
+    first_submission = session_binding.arm_first_submission(initial_message)
     response = _submit_and_wait(
         page,
         browser_kind,
-        initial_message,
+        first_submission,
         should_stop,
         platform=platform,
+        session_check=session_binding.check,
+        submission_target_url=selected_target_url,
+        session_mode=session_binding.session_mode,
         on_submitted=lambda: update(
             phase="running",
             message=f"Prompt sent to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web; waiting for the first controller action.",
         ),
     )
-    conversation_url = _current_agent_conversation_url(
-        page, platform, selected_target_url
+    if should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, selected_target_url),
+            0,
+            False,
+        )
+    bound_conversation_url = session_binding.require_created_conversation(should_stop)
+    if should_stop():
+        return (
+            "",
+            _current_agent_conversation_url(page, platform, selected_target_url),
+            0,
+            False,
+        )
+    conversation_url = bound_conversation_url or _current_agent_conversation_url(
+        page,
+        platform,
+        selected_target_url,
     )
+    interruption_target_url = bound_conversation_url or selected_target_url
+    expected_tab_id = session_binding.expected_tab_id
+    expected_title = session_binding.expected_title
     if conversation_url:
         update(conversation_url=conversation_url)
     activity: list[dict[str, str]] = []
@@ -5019,7 +5596,7 @@ def _run_web_action_loop(
 
         interrupted, interrupt_reason = _detect_browser_interruption(
             page,
-            selected_target_url,
+            interruption_target_url,
             browser_kind,
             platform=platform,
             session_mode=session_mode,
@@ -5030,7 +5607,7 @@ def _run_web_action_loop(
             LOGGER.info("Browser interrupted: %s. Waiting for recovery.", interrupt_reason)
             wait_result = _wait_for_browser_recovery(
                 page=page,
-                expected_url=selected_target_url,
+                expected_url=interruption_target_url,
                 browser_kind=browser_kind,
                 platform=platform,
                 session_mode=session_mode,
@@ -5100,6 +5677,9 @@ def _run_web_action_loop(
                 _observation_message(turn_index + 1, observation),
                 should_stop,
                 platform=platform,
+                session_check=session_binding.check,
+                submission_target_url=selected_target_url,
+                session_mode=session_binding.session_mode,
                 on_submitted=lambda: update(
                     phase="running",
                     message=f"Correction sent to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web; waiting for a valid controller action.",
@@ -5137,6 +5717,9 @@ def _run_web_action_loop(
                     ),
                     should_stop,
                     platform=platform,
+                    session_check=session_binding.check,
+                    submission_target_url=selected_target_url,
+                    session_mode=session_binding.session_mode,
                     on_submitted=lambda: update(
                         phase="running",
                         message=f"Bodycheck requirement sent; waiting for the next {AGENT_PLATFORM_BY_KEY[platform]['label']} action.",
@@ -5195,6 +5778,9 @@ def _run_web_action_loop(
             _observation_message(turn_index, observation),
             should_stop,
             platform=platform,
+            session_check=session_binding.check,
+            submission_target_url=selected_target_url,
+            session_mode=session_binding.session_mode,
             on_submitted=lambda: update(
                 phase="running",
                 message=f"Controller observation sent; waiting for the next {AGENT_PLATFORM_BY_KEY[platform]['label']} action.",
@@ -5314,6 +5900,16 @@ def _web_target_is_open(platform: str, target_url: str, current_url: str) -> boo
         return False
     if platform == "chatgpt":
         return _chatgpt_target_is_open(target_url, current_url)
+    if platform == "grok":
+        target_conversation = normalize_agent_conversation_url("grok", target_url)
+        if target_conversation:
+            return (
+                normalize_agent_conversation_url("grok", current_url)
+                == target_conversation
+            )
+        target_project = normalize_agent_project_url("grok", target_url)
+        if target_project:
+            return normalize_agent_project_url("grok", current_url) == target_project
     target_path = target.path.rstrip("/") or "/"
     current_path = current.path.rstrip("/") or "/"
     if platform == "claude" and target_path == "/new":
@@ -5424,22 +6020,25 @@ def _verify_agent_page(
         return False
     signed_out = bool(
         page.evaluate(
-            r"""() => {
+            r"""({platform}) => {
                 const visible = (element) => element && element.getClientRects().length > 0
                     && getComputedStyle(element).visibility !== 'hidden'
                     && getComputedStyle(element).display !== 'none';
                 const bodyText = (document.body?.innerText || '').trim();
-                const account = document.querySelector(
+                const account = [...document.querySelectorAll(
                     '[aria-label^="Google Account"], [aria-label*="Google Account:"], [data-testid*="account" i], [data-testid*="profile" i]'
-                );
-                const composer = document.querySelector('textarea, [contenteditable="true"]');
+                )].some(visible);
                 const authAction = [...document.querySelectorAll('a,button')].some((element) =>
-                    visible(element) && /^(sign in|log in|sign up)$/i.test(
-                        (element.innerText || element.textContent || '').trim()
-                    )
+                    visible(element) && [
+                        element.getAttribute('aria-label') || '',
+                        element.innerText || element.textContent || '',
+                    ].some((value) => /^(?:sign in|log in|sign up|create account)(?:\s+to\s+(?:grok|gemini|claude))?$/i.test(
+                        value.replace(/\s+/g, ' ').trim()
+                    ))
                 );
-                return Boolean(authAction && !account && !composer && bodyText);
-            }"""
+                return Boolean(authAction && (platform === 'grok' || !account) && bodyText);
+            }""",
+            {"platform": platform},
         )
     )
     if callable(should_stop) and should_stop():
@@ -5448,6 +6047,21 @@ def _verify_agent_page(
         raise RuntimeError(
             f"{settings_browser_label(browser_kind)} is not signed in to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web."
         )
+    if platform == "grok":
+        try:
+            authenticated_payload = _grok_api_json(
+                page,
+                "/rest/app-chat/conversations?"
+                "pageSize=1&excludeProjects=true",
+            )
+            if not isinstance(authenticated_payload.get("conversations"), list):
+                raise RuntimeError(
+                    "Grok authentication probe returned an invalid payload."
+                )
+        except Exception as exc:
+            raise RuntimeError(
+                f"{settings_browser_label(browser_kind)} could not verify an authenticated Grok account."
+            ) from exc
     return True
 
 
@@ -5522,6 +6136,30 @@ def _chatgpt_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
         or normalized.endswith(f" {' '.join(label.split()).casefold()}")
         for label in labels
     )
+
+
+def _web_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
+    """Match an exact provider model label with only explicit selector wrappers."""
+    normalized = re.sub(
+        r"[,:()]+",
+        " ",
+        " ".join(str(value or "").split()).casefold(),
+    )
+    normalized = " ".join(normalized.split())
+    for label in labels:
+        target = " ".join(str(label or "").split()).casefold()
+        if not target:
+            continue
+        escaped = re.escape(target)
+        if normalized == target or re.fullmatch(
+            rf"(?:(?:current|selected) )?(?:model|mode)(?: selector| picker)? "
+            rf"{escaped}(?: selected)?",
+            normalized,
+        ):
+            return True
+        if re.fullmatch(rf"{escaped} (?:model|mode)(?: selected)?", normalized):
+            return True
+    return False
 
 
 CHATGPT_MODEL_TRIGGER_LABELS = (
@@ -6179,41 +6817,86 @@ def _select_web_model(
                     && style.display !== 'none';
             };
             const matches = (value) => {
-                const normalized = normalize(value);
+                const normalized = normalize(value).replace(/[,:()]+/g, ' ').replace(/\s+/g, ' ').trim();
                 return remoteLabels.some((label) => {
                     const target = normalize(label);
-                    return normalized === target || normalized.includes(target);
+                    if (!target) return false;
+                    const escaped = target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    return normalized === target
+                        || new RegExp(`^(?:(?:current|selected) )?(?:model|mode)(?: selector| picker)? ${escaped}(?: selected)?$`, 'iu').test(normalized)
+                        || new RegExp(`^${escaped} (?:model|mode)(?: selected)?$`, 'iu').test(normalized);
                 });
             };
-            const labelFor = (element) => `${element.getAttribute('aria-label') || ''} ${element.innerText || element.textContent || ''}`.trim();
-            const triggers = [...document.querySelectorAll('button, [role="button"]')]
+            const labelFor = (element) => {
+                if (!element) return '';
+                const aria = (element.getAttribute('aria-label') || '').trim();
+                const text = (element.innerText || element.textContent || '').trim();
+                return normalize(aria) === normalize(text) ? (aria || text) : `${aria} ${text}`.trim();
+            };
+            const hasTriggerSemantics = (element) => {
+                const popup = normalize(element.getAttribute('aria-haspopup') || '');
+                const expanded = element.getAttribute('aria-expanded');
+                const metadata = normalize([
+                    element.getAttribute('aria-label') || '',
+                    element.getAttribute('data-testid') || '',
+                    element.getAttribute('id') || '',
+                    element.getAttribute('aria-controls') || '',
+                ].join(' '));
+                return ['menu', 'listbox', 'dialog', 'true'].includes(popup)
+                    || expanded === 'true' || expanded === 'false'
+                    || /model|mode|模式|模型/.test(metadata);
+            };
+            const triggerCandidates = () => [...document.querySelectorAll('button, [role="button"]')]
                 .filter(isVisible)
-                .filter((element) => !element.closest('[role="menu"], [role="listbox"]'));
-            const trigger = triggers.find((element) => {
+                .filter((element) => !element.closest('[role="menu"], [role="listbox"], [role="dialog"]'))
+                .filter(hasTriggerSemantics);
+            const findTrigger = () => triggerCandidates().find((element) => {
                 const label = labelFor(element);
                 const normalized = normalize(label);
                 if (matches(label)) return true;
                 if (platform === 'gemini' && /mode picker|model|模式|模型|选择|選擇/i.test(normalized)) return true;
-                if (platform === 'grok' && /model|mode|auto|grok|模式|模型|选择|選擇|自動|自动/i.test(normalized)) return true;
-                return platform === 'claude' && /model|mode|auto|default|claude|sonnet|opus/i.test(normalized);
+                if (platform === 'grok' && /model|mode|模式|模型|选择|選擇/i.test(normalized)) return true;
+                return platform === 'claude' && /model|mode|sonnet|opus/i.test(normalized);
             });
+            const trigger = findTrigger();
             if (!trigger) return {ok: false, reason: 'model-control-not-found', available: []};
             if (matches(labelFor(trigger))) return {ok: true, selected: normalize(labelFor(trigger)), available: []};
+            const visibleSurfaces = () => [...document.querySelectorAll(
+                '[role="menu"], [role="listbox"], [role="dialog"]'
+            )].filter(isVisible);
+            const surfacesBefore = new Set(visibleSurfaces());
+            const controlledId = trigger.getAttribute('aria-controls') || '';
             trigger.click();
             let candidates = [];
             for (let attempt = 0; attempt < 10; attempt += 1) {
                 await new Promise((resolve) => window.setTimeout(resolve, 100));
-                candidates = [...document.querySelectorAll('[role="menuitem"], [role="option"], button')]
+                const controlledSurface = controlledId ? document.getElementById(controlledId) : null;
+                const surfaces = visibleSurfaces();
+                const surface = controlledSurface && isVisible(controlledSurface)
+                    ? controlledSurface
+                    : surfaces.find((element) => !surfacesBefore.has(element)) || surfaces.at(-1);
+                if (!surface) continue;
+                candidates = [...surface.querySelectorAll('[role="menuitem"], [role="option"], button')]
                     .filter(isVisible)
                     .filter((element) => element !== trigger)
                     .filter((element) => !/send|submit|attach|upload|dictate/i.test(labelFor(element)));
                 const choice = candidates.find((element) => matches(labelFor(element)));
                 if (choice) {
                     choice.click();
+                    const available = candidates.map(labelFor).filter(Boolean);
+                    for (let verifyAttempt = 0; verifyAttempt < 20; verifyAttempt += 1) {
+                        await new Promise((resolve) => window.setTimeout(resolve, 100));
+                        const currentTrigger = findTrigger();
+                        const selected = normalize(labelFor(currentTrigger));
+                        if (matches(selected)) {
+                            return {ok: true, selected, available};
+                        }
+                    }
                     return {
-                        ok: true,
-                        selected: normalize(labelFor(choice)),
-                        available: candidates.map(labelFor).filter(Boolean),
+                        ok: false,
+                        reason: 'model-readback-mismatch',
+                        current: normalize(labelFor(findTrigger())),
+                        available,
                     };
                 }
             }
@@ -6225,13 +6908,28 @@ def _select_web_model(
         }""",
         {"remoteLabels": list(remote_labels), "platform": platform},
     )
-    if isinstance(result, dict) and result.get("ok"):
+    selected_model = str(result.get("selected") or "") if isinstance(result, dict) else ""
+    if (
+        isinstance(result, dict)
+        and result.get("ok")
+        and _web_model_text_matches(selected_model, remote_labels)
+    ):
+        _record_model_observation(
+            observation,
+            observed=selected_model,
+            available=list(result.get("available") or []),
+            attempted_labels=remote_labels,
+            menu_text=str(result.get("selected") or ""),
+        )
         return True
     available = []
     reason = "model-control-unavailable"
     if isinstance(result, dict):
         available = [str(value) for value in result.get("available", []) if str(value).strip()]
-        reason = str(result.get("reason") or reason)
+        reason = str(
+            result.get("reason")
+            or ("model-readback-mismatch" if result.get("ok") else reason)
+        )
     LOGGER.info(
         "%s Web did not expose model %s (%s; available: %s); retaining the current remote model.",
         AGENT_PLATFORM_BY_KEY[platform]["label"],
@@ -6239,7 +6937,29 @@ def _select_web_model(
         reason,
         ", ".join(dict.fromkeys(available)) or "none",
     )
+    _record_model_observation(
+        observation,
+        observed=str(result.get("selected") or "") if isinstance(result, dict) else "",
+        available=available,
+        attempted_labels=remote_labels,
+        menu_text=", ".join(dict.fromkeys(available)),
+        reason=reason,
+    )
     return False
+
+
+def _run_browser_action_unless_stopped(
+    should_stop: Callable[[], bool],
+    action: Callable[[], Any],
+) -> tuple[bool, Any]:
+    """Linearize browser side effects with the service Stop signal when available."""
+    signal = getattr(should_stop, "__self__", None)
+    guarded_action = getattr(signal, "run_unless_set", None)
+    if callable(guarded_action):
+        return guarded_action(action)
+    if should_stop():
+        return False, None
+    return True, action()
 
 
 def _attach_context_file(
@@ -6247,10 +6967,14 @@ def _attach_context_file(
     browser_kind: str,
     context_path: Path,
     should_stop: Callable[[], bool] | None = None,
+    session_check: Callable[[bool], str] | None = None,
 ) -> bool:
     """Attach Markdown and require a visible composer readback before claiming success."""
     if browser_kind == "safari" or (callable(should_stop) and should_stop()):
         return False
+    stop_requested = should_stop or (lambda: False)
+    if session_check is not None:
+        session_check(False)
     file_input = page.locator('input[type="file"]')
     if file_input.count() == 0:
         attach_button = page.locator(
@@ -6261,17 +6985,34 @@ def _attach_context_file(
             and attach_button.count()
             and attach_button.first.is_visible()
         ):
-            attach_button.first.click()
+            executed, _result = _run_browser_action_unless_stopped(
+                stop_requested,
+                lambda: attach_button.first.click(),
+            )
+            if not executed:
+                return False
     if file_input.count() == 0 or (callable(should_stop) and should_stop()):
         return False
     try:
         if callable(should_stop) and should_stop():
             return False
-        file_input.first.set_input_files(str(context_path))
+        def upload_context() -> None:
+            if session_check is not None:
+                session_check(False)
+            file_input.first.set_input_files(str(context_path))
+
+        executed, _result = _run_browser_action_unless_stopped(
+            stop_requested,
+            upload_context,
+        )
+        if not executed:
+            return False
         expected_name = context_path.name
         for _attempt in range(40):
             if callable(should_stop) and should_stop():
                 return False
+            if session_check is not None:
+                session_check(False)
             state = page.evaluate(
                 r"""({expectedName}) => {
                     const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -6344,6 +7085,9 @@ def _submit_and_wait(
     should_stop: Callable[[], bool],
     on_submitted: Callable[[], None] | None = None,
     platform: str = DEFAULT_AGENT_PLATFORM,
+    session_check: Callable[[bool], str] | None = None,
+    submission_target_url: str = "",
+    session_mode: str = "",
 ) -> str:
     """Submit one message and wait for one stable provider response."""
     if should_stop():
@@ -6353,6 +7097,8 @@ def _submit_and_wait(
     baseline_response = _platform_web_last_text(page, browser_kind, platform, selector)
     if should_stop():
         return ""
+    checked_target_url = session_check(False) if session_check is not None else ""
+    atomic_target_url = checked_target_url or str(submission_target_url or "").strip()
     if browser_kind == "safari":
         if platform != "chatgpt":
             raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Agent sessions require Edge or Chrome.")
@@ -6360,7 +7106,17 @@ def _submit_and_wait(
     elif platform == "chatgpt":
         _submit_chromium_prompt(page, message, should_stop)
     else:
-        _submit_chromium_web_prompt(page, platform, message, should_stop)
+        _submit_chromium_web_prompt(
+            page,
+            platform,
+            message,
+            should_stop,
+            session_check=session_check,
+            expected_target_url=atomic_target_url,
+            session_mode=session_mode,
+        )
+    if session_check is not None:
+        session_check(True)
     if on_submitted is not None and not should_stop():
         on_submitted()
 
@@ -6373,6 +7129,8 @@ def _submit_and_wait(
         if should_stop():
             _stop_web_generation(page, browser_kind)
             return response
+        if session_check is not None:
+            session_check(True)
         count = _platform_web_count(page, browser_kind, platform, selector)
         latest_response = _platform_web_last_text(page, browser_kind, platform, selector)
         if count > baseline or (latest_response and latest_response != baseline_response):
@@ -6409,10 +7167,15 @@ def _submit_chromium_web_prompt(
     platform: str,
     message: str,
     should_stop: Callable[[], bool],
+    session_check: Callable[[bool], str] | None = None,
+    expected_target_url: str = "",
+    session_mode: str = "",
 ) -> None:
     """Fill a non-ChatGPT Chromium composer and click its enabled semantic send control."""
     if should_stop():
         return
+    if session_check is not None:
+        session_check(False)
     user_selector = _web_user_selector(platform)
     baseline_user_count = _web_count(page, "chromium", user_selector, platform)
     if should_stop():
@@ -6425,23 +7188,94 @@ def _submit_chromium_web_prompt(
         return
 
     deadline = time.monotonic() + CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS
+    fresh_unbound_grok = (
+        platform == "grok"
+        and str(session_mode or "").strip().lower() in {"new", "project_new"}
+        and not normalize_agent_conversation_url("grok", expected_target_url)
+    )
     keyboard_fallback_at = (
         time.monotonic() + GROK_KEYBOARD_SUBMIT_FALLBACK_SECONDS
-        if platform == "grok"
+        if platform == "grok" and not fresh_unbound_grok
         else None
     )
     last_state: dict[str, Any] = {}
     while time.monotonic() < deadline:
         if should_stop():
             return
-        result = page.evaluate(
-            r"""({platform}) => {
+        if session_check is not None:
+            session_check(False)
+
+        def scan_and_submit() -> Any:
+            if session_check is not None:
+                session_check(False)
+            return page.evaluate(
+                r"""({platform, expectedTargetUrl, sessionMode}) => {
                 const isVisible = (element) => {
                     const style = window.getComputedStyle(element);
                     return element.getClientRects().length > 0
                         && style.visibility !== 'hidden'
                         && style.display !== 'none';
                 };
+                const normalizedPath = (url) => url.pathname.replace(/\/+$/, '') || '/';
+                const targetMatches = () => {
+                    let expected;
+                    let current;
+                    try {
+                        expected = new URL(expectedTargetUrl);
+                        current = new URL(location.href);
+                    } catch (_) {
+                        return false;
+                    }
+                    const allowedHosts = {
+                        gemini: new Set(['gemini.google.com']),
+                        grok: new Set(['grok.com', 'www.grok.com']),
+                        claude: new Set(['claude.ai', 'www.claude.ai']),
+                    }[platform] || new Set();
+                    if (expected.protocol !== 'https:' || current.protocol !== 'https:'
+                        || !allowedHosts.has(expected.hostname.toLowerCase())
+                        || !allowedHosts.has(current.hostname.toLowerCase())) {
+                        return false;
+                    }
+                    const expectedPath = normalizedPath(expected);
+                    const currentPath = normalizedPath(current);
+                    const mode = String(sessionMode || '').trim().toLowerCase();
+                    const expectedChat = expected.searchParams.get('chat') || '';
+                    const currentChat = current.searchParams.get('chat') || '';
+                    if (platform === 'grok') {
+                        if (/^\/c\/[A-Za-z0-9_-]+$/.test(expectedPath)) {
+                            return currentPath === expectedPath && !currentChat;
+                        }
+                        if (/^\/project\/[A-Za-z0-9_-]+$/.test(expectedPath) && expectedChat) {
+                            return currentPath === expectedPath && currentChat === expectedChat;
+                        }
+                        if (mode === 'new') {
+                            return expectedPath === '/' && currentPath === '/' && !currentChat;
+                        }
+                        if (mode === 'project_new') {
+                            return /^\/project\/[A-Za-z0-9_-]+$/.test(expectedPath)
+                                && currentPath === expectedPath && !currentChat;
+                        }
+                        return false;
+                    }
+                    if (mode === 'recent' || mode === 'project_session') {
+                        return currentPath === expectedPath;
+                    }
+                    if (mode === 'new') {
+                        return currentPath === expectedPath;
+                    }
+                    if (mode === 'project_new') {
+                        return currentPath === expectedPath;
+                    }
+                    return false;
+                };
+                if (!targetMatches()) {
+                    return {
+                        clicked: false,
+                        targetMismatch: true,
+                        currentUrl: location.href,
+                        expectedTargetUrl,
+                    };
+                }
                 const labelFor = (button) => `${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''} ${button.innerText || button.textContent || ''}`.trim();
                 const composer = document.querySelector('textarea, [contenteditable="true"]');
                 const scope = composer?.closest('form') || composer?.parentElement?.parentElement || document;
@@ -6451,9 +7285,10 @@ def _submit_chromium_web_prompt(
                 const sendButtons = buttons.filter((button) => {
                     const label = labelFor(button);
                     const testId = button.getAttribute('data-testid') || '';
-                    return /send|submit|ask|发送|傳送|傳送訊息|发送消息|提交|提問|提问/i.test(label)
+                    return (
+                        /send|submit|ask|发送|傳送|傳送訊息|发送消息|提交|提問|提问/i.test(label)
                         && !/attach|upload|share|feedback|copy|附加|上传|上傳/i.test(label)
-                        || /send|submit|ask|chat-submit/i.test(testId);
+                    ) || /send|submit|ask|chat-submit/i.test(testId);
                 });
                 const sendButton = sendButtons.find((button) =>
                     !button.disabled && button.getAttribute('aria-disabled') !== 'true'
@@ -6475,21 +7310,53 @@ def _submit_chromium_web_prompt(
                         disabled: Boolean(button.disabled || button.getAttribute('aria-disabled') === 'true'),
                     })),
                 };
-            }""",
-            {"platform": platform},
+                }""",
+                {
+                    "platform": platform,
+                    "expectedTargetUrl": expected_target_url,
+                    "sessionMode": session_mode,
+                },
+            )
+
+        executed, result = _run_browser_action_unless_stopped(
+            should_stop,
+            scan_and_submit,
         )
+        if not executed:
+            return
         if isinstance(result, dict):
             last_state = result
+            if result.get("targetMismatch"):
+                raise RuntimeError(
+                    "The selected provider tab changed before the prompt could be sent "
+                    f"(expected={expected_target_url}, current={result.get('currentUrl') or 'unknown'})."
+                )
             if result.get("clicked"):
+                if session_check is not None:
+                    session_check(True)
                 break
         if (
             platform == "grok"
             and keyboard_fallback_at is not None
             and time.monotonic() >= keyboard_fallback_at
         ):
+            if should_stop():
+                return
             press = getattr(composer, "press", None)
             if callable(press):
-                press("Enter")
+                def press_enter() -> None:
+                    if session_check is not None:
+                        session_check(False)
+                    press("Enter")
+
+                executed, _result = _run_browser_action_unless_stopped(
+                    should_stop,
+                    press_enter,
+                )
+                if not executed:
+                    return
+                if session_check is not None:
+                    session_check(True)
                 break
         page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
     else:
@@ -6502,6 +7369,8 @@ def _submit_chromium_web_prompt(
     while time.monotonic() < accepted_deadline:
         if should_stop():
             return
+        if session_check is not None:
+            session_check(True)
         composer_empty = bool(
             page.evaluate(
                 """() => {

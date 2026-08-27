@@ -1,6 +1,7 @@
-/* Code version: v3.19.0-codex.1 */
+/* Code version: v3.22.0-codex.1 */
 
 (() => {
+    const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
     const runtimeForm = document.getElementById("agent_runtime_form");
     const promptForm = document.getElementById("agent_prompt_form");
     if (!runtimeForm || !promptForm) return;
@@ -71,12 +72,14 @@
     let catalogState = "idle";
     let catalogError = "";
     let catalogAbort = null;
+    let appliedBootstrapSignature = "";
     const CATALOG_TIMEOUT_MS = 15000;
     let projectSessionRequestId = 0;
     let agentSources = {recent_sessions: [], projects: []};
     let projectSessions = [];
     let sessionTitleOverride = "";
     let boundAgentSessionSignature = "";
+    let lastRenderedAgentRunning = null;
     let responseHistory = [];
     let responseHistoryPage = 1;
     let responseHistorySignature = "";
@@ -166,6 +169,14 @@
         return document.querySelector(".agent-browser-combobox [data-agent-combobox-selected-label]")?.textContent?.trim() || "selected browser";
     }
 
+    function agentSnapshotMatchesSelection(agent) {
+        const platform = String(agent?.platform || "").trim().toLowerCase();
+        const browser = String(agent?.browser || "").trim().toLowerCase();
+        return Boolean(platform && browser)
+            && platform === selectedPlatform()
+            && browser === selectedBrowser();
+    }
+
     function selectedSessionMode() {
         return elements.sessionMode?.value || "new";
     }
@@ -184,7 +195,9 @@
         const candidate = String(value || "").trim();
         if (platform === "chatgpt") return isChatgptConversationUrl(candidate);
         if (platform === "gemini") return /^https:\/\/gemini\.google\.com\/app\/[A-Za-z0-9_-]+\/?$/i.test(candidate);
-        if (platform === "grok") return /^https:\/\/grok\.com\/c\/[A-Za-z0-9_-]+\/?$/i.test(candidate);
+        if (platform === "grok") {
+            return /^https:\/\/(?:www\.)?grok\.com\/(?:c\/[A-Za-z0-9_-]+\/?|project\/[A-Za-z0-9_-]+\/?\?chat=[A-Za-z0-9_-]+)$/i.test(candidate);
+        }
         if (platform === "claude") {
             return /^https:\/\/claude\.ai\/(?:chat\/[A-Za-z0-9_-]+|project\/[A-Za-z0-9_-]+\/(?:chat|c)\/[A-Za-z0-9_-]+)\/?$/i.test(candidate);
         }
@@ -702,8 +715,17 @@
             const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
             const menu = combobox.querySelector("[data-agent-combobox-menu]");
             if (!(input instanceof HTMLInputElement) || !(trigger instanceof HTMLButtonElement) || !menu) return;
-            trigger.addEventListener("click", () => toggleCombobox(combobox));
+            trigger.addEventListener("click", () => {
+                if (
+                    catalogState === "error"
+                    && (combobox === elements.recentSessionCombobox || combobox === elements.projectCombobox)
+                ) {
+                    loadAgentSources({forceRefresh: true});
+                }
+                toggleCombobox(combobox);
+            });
             const selectOption = (option) => {
+                const previousValue = input.value;
                 input.value = option.dataset.agentComboboxOption || "";
                 syncComboboxTriggerFromOption(combobox, option);
                 closeCombobox(combobox);
@@ -711,12 +733,21 @@
                 syncExecutionChoices();
                 const isRouteSelection = combobox.classList.contains("agent-platform-combobox")
                     || combobox.classList.contains("agent-browser-combobox");
+                if (
+                    isRouteSelection
+                    && previousValue !== input.value
+                    && elements.promptInput instanceof HTMLTextAreaElement
+                ) {
+                    elements.promptInput.value = "";
+                    resizePrompt();
+                }
                 if (combobox.classList.contains("agent-platform-combobox")) {
                     sessionTitleOverride = "";
                     resetRemoteSessionHistory();
                     sourceBrowser = "";
                     sourcesLoaded = false;
                     sourceRequestId += 1;
+                    appliedBootstrapSignature = "";
                     projectSessionRequestId += 1;
                     agentSources = {recent_sessions: [], projects: []};
                     if (elements.recentSessionUrl instanceof HTMLInputElement) elements.recentSessionUrl.value = "";
@@ -734,6 +765,7 @@
                     resetRemoteSessionHistory();
                     sourceBrowser = "";
                     sourcesLoaded = false;
+                    appliedBootstrapSignature = "";
                     projectSessionRequestId += 1;
                     agentSources = {recent_sessions: [], projects: []};
                     if (elements.recentSessionUrl instanceof HTMLInputElement) elements.recentSessionUrl.value = "";
@@ -949,33 +981,44 @@
     async function loadAgentSources(options = {}) {
         const forceRefresh = Boolean(options.forceRefresh);
         if (!lastBrowserStatus?.can_download || !selectedBrowser()) return;
-        if (
-            !forceRefresh
-            && sourcesLoading
-            && sourceBrowser === selectedBrowser()
-            && sourcePlatform === selectedPlatform()
-        ) return;
-        if (
-            !forceRefresh
-            && sourcesLoaded
-            && sourceBrowser === selectedBrowser()
-            && sourcePlatform === selectedPlatform()
-        ) return;
         const browserName = selectedBrowser();
         const platform = selectedPlatform();
         const platformLabel = selectedPlatformLabel();
         const bootstrappedSources = lastBrowserStatus?.agent_sources;
         const bootstrappedError = lastBrowserStatus?.agent_sources_error;
+        const supportsBootstrap = BOOTSTRAPPED_SOURCE_PLATFORMS.has(platform);
+        if (!forceRefresh && supportsBootstrap && (bootstrappedSources || bootstrappedError)) {
+            const bootstrapKind = bootstrappedSources ? "sources" : "error";
+            const bootstrapValue = bootstrappedSources || String(bootstrappedError || "");
+            const bootstrapSignature = `${browserName}|${platform}|${bootstrapKind}|${JSON.stringify(bootstrapValue)}`;
+            if (bootstrapSignature !== appliedBootstrapSignature) {
+                if (catalogAbort) {
+                    catalogAbort.abort();
+                    catalogAbort = null;
+                }
+                sourceRequestId += 1;
+                sourceBrowser = browserName;
+                sourcePlatform = platform;
+                appliedBootstrapSignature = bootstrapSignature;
+                if (bootstrappedSources) applyAgentSources(bootstrappedSources);
+                else applyAgentSourcesError(String(bootstrappedError));
+            }
+            return;
+        }
+        if (
+            !forceRefresh
+            && sourcesLoading
+            && sourceBrowser === browserName
+            && sourcePlatform === platform
+        ) return;
+        if (
+            !forceRefresh
+            && sourcesLoaded
+            && sourceBrowser === browserName
+            && sourcePlatform === platform
+        ) return;
         sourceBrowser = browserName;
         sourcePlatform = platform;
-        if (!forceRefresh && bootstrappedSources && (platform === "chatgpt" || platform === "claude")) {
-            applyAgentSources(bootstrappedSources);
-            return;
-        }
-        if (!forceRefresh && bootstrappedError && (platform === "chatgpt" || platform === "claude")) {
-            applyAgentSourcesError(String(bootstrappedError));
-            return;
-        }
         if (catalogAbort) catalogAbort.abort();
         catalogAbort = new AbortController();
         const requestId = ++sourceRequestId;
@@ -1041,9 +1084,9 @@
         }
     }
 
-    function bindCompletedAgentSession(agent) {
+    function bindCompletedAgentSession(agent, completedTransition) {
         const platform = String(agent?.platform || selectedPlatform()).trim().toLowerCase();
-        if (platform !== selectedPlatform() || agent?.running) return;
+        if (!completedTransition || platform !== selectedPlatform() || agent?.running) return;
         const conversationUrl = String(agent?.conversation_url || "").trim();
         if (!isAgentConversationUrl(platform, conversationUrl)) return;
         const signature = `${agent.started_at || ""}|${agent.finished_at || ""}|${conversationUrl}`;
@@ -1567,14 +1610,19 @@
 
     function render(payload) {
         lastPayload = payload || {};
-        const agent = lastPayload.agent || {};
+        const persistedAgent = lastPayload.agent || {};
         const readiness = readinessState(lastPayload);
-        const running = Boolean(agent.running);
+        const running = Boolean(persistedAgent.running);
+        const agent = running || agentSnapshotMatchesSelection(persistedAgent)
+            ? persistedAgent
+            : {};
         const paused = Boolean(agent.paused);
         const platformLabel = selectedPlatformLabel();
+        const completedTransition = lastRenderedAgentRunning === true && !running;
         syncExecutionChoices();
         syncPlatformState();
-        bindCompletedAgentSession(agent);
+        bindCompletedAgentSession(persistedAgent, completedTransition);
+        lastRenderedAgentRunning = running;
         syncConversationLink(agent);
 
         const heading = document.querySelector("[data-agent-heading]");

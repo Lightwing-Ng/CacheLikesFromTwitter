@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.29.4-codex.1
+Code version: v3.33.0-codex.1
 """
 
 from __future__ import annotations
@@ -32,17 +32,21 @@ from app.core.computer_use_agent import (
     ComputerUseSettings,
     ComputerUseSettingsStore,
     WorkspaceController,
+    _LinearizedStopSignal,
+    _ProviderSessionBinding,
     _attach_context_file,
     _CONTROLLER_ACTION_SCHEMA_MARKERS,
     _chatgpt_visible_model_controls,
     default_model_for_platform,
     strongest_model_option,
     _chatgpt_target_is_open,
+    _grok_existing_conversation_urls,
     _web_target_is_open,
     _initial_web_agent_message,
     _run_web_action_loop,
     _select_chatgpt_model,
     _select_web_model,
+    _verify_agent_page,
     _submit_chromium_prompt,
     _submit_chromium_web_prompt,
     _submit_safari_prompt,
@@ -675,11 +679,68 @@ def test_chromium_model_selector_returns_false_without_a_visible_power_control()
 
 
 def test_non_chatgpt_model_selection_uses_the_provider_menu_when_exposed() -> None:
+    evaluated_source = ""
+
     class _Page:
         def evaluate(self, _expression: str, _argument: dict[str, object]) -> dict[str, object]:
+            nonlocal evaluated_source
+            evaluated_source = _expression
             return {"ok": True, "selected": "gemini 3.1 pro", "available": ["Gemini 3.1 Pro"]}
 
-    assert _select_web_model(_Page(), "chromium", "gemini", "gemini-3.1-pro") is True
+    observation: dict[str, object] = {}
+    assert (
+        _select_web_model(
+            _Page(),
+            "chromium",
+            "gemini",
+            "gemini-3.1-pro",
+            observation,
+        )
+        is True
+    )
+    assert observation["observed"] == "gemini 3.1 pro"
+    assert observation["available"] == ["Gemini 3.1 Pro"]
+    assert "platform === 'grok' && /model|mode|auto|grok|" not in evaluated_source
+
+
+def test_grok_model_selection_rejects_autoplay_as_an_auto_readback() -> None:
+    evaluated_source = ""
+
+    class _Page:
+        def evaluate(self, _expression: str, _argument: dict[str, object]) -> dict[str, object]:
+            nonlocal evaluated_source
+            evaluated_source = _expression
+            return {
+                "ok": True,
+                "selected": "Enable Auto-play",
+                "available": ["Enable Auto-play"],
+            }
+
+    observation: dict[str, object] = {}
+
+    assert (
+        _select_web_model(
+            _Page(),
+            "chromium",
+            "grok",
+            "grok-auto",
+            observation,
+        )
+        is False
+    )
+    assert observation["observed"] == "Enable Auto-play"
+    assert observation["reason"] == "model-readback-mismatch"
+    assert "normalized === target" in evaluated_source
+    assert "verifyAttempt" in evaluated_source
+    assert "selected: normalize(labelFor(choice))" not in evaluated_source
+
+
+def test_grok_model_selection_accepts_auto_on_a_label_boundary() -> None:
+    class _Page:
+        def evaluate(self, _expression: str, _argument: dict[str, object]) -> dict[str, object]:
+            return {"ok": True, "selected": "model auto", "available": ["Model Auto"]}
+
+    assert _select_web_model(_Page(), "chromium", "grok", "grok-auto") is True
 
 
 @pytest.mark.parametrize(
@@ -880,7 +941,7 @@ def test_all_web_agent_platforms_support_new_recent_and_project_targets() -> Non
         "project_new",
         project_url="https://gemini.google.com/notebook/notebook-1",
         platform="gemini",
-    ) == "https://gemini.google.com/notebook/notebook-1"
+    ) == "https://gemini.google.com/app/notebook-1"
     assert resolve_agent_session_target(
         "project_new",
         project_url="https://www.grok.com/project/project-1",
@@ -906,10 +967,24 @@ def test_all_web_agent_platforms_support_new_recent_and_project_targets() -> Non
         )
     assert resolve_agent_session_target(
         "project_session",
-        conversation_url="https://www.grok.com/c/grok-session/",
+        conversation_url="https://www.grok.com/project/project-1?chat=grok-session",
         project_url="https://grok.com/project/project-1?tab=conversations",
         platform="grok",
-    ) == "https://grok.com/c/grok-session"
+    ) == "https://grok.com/project/project-1?chat=grok-session"
+    with pytest.raises(ValueError, match="does not belong"):
+        resolve_agent_session_target(
+            "project_session",
+            conversation_url="https://grok.com/project/project-2?chat=grok-session",
+            project_url="https://grok.com/project/project-1?tab=conversations",
+            platform="grok",
+        )
+    with pytest.raises(ValueError, match="does not belong"):
+        resolve_agent_session_target(
+            "project_session",
+            conversation_url="https://grok.com/c/root-session",
+            project_url="https://grok.com/project/project-1?tab=conversations",
+            platform="grok",
+        )
     with pytest.raises(ValueError, match="Choose a Gemini Project"):
         resolve_agent_session_target(
             "project_new",
@@ -1216,6 +1291,39 @@ def test_claude_new_target_allows_the_provider_conversation_redirect() -> None:
         "claude",
         "https://claude.ai/new",
         "https://example.com/chat/generated-session",
+    )
+
+
+def test_grok_target_check_preserves_root_and_project_session_identity() -> None:
+    assert _web_target_is_open(
+        "grok",
+        "https://grok.com/c/root-session",
+        "https://www.grok.com/c/root-session?referrer=history",
+    )
+    assert not _web_target_is_open(
+        "grok",
+        "https://grok.com/c/root-session",
+        "https://grok.com/c/different-session",
+    )
+    assert _web_target_is_open(
+        "grok",
+        "https://grok.com/project/project-1?chat=session-1",
+        "https://grok.com/project/project-1?chat=session-1",
+    )
+    assert not _web_target_is_open(
+        "grok",
+        "https://grok.com/project/project-1?chat=session-1",
+        "https://grok.com/project/project-1?chat=session-2",
+    )
+    assert not _web_target_is_open(
+        "grok",
+        "https://grok.com/project/project-1?chat=session-1",
+        "https://grok.com/project/project-2?chat=session-1",
+    )
+    assert _web_target_is_open(
+        "grok",
+        "https://grok.com/project/project-1?tab=conversations",
+        "https://grok.com/project/project-1?chat=fresh-session",
     )
 
 
@@ -1788,6 +1896,237 @@ def test_request_stop_does_not_release_sleep_assertion_before_completion(
         assert released_assertions == [sleep_assertion]
 
 
+def test_stop_at_exit_claims_sleep_assertion_after_worker_join_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    sleep_assertion = object()
+    released_assertions: list[object] = []
+    runner_entered = Event()
+    release_runner = Event()
+
+    monkeypatch.setattr(computer_use_agent, "AGENT_EXIT_WORKER_JOIN_SECONDS", 0.01)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_start_macos_idle_sleep_assertion",
+        lambda: sleep_assertion,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_stop_macos_idle_sleep_assertion",
+        released_assertions.append,
+    )
+
+    def runner(**_kwargs: object) -> tuple[str, str, int, bool]:
+        runner_entered.set()
+        assert release_runner.wait(timeout=2)
+        return "Late result", "https://chatgpt.com/c/example", 1, True
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    worker = service._worker
+    assert worker is not None
+
+    try:
+        assert runner_entered.wait(timeout=2)
+        service.stop_at_exit()
+        stopping_snapshot = service.snapshot()
+        assert stopping_snapshot["running"] is True
+        assert stopping_snapshot["phase"] == "stopping"
+        assert released_assertions == [sleep_assertion]
+        assert service._sleep_assertion is None
+    finally:
+        release_runner.set()
+        worker.join(timeout=2)
+
+    assert not worker.is_alive()
+
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    stopped_snapshot = service.snapshot()
+    assert stopped_snapshot["running"] is False
+    assert stopped_snapshot["phase"] == "stopped"
+    assert released_assertions == [sleep_assertion]
+
+    with pytest.raises(RuntimeError, match="service is shutting down"):
+        service.start("Do not restart", str(workspace), CrawlConfig())
+
+
+def test_stop_at_exit_releases_unclaimed_assertion_without_a_live_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    sleep_assertion = object()
+    released_assertions: list[object] = []
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_stop_macos_idle_sleep_assertion",
+        released_assertions.append,
+    )
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=tmp_path / "runtime",
+    )
+    service._sleep_assertion = sleep_assertion
+    service._worker = None
+
+    service.stop_at_exit()
+
+    assert released_assertions == [sleep_assertion]
+    assert service._sleep_assertion is None
+
+
+def test_worker_completion_claim_prevents_shutdown_double_release(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    sleep_assertion = object()
+    released_assertions: list[object] = []
+    cleanup_started = Event()
+    release_cleanup = Event()
+
+    monkeypatch.setattr(computer_use_agent, "AGENT_EXIT_WORKER_JOIN_SECONDS", 0.01)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_start_macos_idle_sleep_assertion",
+        lambda: sleep_assertion,
+    )
+
+    def stop_assertion(process: object) -> None:
+        released_assertions.append(process)
+        cleanup_started.set()
+        assert release_cleanup.wait(timeout=2)
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_stop_macos_idle_sleep_assertion",
+        stop_assertion,
+    )
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runner=lambda **_kwargs: (
+            "Verified result",
+            "https://chatgpt.com/c/example",
+            1,
+            True,
+        ),
+        runtime_root=tmp_path / "runtime",
+    )
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    worker = service._worker
+    assert worker is not None
+
+    try:
+        assert cleanup_started.wait(timeout=2)
+        service.stop_at_exit()
+        assert released_assertions == [sleep_assertion]
+        assert service._sleep_assertion is None
+        assert service.snapshot()["running"] is True
+    finally:
+        release_cleanup.set()
+        worker.join(timeout=2)
+
+    assert not worker.is_alive()
+
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert service.snapshot()["phase"] == "finished"
+    assert released_assertions == [sleep_assertion]
+
+
+def test_sleep_assertion_late_registration_after_shutdown_releases_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    sleep_assertion = object()
+    released_assertions: list[object] = []
+    helper_entered = Event()
+    release_helper = Event()
+    runner_calls: list[bool] = []
+
+    monkeypatch.setattr(computer_use_agent, "AGENT_EXIT_WORKER_JOIN_SECONDS", 0.01)
+
+    def start_assertion() -> object:
+        helper_entered.set()
+        assert release_helper.wait(timeout=2)
+        return sleep_assertion
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_start_macos_idle_sleep_assertion",
+        start_assertion,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_stop_macos_idle_sleep_assertion",
+        released_assertions.append,
+    )
+
+    def runner(**_kwargs: object) -> tuple[str, str, int, bool]:
+        runner_calls.append(True)
+        return "Unexpected", "https://chatgpt.com/c/example", 1, True
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+    original_set_sleep_assertion = service._set_sleep_assertion
+    registration_observations: list[tuple[tuple[object, ...], object | None]] = []
+
+    def observe_registration(process: object) -> None:
+        original_set_sleep_assertion(process)
+        registration_observations.append(
+            (tuple(released_assertions), service._sleep_assertion)
+        )
+
+    monkeypatch.setattr(service, "_set_sleep_assertion", observe_registration)
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    worker = service._worker
+    assert worker is not None
+
+    try:
+        assert helper_entered.wait(timeout=2)
+        service.stop_at_exit()
+        assert released_assertions == []
+    finally:
+        release_helper.set()
+        worker.join(timeout=2)
+
+    assert not worker.is_alive()
+
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    snapshot = service.snapshot()
+    assert snapshot["running"] is False
+    assert snapshot["phase"] == "stopped"
+    assert released_assertions == [sleep_assertion]
+    assert service._sleep_assertion is None
+    assert registration_observations == [((sleep_assertion,), None)]
+    assert runner_calls == []
+
+
 def test_exception_after_an_accepted_stop_is_published_as_stopped(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2091,6 +2430,205 @@ def test_worker_start_failure_publishes_failed_and_allows_the_next_run(
     recovered_snapshot = service.snapshot()
     assert recovered_snapshot["running"] is False
     assert recovered_snapshot["phase"] == "finished"
+
+
+def test_sleep_assertion_start_failure_publishes_failed_and_allows_the_next_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    assertion_start_calls = {"count": 0}
+    runner_calls: list[bool] = []
+
+    def fail_once() -> None:
+        assertion_start_calls["count"] += 1
+        if assertion_start_calls["count"] == 1:
+            raise RuntimeError("caffeinate bootstrap failed")
+        return None
+
+    def runner(**_kwargs: object) -> tuple[str, str, int, bool]:
+        runner_calls.append(True)
+        return "Verified result", "https://chatgpt.com/c/recovered", 1, True
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_start_macos_idle_sleep_assertion",
+        fail_once,
+    )
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runner=runner,
+        runtime_root=runtime_root,
+    )
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    failed_snapshot = service.snapshot()
+    assert failed_snapshot["running"] is False
+    assert failed_snapshot["phase"] == "failed"
+    assert failed_snapshot["last_error"] == "caffeinate bootstrap failed"
+    assert runner_calls == []
+    persisted = json.loads(
+        (runtime_root / "last-run.json").read_text(encoding="utf-8")
+    )
+    assert persisted["running"] is False
+    assert persisted["phase"] == "failed"
+
+    service.start("Inspect the workspace again", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    recovered_snapshot = service.snapshot()
+    assert recovered_snapshot["running"] is False
+    assert recovered_snapshot["phase"] == "finished"
+    assert runner_calls == [True]
+
+
+def test_sleep_assertion_registration_failure_releases_and_allows_the_next_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    sleep_assertion = object()
+    assertion_values = iter((sleep_assertion, None))
+    released_assertions: list[object] = []
+    runner_calls: list[bool] = []
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_start_macos_idle_sleep_assertion",
+        lambda: next(assertion_values),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_stop_macos_idle_sleep_assertion",
+        released_assertions.append,
+    )
+
+    def runner(**_kwargs: object) -> tuple[str, str, int, bool]:
+        runner_calls.append(True)
+        return "Verified result", "https://chatgpt.com/c/recovered", 1, True
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runner=runner,
+        runtime_root=runtime_root,
+    )
+    original_set_sleep_assertion = service._set_sleep_assertion
+    registration_calls = {"count": 0}
+
+    def fail_registration_once(process: object) -> None:
+        registration_calls["count"] += 1
+        if registration_calls["count"] == 1:
+            raise RuntimeError("caffeinate registration failed")
+        original_set_sleep_assertion(process)
+
+    monkeypatch.setattr(service, "_set_sleep_assertion", fail_registration_once)
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    failed_snapshot = service.snapshot()
+    assert failed_snapshot["running"] is False
+    assert failed_snapshot["phase"] == "failed"
+    assert failed_snapshot["last_error"] == "caffeinate registration failed"
+    assert released_assertions == [sleep_assertion]
+    assert service._sleep_assertion is None
+    assert runner_calls == []
+    persisted = json.loads(
+        (runtime_root / "last-run.json").read_text(encoding="utf-8")
+    )
+    assert persisted["running"] is False
+    assert persisted["phase"] == "failed"
+
+    service.start("Inspect the workspace again", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+    recovered_snapshot = service.snapshot()
+    assert recovered_snapshot["running"] is False
+    assert recovered_snapshot["phase"] == "finished"
+    assert runner_calls == [True]
+
+
+def test_partial_sleep_assertion_registration_and_shutdown_release_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    sleep_assertion = object()
+    released_assertions: list[object] = []
+    registration_stored = Event()
+    release_registration = Event()
+    runner_calls: list[bool] = []
+
+    monkeypatch.setattr(computer_use_agent, "AGENT_EXIT_WORKER_JOIN_SECONDS", 0.01)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_start_macos_idle_sleep_assertion",
+        lambda: sleep_assertion,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_stop_macos_idle_sleep_assertion",
+        released_assertions.append,
+    )
+
+    def runner(**_kwargs: object) -> tuple[str, str, int, bool]:
+        runner_calls.append(True)
+        return "Unexpected", "https://chatgpt.com/c/example", 1, True
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+    original_set_sleep_assertion = service._set_sleep_assertion
+
+    def fail_after_registration(process: object) -> None:
+        original_set_sleep_assertion(process)
+        registration_stored.set()
+        assert release_registration.wait(timeout=2)
+        raise RuntimeError("caffeinate registration failed after storing")
+
+    monkeypatch.setattr(service, "_set_sleep_assertion", fail_after_registration)
+    service.start("Inspect the workspace", str(workspace), CrawlConfig())
+    worker = service._worker
+    assert worker is not None
+
+    try:
+        assert registration_stored.wait(timeout=2)
+        service.stop_at_exit()
+        assert released_assertions == [sleep_assertion]
+        assert service._sleep_assertion is None
+        assert service._claimed_sleep_assertion is sleep_assertion
+        assert service.snapshot()["running"] is True
+    finally:
+        release_registration.set()
+        worker.join(timeout=2)
+
+    assert not worker.is_alive()
+    snapshot = service.snapshot()
+    assert snapshot["running"] is False
+    assert snapshot["phase"] == "stopped"
+    assert released_assertions == [sleep_assertion]
+    assert service._sleep_assertion is None
+    assert service._claimed_sleep_assertion is None
+    assert runner_calls == []
 
 
 def test_sleep_assertion_release_failure_cannot_block_running_false(
@@ -2995,6 +3533,7 @@ def test_stop_after_model_verification_never_attaches_or_submits(
         _browser: str,
         _context_path: Path,
         should_stop: object,
+        _session_check: object,
     ) -> bool:
         calls["attach"] += 1
         assert callable(should_stop)
@@ -3032,6 +3571,96 @@ def test_stop_after_model_verification_never_attaches_or_submits(
     assert result == ("", _Page.url, 0, False)
     assert calls["attach"] == (0 if stop_stage == "model" else 1)
     assert calls["submit"] == 0
+
+
+@pytest.mark.parametrize(
+    ("session_mode", "selected_target", "expected_attachment_calls"),
+    (
+        ("new", "https://grok.com/", 0),
+        (
+            "project_new",
+            "https://grok.com/project/flight?tab=conversations",
+            0,
+        ),
+        ("recent", "https://grok.com/c/existing-session", 1),
+        (
+            "project_session",
+            "https://grok.com/project/flight?chat=existing-session",
+            1,
+        ),
+    ),
+)
+def test_grok_action_loop_attaches_context_only_to_prebound_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    session_mode: str,
+    selected_target: str,
+    expected_attachment_calls: int,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = selected_target
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace),
+        platform="grok",
+        model="grok-auto",
+    )
+    stop_requested = Event()
+    controller = WorkspaceController(workspace, settings, stop_requested.is_set)
+    attachment_calls = 0
+    context_updates: list[object] = []
+
+    def attach(*_args: object, **_kwargs: object) -> bool:
+        nonlocal attachment_calls
+        attachment_calls += 1
+        return True
+
+    def update(**changes: object) -> None:
+        if "context_attached" in changes:
+            context_updates.append(changes["context_attached"])
+            stop_requested.set()
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: True)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        lambda *_args, **_kwargs: set(),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_select_web_model",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", attach)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_and_wait",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("Stop must prevent the first prompt submission.")
+        ),
+    )
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Audit the flight project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=settings,
+        session_mode=session_mode,
+        selected_target_url=selected_target,
+        should_stop=stop_requested.is_set,
+        update=update,
+        platform="grok",
+    )
+
+    assert result[2:] == (0, False)
+    assert attachment_calls == expected_attachment_calls
+    assert context_updates == [expected_attachment_calls == 1]
 
 
 @pytest.mark.parametrize("context_attached", (True, False))
@@ -3325,6 +3954,804 @@ def test_recent_gemini_and_grok_targets_enter_the_shared_agentic_action_loop(
 
     assert result == ("Done.", target_url, 2, True)
     assert verified == [(platform, target_url)]
+
+
+@pytest.mark.parametrize(
+    ("session_mode", "selected_target", "expected_urls", "scope_query"),
+    (
+        (
+            "new",
+            "https://grok.com/",
+            {
+                "https://grok.com/c/first-session",
+                "https://grok.com/c/second-session",
+            },
+            "excludeProjects=true",
+        ),
+        (
+            "project_new",
+            "https://grok.com/project/flight?tab=conversations",
+            {
+                "https://grok.com/project/flight?chat=first-session",
+                "https://grok.com/project/flight?chat=second-session",
+            },
+            "workspaceId=flight",
+        ),
+    ),
+)
+def test_grok_freshness_baseline_paginates_the_selected_scope(
+    monkeypatch: pytest.MonkeyPatch,
+    session_mode: str,
+    selected_target: str,
+    expected_urls: set[str],
+    scope_query: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    page = object()
+    paths: list[str] = []
+
+    def fetch(selected_page: object, path: str) -> dict[str, object]:
+        assert selected_page is page
+        paths.append(path)
+        if len(paths) == 1:
+            return {
+                "conversations": [{"conversationId": "first-session"}],
+                "nextPageToken": "next-token",
+            }
+        return {"conversations": [{"conversationId": "second-session"}]}
+
+    monkeypatch.setattr(computer_use_agent, "_grok_api_json", fetch)
+
+    assert _grok_existing_conversation_urls(
+        page,
+        selected_target,
+        session_mode,
+    ) == expected_urls
+    assert len(paths) == 2
+    assert all(scope_query in path for path in paths)
+    assert "pageToken=" not in paths[0]
+    assert "pageToken=next-token" in paths[1]
+
+
+def test_grok_freshness_baseline_rejects_a_repeated_page_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    calls = 0
+
+    def fetch(_page: object, _path: str) -> dict[str, object]:
+        nonlocal calls
+        calls += 1
+        return {
+            "conversations": [{"conversationId": f"session-{calls}"}],
+            "nextPageToken": "repeated-token",
+        }
+
+    monkeypatch.setattr(computer_use_agent, "_grok_api_json", fetch)
+
+    with pytest.raises(RuntimeError):
+        _grok_existing_conversation_urls(object(), "https://grok.com/", "new")
+
+    assert calls == 2
+
+
+@pytest.mark.parametrize(
+    "row",
+    (
+        pytest.param("not-an-object", id="non-dict-row"),
+        pytest.param({}, id="missing-conversation-id"),
+        pytest.param({"conversationId": "bad/id"}, id="illegal-conversation-id"),
+        pytest.param({"conversationId": 123}, id="non-string-conversation-id"),
+    ),
+)
+def test_grok_freshness_baseline_rejects_an_invalid_conversation_row(
+    monkeypatch: pytest.MonkeyPatch,
+    row: object,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_api_json",
+        lambda *_args, **_kwargs: {"conversations": [row]},
+    )
+
+    with pytest.raises(RuntimeError):
+        _grok_existing_conversation_urls(object(), "https://grok.com/", "new")
+
+
+def test_grok_freshness_baseline_rejects_an_empty_page_with_a_next_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_api_json",
+        lambda *_args, **_kwargs: {
+            "conversations": [],
+            "nextPageToken": "unreachable-next-page",
+        },
+    )
+
+    with pytest.raises(RuntimeError):
+        _grok_existing_conversation_urls(object(), "https://grok.com/", "new")
+
+
+def test_grok_freshness_baseline_retries_errors_but_commits_only_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    calls = 0
+
+    def capture(*_args: object, **_kwargs: object) -> set[str]:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("temporary catalog failure")
+        return {"https://grok.com/c/existing-session"}
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        capture,
+    )
+    binding = _ProviderSessionBinding(
+        object(),
+        "grok",
+        "https://grok.com/",
+        "new",
+    )
+
+    with pytest.raises(RuntimeError, match="temporary catalog failure"):
+        binding.prepare_fresh_session()
+
+    assert binding.freshness_baseline_captured is False
+    binding.prepare_fresh_session()
+    binding.prepare_fresh_session()
+    assert calls == 2
+    assert binding.existing_conversation_urls == {
+        "https://grok.com/c/existing-session"
+    }
+
+
+def test_grok_freshness_baseline_stops_between_catalog_pages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    stop_requested = Event()
+    paths: list[str] = []
+
+    def fetch(_page: object, path: str) -> dict[str, object]:
+        paths.append(path)
+        stop_requested.set()
+        return {
+            "conversations": [{"conversationId": "first-session"}],
+            "nextPageToken": "must-not-be-fetched",
+        }
+
+    monkeypatch.setattr(computer_use_agent, "_grok_api_json", fetch)
+
+    with pytest.raises(RuntimeError, match="freshness verification was stopped"):
+        _grok_existing_conversation_urls(
+            object(),
+            "https://grok.com/",
+            "new",
+            stop_requested.is_set,
+        )
+
+    assert len(paths) == 1
+    assert "pageToken=" not in paths[0]
+
+
+def test_grok_freshness_binding_returns_before_capture_when_already_stopped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("A stopped run must not fetch the Grok catalog.")
+        ),
+    )
+    binding = _ProviderSessionBinding(
+        object(),
+        "grok",
+        "https://grok.com/",
+        "new",
+    )
+
+    assert binding.prepare_fresh_session(lambda: True) is False
+    assert binding.freshness_baseline_captured is False
+    assert binding.existing_conversation_urls == set()
+
+
+def test_fresh_grok_loop_rebinds_interruption_checks_to_created_conversation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://grok.com/"
+        current_title = "Grok"
+
+        def title(self) -> str:
+            return self.current_title
+
+        def evaluate(
+            self,
+            _expression: str,
+            argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+    page = _Page()
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace),
+        platform="grok",
+        model="grok-auto",
+    )
+    controller = WorkspaceController(workspace, settings, lambda: False)
+    submitted = 0
+    interruption_targets: list[tuple[str, str]] = []
+
+    def submit(*_args: object, **_kwargs: object) -> str:
+        nonlocal submitted
+        submitted += 1
+        if submitted == 1:
+            assert "Controller transfer ID: agent-transfer-" in str(_args[2])
+            page.url = "https://grok.com/c/fresh-session"
+            page.current_title = "Flight atlas audit"
+            session_check = _kwargs.get("session_check")
+            assert callable(session_check)
+            session_check(True)
+            return '{"action":"bodycheck"}'
+        return '{"action":"final","summary":"Done."}'
+
+    def detect(
+        _page: object,
+        expected_url: str,
+        _browser_kind: str,
+        **kwargs: object,
+    ) -> tuple[bool, str]:
+        interruption_targets.append((expected_url, str(kwargs.get("expected_title") or "")))
+        return False, ""
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: True)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        lambda *_args, **_kwargs: set(),
+    )
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+    monkeypatch.setattr(computer_use_agent, "_detect_browser_interruption", detect)
+
+    result = _run_web_action_loop(
+        page=page,
+        browser_kind="chromium",
+        initial_message="Audit the existing project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=settings,
+        session_mode="new",
+        selected_target_url="https://grok.com/",
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+        platform="grok",
+    )
+
+    assert result == ("Done.", "https://grok.com/c/fresh-session", 2, True)
+    assert interruption_targets
+    assert all(
+        target == "https://grok.com/c/fresh-session"
+        for target, _title in interruption_targets
+    )
+    assert all(title == "Flight atlas audit" for _target, title in interruption_targets)
+
+
+def test_project_new_grok_rejects_an_existing_chat_before_any_project_transfer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://grok.com/project/flight?chat=old-session"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace), platform="grok", model="grok-auto"
+    )
+    controller = WorkspaceController(workspace, settings, lambda: False)
+    calls = {"model": 0, "attach": 0, "submit": 0}
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: True)
+
+    def unexpected(stage: str) -> object:
+        calls[stage] += 1
+        raise AssertionError(f"{stage} must not run on an existing Project chat.")
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_select_web_model",
+        lambda *_args, **_kwargs: unexpected("model"),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_attach_context_file",
+        lambda *_args, **_kwargs: unexpected("attach"),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_and_wait",
+        lambda *_args, **_kwargs: unexpected("submit"),
+    )
+
+    with pytest.raises(RuntimeError, match="chosen session before the controller transfer"):
+        _run_web_action_loop(
+            page=_Page(),
+            browser_kind="chromium",
+            initial_message="Audit the flight project.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=settings,
+            session_mode="project_new",
+            selected_target_url="https://grok.com/project/flight?tab=conversations",
+            should_stop=lambda: False,
+            update=lambda **_changes: None,
+            platform="grok",
+        )
+
+    assert calls == {"model": 0, "attach": 0, "submit": 0}
+
+
+@pytest.mark.parametrize(
+    ("session_mode", "selected_target", "redirected_url"),
+    (
+        (
+            "new",
+            "https://grok.com/",
+            "https://grok.com/project/flight?chat=wrong-project-session",
+        ),
+        (
+            "project_new",
+            "https://grok.com/project/flight?tab=conversations",
+            "https://grok.com/c/wrong-root-session",
+        ),
+        (
+            "project_new",
+            "https://grok.com/project/flight?tab=conversations",
+            "https://grok.com/project/other?chat=wrong-project-session",
+        ),
+    ),
+)
+def test_fresh_grok_loop_rejects_an_illegal_first_conversation_transition(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    session_mode: str,
+    selected_target: str,
+    redirected_url: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = selected_target
+
+    page = _Page()
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace), platform="grok", model="grok-auto"
+    )
+    controller = WorkspaceController(workspace, settings, lambda: False)
+
+    def submit(*_args: object, **_kwargs: object) -> str:
+        page.url = redirected_url
+        return '{"action":"bodycheck"}'
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: True)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        lambda *_args, **_kwargs: set(),
+    )
+    monkeypatch.setattr(
+        computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        computer_use_agent, "_attach_context_file", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    with pytest.raises(RuntimeError, match="chosen session before the controller transfer"):
+        _run_web_action_loop(
+            page=page,
+            browser_kind="chromium",
+            initial_message="Audit the flight project.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=settings,
+            session_mode=session_mode,
+            selected_target_url=selected_target,
+            should_stop=lambda: False,
+            update=lambda **_changes: None,
+            platform="grok",
+        )
+
+
+def test_project_new_grok_loop_binds_only_the_same_project_conversation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://grok.com/project/flight?tab=conversations"
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+    page = _Page()
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace), platform="grok", model="grok-auto"
+    )
+    controller = WorkspaceController(workspace, settings, lambda: False)
+    responses = iter(
+        ('{"action":"bodycheck"}', '{"action":"final","summary":"Done."}')
+    )
+
+    def submit(*_args: object, **_kwargs: object) -> str:
+        if page.url.endswith("tab=conversations"):
+            assert "Controller transfer ID: agent-transfer-" in str(_args[2])
+            page.url = "https://grok.com/project/flight?chat=fresh-session"
+            session_check = _kwargs.get("session_check")
+            assert callable(session_check)
+            session_check(True)
+        return next(responses)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: True)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        lambda *_args, **_kwargs: set(),
+    )
+    monkeypatch.setattr(
+        computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        computer_use_agent, "_attach_context_file", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    result = _run_web_action_loop(
+        page=page,
+        browser_kind="chromium",
+        initial_message="Audit the flight project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=settings,
+        session_mode="project_new",
+        selected_target_url="https://grok.com/project/flight?tab=conversations",
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+        platform="grok",
+    )
+
+    assert result == (
+        "Done.",
+        "https://grok.com/project/flight?chat=fresh-session",
+        2,
+        True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("session_mode", "selected_target", "old_session"),
+    (
+        ("new", "https://grok.com/", "https://grok.com/c/preexisting-session"),
+        (
+            "project_new",
+            "https://grok.com/project/flight?tab=conversations",
+            "https://grok.com/project/flight?chat=preexisting-session",
+        ),
+    ),
+)
+def test_fresh_grok_loop_cannot_bind_an_old_session_without_current_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    session_mode: str,
+    selected_target: str,
+    old_session: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = selected_target
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": False, "url": self.url}
+
+    page = _Page()
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace), platform="grok", model="grok-auto"
+    )
+    controller = WorkspaceController(workspace, settings, lambda: False)
+
+    def submit(*_args: object, **kwargs: object) -> str:
+        page.url = old_session
+        session_check = kwargs.get("session_check")
+        assert callable(session_check)
+        assert session_check(True) == ""
+        return '{"action":"bodycheck"}'
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: True)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        lambda *_args, **_kwargs: set(),
+    )
+    monkeypatch.setattr(
+        computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        computer_use_agent, "_attach_context_file", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+    monkeypatch.setattr(computer_use_agent, "PROVIDER_SESSION_BIND_TIMEOUT_SECONDS", 0)
+    monkeypatch.setattr(
+        controller,
+        "execute",
+        lambda _action: (_ for _ in ()).throw(
+            AssertionError("No local action may execute before the session receipt is proven.")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="without proving that the current submission"):
+        _run_web_action_loop(
+            page=page,
+            browser_kind="chromium",
+            initial_message="Audit the flight project.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=settings,
+            session_mode=session_mode,
+            selected_target_url=selected_target,
+            should_stop=lambda: False,
+            update=lambda **_changes: None,
+            platform="grok",
+        )
+
+
+@pytest.mark.parametrize(
+    ("session_mode", "selected_target", "preexisting_session"),
+    (
+        (
+            "new",
+            "https://grok.com/",
+            "https://grok.com/c/preexisting-session",
+        ),
+        (
+            "project_new",
+            "https://grok.com/project/flight?tab=conversations",
+            "https://grok.com/project/flight?chat=preexisting-session",
+        ),
+    ),
+)
+def test_fresh_grok_binding_rejects_a_preexisting_conversation_with_a_current_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    session_mode: str,
+    selected_target: str,
+    preexisting_session: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = selected_target
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        lambda *_args, **_kwargs: {preexisting_session},
+    )
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "grok",
+        selected_target,
+        session_mode,
+    )
+    binding.prepare_fresh_session()
+    binding.arm_first_submission("Inspect the project")
+    page.url = preexisting_session
+
+    with pytest.raises(RuntimeError, match="existed before this New session run"):
+        binding.check(allow_transition=True)
+
+
+def test_submission_receipt_url_drift_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://grok.com/"
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            receipt_url = "https://grok.com/c/current-session"
+            self.url = "https://grok.com/c/different-session"
+            return {"markerEchoed": True, "url": receipt_url}
+
+    page = _Page()
+    binding = _ProviderSessionBinding(page, "grok", "https://grok.com/", "new")
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        lambda *_args, **_kwargs: set(),
+    )
+    binding.prepare_fresh_session()
+    binding.arm_first_submission("Inspect the project")
+    page.url = "https://grok.com/c/current-session"
+
+    with pytest.raises(RuntimeError, match="URL changed while"):
+        binding.check(allow_transition=True)
+
+
+def test_fresh_session_receipt_excludes_the_composer_and_requires_latest_user_message(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://grok.com/c/preexisting-session"
+
+        def evaluate(
+            self,
+            expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            assert "element !== composer" in expression
+            assert "!element.contains(composer)" in expression
+            assert "messages.at(-1)" in expression
+            return {"markerEchoed": False, "url": self.url}
+
+    binding = _ProviderSessionBinding(
+        _Page(),
+        "grok",
+        "https://grok.com/",
+        "new",
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_grok_existing_conversation_urls",
+        lambda *_args, **_kwargs: set(),
+    )
+    binding.prepare_fresh_session()
+    binding.arm_first_submission("Inspect the project")
+
+    assert binding.check(allow_transition=True) == ""
+    assert binding.bound_conversation_url == ""
+
+
+def test_project_new_gemini_rejects_a_different_notebook_identity() -> None:
+    class _Page:
+        url = "https://gemini.google.com/app/notebook-1"
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "gemini",
+        "https://gemini.google.com/app/notebook-1",
+        "project_new",
+    )
+    binding.arm_first_submission("Inspect the notebook")
+    page.url = "https://gemini.google.com/app/notebook-2"
+
+    with pytest.raises(RuntimeError, match="navigated away from the chosen Project"):
+        binding.check(allow_transition=True)
+
+
+def test_project_new_gemini_binds_same_notebook_only_after_current_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://gemini.google.com/app/notebook-1"
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+    page = _Page()
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace),
+        platform="gemini",
+        model="gemini-3.1-pro",
+    )
+    controller = WorkspaceController(workspace, settings, lambda: False)
+    responses = iter(
+        ('{"action":"bodycheck"}', '{"action":"final","summary":"Done."}')
+    )
+
+    def submit(*args: object, **kwargs: object) -> str:
+        if "Controller transfer ID: agent-transfer-" in str(args[2]):
+            session_check = kwargs.get("session_check")
+            assert callable(session_check)
+            assert session_check(True) == page.url
+        return next(responses)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: True)
+    monkeypatch.setattr(
+        computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        computer_use_agent, "_attach_context_file", lambda *_args, **_kwargs: False
+    )
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    result = _run_web_action_loop(
+        page=page,
+        browser_kind="chromium",
+        initial_message="Audit the notebook project.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=settings,
+        session_mode="project_new",
+        selected_target_url=page.url,
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+        platform="gemini",
+    )
+
+    assert result == ("Done.", page.url, 2, True)
 
 
 def test_workspace_controller_stays_inside_project_and_requires_current_bodycheck() -> None:
@@ -6332,7 +7759,12 @@ def test_macos_idle_sleep_assertion_uses_caffeinate_without_waking_display(
     )
     computer_use_agent._stop_macos_idle_sleep_assertion(assertion)
 
-    assert popen_calls[0][0] == [str(executable), "-i"]
+    assert popen_calls[0][0] == [
+        str(executable),
+        "-i",
+        "-w",
+        str(os.getpid()),
+    ]
     assert "-d" not in popen_calls[0][0]
     assert "-u" not in popen_calls[0][0]
     assert popen_calls[0][1]["start_new_session"] is True
@@ -6671,7 +8103,20 @@ def test_chromium_submission_reports_when_attachment_never_enables_send() -> Non
             _submit_chromium_prompt(_Page(), "Inspect the project", lambda: False)
 
 
-def test_grok_submission_can_fall_back_to_enter_when_submit_is_not_exposed() -> None:
+@pytest.mark.parametrize(
+    ("session_mode", "expected_target_url"),
+    (
+        ("recent", "https://grok.com/c/bound-session"),
+        (
+            "project_session",
+            "https://grok.com/project/flight?chat=bound-session",
+        ),
+    ),
+)
+def test_bound_grok_submission_can_fall_back_to_enter_when_submit_is_not_exposed(
+    session_mode: str,
+    expected_target_url: str,
+) -> None:
     class _Composer:
         def __init__(self) -> None:
             self.value = ""
@@ -6712,10 +8157,381 @@ def test_grok_submission_can_fall_back_to_enter_when_submit_is_not_exposed() -> 
         )
         monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
 
-        _submit_chromium_web_prompt(page, "grok", "Continue with the observation", lambda: False)
+        _submit_chromium_web_prompt(
+            page,
+            "grok",
+            "Continue with the observation",
+            lambda: False,
+            expected_target_url=expected_target_url,
+            session_mode=session_mode,
+        )
 
     assert page.composer.value == "Continue with the observation"
     assert page.composer.pressed == ["Enter"]
+
+
+@pytest.mark.parametrize(
+    ("session_mode", "expected_target_url"),
+    (
+        ("new", "https://grok.com/"),
+        (
+            "project_new",
+            "https://grok.com/project/flight?tab=conversations",
+        ),
+    ),
+)
+def test_fresh_unbound_grok_submission_never_uses_enter_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    session_mode: str,
+    expected_target_url: str,
+) -> None:
+    class _Composer:
+        def __init__(self) -> None:
+            self.pressed: list[str] = []
+
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def fill(self, _value: str) -> None:
+            return None
+
+        def press(self, key: str) -> None:
+            self.pressed.append(key)
+
+    class _Page:
+        def __init__(self) -> None:
+            self.composer = _Composer()
+            self.waits: list[int] = []
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "textarea"
+            return self.composer
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: dict[str, str] | None = None,
+        ) -> object:
+            assert "sendButton.click()" in expression
+            assert argument == {
+                "platform": "grok",
+                "expectedTargetUrl": expected_target_url,
+                "sessionMode": session_mode,
+            }
+            return {"clicked": False, "sendButtons": []}
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+
+    page = _Page()
+    clock = iter((0, 0, 181))
+    monkeypatch.setattr(
+        "app.core.computer_use_agent.time.monotonic",
+        lambda: next(clock),
+    )
+    monkeypatch.setattr(
+        "app.core.computer_use_agent.GROK_KEYBOARD_SUBMIT_FALLBACK_SECONDS",
+        0,
+    )
+    monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
+
+    with pytest.raises(RuntimeError, match="enabled Grok send button"):
+        _submit_chromium_web_prompt(
+            page,
+            "grok",
+            "Continue with the observation",
+            lambda: False,
+            expected_target_url=expected_target_url,
+            session_mode=session_mode,
+        )
+
+    assert page.composer.pressed == []
+    assert page.waits == [250]
+
+
+def test_grok_send_target_check_is_atomic_with_click_and_rejects_stale_landing() -> None:
+    class _Composer:
+        def __init__(self) -> None:
+            self.pressed: list[str] = []
+
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def fill(self, _value: str) -> None:
+            return None
+
+        def press(self, key: str) -> None:
+            self.pressed.append(key)
+
+    class _Page:
+        def __init__(self) -> None:
+            self.composer = _Composer()
+            self.scan_sources: list[str] = []
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "textarea"
+            return self.composer
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: dict[str, str] | None = None,
+        ) -> object:
+            assert argument == {
+                "platform": "grok",
+                "expectedTargetUrl": "https://grok.com/",
+                "sessionMode": "new",
+            }
+            self.scan_sources.append(expression)
+            assert expression.index("if (!targetMatches())") < expression.index(
+                "sendButton.click()"
+            )
+            return {
+                "clicked": False,
+                "targetMismatch": True,
+                "currentUrl": "https://grok.com/c/old-session",
+            }
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            raise AssertionError("A target mismatch must abort without another wait.")
+
+    page = _Page()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
+
+        with pytest.raises(RuntimeError, match="tab changed before the prompt"):
+            _submit_chromium_web_prompt(
+                page,
+                "grok",
+                "Inspect the project",
+                lambda: False,
+                expected_target_url="https://grok.com/",
+                session_mode="new",
+            )
+
+    assert len(page.scan_sources) == 1
+    assert page.composer.pressed == []
+
+
+def test_submit_and_wait_prefers_bound_session_for_atomic_target_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    bound_target = "https://grok.com/c/bound-session"
+    submitted: list[dict[str, object]] = []
+    session_checks: list[bool] = []
+
+    def check_session(allow_transition: bool) -> str:
+        session_checks.append(allow_transition)
+        return bound_target
+
+    def submit(*args: object, **kwargs: object) -> None:
+        submitted.append({"args": args, "kwargs": kwargs})
+
+    counts = iter((0, 1))
+    responses = iter(("", "done"))
+    monkeypatch.setattr(computer_use_agent, "_submit_chromium_web_prompt", submit)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_platform_web_count",
+        lambda *_args: next(counts),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_platform_web_last_text",
+        lambda *_args: next(responses),
+    )
+    monkeypatch.setattr(computer_use_agent, "_web_is_generating", lambda *_args: False)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_is_web_response_complete",
+        lambda response, **_kwargs: bool(response),
+    )
+
+    assert (
+        _submit_and_wait(
+            object(),
+            "chromium",
+            "Inspect the project",
+            lambda: False,
+            platform="grok",
+            session_check=check_session,
+            submission_target_url="https://grok.com/",
+            session_mode="new",
+        )
+        == "done"
+    )
+
+    assert len(submitted) == 1
+    assert submitted[0]["kwargs"] == {
+        "session_check": check_session,
+        "expected_target_url": bound_target,
+        "session_mode": "new",
+    }
+    assert session_checks[0] is False
+    assert all(session_checks[index] for index in range(1, len(session_checks)))
+
+
+def test_first_response_wait_rechecks_the_selected_session_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        pass
+
+    transition_checks = 0
+
+    def check_session(allow_transition: bool) -> str:
+        nonlocal transition_checks
+        if allow_transition:
+            transition_checks += 1
+            if transition_checks == 2:
+                raise RuntimeError("session changed during the first response")
+        return ""
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_chromium_web_prompt",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(computer_use_agent, "_platform_web_count", lambda *_args: 0)
+    monkeypatch.setattr(computer_use_agent, "_platform_web_last_text", lambda *_args: "")
+    clock = iter(range(0, 10_000, 1_000))
+    monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: next(clock))
+
+    with pytest.raises(RuntimeError, match="session changed during the first response"):
+        _submit_and_wait(
+            _Page(),
+            "chromium",
+            "Inspect the project",
+            lambda: False,
+            platform="grok",
+            session_check=check_session,
+        )
+
+    assert transition_checks == 2
+
+
+def test_grok_submission_does_not_press_enter_after_stop_during_button_scan() -> None:
+    stop_requested = Event()
+
+    class _Composer:
+        def __init__(self) -> None:
+            self.pressed: list[str] = []
+
+        def fill(self, _value: str) -> None:
+            return None
+
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def press(self, key: str) -> None:
+            self.pressed.append(key)
+
+    class _Page:
+        def __init__(self) -> None:
+            self.composer = _Composer()
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "textarea"
+            return self.composer
+
+        def evaluate(self, expression: str, _argument: object = None) -> object:
+            assert "sendButton.click()" in expression
+            stop_requested.set()
+            return {"clicked": False, "sendButtons": []}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            raise AssertionError("Stop must return before another browser wait.")
+
+    page = _Page()
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("app.core.computer_use_agent.time.monotonic", lambda: 2)
+        monkeypatch.setattr(
+            "app.core.computer_use_agent.GROK_KEYBOARD_SUBMIT_FALLBACK_SECONDS",
+            0,
+        )
+        monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
+
+        _submit_chromium_web_prompt(
+            page,
+            "grok",
+            "Continue with the observation",
+            stop_requested.is_set,
+        )
+
+    assert page.composer.pressed == []
+
+
+def test_grok_enter_fallback_linearizes_a_stop_at_the_final_action_gate() -> None:
+    stop_requested = _LinearizedStopSignal()
+    original_gate = stop_requested.run_unless_set
+
+    class _Composer:
+        def __init__(self) -> None:
+            self.pressed: list[str] = []
+
+        def fill(self, _value: str) -> None:
+            return None
+
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def press(self, key: str) -> None:
+            self.pressed.append(key)
+
+    class _Page:
+        def __init__(self) -> None:
+            self.composer = _Composer()
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "textarea"
+            return self.composer
+
+        def evaluate(self, expression: str, _argument: object = None) -> object:
+            assert "sendButton.click()" in expression
+            return {"clicked": False, "sendButtons": []}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    gate_calls = 0
+
+    def stop_at_final_gate(action: object) -> tuple[bool, object]:
+        nonlocal gate_calls
+        gate_calls += 1
+        if gate_calls == 2:
+            stop_requested.set()
+        assert callable(action)
+        return original_gate(action)
+
+    stop_requested.run_unless_set = stop_at_final_gate  # type: ignore[method-assign]
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr("app.core.computer_use_agent.time.monotonic", lambda: 2)
+        monkeypatch.setattr(
+            "app.core.computer_use_agent.GROK_KEYBOARD_SUBMIT_FALLBACK_SECONDS",
+            0,
+        )
+        monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
+
+        _submit_chromium_web_prompt(
+            page,
+            "grok",
+            "Continue with the observation",
+            stop_requested.is_set,
+        )
+
+    assert gate_calls == 2
+    assert stop_requested.is_set()
+    assert page.composer.pressed == []
 
 
 def test_chromium_last_response_is_empty_before_a_new_session_has_messages() -> None:
@@ -6889,6 +8705,160 @@ def test_stop_interrupts_initial_chromium_composer_verification_before_any_send(
     assert result == ("", page.url, 0, False)
     assert page.composer.attempts == 1
     assert page.reload_calls == []
+
+
+def test_grok_runtime_rejects_a_visible_login_action_even_with_a_composer() -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            return None
+
+    class _Page:
+        url = "https://grok.com/"
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "textarea"
+            return _Composer()
+
+        def evaluate(
+            self,
+            expression: str,
+            _argument: dict[str, str],
+        ) -> bool:
+            assert "authAction" in expression
+            assert "!composer" not in expression
+            assert "platform === 'grok' || !account" in expression
+            assert "sign in|log in|sign up|create account" in expression
+            return True
+
+    with pytest.raises(RuntimeError, match="not signed in to Grok Web"):
+        _verify_agent_page(
+            _Page(),
+            "chromium",
+            "grok",
+            "https://grok.com/",
+        )
+
+
+def test_grok_runtime_requires_positive_authenticated_api_evidence() -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            return None
+
+    class _Page:
+        url = "https://grok.com/"
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "textarea"
+            return _Composer()
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: dict[str, object],
+        ) -> object:
+            if "authAction" in expression:
+                return False
+            assert "/rest/app-chat/conversations?" in str(argument["url"])
+            return {"status": 401, "body": {"error": "Unauthorized"}}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    with pytest.raises(RuntimeError, match="could not verify an authenticated Grok account"):
+        _verify_agent_page(
+            _Page(),
+            "chromium",
+            "grok",
+            "https://grok.com/",
+        )
+
+
+def test_grok_runtime_accepts_a_schema_valid_authenticated_api_response() -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            return None
+
+    class _Page:
+        url = "https://grok.com/"
+
+        def __init__(self) -> None:
+            self.api_urls: list[str] = []
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == "textarea"
+            return _Composer()
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: dict[str, object],
+        ) -> object:
+            if "authAction" in expression:
+                return False
+            api_url = str(argument["url"])
+            self.api_urls.append(api_url)
+            return {"status": 200, "body": {"conversations": []}}
+
+    page = _Page()
+
+    assert (
+        _verify_agent_page(
+            page,
+            "chromium",
+            "grok",
+            "https://grok.com/",
+        )
+        is True
+    )
+    assert page.api_urls == [
+        "https://grok.com/rest/app-chat/conversations?"
+        "pageSize=1&excludeProjects=true"
+    ]
+
+
+def test_grok_runtime_rejects_a_schema_invalid_authentication_payload() -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            return None
+
+    class _Page:
+        url = "https://grok.com/"
+
+        def locator(self, _selector: str) -> _Composer:
+            return _Composer()
+
+        def evaluate(
+            self,
+            expression: str,
+            _argument: dict[str, object],
+        ) -> object:
+            if "authAction" in expression:
+                return False
+            return {"status": 200, "body": {"error": "not authenticated"}}
+
+    with pytest.raises(RuntimeError, match="could not verify an authenticated Grok account"):
+        _verify_agent_page(
+            _Page(),
+            "chromium",
+            "grok",
+            "https://grok.com/",
+        )
 
 
 def test_chromium_composer_fails_immediately_on_a_closed_page() -> None:

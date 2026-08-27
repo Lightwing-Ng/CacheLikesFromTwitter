@@ -1,6 +1,45 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.3.3-codex.1`
+Documentation version: `v1.8.0-codex.1`
+
+## Grok Agent session binding and readiness hardening on 26 Aug 2026
+
+- Fresh Grok runs treat only the normal home-to-`/c/<id>` transition as a candidate new session. The
+  latest visible user message must also echo that run's high-entropy transfer ID, and the receipt URL
+  must survive an immediate canonical recheck before the controller binds it. Project sessions
+  preserve both Project ID and `chat` identity; root chats, cross-Project chats, same-Project old-chat
+  switches, composer-only markers, and receipt URL drift fail closed before any local action.
+- Before a fresh root or Project submit, Grok's complete same-scope conversation catalog is captured
+  as a denylist. Invalid rows, incomplete schemas, repeated cursors, and pagination overflow fail
+  closed; a pre-existing conversation cannot become the run's new session even if it later echoes
+  the current transfer ID. Fresh runs do not upload context before this binding completes.
+- Grok Agent readiness uses the signed-in home-page message composer and collects the initial source
+  catalog in the same Edge or Chrome context. It additionally requires an authenticated Grok
+  conversations request, and visible login or account-creation actions fail even when an anonymous
+  composer is present. The cache-oriented `/files` probe remains separate.
+- Grok `Auto` matching rejects compound controls such as `Auto-play`, requires a semantic model
+  trigger, and limits choices to its opened menu, listbox, or dialog. Finding or clicking a menu item
+  is not a successful readback; the selector trigger must expose the chosen label after the click.
+- A fresh signed bootstrap supersedes stale cached source data or errors before loaded/loading guards
+  execute and invalidates the older request. Grok Project fallback rows must use the selected
+  Project's own `?chat=<id>` URL. Gemini Notebook aliases converge on one typed `/app/<id>` identity
+  and remain receipt-gated for a Project-new run. Existing Gemini Notebook session ownership cannot
+  be proven, so the Project-session catalog is empty and execution accepts only New session in project.
+- The browser-status controller ignores both success and failure from a request whose browser or
+  provider is no longer selected. A delayed ChatGPT failure therefore cannot overwrite a newer Grok
+  ready state in the same Edge selector.
+- Completed Agent snapshots are displayed only when both their provider and browser match the
+  canonical route. A mismatch is rendered as an idle, empty task on the server's first frame and in
+  later polling updates; provider or browser changes also clear the composer. This prevents an old
+  ChatGPT prompt, activity log, or response from being relabeled or resubmitted as a Grok task.
+- Send checks the official host and exact selected target in the same page evaluation that clicks
+  the button. Fresh unbound Grok runs disable the non-atomic Enter fallback; reused or bound Grok
+  sessions check Stop immediately after the DOM send-button scan. A Stop
+  accepted during that scan therefore returns without sending the next observation.
+- After the final 8666 restart, both the isolated Edge production probe and a fresh host Edge tab
+  remained at Grok's Cloudflare `Verify you are human` security page. The controller correctly kept
+  Ask disabled and transferred no project context. The operator must complete the provider-required
+  browser verification; this project does not automate or bypass that external security boundary.
 
 ## Agent Web execution safety contract established on 24 Aug 2026
 
@@ -30,6 +69,13 @@ Documentation version: `v1.3.3-codex.1`
 - A synchronous worker-thread launch failure is committed as `failed` with `running=false` before
   the start error returns. Stop therefore remains unavailable for a worker that never existed, and
   the next valid task is not blocked by a stale `starting` or `stopping` snapshot.
+- The macOS idle-sleep assertion is bound to the service PID through `caffeinate -w`. Worker
+  completion and service shutdown atomically claim one shared assertion, the shutdown hook releases
+  an unclaimed assertion after its bounded worker wait, and a registration arriving after shutdown
+  immediately attempts to release it. Assertion startup and registration exceptions now enter the
+  same completion path instead of leaving a stale `running=true` snapshot. Closing the lid, choosing
+  Sleep, or ending the service can still interrupt the Web task, but the assertion cannot outlive the
+  service PID.
 - macOS and Windows prompts share the same complete 10-action JSON schema. Prompt migrations preserve
   custom guidance and use an owner-only, `fsync`-backed atomic settings replacement so a failed write
   cannot truncate the previous configuration.

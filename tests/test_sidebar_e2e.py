@@ -1,12 +1,13 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.10.0-codex.1
+Code version: v1.14.0-codex.1
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
 from io import BytesIO
+import json
 from pathlib import Path
 import re
 from threading import Thread
@@ -24,6 +25,12 @@ from playwright.sync_api import (
     sync_playwright,
 )
 from werkzeug.serving import BaseWSGIServer, make_server
+
+from app.core.computer_use_agent import (
+    _ProviderSessionBinding,
+    _select_web_model,
+    _submit_chromium_web_prompt,
+)
 
 
 OVERLAY_VIEWPORTS = (
@@ -1578,6 +1585,243 @@ def _chatgpt_catalog_sessions(*sessions: dict[str, str]) -> dict[str, object]:
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("surface_role", ["listbox", "menu"])
+@pytest.mark.parametrize("updates_readback", [True, False])
+def test_grok_model_dom_selection_requires_semantic_trigger_and_verified_readback(
+    disposable_browser: Browser,
+    surface_role: str,
+    updates_readback: bool,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        option_role = "option" if surface_role == "listbox" else "menuitem"
+        page.set_content(
+            f"""
+            <button id="bare-auto">Auto</button>
+            <button id="autoplay" aria-label="Enable Auto-play">Auto</button>
+            <button
+                id="model-trigger"
+                aria-label="Model selector"
+                aria-haspopup="{surface_role}"
+                aria-expanded="false"
+                aria-controls="model-surface"
+            >Choose model</button>
+            <div id="model-surface" role="{surface_role}" hidden>
+                <button id="auto-option" role="{option_role}">Auto</button>
+            </div>
+            <script>
+                window.selectionAudit = {{
+                    bareAutoClicks: 0,
+                    autoplayClicks: 0,
+                    optionClicks: 0,
+                }};
+                const trigger = document.querySelector('#model-trigger');
+                const surface = document.querySelector('#model-surface');
+                document.querySelector('#bare-auto').addEventListener('click', () => {{
+                    window.selectionAudit.bareAutoClicks += 1;
+                }});
+                document.querySelector('#autoplay').addEventListener('click', () => {{
+                    window.selectionAudit.autoplayClicks += 1;
+                }});
+                trigger.addEventListener('click', () => {{
+                    trigger.setAttribute('aria-expanded', 'true');
+                    surface.hidden = false;
+                }});
+                document.querySelector('#auto-option').addEventListener('click', () => {{
+                    window.selectionAudit.optionClicks += 1;
+                    if ({str(updates_readback).lower()}) {{
+                        trigger.textContent = 'Auto';
+                    }}
+                }});
+            </script>
+            """
+        )
+        assert (
+            _select_web_model(page, "chromium", "grok", "grok-auto")
+            is updates_readback
+        )
+        assert page.evaluate("window.selectionAudit") == {
+            "bareAutoClicks": 0,
+            "autoplayClicks": 0,
+            "optionClicks": 1,
+        }
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("receipt_case", "expects_receipt"),
+    [
+        pytest.param("composer", False, id="marker-only-in-composer"),
+        pytest.param("assistant", False, id="marker-only-in-assistant-message"),
+        pytest.param("stale-user", False, id="marker-only-in-earlier-user-message"),
+        pytest.param("latest-user", True, id="marker-in-latest-visible-user-message"),
+    ],
+)
+def test_grok_submission_receipt_requires_marker_in_latest_visible_user_message(
+    disposable_browser: Browser,
+    receipt_case: str,
+    expects_receipt: bool,
+) -> None:
+    marker = "agent-transfer-e2e-receipt-marker"
+    bodies = {
+        "composer": (
+            f'<div data-testid="user-composer" contenteditable="true">{marker}</div>'
+        ),
+        "assistant": (
+            f'<article data-message-author-role="assistant">{marker}</article>'
+        ),
+        "stale-user": (
+            f'<article data-role="user">Earlier prompt {marker}</article>'
+            '<article data-role="user">Latest prompt without a receipt</article>'
+        ),
+        "latest-user": (
+            '<article data-role="user">Earlier prompt without a receipt</article>'
+            f'<article data-role="user">Latest prompt {marker}</article>'
+            '<article data-role="user" hidden>Hidden later prompt without a receipt</article>'
+        ),
+    }
+    conversation_url = "https://grok.com/c/receipt-contract-e2e"
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    page.route(
+        conversation_url,
+        lambda route: route.fulfill(
+            status=200,
+            content_type="text/html",
+            body=f"<!doctype html><html><body>{bodies[receipt_case]}</body></html>",
+        ),
+    )
+    try:
+        page.goto(conversation_url, wait_until="domcontentloaded")
+        binding = _ProviderSessionBinding(
+            page,
+            "grok",
+            conversation_url,
+            "recent",
+        )
+        binding.submission_marker = marker
+
+        receipt_url = binding._current_submission_receipt_url()
+
+        assert receipt_url == (conversation_url if expects_receipt else "")
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_fresh_grok_send_atomically_rejects_an_old_conversation_target(
+    disposable_browser: Browser,
+) -> None:
+    actual_url = "https://grok.com/c/old"
+    expected_url = "https://grok.com/"
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    page.route(
+        actual_url,
+        lambda route: route.fulfill(
+            status=200,
+            content_type="text/html",
+            body="""
+                <!doctype html>
+                <html>
+                    <body>
+                        <form>
+                            <textarea aria-label="Ask Grok"></textarea>
+                            <button id="send" type="button" aria-label="Send">Send</button>
+                        </form>
+                        <script>
+                            window.sendClickAudit = 0;
+                            document.querySelector('#send').addEventListener('click', () => {
+                                window.sendClickAudit += 1;
+                            });
+                        </script>
+                    </body>
+                </html>
+            """,
+        ),
+    )
+    try:
+        page.goto(actual_url, wait_until="domcontentloaded")
+
+        with pytest.raises(RuntimeError, match="selected provider tab changed"):
+            _submit_chromium_web_prompt(
+                page,
+                "grok",
+                "Start a fresh agentic task",
+                lambda: False,
+                expected_target_url=expected_url,
+                session_mode="new",
+            )
+
+        assert page.url == actual_url
+        assert page.evaluate("window.sendClickAudit") == 0
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_fresh_grok_send_accepts_the_expected_root_landing(
+    disposable_browser: Browser,
+) -> None:
+    landing_url = "https://grok.com/"
+    prompt = "Start a fresh agentic task"
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    page.route(
+        landing_url,
+        lambda route: route.fulfill(
+            status=200,
+            content_type="text/html",
+            body="""
+                <!doctype html>
+                <html>
+                    <body>
+                        <form>
+                            <textarea aria-label="Ask Grok"></textarea>
+                            <button id="send" type="button" aria-label="Send">Send</button>
+                        </form>
+                        <script>
+                            window.sendClickAudit = 0;
+                            const composer = document.querySelector('textarea');
+                            document.querySelector('#send').addEventListener('click', () => {
+                                window.sendClickAudit += 1;
+                                const userMessage = document.createElement('article');
+                                userMessage.setAttribute('data-role', 'user');
+                                userMessage.textContent = composer.value;
+                                document.body.append(userMessage);
+                                composer.value = '';
+                                composer.dispatchEvent(new Event('input', {bubbles: true}));
+                            });
+                        </script>
+                    </body>
+                </html>
+            """,
+        ),
+    )
+    try:
+        page.goto(landing_url, wait_until="domcontentloaded")
+
+        _submit_chromium_web_prompt(
+            page,
+            "grok",
+            prompt,
+            lambda: False,
+            expected_target_url=landing_url,
+            session_mode="new",
+        )
+
+        assert page.url == landing_url
+        assert page.evaluate("window.sendClickAudit") == 1
+        assert page.locator("textarea").input_value() == ""
+        expect(page.locator('[data-role="user"]')).to_have_text(prompt)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
 @pytest.mark.slow
 def test_finished_snapshot_does_not_auto_select_recent_chatgpt_session(
     disposable_browser: Browser,
@@ -1585,6 +1829,20 @@ def test_finished_snapshot_does_not_auto_select_recent_chatgpt_session(
 ) -> None:
     captured_ask_payloads: list[dict[str, str]] = []
     source_requests: list[str] = []
+    catalog_payload = _chatgpt_catalog_sessions(
+        {
+            "id": "qqqm-session",
+            "title": "比较 QQQM 与 QQQ",
+            "url": FINISHED_SNAPSHOT_URL,
+            "updated_at": "2026-08-25T09:03:57Z",
+        },
+        {
+            "id": "agentic-troubleshooting",
+            "title": "Agentic Troubleshooting",
+            "url": AGENTIC_TROUBLESHOOTING_URL,
+            "updated_at": "2026-08-26T01:00:00Z",
+        },
+    )
 
     def fulfill_agent_status(route) -> None:
         route.fulfill(json=_finished_chatgpt_agent_payload())
@@ -1599,6 +1857,7 @@ def test_finished_snapshot_does_not_auto_select_recent_chatgpt_session(
                 "can_download": True,
                 "account_name": "ChatGPT account",
                 "message": "Edge is ready for ChatGPT Web.",
+                "agent_sources": catalog_payload,
             }
         )
 
@@ -1607,22 +1866,7 @@ def test_finished_snapshot_does_not_auto_select_recent_chatgpt_session(
 
     def fulfill_sources(route) -> None:
         source_requests.append(route.request.url)
-        route.fulfill(
-            json=_chatgpt_catalog_sessions(
-                {
-                    "id": "qqqm-session",
-                    "title": "比较 QQQM 与 QQQ",
-                    "url": FINISHED_SNAPSHOT_URL,
-                    "updated_at": "2026-08-25T09:03:57Z",
-                },
-                {
-                    "id": "agentic-troubleshooting",
-                    "title": "Agentic Troubleshooting",
-                    "url": AGENTIC_TROUBLESHOOTING_URL,
-                    "updated_at": "2026-08-26T01:00:00Z",
-                },
-            )
-        )
+        route.fulfill(json=catalog_payload)
 
     def fulfill_ask(route) -> None:
         captured_ask_payloads.append(route.request.post_data_json or {})
@@ -1653,13 +1897,16 @@ def test_finished_snapshot_does_not_auto_select_recent_chatgpt_session(
         expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value("")
         expect(page.locator("[data-agent-prompt-session-title]")).to_have_value("")
         expect(page.locator("#agent_conversation_link")).to_have_attribute("href", FINISHED_SNAPSHOT_URL)
-        page.wait_for_function(
-            """() => window.performance.getEntriesByType('resource').some((entry) =>
-                String(entry.name || '').includes('/api/agent/sources')
-                && String(entry.name || '').includes('refresh=1')
-            )"""
+        expect(
+            page.locator(
+                f'[data-agent-session-list="recent"] [data-agent-combobox-option="{FINISHED_SNAPSHOT_URL}"]'
+            )
+        ).to_have_count(1)
+        page.wait_for_timeout(500)
+        assert source_requests == [], (
+            "An initial finished snapshot must consume bootstrapped sources without "
+            "starting a second browser collection."
         )
-        assert any("refresh=1" in url for url in source_requests)
 
         expect(page.locator("#agent_ask_button")).to_be_enabled()
         page.locator("[data-agent-prompt-input]").fill("Inspect the workspace without changing files.")
@@ -1681,6 +1928,257 @@ def test_finished_snapshot_does_not_auto_select_recent_chatgpt_session(
         expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("recent")
         expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value("")
         expect(page.locator("[data-agent-recent-session-url]")).to_have_value("")
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_fresh_grok_bootstrap_supersedes_a_stale_cached_catalog_error(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    source_requests: list[str] = []
+    session_url = "https://grok.com/c/fresh-bootstrap-session"
+    catalog_payload = {
+        "platform": "grok",
+        "browser_label": "Edge",
+        "recent_sessions": [
+            {
+                "id": "fresh-bootstrap-session",
+                "title": "Fresh Grok session",
+                "url": session_url,
+                "updated_at": "2026-08-26T12:00:00Z",
+            }
+        ],
+        "projects": [],
+        "limit": 20,
+    }
+    stale_status = {
+        "platform": "grok",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "Grok account",
+        "message": "Cached Grok status",
+        "agent_sources_error": "Stale catalog failure",
+    }
+    fresh_status = {
+        **stale_status,
+        "message": "Edge verified an authenticated Grok Web session.",
+        "agent_sources_error": "",
+        "agent_sources": catalog_payload,
+    }
+    agent_payload = _finished_chatgpt_agent_payload()
+    agent_payload["agent"] = {
+        **agent_payload["agent"],
+        "platform": "grok",
+        "model": "grok-auto",
+        "actual_model": "Auto",
+        "conversation_url": session_url,
+    }
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    cache_key = "cachelikes:browser-session:v5:agent:grok:edge"
+    cache_entry = json.dumps(
+        {"cached_at": 0, "payload": stale_status},
+        ensure_ascii=False,
+    )
+    page.add_init_script(
+        f"sessionStorage.setItem({json.dumps(cache_key)}, {json.dumps(cache_entry)});"
+        "const value = JSON.parse(sessionStorage.getItem("
+        f"{json.dumps(cache_key)}));"
+        "value.cached_at = Date.now() - 360000;"
+        f"sessionStorage.setItem({json.dumps(cache_key)}, JSON.stringify(value));"
+    )
+    def fulfill_sources(route) -> None:
+        source_requests.append(route.request.url)
+        route.fulfill(json=catalog_payload)
+
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=agent_payload))
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=fresh_status))
+    page.route("**/api/agent/sources**", fulfill_sources)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/grok", wait_until="domcontentloaded")
+        fresh_option = page.locator(
+            f'[data-agent-session-list="recent"] [data-agent-combobox-option="{session_url}"]'
+        )
+        expect(fresh_option).to_have_count(1)
+        expect(fresh_option).to_contain_text("Fresh Grok session")
+        page.wait_for_timeout(300)
+        assert source_requests == []
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_stale_chatgpt_probe_failure_cannot_overwrite_grok_ready_state(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    pending_chatgpt_routes = []
+    browser_session_requests: list[str] = []
+    grok_ready_message = "Edge verified Grok after the provider switch."
+    stale_chatgpt_error = "The superseded ChatGPT probe failed."
+    grok_catalog = {
+        "platform": "grok",
+        "browser_label": "Edge",
+        "recent_sessions": [],
+        "projects": [],
+        "limit": 20,
+    }
+    finished_chatgpt_payload = _finished_chatgpt_agent_payload()
+    finished_chatgpt_payload["agent"]["prompt"] = "STALE_CHATGPT_PROMPT_SENTINEL"
+
+    def fulfill_browser_status(route) -> None:
+        request_url = route.request.url
+        browser_session_requests.append(request_url)
+        if "platform=chatgpt" in request_url:
+            pending_chatgpt_routes.append(route)
+            return
+        assert "platform=grok" in request_url
+        route.fulfill(
+            json={
+                "platform": "grok",
+                "browser": "edge",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "Grok account",
+                "message": grok_ready_message,
+                "agent_sources": grok_catalog,
+            }
+        )
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route(
+        "**/api/agent/status",
+        lambda route: route.fulfill(json=finished_chatgpt_payload),
+    )
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        assert len(pending_chatgpt_routes) == 1
+        expect(page.locator("#agent_response_output")).to_be_visible()
+        expect(page.locator("[data-agent-response-answer-content]")).to_have_text(
+            "Read-only inspection finished."
+        )
+
+        page.get_by_role("button", name="Web service: ChatGPT", exact=True).click()
+        page.locator(
+            '.agent-platform-combobox [data-agent-combobox-option="grok"]'
+        ).click()
+
+        expect(page.get_by_role("button", name="Web service: Grok", exact=True)).to_be_visible()
+        expect(page.locator(".agent-readiness")).to_have_attribute("data-ready", "true")
+        expect(page.locator("#agent_readiness_message")).to_have_text(grok_ready_message)
+        expect(page.locator("#agent_ask_button")).to_be_enabled()
+        expect(page.locator("#agent_phase_chip")).to_have_text("idle")
+        expect(page.locator("#agent_response_output")).to_be_hidden()
+        expect(page.locator("[data-agent-response-question]")).to_be_empty()
+        expect(page.locator("[data-agent-response-answer-content]")).to_be_empty()
+        expect(page.locator("[data-agent-prompt-input]")).to_have_value("")
+        expect(page.locator("#agent_activity_panel")).to_be_hidden()
+        assert len(browser_session_requests) == 2
+        assert "platform=grok" in browser_session_requests[-1]
+
+        with page.expect_response(
+            lambda response: "platform=chatgpt" in response.url and response.status == 409
+        ):
+            pending_chatgpt_routes[0].fulfill(
+                status=409,
+                json={"error": stale_chatgpt_error},
+            )
+        page.evaluate("() => new Promise((resolve) => setTimeout(resolve, 0))")
+
+        expect(page.get_by_role("button", name="Web service: Grok", exact=True)).to_be_visible()
+        expect(page.locator(".agent-readiness")).to_have_attribute("data-ready", "true")
+        expect(page.locator("#agent_readiness_message")).to_have_text(grok_ready_message)
+        expect(page.locator("#agent_readiness_message")).not_to_have_text(stale_chatgpt_error)
+        expect(page.locator("#agent_ask_button")).to_be_enabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_observed_agent_completion_refreshes_sources_exactly_once(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    source_requests: list[str] = []
+    status_requests = 0
+    finished_payload = _finished_chatgpt_agent_payload()
+    running_payload = {
+        **finished_payload,
+        "agent": {
+            **finished_payload["agent"],
+            "running": True,
+            "phase": "running",
+            "finished_at": "",
+            "conversation_url": "",
+        },
+    }
+    catalog_payload = _chatgpt_catalog_sessions()
+
+    def fulfill_agent_status(route) -> None:
+        nonlocal status_requests
+        status_requests += 1
+        route.fulfill(json=running_payload if status_requests == 1 else finished_payload)
+
+    def fulfill_browser_status(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "chatgpt",
+                "browser": "edge",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "ChatGPT account",
+                "message": "Edge is ready for ChatGPT Web.",
+                "agent_sources": catalog_payload,
+            }
+        )
+
+    def fulfill_sources(route) -> None:
+        source_requests.append(route.request.url)
+        route.fulfill(json=catalog_payload)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/sources**", fulfill_sources)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').some((entry) =>
+                String(entry.name || '').includes('/api/agent/sources')
+                && String(entry.name || '').includes('refresh=1')
+            )"""
+        )
+        assert status_requests >= 2
+        assert len(source_requests) == 1
+        assert "refresh=1" in source_requests[0]
     finally:
         context.close()
 

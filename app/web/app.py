@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.49.0-codex.1
+# Code version: v1.51.0-codex.1
 
 from __future__ import annotations
 
@@ -37,6 +37,7 @@ from app.core.agent import (
     normalize_agent_project_url,
     open_agent_in_browser,
     probe_and_collect_claude_sources,
+    probe_and_collect_grok_sources,
     validate_computer_use_settings,
     validate_agent_access_password,
 )
@@ -998,15 +999,57 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         snapshot["history"] = rendered_history
         return snapshot
 
+    def agent_snapshot_for_route(
+        snapshot: dict[str, Any],
+        browser: str,
+        platform: str,
+    ) -> dict[str, Any]:
+        """Hide a completed snapshot that belongs to another Agent route."""
+        snapshot_browser = str(snapshot.get("browser", "")).strip().lower()
+        snapshot_platform = str(snapshot.get("platform", "")).strip().lower()
+        if snapshot.get("running") or (
+            snapshot_browser == browser and snapshot_platform == platform
+        ):
+            return snapshot
+        isolated = dict(snapshot)
+        isolated.update(
+            {
+                "activity": [],
+                "bodycheck_passed": False,
+                "conversation_url": "",
+                "finished_at": "",
+                "history": [],
+                "message": "",
+                "model_verified": False,
+                "paused": False,
+                "phase": "idle",
+                "project_url": "",
+                "prompt": "",
+                "response": "",
+                "response_html": "",
+                "started_at": "",
+                "traditional_handoff_available": False,
+                "traditional_handoff_message": "",
+                "traditional_handoff_opened": False,
+                "turn_count": 0,
+            }
+        )
+        return isolated
+
     def render_agent_page(browser: str, platform: str):
         """Render one Agent page using the browser/provider encoded by its URL."""
         agent_settings = agent_settings_for_route(browser, platform)
         runtime_snapshot = computer_use_settings.snapshot()
+        agent_snapshot = agent_snapshot_for_route(
+            build_agent_snapshot(),
+            browser,
+            platform,
+        )
         return render_template(
             "agent.html",
             version=APP_VERSION,
             runtime_snapshot=runtime_snapshot,
-            agent_snapshot=build_agent_snapshot(),
+            agent_snapshot=agent_snapshot,
             settings=agent_settings,
             agent_project_name=(
                 Path(agent_settings.workspace_path).name or agent_settings.workspace_path
@@ -1968,9 +2011,14 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 response.headers["Expires"] = "0"
             return response
 
-        if scope == "agent" and platform_name == "chatgpt":
+        agent_bootstrap_collectors = {
+            "chatgpt": probe_and_collect_chatgpt_sources,
+            "grok": probe_and_collect_grok_sources,
+            "claude": probe_and_collect_claude_sources,
+        }
+        if scope == "agent" and platform_name in agent_bootstrap_collectors:
             try:
-                payload, source_payload = probe_and_collect_chatgpt_sources(
+                payload, source_payload = agent_bootstrap_collectors[platform_name](
                     browser_name,
                     saved_config,
                     silent=True,
@@ -1979,37 +2027,20 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 return browser_session_response({"error": str(exc)}, 400)
             if source_payload is not None:
                 agent_source_cache.store(
-                    platform="chatgpt",
+                    platform=platform_name,
                     browser=browser_name,
                     source_kind="sources",
                     payload=source_payload,
                 )
                 payload["agent_sources"] = source_payload
             elif payload.get("can_download"):
+                platform_label = {
+                    "chatgpt": "ChatGPT",
+                    "grok": "Grok",
+                    "claude": "Claude",
+                }[platform_name]
                 payload["agent_sources_error"] = (
-                    "ChatGPT is signed in, but Recent sessions could not be loaded from this browser."
-                )
-            return browser_session_response(payload)
-        if scope == "agent" and platform_name == "claude":
-            try:
-                payload, source_payload = probe_and_collect_claude_sources(
-                    browser_name,
-                    saved_config,
-                    silent=True,
-                )
-            except ValueError as exc:
-                return browser_session_response({"error": str(exc)}, 400)
-            if source_payload is not None:
-                agent_source_cache.store(
-                    platform="claude",
-                    browser=browser_name,
-                    source_kind="sources",
-                    payload=source_payload,
-                )
-                payload["agent_sources"] = source_payload
-            elif payload.get("can_download"):
-                payload["agent_sources_error"] = (
-                    "Claude is signed in, but Recent sessions could not be loaded from this browser."
+                    f"{platform_label} is signed in, but Recent sessions could not be loaded from this browser."
                 )
             return browser_session_response(payload)
         try:

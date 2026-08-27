@@ -1,6 +1,6 @@
 """Focused tests for the provider-neutral Agent session source adapter.
 
-Code version: v1.2.0-codex.1
+Code version: v1.5.1-codex.1
 """
 
 from __future__ import annotations
@@ -9,12 +9,16 @@ from unittest.mock import patch
 
 from app.core.agent_session_sources import (
     _claude_page_status,
+    _grok_page_status,
+    _read_gemini_project_links,
     _read_grok_project_links,
     _read_grok_project_session_links,
+    _read_project_session_links,
     list_agent_project_sessions,
     list_agent_sources,
     normalize_agent_conversation_url,
     normalize_agent_project_url,
+    probe_and_collect_grok_sources,
 )
 from app.core.config import CrawlConfig
 from app.core.gemini_downloader import GeminiConversationLink
@@ -61,7 +65,11 @@ def test_agent_project_url_normalization_hides_provider_specific_routes() -> Non
     assert normalize_agent_project_url(
         "gemini",
         "https://gemini.google.com/notebook/notebook-1/?hl=en",
-    ) == "https://gemini.google.com/notebook/notebook-1"
+    ) == "https://gemini.google.com/app/notebook-1"
+    assert normalize_agent_project_url(
+        "gemini",
+        "https://gemini.google.com/notebooks/notebook-1",
+    ) == "https://gemini.google.com/app/notebook-1"
     assert normalize_agent_project_url(
         "grok",
         "https://www.grok.com/project/project-1?tab=conversations",
@@ -119,6 +127,276 @@ def test_claude_status_exposes_account_restriction_without_attempting_login_bypa
     assert status["can_download"] is False
     assert status["account_name"] == "Claude account restricted"
     assert "restricted or unavailable" in status["message"]
+
+
+def test_grok_agent_status_uses_the_message_composer_instead_of_files() -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            return None
+
+    class _Body:
+        def inner_text(self, **_kwargs: object) -> str:
+            return "What do you want to know?"
+
+    class _Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def title(self) -> str:
+            return "Grok"
+
+        def content(self) -> str:
+            return "<html><body><textarea></textarea></body></html>"
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: dict[str, object] | None = None,
+        ) -> object:
+            if argument is None:
+                assert "authAction" in expression
+                return False
+            assert "/rest/app-chat/conversations?" in str(argument["url"])
+            return {"status": 200, "body": {"conversations": []}}
+
+        def locator(self, selector: str) -> object:
+            if selector == "body":
+                return _Body()
+            assert selector == "textarea"
+            return _Composer()
+
+    status = _grok_page_status(_Page(), "Edge")
+
+    assert status["logged_in"] is True
+    assert status["can_download"] is True
+    assert status["message"] == "Edge verified an authenticated Grok Web session."
+
+
+def test_grok_agent_status_rejects_a_signed_out_page_even_with_a_composer() -> None:
+    class _Body:
+        def inner_text(self, **_kwargs: object) -> str:
+            return "Ask anything\nSign in"
+
+    class _Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def title(self) -> str:
+            return "Grok"
+
+        def content(self) -> str:
+            return "<html><body><textarea></textarea><button>Sign in</button></body></html>"
+
+        def locator(self, selector: str) -> object:
+            if selector == "body":
+                return _Body()
+            raise AssertionError("A signed-out page must fail before the composer is trusted.")
+
+    status = _grok_page_status(_Page(), "Edge")
+
+    assert status["logged_in"] is False
+    assert status["can_download"] is False
+    assert status["message"] == "Edge is not signed in to Grok."
+
+
+def test_grok_agent_status_uses_visible_auth_controls_as_signed_out_evidence() -> None:
+    class _Body:
+        def inner_text(self, **_kwargs: object) -> str:
+            return "Ask anything"
+
+    class _Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def title(self) -> str:
+            return "Grok"
+
+        def content(self) -> str:
+            return "<html><body><textarea></textarea><button>Sign in to Grok</button></body></html>"
+
+        def evaluate(self, expression: str) -> bool:
+            assert "authAction" in expression
+            assert "!composer" not in expression
+            assert "authAction && !account" not in expression
+            assert "sign in|log in|sign up|create account" in expression
+            return True
+
+        def locator(self, selector: str) -> object:
+            if selector == "body":
+                return _Body()
+            raise AssertionError("Visible authentication controls must fail before composer access.")
+
+    status = _grok_page_status(_Page(), "Edge")
+
+    assert status["logged_in"] is False
+    assert status["can_download"] is False
+
+
+def test_grok_agent_status_requires_positive_authenticated_api_evidence() -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            return None
+
+    class _Body:
+        def inner_text(self, **_kwargs: object) -> str:
+            return "Ask anything"
+
+    class _Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def title(self) -> str:
+            return "Grok"
+
+        def content(self) -> str:
+            return "<html><body><textarea></textarea></body></html>"
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: dict[str, object] | None = None,
+        ) -> object:
+            if argument is None:
+                return False
+            return {"status": 401, "body": {"error": "Unauthorized"}}
+
+        def locator(self, selector: str) -> object:
+            if selector == "body":
+                return _Body()
+            assert selector == "textarea"
+            return _Composer()
+
+    status = _grok_page_status(_Page(), "Edge")
+
+    assert status["logged_in"] is False
+    assert status["can_download"] is False
+    assert status["message"] == "Edge could not verify an authenticated Grok account."
+
+
+def test_grok_agent_status_rejects_a_schema_invalid_success_payload() -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            return None
+
+    class _Body:
+        def inner_text(self, **_kwargs: object) -> str:
+            return "Ask anything"
+
+    class _Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def title(self) -> str:
+            return "Grok"
+
+        def content(self) -> str:
+            return "<html><body><textarea></textarea></body></html>"
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: dict[str, object] | None = None,
+        ) -> object:
+            if argument is None:
+                return False
+            return {"status": 200, "body": {"error": "not authenticated"}}
+
+        def locator(self, selector: str) -> object:
+            if selector == "body":
+                return _Body()
+            return _Composer()
+
+    status = _grok_page_status(_Page(), "Edge")
+
+    assert status["can_download"] is False
+    assert "could not verify an authenticated Grok account" in status["message"]
+
+
+def test_grok_agent_status_rejects_cloudflare_before_composer_access() -> None:
+    class _Body:
+        def inner_text(self, **_kwargs: object) -> str:
+            return "Performing security verification\nRay ID: abc123"
+
+    class _Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def title(self) -> str:
+            return "Just a moment..."
+
+        def content(self) -> str:
+            return "<html><body>Cloudflare security verification</body></html>"
+
+        def locator(self, selector: str) -> object:
+            if selector == "body":
+                return _Body()
+            raise AssertionError("A security challenge must fail before composer access.")
+
+    status = _grok_page_status(_Page(), "Edge")
+
+    assert status["logged_in"] is False
+    assert status["can_download"] is False
+    assert status["account_name"] == "Security verification required"
+
+
+def test_grok_agent_bootstrap_collects_readiness_and_sources_in_one_context() -> None:
+    source_snapshot = {
+        "recent_sessions": [
+            {
+                "id": "session-1",
+                "title": "Grok session",
+                "url": "https://grok.com/c/session-1",
+            }
+        ],
+        "projects": [],
+    }
+
+    def run_collection(
+        _browser: str,
+        _config: CrawlConfig,
+        home_url: str,
+        collector: object,
+        **_kwargs: object,
+    ) -> object:
+        assert home_url == "https://grok.com/"
+        with patch(
+            "app.core.agent_session_sources._grok_page_status",
+            return_value={
+                "platform": "grok",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "Grok account",
+                "message": "Ready",
+            },
+        ), patch(
+            "app.core.agent_session_sources._collect_grok_sources",
+            return_value=source_snapshot,
+        ):
+            return collector(object())
+
+    with patch(
+        "app.core.agent_session_sources._run_chromium_source_collection",
+        side_effect=run_collection,
+    ) as collection:
+        status, sources = probe_and_collect_grok_sources("edge", CrawlConfig())
+
+    assert status["can_download"] is True
+    assert sources is not None
+    assert sources["recent_sessions"][0]["url"] == "https://grok.com/c/session-1"
+    collection.assert_called_once()
 
 
 def test_gemini_sources_reuse_the_existing_history_link_collector() -> None:
@@ -205,7 +483,13 @@ def test_gemini_sources_expose_notebooks_as_shared_projects() -> None:
                     "title": "Research notebook",
                     "url": "https://gemini.google.com/notebook/notebook-1",
                     "updated_at": "",
-                }
+                },
+                {
+                    "id": "notebook-1",
+                    "title": "Duplicate app alias",
+                    "url": "https://gemini.google.com/app/notebook-1",
+                    "updated_at": "",
+                },
             ],
         },
     ):
@@ -215,7 +499,49 @@ def test_gemini_sources_expose_notebooks_as_shared_projects() -> None:
         {
             "id": "notebook-1",
             "title": "Research notebook",
-            "url": "https://gemini.google.com/notebook/notebook-1",
+            "url": "https://gemini.google.com/app/notebook-1",
+            "updated_at": "",
+        }
+    ]
+
+
+def test_gemini_project_reader_ignores_recent_app_links_in_a_notebook_nav() -> None:
+    rows = (
+        {
+            "href": "https://gemini.google.com/notebook/notebook-1",
+            "title": "Research notebook",
+        },
+        {
+            "href": "https://gemini.google.com/app/recent-chat",
+            "title": "Ordinary recent chat",
+        },
+    )
+
+    class _NotebookLinks:
+        def __init__(self, selector: str) -> None:
+            self.selector = selector
+
+        def evaluate_all(self, script: str) -> list[dict[str, str]]:
+            assert "parent.tagName === 'NAV'" not in script
+            assert "context.join" not in script
+            return [
+                row
+                for row in rows
+                if "/notebook/" in row["href"] or "/notebooks/" in row["href"]
+            ]
+
+    class _Page:
+        def locator(self, selector: str) -> _NotebookLinks:
+            assert 'href*="/notebook/"' in selector
+            assert 'href*="/notebooks/"' in selector
+            assert 'href*="/app/"' not in selector
+            return _NotebookLinks(selector)
+
+    assert _read_gemini_project_links(_Page()) == [
+        {
+            "id": "notebook-1",
+            "title": "Research notebook",
+            "url": "https://gemini.google.com/app/notebook-1",
             "updated_at": "",
         }
     ]
@@ -351,37 +677,100 @@ def test_grok_project_session_reader_uses_workspace_conversations_api() -> None:
     }]
 
 
-def test_project_session_listing_uses_one_contract_for_gemini_and_grok() -> None:
-    project_cases = (
-        (
-            "gemini",
-            "https://gemini.google.com/notebook/notebook-1",
-            "https://gemini.google.com/app/gemini-session",
-        ),
-        (
-            "grok",
-            "https://grok.com/project/project-1?tab=conversations",
-            "https://grok.com/c/grok-session",
-        ),
-    )
-    for platform, project_url, session_url in project_cases:
-        with patch(
-            "app.core.agent_session_sources._run_chromium_source_collection",
-            return_value=[
+def test_grok_project_session_fallback_keeps_only_same_project_chat_urls() -> None:
+    class _Page:
+        def evaluate(
+            self,
+            _script: str,
+            request: dict[str, object] | None = None,
+        ) -> object:
+            if request is not None:
+                raise RuntimeError("API unavailable")
+            return [
                 {
-                    "id": "selected-session",
-                    "title": "Selected session",
-                    "url": session_url,
-                    "updated_at": "",
-                }
-            ],
-        ) as collector:
-            payload = list_agent_project_sessions(platform, "edge", project_url, CrawlConfig())
+                    "href": "https://grok.com/project/project-1?chat=session-1",
+                    "title": "Same project",
+                },
+                {
+                    "href": "https://grok.com/c/root-session",
+                    "title": "Root chat",
+                },
+                {
+                    "href": "https://grok.com/project/project-2?chat=session-2",
+                    "title": "Other project",
+                },
+            ]
 
-        assert payload["platform"] == platform
-        assert payload["project_url"] == project_url
-        assert payload["sessions"][0]["url"] == session_url
-        assert collector.call_args.args[2] == project_url
+    assert _read_grok_project_session_links(
+        _Page(),
+        "https://grok.com/project/project-1?tab=conversations",
+    ) == [
+        {
+            "id": "session-1",
+            "title": "Same project",
+            "url": "https://grok.com/project/project-1?chat=session-1",
+            "updated_at": "",
+        }
+    ]
+
+
+def test_gemini_project_session_listing_fails_closed_without_collection() -> None:
+    with patch(
+        "app.core.agent_session_sources._run_chromium_source_collection"
+    ) as collector:
+        payload = list_agent_project_sessions(
+            "gemini",
+            "edge",
+            "https://gemini.google.com/app/notebook-1",
+            CrawlConfig(),
+        )
+
+    collector.assert_not_called()
+    assert payload["sessions"] == []
+    assert payload["project_url"] == "https://gemini.google.com/app/notebook-1"
+    assert payload["message"] == (
+        "Gemini Notebook session ownership cannot be verified; "
+        "use New session in project."
+    )
+
+
+def test_gemini_project_session_dom_fallback_never_reads_page_links() -> None:
+    class _Page:
+        def evaluate(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("Gemini Project sessions must not inspect page links.")
+
+    assert _read_project_session_links(
+        _Page(),
+        "gemini",
+        "https://gemini.google.com/app/notebook-1",
+    ) == []
+
+
+def test_grok_project_session_listing_uses_the_shared_contract() -> None:
+    project_url = "https://grok.com/project/project-1?tab=conversations"
+    session_url = "https://grok.com/project/project-1?chat=grok-session"
+    with patch(
+        "app.core.agent_session_sources._run_chromium_source_collection",
+        return_value=[
+            {
+                "id": "selected-session",
+                "title": "Selected session",
+                "url": session_url,
+                "updated_at": "",
+            }
+        ],
+    ) as collector:
+        payload = list_agent_project_sessions(
+            "grok",
+            "edge",
+            project_url,
+            CrawlConfig(),
+        )
+
+    assert payload["platform"] == "grok"
+    assert payload["project_url"] == project_url
+    assert payload["sessions"][0]["url"] == session_url
+    assert collector.call_args.args[2] == project_url
 
 
 def test_chatgpt_project_session_listing_keeps_existing_adapter() -> None:
