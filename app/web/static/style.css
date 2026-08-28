@@ -4592,7 +4592,10 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 
     .app-shell.is-sidebar-collapsed .cache-overview-title-card,
     html.sidebar-memory-collapsed .app-shell .cache-overview-title-card {
-        padding-inline-end: 68px;
+        padding: var(--workspace-title-rail-pad-block-start)
+            68px
+            0
+            var(--workspace-title-rail-collapsed-pad-inline-start);
     }
 
     .cache-overview-title-card .report-heading {
