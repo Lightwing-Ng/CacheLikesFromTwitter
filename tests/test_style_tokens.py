@@ -1412,7 +1412,7 @@ def test_cache_workspace_reuses_the_shared_title_rail_and_scroll_layer() -> None
         ".cache-workspace-content {",
         "overflow-y: auto;",
         "padding-inline-end: calc(",
-        "+ var(--global-quick-actions-right)",
+        "+ (var(--page-edge-pad) * 2)",
         "+ var(--sidebar-toggle-quick-action-clearance)",
         ".cache-overview-title-card .report-heading {",
         "text-wrap: balance;",
