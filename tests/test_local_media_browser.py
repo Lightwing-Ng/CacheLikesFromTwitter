@@ -1,12 +1,13 @@
 """Read-only local media browser tests.
 
-Code version: v1.11.0-codex.1
+Code version: v1.11.0-codex.2
 """
 
 from __future__ import annotations
 
 import json
 import os
+from datetime import datetime
 from dataclasses import replace
 from pathlib import Path
 from threading import Event, Thread
@@ -22,6 +23,7 @@ from app.core.local_media_browser import (
     file_manager_open_directory_command,
     format_captured_at_label,
     format_captured_at_timestamp_label,
+    format_datetime_label,
     local_file_manager_label,
     paginate_chatgpt_sessions,
     paginate_media_items,
@@ -300,7 +302,7 @@ def test_scans_x_video_and_supports_double_info_suffix(tmp_path: Path) -> None:
     assert len(items) == 1
     assert items[0].media_kind == "video"
     assert items[0].title == "Cached X video"
-    assert items[0].captured_at_label == "8 Aug 2026"
+    assert items[0].captured_at_label == "08/08/2026"
 
 
 def test_scans_grok_catalog_metadata(tmp_path: Path) -> None:
@@ -333,7 +335,7 @@ def test_scans_grok_catalog_metadata(tmp_path: Path) -> None:
     assert items[0].title == "portrait"
     assert items[0].creator == "Grok"
     assert items[0].source_url == "https://grok.com/files/asset-123"
-    assert items[0].captured_at_label == "7 Aug 2026"
+    assert items[0].captured_at_label == "07/08/2026"
 
 
 def test_grok_catalog_damage_falls_back_to_filename_and_mtime(tmp_path: Path) -> None:
@@ -348,7 +350,7 @@ def test_grok_catalog_damage_falls_back_to_filename_and_mtime(tmp_path: Path) ->
     assert len(items) == 1
     assert items[0].filename == "fallback.webp"
     assert items[0].title == "fallback.webp"
-    assert items[0].captured_at_label == "8 Aug 2026"
+    assert items[0].captured_at_label == "08/08/2026"
 
 
 def test_scans_chatgpt_catalog_and_project_name(tmp_path: Path) -> None:
@@ -470,7 +472,7 @@ def test_legacy_chatgpt_tombstone_hydrates_source_metadata_from_catalog(tmp_path
     assert item.is_deleted
     assert item.creator == "Updated session"
     assert item.captured_at == "2026-08-10T12:34:00Z"
-    assert item.captured_at_label == "10 Aug 2026"
+    assert item.captured_at_label == "10/08/2026"
     assert item.chatgpt_session_key == "session-123"
 
 
@@ -744,8 +746,18 @@ def test_chatgpt_catalog_missing_falls_back_to_filename(tmp_path: Path) -> None:
     assert items[0].media_kind == "image"
 
 
-def test_formats_captured_timestamp_with_minute_precision() -> None:
-    assert format_captured_at_timestamp_label("2026-08-09T07:09:50Z") == "9 Aug 2026 07:09"
+def test_formats_captured_timestamp_with_seconds_and_timezone() -> None:
+    expected = datetime.fromisoformat("2026-08-09T07:09:50+00:00").astimezone()
+    expected_timezone = expected.tzname() or "UTC"
+    assert format_captured_at_timestamp_label("2026-08-09T07:09:50Z") == (
+        f"{expected.day:02d}/{expected.month:02d}/{expected.year:04d} "
+        f"{expected.hour:02d}:{expected.minute:02d}:{expected.second:02d} "
+        f"({expected_timezone})"
+    )
+
+
+def test_formats_date_only_value_without_time_or_timezone() -> None:
+    assert format_datetime_label("2026-08-09") == "09/08/2026"
 
 
 def test_chatgpt_for_prompts_is_exempt_from_regular_inventory(tmp_path: Path) -> None:
@@ -897,8 +909,8 @@ def test_pagination_range_picker_preserves_a_short_only_or_merged_tail() -> None
     assert next(item for item in merged_tail if item.kind == "ellipsis").ranges == ((6, 12),)
 
 
-def test_date_format_uses_fixed_english_months() -> None:
-    assert format_captured_at_label("20260808") == "8 Aug 2026"
+def test_date_format_uses_zero_padded_numeric_parts() -> None:
+    assert format_captured_at_label("20260808") == "08/08/2026"
 
 
 def test_stable_id_is_unchanged_across_two_scans(tmp_path: Path) -> None:

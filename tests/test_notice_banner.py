@@ -1,4 +1,4 @@
-"""Regression coverage for the shared floating-banner contract. Code version: v0.1.0-codex.1."""
+"""Regression coverage for the shared floating-banner contract. Code version: v0.1.0-codex.2."""
 
 from pathlib import Path
 
@@ -58,6 +58,25 @@ def test_banner_styles_follow_the_sibling_top_aligned_contract() -> None:
         "transform: translate3d(-50%, 0, 0);",
     ):
         assert token in stylesheet
+
+
+def test_banner_surface_reuses_the_modal_dialog_material_and_close_contract() -> None:
+    """Keep Cache banners on the sibling Style tokens material and close treatment."""
+    stylesheet = (STATIC_ROOT / "style.css").read_text(encoding="utf-8")
+    floating_start = stylesheet.index(".notice-floating {")
+    floating_rule = stylesheet[floating_start:stylesheet.index("\n}", floating_start)]
+    dismiss_start = stylesheet.index(".dismiss-button {")
+    dismiss_rule = stylesheet[dismiss_start:stylesheet.index("\n}", dismiss_start)]
+    dismiss_state_start = stylesheet.index(".dismiss-button:hover,")
+    dismiss_state_rule = stylesheet[dismiss_state_start:stylesheet.index("\n}", dismiss_state_start)]
+
+    assert "background: var(--notice-floating-material);" in floating_rule
+    assert "box-shadow: var(--frosted-glass-shadow);" in floating_rule
+    assert "backdrop-filter: var(--frosted-glass-blur);" in floating_rule
+    assert "border: var(--frosted-glass-border);" in floating_rule
+    assert "border: 0;" in dismiss_rule
+    assert "background: transparent;" in dismiss_state_rule
+    assert "box-shadow: none;" in dismiss_state_rule
 
 
 def test_shared_notice_controller_persists_only_opt_in_notice_state() -> None:

@@ -1,4 +1,4 @@
-{# Code version: v1.18.0-codex.8 #}
+{# Code version: v1.18.0-codex.11 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.86.0-codex.4') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.86.0-codex.8') }}">
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -17,7 +17,7 @@
     <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.8.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.8.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.8.0-codex.2') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -267,18 +267,28 @@
                     <dl class="summary-list">
                         <div class="summary-row">
                             <dt>Started</dt>
-                            <dd id="started_at" data-status-field="started_at" data-status-fallback="-">{{ snapshot.started_at or "-" }}</dd>
+                            <dd
+                                id="started_at"
+                                data-status-field="started_at"
+                                data-status-format="datetime"
+                                data-status-fallback="-"
+                            >{{ format_datetime_label(snapshot.started_at) if snapshot.started_at else "-" }}</dd>
                         </div>
                         <div class="summary-row">
                             <dt>Finished</dt>
-                            <dd id="finished_at" data-status-field="finished_at" data-status-fallback="-">{{ snapshot.finished_at or "-" }}</dd>
+                            <dd
+                                id="finished_at"
+                                data-status-field="finished_at"
+                                data-status-format="datetime"
+                                data-status-fallback="-"
+                            >{{ format_datetime_label(snapshot.finished_at) if snapshot.finished_at else "-" }}</dd>
                         </div>
                         <div class="summary-row">
                             <dt>Output dir</dt>
                             <dd>
                                 <span class="shadow-backup-destination-control settings-directory-control settings-directory-control-readonly">
                                     <input
-                                        class="text-input-control settings-directory-input"
+                                        class="text-input-control settings-directory-input output-directory-input"
                                         type="text"
                                         id="output_dir"
                                         data-status-field="output_dir"

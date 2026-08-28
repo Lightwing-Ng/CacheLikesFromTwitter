@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.45.0-codex.1
+Code version: v3.46.0-codex.2
 """
 
 from __future__ import annotations
@@ -904,6 +904,27 @@ def test_non_chatgpt_model_control_hydration_wait_is_bounded(
         "visible_button_count": 0,
         "visible_composer_count": 1,
     }
+
+
+def test_gemini_model_gate_allows_cold_edge_hydration_budget() -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    assert (
+        computer_use_agent.WEB_MODEL_CONTROL_WAIT_ATTEMPTS
+        * computer_use_agent.WEB_MODEL_CONTROL_POLL_SECONDS
+        >= 45
+    )
+
+
+def test_gemini_composer_contract_excludes_placeholder_skeleton() -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    selector = computer_use_agent._web_composer_selector("gemini")
+
+    assert 'rich-textarea [contenteditable="true"]' in selector
+    assert ":not(.ql-clipboard)" in selector
+    assert 'textarea[aria-label*="prompt" i]' in selector
+    assert "textarea[placeholder]" not in selector
 
 
 def test_non_chatgpt_model_selection_does_not_retry_ambiguous_controls() -> None:

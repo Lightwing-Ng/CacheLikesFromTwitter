@@ -1,6 +1,6 @@
 """Read the local CSS foundation token registry for the Style tokens page.
 
-Code version: v0.4.0-codex.2
+Code version: v0.4.0-codex.3
 """
 
 from __future__ import annotations
@@ -394,7 +394,7 @@ def build_style_token_component_rows() -> list[dict[str, object]]:
             "id": "tooltip",
             "name": "Tooltip",
             "sample_kind": "chart-tooltip",
-            "sample_title": "28 Aug 2026 10:08",
+            "sample_title": "28/08/2026 10:08:00 (CST)",
             "token_names": ("--tooltip-background", "--tooltip-border", "--tooltip-shadow", "--tooltip-blur", "--chart-tooltip-min-width", "--chart-tooltip-max-width", "--chart-tooltip-padding", "--chart-tooltip-radius", "--chart-tooltip-row-gap", "--chart-tooltip-item-gap"),
             "material_names": ("--tooltip-background", "--tooltip-border", "--tooltip-shadow", "--tooltip-blur"),
         },

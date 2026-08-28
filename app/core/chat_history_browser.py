@@ -1,6 +1,6 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.11.1-codex.1
+# Code version: v1.11.1-codex.2
 
 from __future__ import annotations
 
@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit, urlunsplit
 
-from .local_media_browser import LocalMediaItem, LocalMediaPaginationItem, build_local_store_pagination
+from .local_media_browser import (
+    LocalMediaItem,
+    LocalMediaPaginationItem,
+    build_local_store_pagination,
+    format_datetime_label,
+)
 from .resource_persistence import (
     CHATGPT_HISTORY_FILENAME,
     GEMINI_HISTORY_FILENAME,
@@ -23,20 +28,6 @@ CHAT_HISTORY_PAGE_SIZE = 100
 CHAT_HISTORY_SESSION_PAGE_SIZE = 100
 CHAT_HISTORY_SOURCE_VALUES = frozenset({"all", "chatgpt", "gemini", "grok"})
 CHAT_HISTORY_SORT_VALUES = frozenset({"newest", "oldest", "name"})
-_ENGLISH_MONTHS = (
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-)
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,17 +149,9 @@ def normalize_chat_history_sort(value: str | None) -> str:
 
 
 def format_chat_message_timestamp_label(value: str | None) -> str:
-    """Format a cached UTC timestamp as ``DD Mmm yyyy HH:MM`` in local time."""
-    from datetime import UTC, datetime
-
-    try:
-        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
-    except (TypeError, ValueError):
-        return "Unknown time"
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=UTC)
-    parsed = parsed.astimezone()
-    return f"{parsed.day:02d} {_ENGLISH_MONTHS[parsed.month - 1]} {parsed.year} {parsed.hour:02d}:{parsed.minute:02d}"
+    """Format a cached date or timestamp according to the UI datetime contract."""
+    formatted = format_datetime_label(value)
+    return "Unknown time" if formatted == "Unknown date" else formatted
 
 
 def _safe_external_url(value: Any) -> str:

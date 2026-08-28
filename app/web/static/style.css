@@ -1,4 +1,4 @@
-/* Code version: v2.86.0-codex.4 */
+/* Code version: v2.86.0-codex.8 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -238,7 +238,7 @@
     --local-store-pagination-material: var(--frosted-glass-background);
     --scrollable-data-table-header-material: var(--frosted-glass-background);
     --shared-select-trigger-material: var(--frosted-glass-background);
-    --shared-select-dropdown-material: var(--frosted-glass-background);
+    --shared-select-dropdown-material: var(--frosted-glass-opaque-background);
     --shared-select-dropdown-padding: 10px;
     --shared-select-dropdown-radius: var(--radius-soft);
     --shared-select-dropdown-max-height: min(360px, 55vh);
@@ -2403,6 +2403,10 @@ a.ghost-link[href$="/settings"] {
     flex: 1 1 auto;
 }
 
+input[type="text"].output-directory-input {
+    font-size: var(--font-table-body);
+}
+
 .secondary-button {
     display: inline-flex;
     align-items: center;
@@ -2671,11 +2675,11 @@ a.ghost-link[href$="/settings"] {
     width: min(420px, calc(100% - 12px));
     margin: 0;
     padding: 12px 12px 12px 14px;
-    background: var(--glass-popover-background);
-    box-shadow: var(--glass-popover-shadow);
-    backdrop-filter: var(--glass-popover-blur);
-    -webkit-backdrop-filter: var(--glass-popover-blur);
-    border: var(--glass-popover-border);
+    background: var(--notice-floating-material);
+    box-shadow: var(--frosted-glass-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
+    border: var(--frosted-glass-border);
     z-index: var(--layer-global-popover);
 }
 
@@ -2800,6 +2804,7 @@ a.ghost-link[href$="/settings"] {
     height: var(--workspace-modal-close-size);
     min-height: var(--workspace-modal-close-size);
     padding: 0;
+    border: 0;
     border-radius: 50%;
     background: transparent;
     color: var(--accent-text);
@@ -2813,9 +2818,9 @@ a.ghost-link[href$="/settings"] {
 .dismiss-button:focus-visible {
     outline: none;
     transform: none;
-    background: var(--glass-surface-background-dense);
+    background: transparent;
     color: var(--theme-error);
-    box-shadow: 0 10px 20px -14px var(--theme-shadow-ambient), 0 6px 14px -10px var(--theme-error-translucent), inset 0 1px 0 var(--theme-glass-highlight);
+    box-shadow: none;
 }
 
 .dismiss-button .icon {
@@ -4403,11 +4408,18 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 
 .notice-floating,
 .sidebar-dock {
-    background: var(--frosted-glass-background);
     border: var(--frosted-glass-border);
     box-shadow: var(--frosted-glass-shadow);
     backdrop-filter: var(--frosted-glass-blur);
     -webkit-backdrop-filter: var(--frosted-glass-blur);
+}
+
+.notice-floating {
+    background: var(--notice-floating-material);
+}
+
+.sidebar-dock {
+    background: var(--frosted-glass-background);
 }
 
 @media (max-width: 900px) {

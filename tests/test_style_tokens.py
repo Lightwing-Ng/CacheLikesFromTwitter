@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.49.0-codex.9
+Code version: v1.49.0-codex.12
 """
 
 from pathlib import Path
@@ -235,10 +235,13 @@ def test_cache_status_message_hangs_under_the_account_label() -> None:
 def test_cache_output_directory_reuses_the_standard_folder_button() -> None:
     """Keep the Cache output action on the shared circular directory-control contract."""
     stylesheet = _stylesheet()
+    output_directory_start = stylesheet.index('input[type="text"].output-directory-input {')
+    output_directory_rule = stylesheet[output_directory_start:stylesheet.index("\n}", output_directory_start)]
 
     assert ".output-directory-status {" in stylesheet
     assert ".settings-directory-choose-button," in stylesheet
     assert ".settings-directory-choose-icon {" in stylesheet
+    assert "font-size: var(--font-table-body);" in output_directory_rule
 
 
 def test_cache_sidebar_parameter_grids_use_one_field_per_row() -> None:
@@ -984,6 +987,7 @@ def test_style_token_component_catalog_consumes_the_sibling_control_contracts() 
         "--notice-floating-material: var(--frosted-glass-background);",
         "--scrollable-data-table-header-material: var(--frosted-glass-background);",
         "--shared-select-trigger-material: var(--frosted-glass-background);",
+        "--shared-select-dropdown-material: var(--frosted-glass-opaque-background);",
     ):
         assert token in stylesheet
 
@@ -1716,7 +1720,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.86.0-codex.4 */",
+            "/* Code version: v2.86.0-codex.8 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',

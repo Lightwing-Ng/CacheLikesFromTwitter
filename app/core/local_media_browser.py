@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.21.0-codex.1
+# Code version: v1.21.0-codex.2
 
 from __future__ import annotations
 
@@ -55,20 +55,7 @@ _NUMERIC_RE = re.compile(r"^\d+(?:\.\d+)?$")
 _CHATGPT_BRANCH_MARKER_RE = re.compile(r"\bbranch\b", re.IGNORECASE)
 _CHATGPT_BRANCH_LABEL_RE = re.compile(r"\bbranch\b\s*(?:[·•]|[-–—])?\s*", re.IGNORECASE)
 _CHATGPT_MASTER_REVISION_RE = re.compile(r"\bmaster\s+([0-9]{4}[a-z0-9._-]*)\b", re.IGNORECASE)
-_ENGLISH_MONTHS = (
-    "Jan",
-    "Feb",
-    "Mar",
-    "Apr",
-    "May",
-    "Jun",
-    "Jul",
-    "Aug",
-    "Sep",
-    "Oct",
-    "Nov",
-    "Dec",
-)
+_DATE_ONLY_DISPLAY_RE = re.compile(r"^(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{8})$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,21 +138,33 @@ def stable_media_id(relative_path: str) -> str:
 
 
 def format_captured_at_label(value: str | datetime | None) -> str:
-    """Format a timestamp with fixed English month names for the UI."""
-    parsed = _parse_datetime(value)
-    if parsed is None:
-        return "Unknown date"
-    return f"{parsed.day} {_ENGLISH_MONTHS[parsed.month - 1]} {parsed.year}"
+    """Format a media date as ``dd/mm/yyyy`` for the UI."""
+    return format_datetime_label(value, date_only=True)
 
 
 def format_captured_at_timestamp_label(value: str | datetime | None) -> str:
-    """Format a UTC timestamp with minute precision for browser metadata."""
+    """Format a media date or timestamp according to the UI datetime contract."""
+    return format_datetime_label(value)
+
+
+def format_datetime_label(
+    value: str | datetime | None,
+    *,
+    date_only: bool = False,
+) -> str:
+    """Format one user-visible date or timestamp in the local timezone."""
     parsed = _parse_datetime(value)
     if parsed is None:
         return "Unknown date"
+    if date_only or _is_date_only_value(value):
+        return f"{parsed.day:02d}/{parsed.month:02d}/{parsed.year:04d}"
+
+    localized = parsed.astimezone()
+    timezone_code = _timezone_code(localized)
     return (
-        f"{parsed.day} {_ENGLISH_MONTHS[parsed.month - 1]} {parsed.year} "
-        f"{parsed.hour:02d}:{parsed.minute:02d}"
+        f"{localized.day:02d}/{localized.month:02d}/{localized.year:04d} "
+        f"{localized.hour:02d}:{localized.minute:02d}:{localized.second:02d} "
+        f"({timezone_code})"
     )
 
 
@@ -587,7 +586,11 @@ class BrowserDeletionCatalog:
     @staticmethod
     def _item_from_payload(payload: Mapping[str, Any]) -> LocalMediaItem:
         fields = {field.name for field in LocalMediaItem.__dataclass_fields__.values()}
-        return LocalMediaItem(**{key: payload.get(key) for key in fields if key in payload})
+        normalized_payload = {key: payload.get(key) for key in fields if key in payload}
+        captured_at = normalized_payload.get("captured_at")
+        if captured_at:
+            normalized_payload["captured_at_label"] = format_captured_at_label(captured_at)
+        return LocalMediaItem(**normalized_payload)
 
     def _item_from_entry(self, entry: Mapping[str, Any]) -> LocalMediaItem:
         payload = dict(entry.get("item") or {})
@@ -1623,6 +1626,26 @@ def _parse_datetime(value: str | datetime | Any) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _is_date_only_value(value: str | datetime | None) -> bool:
+    """Return whether a value explicitly contains a date without a time."""
+    if isinstance(value, datetime) or value is None:
+        return False
+    return bool(_DATE_ONLY_DISPLAY_RE.fullmatch(str(value).strip()))
+
+
+def _timezone_code(value: datetime) -> str:
+    """Return a three-letter timezone code for one localized datetime."""
+    timezone_name = (value.tzname() or "").strip()
+    if len(timezone_name) == 3 and timezone_name.isalpha():
+        return timezone_name.upper()
+    offset = value.utcoffset()
+    if offset is not None and offset.total_seconds() == 8 * 60 * 60:
+        return "CST"
+    if offset is not None and offset.total_seconds() == 0:
+        return "UTC"
+    return "UTC"
 
 
 def _isoformat(value: datetime) -> str:

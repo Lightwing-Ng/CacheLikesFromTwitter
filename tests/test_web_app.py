@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.0-codex.11
+# Code version: v1.88.0-codex.13
 
 from __future__ import annotations
 
@@ -63,6 +63,7 @@ BROWSER_SESSION_MESSAGES_SCRIPT_PATH = (
 FUSE_ASSET_PATH = Path(__file__).resolve().parents[1] / "app/web/static/vendor/fuse.min.mjs"
 THEME_MODE_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/theme-mode.js"
 BROWSER_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app/web/templates/browser.html"
+CACHE_PAGE_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app/web/templates/_cache_page.html"
 PAGINATION_TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "app/web/templates/_pagination.html"
 WAITING_MODAL_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/waiting-modal.js"
 LANGUAGE_RENDERING_SCRIPT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/language-rendering.js"
@@ -352,6 +353,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-status-field="task_failures"', chatgpt_body)
         self.assertIn('id="output_dir"', chatgpt_body)
         self.assertIn('data-status-field="output_dir"', chatgpt_body)
+        self.assertIn('class="text-input-control settings-directory-input output-directory-input"', chatgpt_body)
         self.assertIn('aria-label="Output directory"', chatgpt_body)
         self.assertIn('data-output-directory-open', chatgpt_body)
         self.assertIn('class="icon settings-directory-choose-icon"', chatgpt_body)
@@ -363,7 +365,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="status_progress_value"', chatgpt_body)
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
-        self.assertIn('cache-page.js?v=cache-page-v1.8.0-codex.1', chatgpt_body)
+        self.assertIn('cache-page.js?v=cache-page-v1.8.0-codex.2', chatgpt_body)
         self.assertIn('segmented-control.js?v=segmented-control-v1.0.2-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
@@ -489,7 +491,11 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.86.0-codex.4"
+                expected_style_version = (
+                    "style-v2.86.0-codex.8"
+                    if page_source in {"x", "grok", "chatgpt", "gemini"}
+                    else "style-v2.86.0-codex.6"
+                )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -1980,6 +1986,7 @@ class WebAppTests(unittest.TestCase):
 
     def test_cache_status_polling_preserves_optimistic_content_and_avoids_repeated_rendering(self) -> None:
         script = CACHE_PAGE_SCRIPT_PATH.read_text(encoding="utf-8")
+        template = CACHE_PAGE_TEMPLATE_PATH.read_text(encoding="utf-8")
 
         for fragment in (
             'const statusPollIntervalMs = 3_000;',
@@ -1988,12 +1995,20 @@ class WebAppTests(unittest.TestCase):
             'if (!statusUrl || statusRefreshInFlight || document.hidden) return;',
             'document.addEventListener("visibilitychange", handleVisibilityChange);',
             'scheduleStatusRefresh();',
+            'const datetimeFormatter = new Intl.DateTimeFormat("en-GB",',
+            'if (element.dataset.statusFormat === "datetime")',
+            'formatDatetime(rawValue)',
+            'function formatRecentEvent(eventText)',
+            'formatRecentEvent(eventText)',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)
 
         self.assertNotIn("window.setInterval(refreshStatus", script)
         self.assertNotIn("\n    refreshStatus();\n", script)
+        self.assertEqual(template.count('data-status-format="datetime"'), 2)
+        self.assertIn("format_datetime_label(snapshot.started_at)", template)
+        self.assertIn("format_datetime_label(snapshot.finished_at)", template)
 
     def test_browser_status_uses_stale_while_revalidate_without_duplicate_probes(self) -> None:
         script = BROWSER_SESSION_STATUS_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -2284,7 +2299,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.86.0-codex.4", body)
+            self.assertIn("style-v2.86.0-codex.6", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.0-codex.1', body)
@@ -2553,7 +2568,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("browser-media-card-description", body)
         self.assertNotIn("Session name:</dt>", body)
         self.assertIn("foundation-metric-card", body)
-        self.assertIn("Created on:</dt><dd>9 Aug 2026 07:09</dd>", body)
+        self.assertIn("Created on:</dt><dd>09/08/2026 15:09:50 (CST)</dd>", body)
         self.assertIn("Size:</dt><dd>1.72 MiB</dd>", body)
         self.assertIn('class="browser-media-prompt"', body)
         self.assertIn('data-media-prompt-toggle', body)

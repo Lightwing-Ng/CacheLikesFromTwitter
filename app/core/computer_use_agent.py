@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.45.0-codex.1
+Code version: v3.46.0-codex.2
 """
 
 from __future__ import annotations
@@ -86,7 +86,10 @@ MAX_FILE_READ_CHARS = 120_000
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
 CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
-WEB_MODEL_CONTROL_WAIT_ATTEMPTS = 61
+# Gemini can expose a placeholder textarea while its authenticated Angular
+# shell is still hydrating. Keep model verification bounded, but long enough
+# to wait for the real composer and mode picker on a cold Edge clone.
+WEB_MODEL_CONTROL_WAIT_ATTEMPTS = 241
 WEB_MODEL_CONTROL_POLL_SECONDS = 0.25
 GROK_MODEL_CONTROL_WAIT_ATTEMPTS = 121
 MAX_BASE64_DECODED_BYTES = MAX_FILE_READ_CHARS
@@ -6747,10 +6750,10 @@ def _web_composer_selector(platform: str) -> str:
     return {
         "chatgpt": "#prompt-textarea",
         "gemini": (
-            'rich-textarea [contenteditable="true"], '
-            '[data-test-id="input-area"] [contenteditable="true"], '
-            '[contenteditable="true"][aria-label*="prompt" i], '
-            'textarea[aria-label], textarea[placeholder]'
+            'rich-textarea [contenteditable="true"]:not(.ql-clipboard), '
+            '[data-test-id="input-area"] [contenteditable="true"]:not(.ql-clipboard), '
+            '[contenteditable="true"][aria-label*="prompt" i]:not(.ql-clipboard), '
+            'textarea[aria-label*="prompt" i]'
         ),
         "grok": (
             'textarea, div[contenteditable="true"][role="textbox"]'

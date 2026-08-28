@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.52.1-codex.6
+# Code version: v1.52.1-codex.7
 
 from __future__ import annotations
 
@@ -91,12 +91,14 @@ from app.core.storage import (
     build_chat_history_markdown,
     choose_settings_directory,
     choose_shadow_backup_destination,
-    open_directory_path,
+    format_captured_at_label,
     format_captured_at_timestamp_label,
     format_chat_message_timestamp_label,
+    format_datetime_label,
     local_file_manager_label,
     media_route_relative_path,
     normalize_browser_filters,
+    open_directory_path,
     PromptStore,
     prompt_pointer_key,
     query_chat_history,
@@ -622,7 +624,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             "project_name": item.project_name,
             "source_url": item.source_url,
             "resource_key": item.resource_key,
-            "captured_at_label": item.captured_at_label,
+            "captured_at_label": format_captured_at_label(item.captured_at),
             "content_bytes": item.content_bytes,
             "size_label": format_media_size(item.content_bytes),
             "media_url": media_url,
@@ -837,6 +839,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             default_host=DEFAULT_HOST,
             default_port=DEFAULT_PORT,
             log_file_path=str(get_log_file_path()),
+            format_datetime_label=format_datetime_label,
         )
 
     def cache_source_url(source_key: str) -> str:

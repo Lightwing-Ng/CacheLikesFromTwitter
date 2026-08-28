@@ -1,4 +1,4 @@
-/* Code version: v1.8.0-codex.1 */
+/* Code version: v1.8.0-codex.2 */
 
 (() => {
     "use strict";
@@ -14,6 +14,28 @@
     const statusPollIntervalMs = 3_000;
     const terminalPhases = new Set(["finished", "completed", "success", "stopped"]);
     const numberFormatter = new Intl.NumberFormat("en-US");
+    const datetimeFormatter = new Intl.DateTimeFormat("en-GB", {
+        day: "2-digit",
+        month: "2-digit",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+        timeZoneName: "short",
+    });
+    const timezoneCodesByOffset = Object.freeze({
+        "-480": "PST",
+        "-420": "MST",
+        "-360": "CST",
+        "-300": "EST",
+        "-240": "EDT",
+        "0": "UTC",
+        "60": "CET",
+        "120": "EET",
+        "480": "CST",
+        "540": "JST",
+    });
 
     const phaseChip = document.getElementById("phase_chip");
     const bannerPhase = document.getElementById("banner_phase");
@@ -149,6 +171,45 @@
     function formatMetricNumber(value) {
         const parsed = Number(value);
         return Number.isFinite(parsed) ? numberFormatter.format(parsed) : "0";
+    }
+
+    function formatDatetime(value) {
+        const rawValue = String(value ?? "").trim();
+        if (!rawValue) return "";
+        const dateOnlyMatch = rawValue.match(/^(\d{4})[-/](\d{2})[-/](\d{2})$/);
+        if (dateOnlyMatch) {
+            return dateOnlyMatch[3] + "/" + dateOnlyMatch[2] + "/" + dateOnlyMatch[1];
+        }
+        const compactDateMatch = rawValue.match(/^(\d{4})(\d{2})(\d{2})$/);
+        if (compactDateMatch) {
+            return compactDateMatch[3] + "/" + compactDateMatch[2] + "/" + compactDateMatch[1];
+        }
+
+        const parsed = new Date(rawValue);
+        if (Number.isNaN(parsed.getTime())) return "Unknown date";
+        const parts = Object.fromEntries(
+            datetimeFormatter.formatToParts(parsed).map((part) => [part.type, part.value]),
+        );
+        const timezoneLabel = parts.timeZoneName || "";
+        const offsetMinutes = String(-parsed.getTimezoneOffset());
+        const timezoneCode = timezoneLabel === "GMT" && offsetMinutes === "0"
+            ? "UTC"
+            : /^[A-Za-z]{3}$/.test(timezoneLabel)
+                ? timezoneLabel.toUpperCase()
+                : timezoneCodesByOffset[offsetMinutes] || "UTC";
+        return parts.day + "/" + parts.month + "/" + parts.year
+            + " " + parts.hour + ":" + parts.minute + ":" + parts.second
+            + " (" + timezoneCode + ")";
+    }
+
+    function formatRecentEvent(eventText) {
+        const rawEvent = String(eventText || "");
+        const match = rawEvent.match(/^\[([^\]]+)\](.*)$/);
+        if (!match) return rawEvent;
+        const formattedTimestamp = formatDatetime(match[1]);
+        return formattedTimestamp === "Unknown date"
+            ? rawEvent
+            : "[" + formattedTimestamp + "]" + match[2];
     }
 
     function setPhaseState(phase) {
@@ -327,7 +388,7 @@
                 const indexCell = document.createElement("td");
                 const messageCell = document.createElement("td");
                 indexCell.textContent = String(pageStartIndex + index + 1);
-                messageCell.textContent = eventText;
+                messageCell.textContent = formatRecentEvent(eventText);
                 row.append(indexCell, messageCell);
                 recentEventsBody.appendChild(row);
             });
@@ -495,6 +556,15 @@
                 return;
             }
             const fallback = element.dataset.statusFallback || "";
+            if (element.dataset.statusFormat === "datetime") {
+                setStatusValueIfChanged(
+                    element,
+                    rawValue === null || rawValue === undefined || rawValue === ""
+                        ? fallback
+                        : formatDatetime(rawValue),
+                );
+                return;
+            }
             setStatusValueIfChanged(element, rawValue === null || rawValue === undefined || rawValue === ""
                 ? fallback
                 : String(rawValue));
