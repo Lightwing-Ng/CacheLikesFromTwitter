@@ -285,9 +285,17 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
                     || left.top >= right.bottom
                 );
                 const toggle = rectFor("#sidebar_toggle");
+                const titleElement = document.querySelector(
+                    ".cache-overview-title-card .report-heading",
+                );
                 const title = rectFor(".cache-overview-title-card .report-heading");
                 const theme = rectFor("#global_theme_toggle");
                 const titleCard = rectFor(".cache-overview-title-card");
+                const titleRow = rectFor(".cache-overview-title-card > .report-heading-row");
+                const titleCardStyle = getComputedStyle(
+                    document.querySelector(".cache-overview-title-card"),
+                );
+                const titleStyle = getComputedStyle(titleElement);
                 return {
                     viewport: {
                         innerWidth: window.innerWidth,
@@ -295,7 +303,13 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
                         devicePixelRatio: window.devicePixelRatio,
                     },
                     titleCard,
+                    titleCardPaddingInlineEnd: titleCardStyle.paddingInlineEnd,
+                    titleCardPaddingInlineStart: titleCardStyle.paddingInlineStart,
+                    titleRow,
                     title,
+                    titleWidth: titleElement.getBoundingClientRect().width,
+                    titleMinWidth: titleStyle.minWidth,
+                    titleMaxWidth: titleStyle.maxWidth,
                     theme,
                     toggle,
                     titleOverlapsTheme: overlaps(title, theme),
@@ -308,10 +322,20 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
                 };
             }"""
         )
-        assert not narrow["titleOverlapsTheme"], narrow
-        assert not narrow["titleOverlapsToggle"], narrow
-        assert narrow["toggleGap"] >= 12, narrow
-        assert not narrow["horizontalOverflow"], narrow
+        narrow_debug = (
+            f"viewport={narrow['viewport']}; titleCard={narrow['titleCard']}; "
+            f"titleRow={narrow['titleRow']}; title={narrow['title']}; "
+            f"theme={narrow['theme']}; toggle={narrow['toggle']}; "
+            f"padding-inline={narrow['titleCardPaddingInlineStart']}/"
+            f"{narrow['titleCardPaddingInlineEnd']}; "
+            f"title-width={narrow['titleWidth']}; "
+            f"title-min-width={narrow['titleMinWidth']}; "
+            f"title-max-width={narrow['titleMaxWidth']}"
+        )
+        assert not narrow["titleOverlapsTheme"], narrow_debug
+        assert not narrow["titleOverlapsToggle"], narrow_debug
+        assert narrow["toggleGap"] >= 12, narrow_debug
+        assert not narrow["horizontalOverflow"], narrow_debug
     finally:
         context.close()
 
