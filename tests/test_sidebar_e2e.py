@@ -4068,7 +4068,7 @@ def test_grok_send_uses_visible_composer_and_nearest_bounded_semantic_scope(
                                 message.setAttribute('data-role', 'user');
                                 message.textContent = [...composer.children]
                                     .map((paragraph) => paragraph.textContent || '')
-                                        .join('\\n');
+                                    .join('\\n');
                                 document.querySelector('#composer-scope').append(message);
                                 composer.replaceChildren();
                             });
@@ -4080,16 +4080,16 @@ def test_grok_send_uses_visible_composer_and_nearest_bounded_semantic_scope(
                 </html>
             """,
         ),
-        )
-        try:
-            page.goto(landing_url, wait_until="domcontentloaded")
-            assert page.evaluate("window.sendAudit") == {
-                "provider": 0,
-                "unrelated": 0,
-                "feedback": 0,
-            }
+    )
+    try:
+        page.goto(landing_url, wait_until="domcontentloaded")
+        assert page.evaluate("window.sendAudit") == {
+            "provider": 0,
+            "unrelated": 0,
+            "feedback": 0,
+        }
 
-            accepted = _submit_chromium_web_prompt(
+        accepted = _submit_chromium_web_prompt(
             page,
             "grok",
             wire_prompt,
@@ -4113,34 +4113,34 @@ def test_grok_send_uses_visible_composer_and_nearest_bounded_semantic_scope(
             "feedback": 0,
         }
         assert page.locator("#hidden-composer").input_value() == ""
-            assert page.locator("#visible-composer").inner_text() == ""
-            assert page.locator("#feedback-composer").input_value() == ""
-            expect(page.locator('[data-role="user"]')).to_have_text(wire_prompt)
+        assert page.locator("#visible-composer").inner_text() == ""
+        assert page.locator("#feedback-composer").input_value() == ""
+        expect(page.locator('[data-role="user"]')).to_have_text(wire_prompt)
 
-            page.evaluate("window.injectTrailingComposerText = true")
-            rejected_marker = "agent-turn-" + ("e" * 32)
-            rejected_prompt = (
-                "Reject an ambiguous composer"
-                f"\n\nController turn receipt: {rejected_marker}"
+        page.evaluate("window.injectTrailingComposerText = true")
+        rejected_marker = "agent-turn-" + ("e" * 32)
+        rejected_prompt = (
+            "Reject an ambiguous composer"
+            f"\n\nController turn receipt: {rejected_marker}"
+        )
+        with pytest.raises(RuntimeError, match="did not preserve"):
+            _submit_chromium_web_prompt(
+                page,
+                "grok",
+                rejected_prompt,
+                lambda: False,
+                expected_target_url=landing_url,
+                session_mode="new",
+                baseline_snapshot=_provider_turn_snapshot(page, "grok"),
+                submission_receipt_marker=rejected_marker,
             )
-            with pytest.raises(RuntimeError, match="did not preserve"):
-                _submit_chromium_web_prompt(
-                    page,
-                    "grok",
-                    rejected_prompt,
-                    lambda: False,
-                    expected_target_url=landing_url,
-                    session_mode="new",
-                    baseline_snapshot=_provider_turn_snapshot(page, "grok"),
-                    submission_receipt_marker=rejected_marker,
-                )
-            assert page.evaluate("window.sendAudit") == {
-                "provider": 1,
-                "unrelated": 0,
-                "feedback": 0,
-            }
-        finally:
-            context.close()
+        assert page.evaluate("window.sendAudit") == {
+            "provider": 1,
+            "unrelated": 0,
+            "feedback": 0,
+        }
+    finally:
+        context.close()
 
 
 @pytest.mark.integration
