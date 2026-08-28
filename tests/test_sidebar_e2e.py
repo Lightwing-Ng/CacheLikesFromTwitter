@@ -296,12 +296,16 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
                     document.querySelector(".cache-overview-title-card"),
                 );
                 const titleStyle = getComputedStyle(titleElement);
+                const pageStyle = getComputedStyle(document.querySelector(".page"));
                 return {
                     viewport: {
                         innerWidth: window.innerWidth,
                         clientWidth: document.documentElement.clientWidth,
                         devicePixelRatio: window.devicePixelRatio,
                     },
+                    compactMediaMatches: window.matchMedia("(max-width: 560px)").matches,
+                    pageClearance: pageStyle.getPropertyValue("--sidebar-toggle-quick-action-clearance"),
+                    globalQuickActionsRight: pageStyle.getPropertyValue("--global-quick-actions-right"),
                     titleCard,
                     titleCardPaddingInlineEnd: titleCardStyle.paddingInlineEnd,
                     titleCardPaddingInlineStart: titleCardStyle.paddingInlineStart,
@@ -324,6 +328,9 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
         )
         narrow_debug = (
             f"viewport={narrow['viewport']}; titleCard={narrow['titleCard']}; "
+            f"compact-media={narrow['compactMediaMatches']}; "
+            f"page-clearance={narrow['pageClearance']}; "
+            f"global-right={narrow['globalQuickActionsRight']}; "
             f"titleRow={narrow['titleRow']}; title={narrow['title']}; "
             f"theme={narrow['theme']}; toggle={narrow['toggle']}; "
             f"padding-inline={narrow['titleCardPaddingInlineStart']}/"
