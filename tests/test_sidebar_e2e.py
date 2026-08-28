@@ -271,6 +271,13 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
         )
 
         page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_function(
+            """() => {
+                const titleCard = document.querySelector(".cache-overview-title-card");
+                return window.matchMedia("(max-width: 560px)").matches
+                    && getComputedStyle(titleCard).paddingInlineEnd === "68px";
+            }"""
+        )
         expect(toggle).to_have_attribute("aria-expanded", "false")
         narrow = page.evaluate(
             """() => {
@@ -297,38 +304,6 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
                 );
                 const titleStyle = getComputedStyle(titleElement);
                 const pageStyle = getComputedStyle(document.querySelector(".page"));
-                const titleCardElement = document.querySelector(
-                    ".cache-overview-title-card",
-                );
-                const matchingTitlePaddingRules = [];
-                const visitRules = (rules, media = "") => {
-                    for (const rule of Array.from(rules || [])) {
-                        if (rule.type === CSSRule.MEDIA_RULE) {
-                            if (window.matchMedia(rule.conditionText).matches) {
-                                visitRules(rule.cssRules, rule.conditionText);
-                            }
-                            continue;
-                        }
-                        if (
-                            !rule.selectorText
-                            || !titleCardElement.matches(rule.selectorText)
-                            || !/padding/i.test(rule.style?.cssText || "")
-                        ) {
-                            continue;
-                        }
-                        matchingTitlePaddingRules.push({
-                            media,
-                            selector: rule.selectorText,
-                            declarations: rule.style.cssText,
-                        });
-                    }
-                };
-                for (const sheet of Array.from(document.styleSheets)) {
-                    try {
-                        visitRules(sheet.cssRules);
-                    } catch (_error) {
-                    }
-                }
                 return {
                     viewport: {
                         innerWidth: window.innerWidth,
@@ -339,8 +314,6 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
                     pageClearance: pageStyle.getPropertyValue("--sidebar-toggle-quick-action-clearance"),
                     globalQuickActionsRight: pageStyle.getPropertyValue("--global-quick-actions-right"),
                     titleCard,
-                    pagePadding: pageStyle.padding,
-                    titleCardInlineStyle: titleCardElement.getAttribute("style"),
                     titleCardPaddingInlineEnd: titleCardStyle.paddingInlineEnd,
                     titleCardPaddingInlineStart: titleCardStyle.paddingInlineStart,
                     titleRow,
@@ -348,8 +321,6 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
                     titleWidth: titleElement.getBoundingClientRect().width,
                     titleMinWidth: titleStyle.minWidth,
                     titleMaxWidth: titleStyle.maxWidth,
-                    matchingTitlePaddingRules,
-                    styleSheetHrefs: Array.from(document.styleSheets).map(sheet => sheet.href),
                     theme,
                     toggle,
                     titleOverlapsTheme: overlaps(title, theme),
@@ -374,10 +345,6 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
             f"title-width={narrow['titleWidth']}; "
             f"title-min-width={narrow['titleMinWidth']}; "
             f"title-max-width={narrow['titleMaxWidth']}"
-            f"; page-padding={narrow['pagePadding']}"
-            f"; title-inline={narrow['titleCardInlineStyle']}"
-            f"; title-padding-rules={narrow['matchingTitlePaddingRules']}"
-            f"; stylesheets={narrow['styleSheetHrefs']}"
         )
         assert not narrow["titleOverlapsTheme"], narrow_debug
         assert not narrow["titleOverlapsToggle"], narrow_debug
