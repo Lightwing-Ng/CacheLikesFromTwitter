@@ -287,7 +287,17 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
                 const toggle = rectFor("#sidebar_toggle");
                 const title = rectFor(".cache-overview-title-card .report-heading");
                 const theme = rectFor("#global_theme_toggle");
+                const titleCard = rectFor(".cache-overview-title-card");
                 return {
+                    viewport: {
+                        innerWidth: window.innerWidth,
+                        clientWidth: document.documentElement.clientWidth,
+                        devicePixelRatio: window.devicePixelRatio,
+                    },
+                    titleCard,
+                    title,
+                    theme,
+                    toggle,
                     titleOverlapsTheme: overlaps(title, theme),
                     titleOverlapsToggle: overlaps(title, toggle),
                     toggleGap: title.left - toggle.right,
@@ -298,10 +308,10 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
                 };
             }"""
         )
-        assert not narrow["titleOverlapsTheme"]
-        assert not narrow["titleOverlapsToggle"]
-        assert narrow["toggleGap"] >= 12
-        assert not narrow["horizontalOverflow"]
+        assert not narrow["titleOverlapsTheme"], narrow
+        assert not narrow["titleOverlapsToggle"], narrow
+        assert narrow["toggleGap"] >= 12, narrow
+        assert not narrow["horizontalOverflow"], narrow
     finally:
         context.close()
 
