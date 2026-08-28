@@ -1,4 +1,4 @@
-{# Code version: v1.17.2-codex.1 #}
+{# Code version: v1.18.0-codex.8 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.54') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.86.0-codex.4') }}">
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -190,7 +190,7 @@
                 </form>
                 {% if cache_source.show_shared_settings_link %}
                 <a
-                    class="ghost-link ghost-link--compact cache-settings-link"
+                    class="secondary-button cache-settings-link"
                     href="{{ url_for('settings') }}#settings-downloads"
                 >Open shared cache settings</a>
                 {% endif %}
@@ -218,19 +218,20 @@
         </aside>
 
         <section class="panel chart-panel workspace" id="workspace_panel">
-            <div class="workspace-header workspace-mobile-summary-shell">
-                <div class="report-card workspace-summary-card workspace-article-card anchor-section" id="overview">
+            <div class="workspace-header cache-workspace-header workspace-mobile-summary-shell">
+                <header class="report-card workspace-summary-card workspace-article-card cache-overview-title-card">
                     <div class="report-heading-row">
-                        <div>
-                            {% if cache_source.key != "grok" %}
-                            <p class="workspace-kicker">Live snapshot</p>
-                            {% endif %}
-                            <h2>{{ cache_source.overview_title }}</h2>
-                        </div>
+                        <h2 class="report-heading">{{ cache_source.overview_title }}</h2>
                     </div>
+                </header>
+                <div class="cache-workspace-content">
+                    <article class="report-card workspace-summary-card workspace-article-card cache-overview-content-card anchor-section" id="overview">
+                        {% if cache_source.key != "grok" %}
+                        <p class="workspace-kicker">Live snapshot</p>
+                        {% endif %}
                     <div class="metric-grid foundation-metric-grid">
                         {% block primary_metrics %}{% endblock %}
-                        <div class="metric-card foundation-metric-card">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Phase</span>
                             <strong id="phase_value">{{ current_phase }}</strong>
                         </div>
@@ -308,38 +309,39 @@
                             <dd>Every 3 seconds</dd>
                         </div>
                     </dl>
-                </div>
+                    </article>
 
-                <section class="workspace-grid workspace-content-card">
-                    <div class="report-card workspace-article-card log-card anchor-section" id="activity">
-                        <div class="report-heading-row">
-                            <div>
-                                <p class="workspace-kicker">Events</p>
-                                <h2>Recent log stream</h2>
+                    <section class="workspace-grid workspace-content-card">
+                        <div class="report-card workspace-article-card log-card anchor-section" id="activity">
+                            <div class="report-heading-row">
+                                <div>
+                                    <p class="workspace-kicker">Events</p>
+                                    <h2>Recent log stream</h2>
+                                </div>
+                            </div>
+                            <div class="events-table-shell">
+                                <div class="events-table-scroll">
+                                    <table class="events-table" aria-label="Recent events table">
+                                        <thead>
+                                            <tr>
+                                                <th scope="col" class="events-col-index">#</th>
+                                                <th scope="col">Event</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="recent_events_body"></tbody>
+                                    </table>
+                                </div>
+                                <nav
+                                    class="browser-pagination local-store-pagination local-store-pagination--floating events-pagination"
+                                    id="recent_events_pagination"
+                                    aria-label="Recent event pages"
+                                    hidden
+                                >
+                                </nav>
                             </div>
                         </div>
-                        <div class="events-table-shell">
-                            <div class="events-table-scroll">
-                                <table class="events-table" aria-label="Recent events table">
-                                    <thead>
-                                        <tr>
-                                            <th scope="col" class="events-col-index">#</th>
-                                            <th scope="col">Event</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="recent_events_body"></tbody>
-                                </table>
-                            </div>
-                            <nav
-                                class="browser-pagination local-store-pagination local-store-pagination--floating events-pagination"
-                                id="recent_events_pagination"
-                                aria-label="Recent event pages"
-                                hidden
-                            >
-                            </nav>
-                        </div>
-                    </div>
-                </section>
+                    </section>
+                </div>
             </div>
         </section>
     </div>
@@ -350,7 +352,7 @@
 </main>
 
 {% include "_waiting_modal.html" %}
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.19.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.20.0-codex.1') }}"></script>
 {% block tail %}{% endblock %}
 </body>
 </html>

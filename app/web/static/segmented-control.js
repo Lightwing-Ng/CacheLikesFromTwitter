@@ -1,4 +1,4 @@
-/* Code version: v1.0.3-codex.1 */
+/* Code version: v1.0.4-codex.1 */
 
 (() => {
     "use strict";
@@ -115,11 +115,20 @@
     window.addEventListener("resize", syncAll, {passive: true});
 
     if (typeof MutationObserver === "function") {
-        const observer = new MutationObserver(() => syncAll());
+        const observer = new MutationObserver((records) => {
+            const includesSegmentedControl = records.some((record) => (
+                Array.from(record.addedNodes).some((node) => (
+                    node instanceof Element
+                    && (node.matches(selector) || node.querySelector(selector))
+                ))
+            ));
+            if (includesSegmentedControl) {
+                syncAll();
+            }
+        });
         observer.observe(document.body, {
             subtree: true,
-            attributes: true,
-            attributeFilter: ["aria-checked", "class", "hidden"],
+            childList: true,
         });
     }
 })();

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.80.4-codex.1
+# Code version: v1.80.4-codex.3
 
 from __future__ import annotations
 
@@ -608,7 +608,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('class="icon icon-settings-cloud"', settings_body)
         self.assertIn('data-agent-terminal-authorization-status aria-live="polite" hidden></span>', settings_body)
         self.assertIn('class="settings-inline-button settings-inline-button-primary shadow-backup-sync-button"', settings_body)
-        self.assertIn('shadow-backup-settings.js?v=shadow-backup-settings-v1.3.0-codex.1', settings_body)
+        self.assertIn('shadow-backup-settings.js?v=shadow-backup-settings-v1.3.0-codex.2', settings_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.1.0-codex.1', settings_body)
         self.assertIn("Danger zone", settings_body)
 
@@ -796,7 +796,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-remote-label="Auto"', local_body)
         self.assertIn('ChatGPT · 5.6 Sol', local_body)
         self.assertIn('Gemini · 3.1 Pro', local_body)
-        self.assertIn('Grok · Auto', local_body)
+        self.assertIn('Grok · Build', local_body)
         self.assertIn('data-agent-combobox-option="safari"', local_body)
         self.assertIn('data-agent-heading', local_body)
         self.assertIn('data-agent-prompt-input', local_body)
@@ -1111,7 +1111,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-browser-session-platform="chatgpt"', body)
         self.assertIn('data-agent-combobox-option="gpt-5.6-sol"', body)
         self.assertIn('data-agent-combobox-option="gemini-3.1-pro"', body)
-        self.assertIn('data-agent-combobox-option="grok-auto"', body)
+        self.assertIn('data-agent-combobox-option="grok-build"', body)
         self.assertIn('placeholder="Do anything"', body)
         self.assertIn('elements.promptInput.placeholder = "Do anything"', script)
 
@@ -1144,7 +1144,7 @@ class WebAppTests(unittest.TestCase):
                                 "operating_system": "macos",
                                 "platform": "grok",
                                 "browser": "chrome",
-                                "model": "grok-auto",
+                                "model": "grok-build",
                             },
                         )
 
@@ -1152,7 +1152,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(gemini_response.get_json()["settings"]["model"], "gemini-3.1-pro")
         self.assertEqual(grok_response.status_code, 200)
         self.assertEqual(grok_response.get_json()["settings"]["platform"], "grok")
-        self.assertEqual(grok_response.get_json()["settings"]["model"], "grok-auto")
+        self.assertEqual(grok_response.get_json()["settings"]["model"], "grok-build")
 
     def test_agent_source_routes_are_loopback_only_and_delegate_selected_browser(self) -> None:
         with TemporaryDirectory() as raw_root:
@@ -1993,7 +1993,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("browser-session-message-toggle", detail_body)
         self.assertIn("browser-session-actions", detail_body)
         self.assertIn("browser-session-actions-trigger", detail_body)
-        self.assertIn("browser.safari.png", detail_body)
+        self.assertIn('class="icon browser-session-safari-icon"', detail_body)
+        self.assertNotIn("browser.safari.png", detail_body)
         self.assertIn("Open original in Safari", detail_body)
         self.assertIn("Export Markdown", detail_body)
         self.assertIn("Refresh current page", detail_body)

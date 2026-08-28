@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.40.0-codex.1
+Code version: v3.43.0-codex.1
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from io import BytesIO, StringIO, TextIOWrapper
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import shutil
 import subprocess
@@ -34,10 +35,15 @@ from app.core.computer_use_agent import (
     WorkspaceController,
     _LinearizedStopSignal,
     _ProviderSessionBinding,
+    _provider_human_verification_reason,
+    _provider_turn_snapshot,
+    _restore_provider_challenge_window,
+    _surface_provider_challenge_window,
     _attach_context_file,
     _CONTROLLER_ACTION_SCHEMA_MARKERS,
     _chatgpt_response_snapshot,
     _chatgpt_visible_model_controls,
+    _detect_browser_interruption,
     default_model_for_platform,
     strongest_model_option,
     _chatgpt_target_is_open,
@@ -52,6 +58,9 @@ from app.core.computer_use_agent import (
     _submit_chromium_web_prompt,
     _submit_safari_prompt,
     _wait_for_chromium_composer,
+    _wait_for_browser_recovery,
+    _web_composer_selector,
+    _visible_web_composer_selector,
     _web_last_text,
     _web_is_generating,
     _is_web_response_complete,
@@ -218,14 +227,22 @@ def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None
     assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok", "claude"]
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["gemini"][0]["ui_label"] == "3.1 Pro"
-    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["ui_label"] == "Auto"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["ui_label"] == "Build"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["remote_labels"] == ("Build",)
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["remote_trigger_labels"] == (
+        "Build Beta",
+    )
+    assert _web_composer_selector("grok") == (
+        'textarea, div[contenteditable="true"][role="textbox"]'
+        '[aria-label="Ask Grok anything"]'
+    )
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["claude"][0]["ui_label"] == "Auto"
 
     with TemporaryDirectory() as raw_root:
         for platform, model, target_url in (
             ("chatgpt", "gpt-5.6-sol", "https://chatgpt.com/"),
             ("gemini", "gemini-3.1-pro", "https://gemini.google.com/app"),
-            ("grok", "grok-auto", "https://grok.com/"),
+            ("grok", "grok-build", "https://grok.com/"),
             ("claude", "claude-auto", "https://claude.ai/new"),
         ):
             settings = validate_computer_use_settings(
@@ -261,6 +278,35 @@ def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None
                     "target_url": "https://example.com/",
                 }
             )
+
+
+@pytest.mark.parametrize("legacy_model", ("grok-auto", "grok-heavy"))
+def test_legacy_grok_setting_migrates_to_build(
+    tmp_path: Path,
+    legacy_model: str,
+) -> None:
+    settings_path = tmp_path / "computer-use-agent.json"
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings_path.write_text(
+        json.dumps(
+            {
+                "workspace_path": str(workspace),
+                "operating_system": "macos",
+                "platform": "grok",
+                "browser": "edge",
+                "model": legacy_model,
+                "target_url": "https://grok.com/",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    settings = load_computer_use_settings(settings_path)
+
+    assert settings.platform == "grok"
+    assert settings.model == "grok-build"
+    assert json.loads(settings_path.read_text(encoding="utf-8"))["model"] == "grok-build"
 
 
 def test_default_model_selection_chooses_the_strongest_current_option() -> None:
@@ -704,18 +750,10 @@ def test_non_chatgpt_model_selection_uses_the_provider_menu_when_exposed() -> No
     assert "platform === 'grok' && /model|mode|auto|grok|" not in evaluated_source
 
 
-def test_grok_model_selection_rejects_autoplay_as_an_auto_readback() -> None:
-    evaluated_source = ""
-
+def test_grok_model_selection_fails_closed_without_a_trusted_locator() -> None:
     class _Page:
-        def evaluate(self, _expression: str, _argument: dict[str, object]) -> dict[str, object]:
-            nonlocal evaluated_source
-            evaluated_source = _expression
-            return {
-                "ok": True,
-                "selected": "Enable Auto-play",
-                "available": ["Enable Auto-play"],
-            }
+        def evaluate(self, *_args: object, **_kwargs: object) -> object:
+            raise AssertionError("Grok must not use a synthetic DOM click fallback.")
 
     observation: dict[str, object] = {}
 
@@ -724,24 +762,13 @@ def test_grok_model_selection_rejects_autoplay_as_an_auto_readback() -> None:
             _Page(),
             "chromium",
             "grok",
-            "grok-auto",
+            "grok-build",
             observation,
         )
         is False
     )
-    assert observation["observed"] == "Enable Auto-play"
-    assert observation["reason"] == "model-readback-mismatch"
-    assert "normalized === target" in evaluated_source
-    assert "verifyAttempt" in evaluated_source
-    assert "selected: normalize(labelFor(choice))" not in evaluated_source
-
-
-def test_grok_model_selection_accepts_auto_on_a_label_boundary() -> None:
-    class _Page:
-        def evaluate(self, _expression: str, _argument: dict[str, object]) -> dict[str, object]:
-            return {"ok": True, "selected": "model auto", "available": ["Model Auto"]}
-
-    assert _select_web_model(_Page(), "chromium", "grok", "grok-auto") is True
+    assert observation["reason"] == "trusted-model-selector-unavailable"
+    assert observation["attempted_labels"] == ["Build"]
 
 
 @pytest.mark.parametrize("decoy", ("Claude", "Default"))
@@ -929,6 +956,66 @@ def test_non_chatgpt_model_selection_linearizes_a_concurrent_stop() -> None:
                 "chromium",
                 "gemini",
                 "gemini-3.1-pro",
+                should_stop=stop_requested.is_set,
+            )
+        )
+    )
+
+    def request_stop() -> None:
+        stop_attempted.set()
+        stop_requested.set()
+        stop_finished.set()
+
+    stop_thread = Thread(target=request_stop)
+    selection_thread.start()
+    assert selection_started.wait(timeout=2)
+    stop_thread.start()
+    assert stop_attempted.wait(timeout=2)
+    assert not stop_finished.wait(timeout=0.05)
+    allow_selection_to_finish.set()
+    selection_thread.join(timeout=2)
+    stop_thread.join(timeout=2)
+
+    assert not selection_thread.is_alive()
+    assert not stop_thread.is_alive()
+    assert stop_finished.is_set()
+    assert stop_requested.is_set()
+    assert result == [True]
+
+
+def test_grok_model_selection_linearizes_the_entire_trusted_click_transaction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    selection_started = Event()
+    allow_selection_to_finish = Event()
+    stop_attempted = Event()
+    stop_finished = Event()
+    stop_requested = _LinearizedStopSignal()
+    result: list[bool] = []
+
+    class _Page:
+        def locator(self, _selector: str) -> object:
+            return object()
+
+    def select(*_args: object, **_kwargs: object) -> bool:
+        selection_started.set()
+        assert allow_selection_to_finish.wait(timeout=2)
+        return True
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_select_grok_model_with_trusted_clicks",
+        select,
+    )
+    selection_thread = Thread(
+        target=lambda: result.append(
+            _select_web_model(
+                _Page(),
+                "chromium",
+                "grok",
+                "grok-build",
                 should_stop=stop_requested.is_set,
             )
         )
@@ -3728,6 +3815,8 @@ def test_action_parser_requires_one_json_object() -> None:
         )
     with pytest.raises(ValueError, match="exactly one JSON"):
         parse_agent_action("I will inspect the project.")
+    with pytest.raises(ValueError):
+        parse_agent_action('```json\n{"action":"observe"} trailing\n```')
 
 
 def test_provider_progress_status_is_not_treated_as_a_controller_response() -> None:
@@ -3816,9 +3905,9 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
         ),
         (
             "grok",
-            "grok-auto",
+            "grok-build",
             "Grok",
-            "Auto",
+            "Build",
             "https://grok.com/c/model-check",
         ),
         (
@@ -3887,6 +3976,70 @@ def test_web_action_loop_fails_closed_before_context_or_prompt_when_model_is_unv
         )
 
     assert calls == {"attach": 0, "submit": 0}
+    assert "No project context or prompt was sent." in str(error.value)
+
+
+def test_gemini_action_loop_reports_an_anonymous_model_menu_before_transfer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://gemini.google.com/app"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(
+        workspace_path=str(workspace),
+        platform="gemini",
+        model="gemini-3.1-pro",
+    )
+    controller = WorkspaceController(workspace, settings, lambda: False)
+    transfer_calls = 0
+
+    def select_model(
+        _page: object,
+        _browser_kind: str,
+        _platform: str,
+        _model: str,
+        observation: dict[str, object],
+        **_kwargs: object,
+    ) -> bool:
+        observation.update(
+            {
+                "reason": "signed-out",
+                "available": ["3.5 Flash-Lite", "3.1 Pro", "Sign in for all models"],
+            }
+        )
+        return False
+
+    def unexpected_transfer(*_args: object, **_kwargs: object) -> bool:
+        nonlocal transfer_calls
+        transfer_calls += 1
+        return True
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", select_model)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", unexpected_transfer)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", unexpected_transfer)
+
+    with pytest.raises(RuntimeError, match="not signed in to Gemini Web") as error:
+        _run_web_action_loop(
+            page=_Page(),
+            browser_kind="chromium",
+            initial_message="Inspect the project.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=settings,
+            platform="gemini",
+            session_mode="recent",
+            selected_target_url="https://gemini.google.com/app",
+            should_stop=lambda: False,
+            update=lambda **_changes: None,
+        )
+
+    assert transfer_calls == 0
     assert "No project context or prompt was sent." in str(error.value)
 
 
@@ -3992,7 +4145,7 @@ def test_grok_action_loop_attaches_context_only_to_prebound_sessions(
     settings = ComputerUseSettings(
         workspace_path=str(workspace),
         platform="grok",
-        model="grok-auto",
+        model="grok-build",
     )
     stop_requested = Event()
     controller = WorkspaceController(workspace, settings, stop_requested.is_set)
@@ -4277,7 +4430,7 @@ def test_verification_gate_resets_after_every_edit(
     ("platform", "target_url", "model"),
     (
         ("gemini", "https://gemini.google.com/app/gemini-session", "gemini-3.1-pro"),
-        ("grok", "https://grok.com/c/grok-session", "grok-auto"),
+        ("grok", "https://grok.com/c/grok-session", "grok-build"),
     ),
 )
 def test_recent_gemini_and_grok_targets_enter_the_shared_agentic_action_loop(
@@ -4311,8 +4464,10 @@ def test_recent_gemini_and_grok_targets_enter_the_shared_agentic_action_loop(
         selected_platform: str,
         selected_target: str,
         should_stop: object,
+        availability_check: object,
     ) -> None:
         assert callable(should_stop)
+        assert callable(availability_check)
         verified.append((selected_platform, selected_target))
 
     def submit(_page: object, _browser: str, _message: str, _should_stop: object, **_kwargs: object) -> str:
@@ -4583,7 +4738,7 @@ def test_fresh_grok_loop_rebinds_interruption_checks_to_created_conversation(
     settings = ComputerUseSettings(
         workspace_path=str(workspace),
         platform="grok",
-        model="grok-auto",
+        model="grok-build",
     )
     controller = WorkspaceController(workspace, settings, lambda: False)
     submitted = 0
@@ -4657,7 +4812,7 @@ def test_project_new_grok_rejects_an_existing_chat_before_any_project_transfer(
     workspace = tmp_path / "project"
     workspace.mkdir()
     settings = ComputerUseSettings(
-        workspace_path=str(workspace), platform="grok", model="grok-auto"
+        workspace_path=str(workspace), platform="grok", model="grok-build"
     )
     controller = WorkspaceController(workspace, settings, lambda: False)
     calls = {"model": 0, "attach": 0, "submit": 0}
@@ -4738,7 +4893,7 @@ def test_fresh_grok_loop_rejects_an_illegal_first_conversation_transition(
     workspace = tmp_path / "project"
     workspace.mkdir()
     settings = ComputerUseSettings(
-        workspace_path=str(workspace), platform="grok", model="grok-auto"
+        workspace_path=str(workspace), platform="grok", model="grok-build"
     )
     controller = WorkspaceController(workspace, settings, lambda: False)
 
@@ -4796,7 +4951,7 @@ def test_project_new_grok_loop_binds_only_the_same_project_conversation(
     workspace = tmp_path / "project"
     workspace.mkdir()
     settings = ComputerUseSettings(
-        workspace_path=str(workspace), platform="grok", model="grok-auto"
+        workspace_path=str(workspace), platform="grok", model="grok-build"
     )
     controller = WorkspaceController(workspace, settings, lambda: False)
     responses = iter(
@@ -4882,7 +5037,7 @@ def test_fresh_grok_loop_cannot_bind_an_old_session_without_current_receipt(
     workspace = tmp_path / "project"
     workspace.mkdir()
     settings = ComputerUseSettings(
-        workspace_path=str(workspace), platform="grok", model="grok-auto"
+        workspace_path=str(workspace), platform="grok", model="grok-build"
     )
     controller = WorkspaceController(workspace, settings, lambda: False)
 
@@ -8271,7 +8426,7 @@ def test_agent_service_does_not_auto_handoff_a_non_edge_failure(tmp_path: Path) 
     ("platform", "model", "home_url"),
     (
         ("gemini", "gemini-3.1-pro", "https://gemini.google.com/app"),
-        ("grok", "grok-auto", "https://grok.com/"),
+        ("grok", "grok-build", "https://grok.com/"),
     ),
 )
 def test_service_switching_provider_resets_the_previous_target_url(
@@ -8319,7 +8474,7 @@ def test_initial_web_agent_message_carries_the_local_session_name() -> None:
         message = _initial_web_agent_message(
             "Inspect the text cache",
             workspace,
-            ComputerUseSettings(workspace_path=str(workspace), platform="grok", model="grok-auto"),
+            ComputerUseSettings(workspace_path=str(workspace), platform="grok", model="grok-build"),
             context_path,
             "new",
             platform="grok",
@@ -9138,13 +9293,25 @@ def test_bound_grok_submission_can_fall_back_to_enter_when_submit_is_not_exposed
             self.composer = _Composer()
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == "textarea"
+            assert selector == _visible_web_composer_selector("grok")
             return self.composer
 
         def evaluate(self, expression: str, _argument: object = None) -> object:
-            if "const composer = document.querySelector" in expression:
+            if "sendButton.click()" in expression:
                 return {"clicked": False, "sendButtons": []}
-            return True
+            if "const assistantGroups" in expression:
+                return {
+                    "url": expected_target_url,
+                    "count": 0,
+                    "userCount": 1,
+                    "latestUserText": self.composer.value,
+                    "text": "",
+                    "generating": False,
+                    "composerPresent": True,
+                    "composerEmpty": True,
+                    "assistantAfterLatestUser": False,
+                }
+            raise AssertionError("Unexpected provider evaluation")
 
         def wait_for_timeout(self, _milliseconds: int) -> None:
             return None
@@ -9206,7 +9373,7 @@ def test_fresh_unbound_grok_submission_never_uses_enter_fallback(
             self.waits: list[int] = []
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == "textarea"
+            assert selector == _visible_web_composer_selector("grok")
             return self.composer
 
         def evaluate(
@@ -9219,6 +9386,10 @@ def test_fresh_unbound_grok_submission_never_uses_enter_fallback(
                 "platform": "grok",
                 "expectedTargetUrl": expected_target_url,
                 "sessionMode": session_mode,
+                "composerSelector": _web_composer_selector("grok"),
+                "expectedMessage": "Continue with the observation",
+                "receiptMarker": "",
+                "locatorToken": "",
             }
             return {"clicked": False, "sendButtons": []}
 
@@ -9272,7 +9443,7 @@ def test_grok_send_target_check_is_atomic_with_click_and_rejects_stale_landing()
             self.scan_sources: list[str] = []
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == "textarea"
+            assert selector == _visible_web_composer_selector("grok")
             return self.composer
 
         def evaluate(
@@ -9284,6 +9455,10 @@ def test_grok_send_target_check_is_atomic_with_click_and_rejects_stale_landing()
                 "platform": "grok",
                 "expectedTargetUrl": "https://grok.com/",
                 "sessionMode": "new",
+                "composerSelector": _web_composer_selector("grok"),
+                "expectedMessage": "Inspect the project",
+                "receiptMarker": "",
+                "locatorToken": "",
             }
             self.scan_sources.append(expression)
             assert expression.index("if (!targetMatches())") < expression.index(
@@ -9317,6 +9492,112 @@ def test_grok_send_target_check_is_atomic_with_click_and_rejects_stale_landing()
     assert page.composer.pressed == []
 
 
+def test_provider_composer_fill_is_linearized_with_stop_signal(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stop_requested = _LinearizedStopSignal()
+    original_gate = stop_requested.run_unless_set
+
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def fill(self, _value: str) -> None:
+            raise AssertionError("Stop must win before filling the provider composer.")
+
+    class _Page:
+        def locator(self, _selector: str) -> _Composer:
+            return _Composer()
+
+        def evaluate(self, _expression: str, _argument: object = None) -> object:
+            raise AssertionError("Stop must return before provider Send scanning.")
+
+    gate_calls = 0
+
+    def stop_at_fill_gate(action: object) -> tuple[bool, object]:
+        nonlocal gate_calls
+        gate_calls += 1
+        stop_requested.set()
+        assert callable(action)
+        return original_gate(action)
+
+    stop_requested.run_unless_set = stop_at_fill_gate  # type: ignore[method-assign]
+    monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
+
+    _submit_chromium_web_prompt(
+        _Page(),
+        "gemini",
+        "Inspect the project",
+        stop_requested.is_set,
+        expected_target_url="https://gemini.google.com/app/selected-session",
+        session_mode="recent",
+    )
+
+    assert gate_calls == 1
+    assert stop_requested.is_set()
+
+
+def test_missing_provider_composer_is_not_submission_acceptance(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def fill(self, _value: str) -> None:
+            return None
+
+    class _Page:
+        def __init__(self) -> None:
+            self.send_clicks = 0
+
+        def locator(self, _selector: str) -> _Composer:
+            return _Composer()
+
+        def evaluate(self, expression: str, _argument: object = None) -> object:
+            if "sendButton.click()" in expression:
+                self.send_clicks += 1
+                return {"clicked": True, "ariaLabel": "Send"}
+            if "const assistantGroups" in expression:
+                return {
+                    "url": "https://gemini.google.com/app/selected-session",
+                    "count": 0,
+                    "userCount": 0,
+                    "latestUserText": "",
+                    "text": "",
+                    "generating": False,
+                    "composerPresent": False,
+                    "composerEmpty": False,
+                    "assistantAfterLatestUser": False,
+                }
+            raise AssertionError("Unexpected provider evaluation.")
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    clock = iter((0, 0, 0, 0, 16))
+    monkeypatch.setattr(
+        "app.core.computer_use_agent.time.monotonic",
+        lambda: next(clock),
+    )
+    monkeypatch.setattr("app.core.computer_use_agent._web_count", lambda *_args: 0)
+
+    with pytest.raises(RuntimeError, match="did not accept the prompt"):
+        _submit_chromium_web_prompt(
+            page,
+            "gemini",
+            "Inspect the project",
+            lambda: False,
+            expected_target_url="https://gemini.google.com/app/selected-session",
+            session_mode="recent",
+        )
+
+    assert page.send_clicks == 1
+
+
 def test_submit_and_wait_prefers_bound_session_for_atomic_target_guard(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -9333,20 +9614,31 @@ def test_submit_and_wait_prefers_bound_session_for_atomic_target_guard(
     def submit(*args: object, **kwargs: object) -> None:
         submitted.append({"args": args, "kwargs": kwargs})
 
-    counts = iter((0, 1))
-    responses = iter(("", "done"))
+    snapshots = iter(
+        (
+            {
+                "url": bound_target,
+                "count": 0,
+                "text": "",
+                "generating": False,
+                "assistantAfterLatestUser": False,
+            },
+            {
+                "url": bound_target,
+                "count": 1,
+                "text": "done",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+                "markerEchoed": True,
+            },
+        )
+    )
     monkeypatch.setattr(computer_use_agent, "_submit_chromium_web_prompt", submit)
     monkeypatch.setattr(
         computer_use_agent,
-        "_platform_web_count",
-        lambda *_args: next(counts),
+        "_provider_turn_snapshot",
+        lambda *_args, **_kwargs: next(snapshots),
     )
-    monkeypatch.setattr(
-        computer_use_agent,
-        "_platform_web_last_text",
-        lambda *_args: next(responses),
-    )
-    monkeypatch.setattr(computer_use_agent, "_web_is_generating", lambda *_args: False)
     monkeypatch.setattr(
         computer_use_agent,
         "_is_web_response_complete",
@@ -9368,10 +9660,24 @@ def test_submit_and_wait_prefers_bound_session_for_atomic_target_guard(
     )
 
     assert len(submitted) == 1
-    assert submitted[0]["kwargs"] == {
+    submitted_kwargs = submitted[0]["kwargs"]
+    assert isinstance(submitted_kwargs, dict)
+    receipt_marker = str(submitted_kwargs["submission_receipt_marker"])
+    assert re.fullmatch(r"agent-turn-[0-9a-f]{32}", receipt_marker)
+    assert receipt_marker in str(submitted[0]["args"][2])
+    assert submitted_kwargs == {
         "session_check": check_session,
         "expected_target_url": bound_target,
         "session_mode": "new",
+        "availability_check": None,
+        "baseline_snapshot": {
+            "url": bound_target,
+            "count": 0,
+            "text": "",
+            "generating": False,
+            "assistantAfterLatestUser": False,
+        },
+        "submission_receipt_marker": receipt_marker,
     }
     assert session_checks[0] is False
     assert all(session_checks[index] for index in range(1, len(session_checks)))
@@ -9631,8 +9937,17 @@ def test_first_response_wait_rechecks_the_selected_session_identity(
         "_submit_chromium_web_prompt",
         lambda *_args, **_kwargs: None,
     )
-    monkeypatch.setattr(computer_use_agent, "_platform_web_count", lambda *_args: 0)
-    monkeypatch.setattr(computer_use_agent, "_platform_web_last_text", lambda *_args: "")
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_provider_turn_snapshot",
+        lambda *_args: {
+            "url": "https://grok.com/",
+            "count": 0,
+            "text": "",
+            "generating": False,
+            "assistantAfterLatestUser": False,
+        },
+    )
     clock = iter(range(0, 10_000, 1_000))
     monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: next(clock))
 
@@ -9671,7 +9986,7 @@ def test_grok_submission_does_not_press_enter_after_stop_during_button_scan() ->
             self.composer = _Composer()
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == "textarea"
+            assert selector == _visible_web_composer_selector("grok")
             return self.composer
 
         def evaluate(self, expression: str, _argument: object = None) -> object:
@@ -9696,6 +10011,8 @@ def test_grok_submission_does_not_press_enter_after_stop_during_button_scan() ->
             "grok",
             "Continue with the observation",
             stop_requested.is_set,
+            expected_target_url="https://grok.com/c/bound-session",
+            session_mode="recent",
         )
 
     assert page.composer.pressed == []
@@ -9724,7 +10041,7 @@ def test_grok_enter_fallback_linearizes_a_stop_at_the_final_action_gate() -> Non
             self.composer = _Composer()
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == "textarea"
+            assert selector == _visible_web_composer_selector("grok")
             return self.composer
 
         def evaluate(self, expression: str, _argument: object = None) -> object:
@@ -9759,6 +10076,8 @@ def test_grok_enter_fallback_linearizes_a_stop_at_the_final_action_gate() -> Non
             "grok",
             "Continue with the observation",
             stop_requested.is_set,
+            expected_target_url="https://grok.com/c/bound-session",
+            session_mode="recent",
         )
 
     assert gate_calls == 2
@@ -9839,27 +10158,1209 @@ def test_chatgpt_response_snapshot_keeps_url_text_count_and_generation_atomic() 
             expression: str,
             argument: dict[str, str],
         ) -> dict[str, object]:
-            assert argument == {"selector": selector}
+            assert argument == {
+                "platform": "chatgpt",
+                "assistantSelector": selector,
+                "userSelector": '[data-message-author-role="user"]',
+                "composerSelector": "#prompt-textarea",
+            }
             assert "url: location.href" in expression
             assert "count: elements.length" in expression
+            assert "userCount: users.length" in expression
             assert "text," in expression
             assert "generating," in expression
-            assert "assistantAfterLatestUser:" in expression
+            assert "assistantAfterLatestUser," in expression
             return {
                 "url": "https://chatgpt.com/c/fresh-session",
                 "count": 2,
+                "userCount": 1,
+                "latestUserText": "current prompt",
                 "text": '{"action":"bodycheck"}',
                 "generating": True,
+                "composerPresent": True,
+                "composerEmpty": False,
                 "assistantAfterLatestUser": True,
             }
 
     assert _chatgpt_response_snapshot(_Page(), selector) == {
         "url": "https://chatgpt.com/c/fresh-session",
         "count": 2,
+        "userCount": 1,
+        "latestUserText": "current prompt",
         "text": '{"action":"bodycheck"}',
         "generating": True,
+        "composerPresent": True,
+        "composerEmpty": False,
         "assistantAfterLatestUser": True,
     }
+
+
+@pytest.mark.parametrize(
+    ("platform", "target_url"),
+    (
+        ("gemini", "https://gemini.google.com/app/atomic-session"),
+        ("grok", "https://grok.com/c/atomic-session"),
+    ),
+)
+def test_provider_turn_snapshot_uses_one_ordered_visible_dom_read(
+    platform: str,
+    target_url: str,
+) -> None:
+    class _Page:
+        def evaluate(
+            self,
+            expression: str,
+            argument: dict[str, str],
+        ) -> dict[str, object]:
+            assert argument["assistantSelector"]
+            assert argument["userSelector"]
+            assert argument["composerSelector"]
+            assert argument["platform"] == platform
+            assert "const outerRoots" in expression
+            assert "other.contains(element)" in expression
+            assert "const selectRoots" in expression
+            assert "compareDocumentPosition" in expression
+            assert "url: location.href" in expression
+            return {
+                "url": target_url,
+                "count": 3,
+                "userCount": 2,
+                "latestUserText": "current prompt",
+                "text": '{"action":"bodycheck"}',
+                "generating": False,
+                "composerPresent": True,
+                "composerEmpty": True,
+                "assistantAfterLatestUser": True,
+            }
+
+    assert _provider_turn_snapshot(_Page(), platform) == {
+        "url": target_url,
+        "count": 3,
+        "userCount": 2,
+        "latestUserText": "current prompt",
+        "text": '{"action":"bodycheck"}',
+        "generating": False,
+        "composerPresent": True,
+        "composerEmpty": True,
+        "assistantAfterLatestUser": True,
+    }
+
+
+@pytest.mark.parametrize(
+    ("platform", "target_url"),
+    (
+        ("gemini", "https://gemini.google.com/app/selected-session"),
+        ("grok", "https://grok.com/c/selected-session"),
+    ),
+)
+def test_provider_waiter_ignores_assistant_text_before_the_latest_user(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    target_url: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = target_url
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    snapshots = iter(
+        (
+            {
+                "url": target_url,
+                "count": 1,
+                "text": "old response",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+            },
+            {
+                "url": target_url,
+                "count": 1,
+                "text": "stale response changed",
+                "generating": False,
+                "assistantAfterLatestUser": False,
+                "markerEchoed": False,
+            },
+            {
+                "url": target_url,
+                "count": 2,
+                "text": "current response",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+                "markerEchoed": True,
+            },
+        )
+    )
+    completion_candidates: list[str] = []
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_chromium_web_prompt",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_provider_turn_snapshot",
+        lambda *_args, **_kwargs: next(snapshots),
+    )
+
+    def response_complete(response: str, **_kwargs: object) -> bool:
+        completion_candidates.append(response)
+        return response == "current response"
+
+    monkeypatch.setattr(computer_use_agent, "_is_web_response_complete", response_complete)
+    monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: 0)
+
+    assert _submit_and_wait(
+        _Page(),
+        "chromium",
+        "Inspect the project",
+        lambda: False,
+        platform=platform,
+        submission_target_url=target_url,
+        session_mode="recent",
+    ) == "current response"
+    assert "stale response changed" not in completion_candidates
+    assert completion_candidates[-1] == "current response"
+
+
+@pytest.mark.parametrize(
+    ("platform", "target_url", "wrong_url"),
+    (
+        (
+            "gemini",
+            "https://gemini.google.com/app/selected-session",
+            "https://gemini.google.com/app/wrong-session",
+        ),
+        (
+            "grok",
+            "https://grok.com/c/selected-session",
+            "https://grok.com/c/wrong-session",
+        ),
+    ),
+)
+def test_provider_waiter_rejects_complete_action_from_the_wrong_session_url(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    target_url: str,
+    wrong_url: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = target_url
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    snapshots = iter(
+        (
+            {
+                "url": target_url,
+                "count": 1,
+                "userCount": 1,
+                "latestUserText": "old prompt",
+                "text": "old response",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+            },
+            {
+                "url": wrong_url,
+                "count": 2,
+                "userCount": 2,
+                "latestUserText": "current prompt",
+                "text": '{"action":"final","summary":"wrong session"}',
+                "generating": False,
+                "assistantAfterLatestUser": True,
+                "markerEchoed": True,
+            },
+            {
+                "url": target_url,
+                "count": 2,
+                "userCount": 2,
+                "latestUserText": "current prompt",
+                "text": '{"action":"final","summary":"current session"}',
+                "generating": False,
+                "assistantAfterLatestUser": True,
+                "markerEchoed": True,
+            },
+        )
+    )
+    completion_candidates: list[str] = []
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_chromium_web_prompt",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_provider_turn_snapshot",
+        lambda *_args, **_kwargs: next(snapshots),
+    )
+
+    def response_complete(response: str, **_kwargs: object) -> bool:
+        completion_candidates.append(response)
+        return "current session" in response
+
+    monkeypatch.setattr(computer_use_agent, "_is_web_response_complete", response_complete)
+    monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: 0)
+
+    response = _submit_and_wait(
+        _Page(),
+        "chromium",
+        "Inspect the selected project",
+        lambda: False,
+        platform=platform,
+        submission_target_url=target_url,
+        session_mode="recent",
+    )
+
+    assert "current session" in response
+    assert not any("wrong session" in candidate for candidate in completion_candidates)
+
+
+@pytest.mark.parametrize("ambiguous_send", [False, True])
+def test_post_send_challenge_recovers_without_resending(
+    ambiguous_send: bool,
+) -> None:
+    target_url = "https://grok.com/c/post-send-challenge"
+    prompt = "Continue the same controller turn"
+
+    class _Composer:
+        first: "_Composer"
+
+        def __init__(self) -> None:
+            self.first = self
+            self.value = ""
+
+        def fill(self, value: str) -> None:
+            self.value = value
+
+    class _Page:
+        url = target_url
+
+        def __init__(self) -> None:
+            self.composer = _Composer()
+            self.challenge = False
+            self.send_clicks = 0
+
+        def locator(self, _selector: str) -> _Composer:
+            return self.composer
+
+        def evaluate(
+            self,
+            expression: str,
+            _argument: object = None,
+        ) -> dict[str, object]:
+            if "challengeSelectors" in expression:
+                return {
+                    "detected": self.challenge,
+                    "reason": "security challenge control",
+                    "composerAvailable": not self.challenge,
+                }
+            if "sendButton.click()" in expression:
+                self.send_clicks += 1
+                if ambiguous_send:
+                    self.challenge = True
+                    raise RuntimeError("Execution context was destroyed")
+                return {"clicked": True}
+            if "const assistantGroups" in expression:
+                return {
+                    "url": target_url,
+                    "count": 0,
+                    "userCount": 1,
+                    "latestUserText": prompt,
+                    "text": "",
+                    "generating": False,
+                    "composerPresent": True,
+                    "composerEmpty": True,
+                    "assistantAfterLatestUser": False,
+                }
+            raise AssertionError("Unexpected browser evaluation")
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    transition_checks = 0
+
+    def session_check(allow_transition: bool) -> str:
+        nonlocal transition_checks
+        if allow_transition:
+            transition_checks += 1
+            if not ambiguous_send and transition_checks == 1:
+                page.challenge = True
+                raise RuntimeError("The provider navigated to a challenge page")
+        return target_url
+
+    def availability_check() -> tuple[bool, float]:
+        if page.challenge:
+            page.challenge = False
+            return True, 4.0
+        return True, 0.0
+
+    accepted = _submit_chromium_web_prompt(
+        page,
+        "grok",
+        prompt,
+        lambda: False,
+        session_check=session_check,
+        expected_target_url=target_url,
+        session_mode="recent",
+        availability_check=availability_check,
+        baseline_snapshot={
+            "url": target_url,
+            "count": 0,
+            "userCount": 0,
+            "latestUserText": "",
+            "text": "",
+        },
+    )
+
+    assert accepted is True
+    assert page.send_clicks == 1
+    assert transition_checks >= 1
+
+
+@pytest.mark.parametrize(
+    "fill_interruption",
+    ("throws", "clears", "send-gate-clears"),
+)
+def test_pre_send_challenge_refills_exactly_once_after_recovery(
+    fill_interruption: str,
+) -> None:
+    target_url = "https://grok.com/c/pre-send-challenge"
+    receipt_marker = "agent-turn-" + ("a" * 32)
+    prompt = f"Continue the controller\n\nController turn receipt: {receipt_marker}"
+
+    class _Composer:
+        first: "_Composer"
+
+        def __init__(self, selected_page: "_Page") -> None:
+            self.first = self
+            self.page = selected_page
+            self.value = ""
+            self.fill_calls = 0
+
+        def fill(self, value: str, **_kwargs: object) -> None:
+            self.fill_calls += 1
+            self.value = value
+            if self.fill_calls != 1:
+                return
+            if fill_interruption == "send-gate-clears":
+                return
+            self.page.challenge = True
+            if fill_interruption == "throws":
+                raise RuntimeError(
+                    "Execution context was destroyed, most likely because of a navigation"
+                )
+
+    class _Page:
+        url = target_url
+
+        def __init__(self) -> None:
+            self.challenge = False
+            self.recovery_calls = 0
+            self.challenge_on_next_availability = False
+            self.send_clicks = 0
+            self.user_text = ""
+            self.composer = _Composer(self)
+
+        def locator(self, selector: str) -> _Composer:
+            assert "data-cachelikes-agent-composer" in selector
+            return self.composer
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: object = None,
+        ) -> dict[str, object]:
+            payload = argument if isinstance(argument, dict) else {}
+            if "challengeSelectors" in expression:
+                return {
+                    "detected": self.challenge,
+                    "reason": "security challenge control",
+                    "composerAvailable": not self.challenge,
+                }
+            if "sendButton.click()" in expression:
+                self.send_clicks += 1
+                self.user_text = self.composer.value
+                self.composer.value = ""
+                return {"clicked": True}
+            if "const assistantGroups" in expression:
+                return {
+                    "url": target_url,
+                    "count": 0,
+                    "userCount": 1,
+                    "latestUserText": self.user_text,
+                    "markerEchoed": receipt_marker in self.user_text,
+                    "text": "",
+                    "generating": False,
+                    "composerPresent": True,
+                    "composerEmpty": True,
+                    "assistantAfterLatestUser": False,
+                }
+            if "expectedMessage" in payload:
+                exact = self.composer.value == prompt
+                if (
+                    fill_interruption == "send-gate-clears"
+                    and self.composer.fill_calls == 1
+                    and exact
+                ):
+                    self.challenge_on_next_availability = True
+                return {
+                    "composerCount": 1,
+                    "composerPresent": True,
+                    "exact": exact,
+                    "markerPresent": receipt_marker in self.composer.value,
+                }
+            if "locatorToken" in payload:
+                return {"composerCount": 1}
+            raise AssertionError("Unexpected browser evaluation")
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+
+    def availability_check() -> tuple[bool, float]:
+        if page.challenge_on_next_availability:
+            page.challenge_on_next_availability = False
+            page.composer.value = ""
+            page.recovery_calls += 1
+            return True, 3.0
+        if page.challenge:
+            page.challenge = False
+            page.recovery_calls += 1
+            if fill_interruption == "clears":
+                page.composer.value = ""
+            return True, 3.0
+        return True, 0.0
+
+    assert _submit_chromium_web_prompt(
+        page,
+        "grok",
+        prompt,
+        lambda: False,
+        session_check=lambda _allow_transition: target_url,
+        expected_target_url=target_url,
+        session_mode="recent",
+        availability_check=availability_check,
+        baseline_snapshot={"url": target_url, "count": 0, "userCount": 0},
+        submission_receipt_marker=receipt_marker,
+    ) is True
+    assert page.recovery_calls == 1
+    assert page.composer.fill_calls == 2
+    assert page.send_clicks == 1
+
+
+def test_navigation_commit_error_waits_for_receipt_without_resending() -> None:
+    target_url = "https://gemini.google.com/app/fresh-session"
+    receipt_marker = "agent-turn-" + ("b" * 32)
+    prompt = f"Inspect the project\n\nController turn receipt: {receipt_marker}"
+
+    class _Composer:
+        first: "_Composer"
+
+        def __init__(self) -> None:
+            self.first = self
+            self.value = ""
+
+        def fill(self, value: str, **_kwargs: object) -> None:
+            self.value = value
+
+    class _Page:
+        url = target_url
+
+        def __init__(self) -> None:
+            self.composer = _Composer()
+            self.send_attempts = 0
+            self.receipt_reads = 0
+
+        def locator(self, selector: str) -> _Composer:
+            assert "data-cachelikes-agent-composer" in selector
+            return self.composer
+
+        def evaluate(
+            self,
+            expression: str,
+            argument: object = None,
+        ) -> dict[str, object]:
+            payload = argument if isinstance(argument, dict) else {}
+            if "challengeSelectors" in expression:
+                return {"detected": False, "composerAvailable": True}
+            if "sendButton.click()" in expression:
+                self.send_attempts += 1
+                raise RuntimeError(
+                    "Execution context was destroyed, most likely because of a navigation"
+                )
+            if "const assistantGroups" in expression:
+                self.receipt_reads += 1
+                if self.receipt_reads == 1:
+                    raise RuntimeError("Execution context was destroyed")
+                return {
+                    "url": target_url,
+                    "count": 0,
+                    "userCount": 1,
+                    "latestUserText": prompt,
+                    "markerEchoed": True,
+                    "text": "",
+                    "generating": False,
+                    "composerPresent": True,
+                    "composerEmpty": True,
+                    "assistantAfterLatestUser": False,
+                }
+            if "expectedMessage" in payload:
+                return {
+                    "composerCount": 1,
+                    "composerPresent": True,
+                    "exact": self.composer.value == prompt,
+                    "markerPresent": receipt_marker in self.composer.value,
+                }
+            if "locatorToken" in payload:
+                return {"composerCount": 1}
+            raise AssertionError("Unexpected browser evaluation")
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    assert _submit_chromium_web_prompt(
+        page,
+        "gemini",
+        prompt,
+        lambda: False,
+        session_check=lambda _allow_transition: target_url,
+        expected_target_url=target_url,
+        session_mode="recent",
+        availability_check=lambda: (True, 0.0),
+        baseline_snapshot={"url": target_url, "count": 0, "userCount": 0},
+        submission_receipt_marker=receipt_marker,
+    ) is True
+    assert page.send_attempts == 1
+    assert page.receipt_reads == 2
+
+
+@pytest.mark.parametrize(
+    ("platform", "target_url"),
+    (
+        ("gemini", "https://gemini.google.com/app/selected-session"),
+        ("grok", "https://grok.com/c/selected-session"),
+    ),
+)
+def test_provider_turn_fails_closed_when_a_later_user_supersedes_its_receipt(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    target_url: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    receipt_marker = "agent-turn-" + ("c" * 32)
+    snapshots = iter(
+        (
+            {
+                "url": target_url,
+                "count": 1,
+                "userCount": 1,
+                "latestUserText": "old prompt",
+                "text": "old response",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+            },
+            {
+                "url": target_url,
+                "count": 1,
+                "userCount": 2,
+                "latestUserText": receipt_marker,
+                "markerEchoed": True,
+                "text": "",
+                "generating": True,
+                "assistantAfterLatestUser": False,
+            },
+            {
+                "url": target_url,
+                "count": 2,
+                "userCount": 3,
+                "latestUserText": "another user prompt",
+                "markerEchoed": False,
+                "text": "another user's response",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+            },
+        )
+    )
+
+    class _Page:
+        url = target_url
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    monkeypatch.setattr(computer_use_agent.secrets, "token_hex", lambda _size: "c" * 32)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_chromium_web_prompt",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_provider_turn_snapshot",
+        lambda *_args, **_kwargs: next(snapshots),
+    )
+    monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: 0)
+
+    with pytest.raises(RuntimeError, match="superseded the current controller receipt"):
+        _submit_and_wait(
+            _Page(),
+            "chromium",
+            "Inspect the project",
+            lambda: False,
+            platform=platform,
+            submission_target_url=target_url,
+            session_mode="recent",
+        )
+
+
+@pytest.mark.parametrize(
+    ("platform", "target_url"),
+    (
+        ("gemini", "https://gemini.google.com/app/selected-session"),
+        ("grok", "https://grok.com/c/selected-session"),
+    ),
+)
+def test_provider_turn_waits_for_history_to_rehydrate_after_challenge(
+    monkeypatch: pytest.MonkeyPatch,
+    platform: str,
+    target_url: str,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    receipt_marker = "agent-turn-" + ("e" * 32)
+    snapshots = iter(
+        (
+            {
+                "url": target_url,
+                "count": 1,
+                "userCount": 1,
+                "latestUserText": "old prompt",
+                "text": "old response",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+            },
+            {
+                "url": target_url,
+                "count": 1,
+                "userCount": 2,
+                "latestUserText": receipt_marker,
+                "markerEchoed": True,
+                "text": "",
+                "generating": True,
+                "assistantAfterLatestUser": False,
+            },
+            {
+                "url": target_url,
+                "count": 0,
+                "userCount": 0,
+                "latestUserText": "",
+                "markerEchoed": False,
+                "text": "",
+                "generating": False,
+                "assistantAfterLatestUser": False,
+            },
+            {
+                "url": target_url,
+                "count": 2,
+                "userCount": 2,
+                "latestUserText": receipt_marker,
+                "markerEchoed": True,
+                "text": "current response",
+                "generating": False,
+                "assistantAfterLatestUser": True,
+            },
+        )
+    )
+    availability_calls = 0
+
+    def availability_check() -> tuple[bool, float]:
+        nonlocal availability_calls
+        availability_calls += 1
+        return True, 4.0 if availability_calls == 4 else 0.0
+
+    class _Page:
+        url = target_url
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    monkeypatch.setattr(computer_use_agent.secrets, "token_hex", lambda _size: "e" * 32)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_chromium_web_prompt",
+        lambda *_args, **_kwargs: True,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_provider_turn_snapshot",
+        lambda *_args, **_kwargs: next(snapshots),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_is_web_response_complete",
+        lambda response, **_kwargs: response == "current response",
+    )
+    monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: 0)
+
+    assert _submit_and_wait(
+        _Page(),
+        "chromium",
+        "Inspect the project",
+        lambda: False,
+        platform=platform,
+        submission_target_url=target_url,
+        session_mode="recent",
+        availability_check=availability_check,
+    ) == "current response"
+
+
+def test_availability_gate_extends_deadlines_only_for_explicit_recovery_pause() -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    assert computer_use_agent._run_availability_gate(lambda: True) == (True, 0.0)
+    assert computer_use_agent._run_availability_gate(
+        lambda: (True, 7.5)
+    ) == (True, 7.5)
+
+
+def test_challenge_marker_in_chat_text_does_not_pause_with_a_visible_composer() -> None:
+    captured_source = ""
+
+    class _Page:
+        def evaluate(self, expression: str, _argument: object) -> dict[str, object]:
+            nonlocal captured_source
+            captured_source = expression
+            return {
+                "detected": False,
+                "reason": "captcha",
+                "composerAvailable": True,
+            }
+
+    assert _provider_human_verification_reason(_Page(), "gemini") == ""
+    assert "challengeElement || (!composerAvailable && marker)" in captured_source
+
+
+@pytest.mark.parametrize(
+    ("platform", "reason"),
+    (
+        ("gemini", "unusual traffic"),
+        ("grok", "security challenge control"),
+    ),
+)
+def test_provider_human_verification_uses_a_fixed_safe_reason(
+    platform: str,
+    reason: str,
+) -> None:
+    class _Page:
+        def evaluate(self, _expression: str, _argument: object) -> dict[str, object]:
+            return {"detected": True, "reason": reason, "composerAvailable": False}
+
+    detected = _provider_human_verification_reason(_Page(), platform)
+
+    assert detected.startswith("Human verification required: ")
+    assert reason in detected
+
+
+def test_challenge_window_surfaces_and_restores_the_same_chromium_clone() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class _Session:
+        def send(self, method: str, params: object = None) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "Browser.getWindowForTarget":
+                return {"windowId": 17}
+            if method == "Browser.getWindowBounds":
+                return {
+                    "bounds": {
+                        "left": -32_000,
+                        "top": -32_000,
+                        "width": 1_280,
+                        "height": 900,
+                        "windowState": "minimized",
+                    }
+                }
+            return {}
+
+        def detach(self) -> None:
+            calls.append(("detach", None))
+
+    class _Context:
+        def new_cdp_session(self, selected_page: object) -> _Session:
+            assert selected_page is page
+            return _Session()
+
+    class _Page:
+        context = _Context()
+
+        def __init__(self) -> None:
+            self.front_calls = 0
+
+        def bring_to_front(self) -> None:
+            self.front_calls += 1
+
+    page = _Page()
+    original = _surface_provider_challenge_window(page)
+    _restore_provider_challenge_window(page, original)
+
+    assert original == {
+        "windowId": 17,
+        "bounds": {
+            "left": -32_000,
+            "top": -32_000,
+            "width": 1_280,
+            "height": 900,
+            "windowState": "minimized",
+        },
+    }
+    assert page.front_calls == 1
+    assert (
+        "Browser.setWindowBounds",
+        {"windowId": 17, "bounds": {"windowState": "normal"}},
+    ) in calls
+    assert (
+        "Browser.setWindowBounds",
+        {"windowId": 17, "bounds": {"windowState": "minimized"}},
+    ) in calls
+
+
+def test_challenge_window_stays_untouched_without_recoverable_bounds() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class _Session:
+        def send(self, method: str, params: object = None) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "Browser.getWindowForTarget":
+                return {"windowId": 17}
+            if method == "Browser.getWindowBounds":
+                return {"bounds": {}}
+            return {}
+
+        def detach(self) -> None:
+            calls.append(("detach", None))
+
+    class _Context:
+        def new_cdp_session(self, _selected_page: object) -> _Session:
+            return _Session()
+
+    class _Page:
+        context = _Context()
+
+        def __init__(self) -> None:
+            self.front_calls = 0
+
+        def bring_to_front(self) -> None:
+            self.front_calls += 1
+
+    page = _Page()
+
+    assert _surface_provider_challenge_window(page) is None
+    assert page.front_calls == 0
+    assert not any(method == "Browser.setWindowBounds" for method, _params in calls)
+
+
+def test_challenge_window_rolls_back_partial_surface_failure() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class _Session:
+        def __init__(self) -> None:
+            self.surface_updates = 0
+
+        def send(self, method: str, params: object = None) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "Browser.getWindowForTarget":
+                return {"windowId": 23}
+            if method == "Browser.getWindowBounds":
+                return {
+                    "bounds": {
+                        "left": -32_000,
+                        "top": -32_000,
+                        "width": 1_280,
+                        "height": 900,
+                        "windowState": "minimized",
+                    }
+                }
+            if method == "Browser.setWindowBounds":
+                self.surface_updates += 1
+                if self.surface_updates == 2:
+                    raise RuntimeError("Failed while moving the challenge window")
+            return {}
+
+        def detach(self) -> None:
+            calls.append(("detach", None))
+
+    session = _Session()
+
+    class _Context:
+        def new_cdp_session(self, _selected_page: object) -> _Session:
+            return session
+
+    class _Page:
+        context = _Context()
+
+        def bring_to_front(self) -> None:
+            raise AssertionError("The incomplete surface must not be presented as ready.")
+
+    assert _surface_provider_challenge_window(_Page()) is None
+    assert (
+        "Browser.setWindowBounds",
+        {
+            "windowId": 23,
+            "bounds": {
+                "left": -32_000,
+                "top": -32_000,
+                "width": 1_280,
+                "height": 900,
+            },
+        },
+    ) in calls
+    assert (
+        "Browser.setWindowBounds",
+        {"windowId": 23, "bounds": {"windowState": "minimized"}},
+    ) in calls
+
+
+def test_grok_new_conversation_title_change_does_not_block_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "_macos_screen_is_locked", lambda: False)
+
+    class _Page:
+        url = "https://grok.com/c/new-conversation"
+        _guid = "grok-tab"
+
+        def is_closed(self) -> bool:
+            return False
+
+        def title(self) -> str:
+            return "New task title"
+
+        def evaluate(self, _expression: str, _argument: object) -> dict[str, object]:
+            return {"detected": False, "composerAvailable": True}
+
+    assert _detect_browser_interruption(
+        _Page(),
+        "https://grok.com/",
+        "chromium",
+        platform="grok",
+        session_mode="new",
+        expected_tab_id="grok-tab",
+        expected_title="Grok",
+    ) == (False, "")
+
+
+def test_human_verification_waits_for_clear_state_and_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    reason = "Human verification required: Grok requires security challenge control."
+    interruptions = iter(
+        (
+            (True, reason),
+            (False, ""),
+            (False, ""),
+        )
+    )
+    resume_calls = 0
+    updates: list[dict[str, object]] = []
+    restored: list[object] = []
+
+    def should_resume() -> bool:
+        nonlocal resume_calls
+        resume_calls += 1
+        return resume_calls in {1, 3}
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_detect_browser_interruption",
+        lambda *_args, **_kwargs: next(interruptions),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_surface_provider_challenge_window",
+        lambda _page: {"windowId": 17, "bounds": {}},
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_restore_provider_challenge_window",
+        lambda _page, state: restored.append(state),
+    )
+    monkeypatch.setattr(computer_use_agent.time, "sleep", lambda _seconds: None)
+
+    result = _wait_for_browser_recovery(
+        page=object(),
+        expected_url="https://grok.com/c/session",
+        browser_kind="edge",
+        platform="grok",
+        session_mode="recent",
+        expected_tab_id="tab-1",
+        expected_title="Task",
+        should_stop=lambda: False,
+        should_resume=should_resume,
+        update=lambda **changes: updates.append(changes),
+        reason=reason,
+    )
+
+    assert result == "recovered"
+    assert resume_calls == 3
+    assert any(
+        update.get("message", "").startswith(
+            "Resume was requested, but the selected provider tab is still interrupted."
+        )
+        for update in updates
+    )
+    cleared_message = (
+        "Human verification cleared. Select Resume to continue the same Web Agent turn."
+    )
+    assert any(
+        update.get("message") == cleared_message
+        and update.get("pause_reason") == cleared_message
+        for update in updates
+    )
+    assert restored == [{"windowId": 17, "bounds": {}}]
+
+
+def test_browser_recovery_dynamically_upgrades_to_human_verification(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    navigation_reason = "The selected provider page is temporarily inaccessible."
+    challenge_reason = (
+        "Human verification required: Gemini requires security challenge control."
+    )
+    interruptions = iter(
+        (
+            (True, challenge_reason),
+            (False, ""),
+            (False, ""),
+        )
+    )
+    resume_calls = 0
+    surfaced: list[object] = []
+    restored: list[object] = []
+    updates: list[dict[str, object]] = []
+
+    def should_resume() -> bool:
+        nonlocal resume_calls
+        resume_calls += 1
+        return resume_calls == 3
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_detect_browser_interruption",
+        lambda *_args, **_kwargs: next(interruptions),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_surface_provider_challenge_window",
+        lambda page: surfaced.append(page) or {"windowId": 23, "bounds": {}},
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_restore_provider_challenge_window",
+        lambda page, state: restored.append((page, state)),
+    )
+    monkeypatch.setattr(computer_use_agent.time, "sleep", lambda _seconds: None)
+    page = object()
+
+    result = _wait_for_browser_recovery(
+        page=page,
+        expected_url="https://gemini.google.com/app/session",
+        browser_kind="edge",
+        platform="gemini",
+        session_mode="recent",
+        expected_tab_id="tab-1",
+        expected_title="Task",
+        should_stop=lambda: False,
+        should_resume=should_resume,
+        update=lambda **changes: updates.append(changes),
+        reason=navigation_reason,
+    )
+
+    assert result == "recovered"
+    assert surfaced == [page]
+    assert restored == [(page, {"windowId": 23, "bounds": {}})]
+    assert resume_calls == 3
+    assert any(update.get("pause_reason") == challenge_reason for update in updates)
+
+
+def test_human_verification_reappearance_requires_a_fresh_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    reason = "Human verification required: Grok requires security challenge control."
+    interruptions = iter(
+        (
+            (False, ""),
+            (True, reason),
+            (False, ""),
+            (False, ""),
+        )
+    )
+    resume_calls = 0
+    updates: list[dict[str, object]] = []
+
+    def should_resume() -> bool:
+        nonlocal resume_calls
+        resume_calls += 1
+        return resume_calls in {2, 4}
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_detect_browser_interruption",
+        lambda *_args, **_kwargs: next(interruptions),
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_surface_provider_challenge_window",
+        lambda _page: {"windowId": 31, "bounds": {}},
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_restore_provider_challenge_window",
+        lambda *_args: None,
+    )
+    monkeypatch.setattr(computer_use_agent.time, "sleep", lambda _seconds: None)
+
+    result = _wait_for_browser_recovery(
+        page=object(),
+        expected_url="https://grok.com/c/session",
+        browser_kind="edge",
+        platform="grok",
+        session_mode="recent",
+        expected_tab_id="tab-1",
+        expected_title="Task",
+        should_stop=lambda: False,
+        should_resume=should_resume,
+        update=lambda **changes: updates.append(changes),
+        reason=reason,
+    )
+
+    cleared_message = (
+        "Human verification cleared. Select Resume to continue the same Web Agent turn."
+    )
+    assert result == "recovered"
+    assert resume_calls == 4
+    assert sum(update.get("message") == cleared_message for update in updates) == 2
+    assert any(
+        update.get("message", "").startswith(
+            "Resume was requested, but the selected provider tab is still interrupted."
+        )
+        for update in updates
+    )
 
 
 def test_chatgpt_waiter_ignores_assistant_text_before_the_latest_user(
@@ -10067,7 +11568,7 @@ def test_gemini_runtime_rejects_region_unavailability_before_composer_wait(
         url = "https://gemini.google.com/app"
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == 'textarea, [contenteditable="true"]'
+            assert selector == computer_use_agent._visible_web_composer_selector("gemini")
             return _Composer()
 
     monkeypatch.setattr(
@@ -10087,6 +11588,113 @@ def test_gemini_runtime_rejects_region_unavailability_before_composer_wait(
             "https://gemini.google.com/app",
         )
 
+    assert "No project context or prompt was sent." in str(error.value)
+
+
+def test_gemini_runtime_tolerates_one_signed_out_hydration_frame(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    inspections = iter(
+        (
+            {"unsupportedRegion": False, "signedOut": True},
+            {"unsupportedRegion": False, "signedOut": False},
+            {"unsupportedRegion": False, "signedOut": False},
+            {"unsupportedRegion": False, "signedOut": False},
+        )
+    )
+
+    class _Composer:
+        def __init__(self) -> None:
+            self.waits = 0
+
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            self.waits += 1
+
+    class _Page:
+        url = "https://gemini.google.com/app"
+
+        def __init__(self) -> None:
+            self.composer = _Composer()
+            self.timeouts: list[int] = []
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == computer_use_agent._visible_web_composer_selector("gemini")
+            return self.composer
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.timeouts.append(milliseconds)
+
+        def evaluate(self, _expression: str, *_args: object) -> object:
+            raise AssertionError("Gemini must not run the weaker generic auth scan.")
+
+    page = _Page()
+    monkeypatch.setattr(
+        computer_use_agent,
+        "inspect_gemini_session",
+        lambda _page: next(inspections),
+    )
+
+    assert (
+        _verify_agent_page(
+            page,
+            "chromium",
+            "gemini",
+            "https://gemini.google.com/app",
+        )
+        is True
+    )
+    assert page.composer.waits == 1
+    assert page.timeouts == [computer_use_agent.WEB_SEND_BUTTON_POLL_MILLISECONDS]
+
+
+def test_gemini_runtime_requires_two_signed_out_frames_before_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def wait_for(self, **_kwargs: object) -> None:
+            raise AssertionError("Stable sign-out must preempt composer readiness.")
+
+    class _Page:
+        url = "https://gemini.google.com/app"
+
+        def __init__(self) -> None:
+            self.timeouts: list[int] = []
+
+        def locator(self, selector: str) -> _Composer:
+            assert selector == computer_use_agent._visible_web_composer_selector("gemini")
+            return _Composer()
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.timeouts.append(milliseconds)
+
+    page = _Page()
+    monkeypatch.setattr(
+        computer_use_agent,
+        "inspect_gemini_session",
+        lambda _page: {"unsupportedRegion": False, "signedOut": True},
+    )
+
+    with pytest.raises(RuntimeError, match="not signed in to Gemini Web") as error:
+        _verify_agent_page(
+            page,
+            "chromium",
+            "gemini",
+            "https://gemini.google.com/app",
+        )
+
+    assert page.timeouts == [computer_use_agent.WEB_SEND_BUTTON_POLL_MILLISECONDS]
     assert "No project context or prompt was sent." in str(error.value)
 
 
@@ -10116,7 +11724,7 @@ def test_gemini_composer_wait_rechecks_a_late_region_transition(
         url = "https://gemini.google.com/app"
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == 'textarea, [contenteditable="true"]'
+            assert selector == computer_use_agent._visible_web_composer_selector("gemini")
             return _Composer()
 
         def reload(self, **_kwargs: object) -> None:
@@ -10194,7 +11802,7 @@ def test_grok_runtime_rejects_a_visible_login_action_even_with_a_composer() -> N
         url = "https://grok.com/"
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == "textarea"
+            assert selector == _visible_web_composer_selector("grok")
             return _Composer()
 
         def evaluate(
@@ -10230,7 +11838,7 @@ def test_grok_runtime_requires_positive_authenticated_api_evidence() -> None:
         url = "https://grok.com/"
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == "textarea"
+            assert selector == _visible_web_composer_selector("grok")
             return _Composer()
 
         def evaluate(
@@ -10271,7 +11879,7 @@ def test_grok_runtime_accepts_a_schema_valid_authenticated_api_response() -> Non
             self.api_urls: list[str] = []
 
         def locator(self, selector: str) -> _Composer:
-            assert selector == "textarea"
+            assert selector == _visible_web_composer_selector("grok")
             return _Composer()
 
         def evaluate(

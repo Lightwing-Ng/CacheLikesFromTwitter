@@ -1,6 +1,6 @@
 """Focused tests for the local text-history browser."""
 
-# Code version: v1.3.2-codex.1
+# Code version: v1.4.1-codex.1
 
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +22,7 @@ def _history_row(
     *,
     role: str = "user",
     conversation_title: str = "Demo conversation",
+    first_seen_at: str = "2026-08-15T09:38:00Z",
     last_seen_at: str = "2026-08-12T05:00:00Z",
     message_index: int = 0,
 ) -> dict[str, object]:
@@ -41,7 +42,7 @@ def _history_row(
         "content_sha256": "hash",
         "source_links": [],
         "model_label": "",
-        "first_seen_at": last_seen_at,
+        "first_seen_at": first_seen_at,
         "last_seen_at": last_seen_at,
     }
 
@@ -90,6 +91,55 @@ def test_query_chat_history_can_paginate_one_row_per_session(tmp_path: Path) -> 
     assert page.sessions[0].message_count == 2
     assert page.sessions[0].latest_message == "Latest"
     assert {message.message_key for message in page.items} == {"new:0:user", "new:1:assistant"}
+
+
+def test_gemini_capture_fallback_is_unknown_and_sorts_after_source_time(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "gemini" / "history.parquet"
+    write_parquet_rows_atomic(
+        history_path,
+        [
+            _history_row(
+                "trusted",
+                "trusted:0:user",
+                "Trusted source time",
+                first_seen_at="2026-08-15T09:38:00Z",
+                last_seen_at="2026-06-04T06:40:37Z",
+            ),
+            _history_row(
+                "fallback",
+                "fallback:0:user",
+                "Capture fallback",
+                first_seen_at="2026-08-15T09:37:00Z",
+                last_seen_at="2026-08-15T09:37:00Z",
+            ),
+            _history_row(
+                "regressed",
+                "regressed:0:user",
+                "Later refresh fallback",
+                first_seen_at="2026-08-13T09:31:25Z",
+                last_seen_at="2026-08-15T09:38:36Z",
+            ),
+        ],
+        GEMINI_HISTORY_SCHEMA,
+    )
+
+    newest_page = query_chat_history(tmp_path, source="gemini", session_view=True, sort="newest")
+    oldest_page = query_chat_history(tmp_path, source="gemini", session_view=True, sort="oldest")
+
+    assert [session.conversation_id for session in newest_page.sessions] == [
+        "trusted",
+        "fallback",
+        "regressed",
+    ]
+    assert [session.conversation_id for session in oldest_page.sessions] == [
+        "trusted",
+        "fallback",
+        "regressed",
+    ]
+    assert newest_page.sessions[0].last_seen_at == "2026-06-04T06:40:37Z"
+    assert newest_page.sessions[1].last_seen_at == ""
+    assert newest_page.sessions[2].last_seen_at == ""
+    assert format_chat_message_timestamp_label(newest_page.sessions[2].last_seen_at) == "Unknown time"
 
 
 def test_query_chatgpt_history_lists_sessions_on_the_home_page(tmp_path: Path) -> None:
@@ -150,12 +200,21 @@ def test_query_chatgpt_history_lists_sessions_on_the_home_page(tmp_path: Path) -
     assert second_page.current_page == 1
 
 
-def test_query_chat_history_opens_one_session_and_paginates_messages(tmp_path: Path) -> None:
+def test_query_chat_history_opens_one_session_and_searches_all_sessions(tmp_path: Path) -> None:
     history_path = tmp_path / "llm" / "gemini" / "history.parquet"
     rows = [
         _history_row("demo", f"demo:{index}", f"Message {index}", message_index=index)
         for index in range(3)
     ]
+    rows.append(
+        _history_row(
+            "atour",
+            "atour:0",
+            "A separate cached message",
+            conversation_title="亚朵星球：体验驱动的睡眠专家",
+            last_seen_at="2026-08-11T05:00:00Z",
+        )
+    )
     write_parquet_rows_atomic(history_path, rows, GEMINI_HISTORY_SCHEMA)
 
     index_page = query_chat_history(tmp_path, source="gemini", session_view=True)
@@ -176,16 +235,19 @@ def test_query_chat_history_opens_one_session_and_paginates_messages(tmp_path: P
     assert [message.message_index for message in detail_page.items] == [0, 1]
     assert detail_page.pagination_unit == "message"
 
-    filtered_detail_page = query_chat_history(
+    global_search_page = query_chat_history(
         tmp_path,
         source="gemini",
-        query="Message 1",
+        query="亚朵",
         session_view=True,
         session=session_id,
     )
-    assert filtered_detail_page.session_detail
-    assert filtered_detail_page.total_count == 1
-    assert [message.message_index for message in filtered_detail_page.items] == [1]
+    assert not global_search_page.session_detail
+    assert global_search_page.current_session is None
+    assert global_search_page.total_count == 1
+    assert global_search_page.conversation_count == 1
+    assert [session.conversation_id for session in global_search_page.sessions] == ["atour"]
+    assert [message.conversation_id for message in global_search_page.items] == ["atour"]
 
 
 def test_build_chat_history_markdown_exports_the_complete_session(tmp_path: Path) -> None:

@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.19.0-codex.1
+Code version: v1.23.1-codex.1
 """
 
 from __future__ import annotations
@@ -28,8 +28,10 @@ from werkzeug.serving import BaseWSGIServer, make_server
 
 from app.core.computer_use_agent import (
     _ProviderSessionBinding,
+    _provider_turn_snapshot,
     _select_web_model,
     _submit_chromium_web_prompt,
+    parse_agent_action,
 )
 from app.core.gemini_downloader import inspect_gemini_session
 
@@ -204,6 +206,453 @@ def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
             ) == expected_paths
     finally:
         context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Match the sibling title rail at desktop size in both sidebar states."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/chatgpt",
+        1_024,
+        900,
+        touch=False,
+    )
+    try:
+        toggle = page.locator("#sidebar_toggle")
+        title = page.locator(".cache-overview-title-card .report-heading")
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        expect(title).to_have_text("ChatGPT cache overview")
+
+        def read_geometry() -> dict[str, float]:
+            return page.evaluate(
+                """() => {
+                    const toggle = document.querySelector("#sidebar_toggle").getBoundingClientRect();
+                    const title = document.querySelector(
+                        ".cache-overview-title-card .report-heading",
+                    ).getBoundingClientRect();
+                    const theme = document.querySelector("#global_theme_toggle").getBoundingClientRect();
+                    const centerY = rect => rect.top + (rect.height / 2);
+                    return {
+                        titleCenterDelta: Math.abs(centerY(title) - centerY(toggle)),
+                        themeCenterDelta: Math.abs(centerY(title) - centerY(theme)),
+                        toggleGap: title.left - toggle.right,
+                    };
+                }"""
+            )
+
+        expanded = read_geometry()
+        assert expanded["titleCenterDelta"] <= 1
+        assert expanded["themeCenterDelta"] <= 1
+        assert expanded["toggleGap"] >= 12
+
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        page.wait_for_function(
+            """() => {
+                const toggle = document.querySelector("#sidebar_toggle").getBoundingClientRect();
+                const title = document.querySelector(
+                    ".cache-overview-title-card .report-heading",
+                ).getBoundingClientRect();
+                return title.left - toggle.right >= 12;
+            }"""
+        )
+        collapsed = read_geometry()
+        assert collapsed["titleCenterDelta"] <= 1
+        assert collapsed["themeCenterDelta"] <= 1
+        assert collapsed["toggleGap"] >= 12
+        assert not page.evaluate(
+            "Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) "
+            "> document.documentElement.clientWidth"
+        )
+
+        page.set_viewport_size({"width": 390, "height": 844})
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        narrow = page.evaluate(
+            """() => {
+                const rectFor = selector => {
+                    const rect = document.querySelector(selector).getBoundingClientRect();
+                    return {left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom};
+                };
+                const overlaps = (left, right) => !(
+                    left.right <= right.left
+                    || left.left >= right.right
+                    || left.bottom <= right.top
+                    || left.top >= right.bottom
+                );
+                const toggle = rectFor("#sidebar_toggle");
+                const title = rectFor(".cache-overview-title-card .report-heading");
+                const theme = rectFor("#global_theme_toggle");
+                return {
+                    titleOverlapsTheme: overlaps(title, theme),
+                    titleOverlapsToggle: overlaps(title, toggle),
+                    toggleGap: title.left - toggle.right,
+                    horizontalOverflow: Math.max(
+                        document.documentElement.scrollWidth,
+                        document.body.scrollWidth,
+                    ) > document.documentElement.clientWidth,
+                };
+            }"""
+        )
+        assert not narrow["titleOverlapsTheme"]
+        assert not narrow["titleOverlapsToggle"]
+        assert narrow["toggleGap"] >= 12
+        assert not narrow["horizontalOverflow"]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("route", "target_selector", "title_selector"),
+    (
+        (
+            "/cache/chatgpt",
+            ".cache-workspace-content",
+            ".cache-overview-title-card > .report-heading-row",
+        ),
+        (
+            "/browser",
+            ".browser-content-card",
+            ".browser-summary-card > .report-heading-row",
+        ),
+        (
+            "/settings/style-tokens",
+            ".style-token-shell",
+            ".settings-summary-card > .report-heading-row",
+        ),
+        (
+            "/agent",
+            ".agent-workspace-grid",
+            ".agent-summary-card > .report-heading-row",
+        ),
+        (
+            "/settings",
+            ".settings-category-shell",
+            "#settings_workspace .workspace-summary-card > .report-heading-row",
+        ),
+    ),
+)
+def test_sidebar_gel_motion_is_content_only_across_product_surfaces(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    route: str,
+    target_selector: str,
+    title_selector: str,
+) -> None:
+    """Keep shared soft-body motion expressive without animating title geometry."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}{route}",
+        1_024,
+        900,
+        touch=False,
+        reduced_motion="no-preference",
+    )
+    try:
+        target = page.locator(target_selector)
+        title = page.locator(title_selector)
+        expect(target).to_be_visible()
+        expect(title).to_be_visible()
+        expect(page.locator("#sidebar_toggle")).to_have_attribute("aria-expanded", "true")
+        expect(target).to_have_attribute("data-sidebar-gel-content", "")
+        page.wait_for_load_state("networkidle")
+        page.evaluate("() => document.fonts.ready")
+
+        expanded_baseline = target.evaluate(
+            "element => { const rect = element.getBoundingClientRect(); "
+            "return {left: rect.left, top: rect.top, width: rect.width}; }"
+        )
+
+        def sample_motion() -> dict[str, object]:
+            return page.evaluate(
+                """async ([targetSelector, titleSelector]) => {
+                    const toggle = document.querySelector("#sidebar_toggle");
+                    const shell = document.querySelector(".app-shell");
+                    const content = document.querySelector(targetSelector);
+                    const title = document.querySelector(titleSelector);
+                    if (!(toggle instanceof HTMLElement)
+                        || !(shell instanceof HTMLElement)
+                        || !(content instanceof HTMLElement)
+                        || !(title instanceof HTMLElement)) return null;
+
+                    const frames = [];
+                    const startedAt = performance.now();
+                    toggle.click();
+                    await new Promise(resolve => {
+                        const sample = () => {
+                            const transform = getComputedStyle(content).transform;
+                            const matrix = transform === "none"
+                                ? new DOMMatrixReadOnly()
+                                : new DOMMatrixReadOnly(transform);
+                            const contentRect = content.getBoundingClientRect();
+                            const titleRect = title.getBoundingClientRect();
+                            const toggleRect = toggle.getBoundingClientRect();
+                            frames.push({
+                                animationNames: content.getAnimations()
+                                    .map(animation => animation.animationName || ""),
+                                className: shell.className,
+                                contentGap: contentRect.top - titleRect.bottom,
+                                documentOverflow: Math.max(
+                                    document.documentElement.scrollWidth,
+                                    document.body.scrollWidth,
+                                ) - document.documentElement.clientWidth,
+                                offsetWidth: content.offsetWidth,
+                                scaleX: matrix.a,
+                                scaleY: matrix.d,
+                                titleToggleGap: titleRect.left - toggleRect.right,
+                                translateX: matrix.e,
+                            });
+                            if (performance.now() - startedAt >= 760) {
+                                resolve();
+                                return;
+                            }
+                            requestAnimationFrame(sample);
+                        };
+                        requestAnimationFrame(sample);
+                    });
+                    const finalRect = content.getBoundingClientRect();
+                    return {
+                        finalAnimationNames: content.getAnimations()
+                            .map(animation => animation.animationName || ""),
+                        finalClassName: shell.className,
+                        finalRect: {
+                            left: finalRect.left,
+                            top: finalRect.top,
+                            width: finalRect.width,
+                        },
+                        finalTransform: getComputedStyle(content).transform,
+                        frames,
+                    };
+                }""",
+                [target_selector, title_selector],
+            )
+
+        closing = sample_motion()
+        assert closing is not None
+        assert any(
+            "is-sidebar-closing" in frame["className"]
+            for frame in closing["frames"]
+        )
+        assert any(
+            "workspace-sidebar-gel-close" in frame["animationNames"]
+            for frame in closing["frames"]
+        )
+        assert max(abs(frame["translateX"]) for frame in closing["frames"]) > 8
+        assert max(abs(frame["scaleX"] - 1) for frame in closing["frames"]) > 0.01
+        assert max(abs(frame["scaleY"] - 1) for frame in closing["frames"]) > 0.01
+        assert max(frame["documentOverflow"] for frame in closing["frames"]) <= 1
+        assert min(frame["contentGap"] for frame in closing["frames"]) >= 0
+        assert min(frame["titleToggleGap"] for frame in closing["frames"]) >= 11.5
+        assert (
+            max(frame["offsetWidth"] for frame in closing["frames"])
+            - min(frame["offsetWidth"] for frame in closing["frames"])
+        ) <= 1
+        assert "is-sidebar-animating" not in closing["finalClassName"]
+        assert closing["finalTransform"] == "none"
+        assert not any(
+            str(name).startswith("workspace-sidebar-gel-")
+            for name in closing["finalAnimationNames"]
+        )
+
+        opening = sample_motion()
+        assert opening is not None
+        assert any(
+            "workspace-sidebar-gel-open" in frame["animationNames"]
+            for frame in opening["frames"]
+        )
+        assert max(frame["documentOverflow"] for frame in opening["frames"]) <= 1
+        assert min(frame["contentGap"] for frame in opening["frames"]) >= 0
+        assert min(frame["titleToggleGap"] for frame in opening["frames"]) >= 11.5
+        assert "is-sidebar-animating" not in opening["finalClassName"]
+        assert opening["finalTransform"] == "none"
+        for key in ("left", "top", "width"):
+            assert abs(opening["finalRect"][key] - expanded_baseline[key]) <= 1
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("width", "height", "touch", "reduced_motion"),
+    (
+        (1_024, 900, False, "reduce"),
+        (390, 844, True, "no-preference"),
+    ),
+)
+def test_sidebar_gel_motion_respects_reduced_motion_and_overlay_gates(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    width: int,
+    height: int,
+    touch: bool,
+    reduced_motion: str,
+) -> None:
+    """Prevent even a transient soft-body class outside the desktop motion contract."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/settings/style-tokens",
+        width,
+        height,
+        touch=touch,
+        reduced_motion=reduced_motion,
+    )
+    try:
+        state = page.locator("#sidebar_toggle").evaluate(
+            """toggle => {
+                const shell = document.querySelector(".app-shell");
+                const content = document.querySelector(".style-token-shell");
+                toggle.click();
+                return {
+                    animationNames: content?.getAnimations()
+                        .map(animation => animation.animationName || "") || [],
+                    className: shell?.className || "",
+                };
+            }"""
+        )
+        assert "is-sidebar-animating" not in state["className"]
+        assert not any(
+            str(name).startswith("workspace-sidebar-gel-")
+            for name in state["animationNames"]
+        )
+        assert page.evaluate(
+            "Math.max(document.documentElement.scrollWidth, document.body.scrollWidth) "
+            "- document.documentElement.clientWidth"
+        ) <= 1
+    finally:
+        context.close()
+
+
+def test_style_tokens_component_catalog_is_interactive_and_responsive(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Exercise the shared component lab at desktop and narrow widths."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/settings/style-tokens",
+        1_280,
+        720,
+        touch=False,
+    )
+    try:
+        cards = page.locator("[data-style-token-card]")
+        expect(cards).to_have_count(22)
+        assert page.evaluate(
+            "document.documentElement.scrollWidth === document.documentElement.clientWidth"
+        )
+        assert len(
+            page.locator("[data-style-token-card]").first.evaluate(
+                "element => getComputedStyle(element).gridTemplateColumns.split(' ')"
+            )
+        ) == 2
+        assert page.locator("[data-style-token-agent-browser-menu]").is_hidden()
+
+        refresh_button = page.locator("[data-style-token-secondary-button]")
+        refresh_geometry = refresh_button.evaluate(
+            "element => ({ width: element.getBoundingClientRect().width, parentWidth: element.parentElement.getBoundingClientRect().width })"
+        )
+        assert refresh_geometry["width"] < refresh_geometry["parentWidth"]
+
+        tag_typography = page.locator("[data-style-token-prompt-tag]").evaluate(
+            "element => { const style = getComputedStyle(element); return { fontSize: style.fontSize, fontWeight: style.fontWeight }; }"
+        )
+        assert tag_typography == {"fontSize": "12px", "fontWeight": "500"}
+
+        sort_label_weight = page.locator(
+            '#shared-select-filter [data-style-token-shared-filter-label]'
+        ).evaluate("element => getComputedStyle(element).fontWeight")
+        assert sort_label_weight == "400"
+
+        agent_trigger = page.locator("[data-style-token-agent-browser-trigger]")
+        assert agent_trigger.evaluate(
+            "element => element.getBoundingClientRect().height"
+        ) == 36
+        selected_agent_option_radius = page.locator(
+            '[data-style-token-agent-browser-option="edge"]'
+        ).evaluate("element => getComputedStyle(element).borderRadius")
+        assert selected_agent_option_radius == "999px"
+
+        period_trigger = page.locator(
+            "#shared-select-dropdown [data-style-token-shared-filter-trigger]"
+        )
+        period_trigger.focus()
+        period_trigger.press("ArrowDown")
+        page.keyboard.press("End")
+        page.keyboard.press("Enter")
+        expect(page.locator("#shared-select-dropdown select")).to_have_value("max")
+
+        agent_trigger.press("ArrowDown")
+        page.keyboard.press("End")
+        page.keyboard.press("Enter")
+        expect(page.locator("[data-style-token-agent-browser-input]")).to_have_value(
+            "chrome"
+        )
+
+        prompt_tag = page.locator("[data-style-token-prompt-tag]")
+        page.locator("[data-style-token-prompt-tag-remove]").click()
+        expect(prompt_tag).to_have_class(re.compile(r"style-token-dismissible-hidden"))
+        expect(prompt_tag).not_to_have_class(
+            re.compile(r"style-token-dismissible-hidden"),
+            timeout=2_000,
+        )
+
+        page.locator("[data-style-token-text-input-clear]").click()
+        expect(page.locator("[data-style-token-text-input]")).to_have_value("")
+
+        action_button = page.locator("[data-style-token-action-button]")
+        action_button.click()
+        expect(action_button).to_be_disabled()
+        expect(action_button).to_be_enabled(timeout=2_000)
+
+        table_filter = page.locator("[data-style-token-table-filter-trigger]")
+        table_filter.click()
+        page.locator('[data-style-token-table-filter-option="buy"]').click()
+        expect(page.locator("[data-style-token-table-filter-summary]")).to_have_text(
+            "5 filtered of 12 total"
+        )
+        expect(page.locator("[data-style-token-table-pagination]")).to_be_hidden()
+
+        token_control = page.locator(
+            '[data-style-token-name="--settings-round-icon-button-size"]'
+        ).first
+        expect(token_control).to_have_attribute("data-style-token-value", "36")
+        token_control.locator('[data-style-token-stepper="up"]').click()
+        expect(token_control).to_have_attribute("data-style-token-value", "37")
+        assert page.locator("[data-style-token-shell]").evaluate(
+            "element => element.style.getPropertyValue('--settings-round-icon-button-size')"
+        ) == "37px"
+    finally:
+        context.close()
+
+    narrow_page, narrow_context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/settings/style-tokens",
+        390,
+        844,
+        touch=True,
+    )
+    try:
+        assert narrow_page.evaluate(
+            "document.documentElement.scrollWidth === document.documentElement.clientWidth"
+        )
+        assert narrow_page.locator("[data-style-token-card]").first.evaluate(
+            "element => getComputedStyle(element).gridTemplateColumns.split(' ').length"
+        ) == 1
+        expect(narrow_page.locator("[data-style-token-resizer]")).to_be_hidden()
+        title_left = narrow_page.locator(
+            ".settings-summary-card .report-heading"
+        ).bounding_box()["x"]
+        toggle_box = narrow_page.locator("#sidebar_toggle").bounding_box()
+        assert title_left >= toggle_box["x"] + toggle_box["width"]
+    finally:
+        narrow_context.close()
 
 
 @pytest.mark.integration
@@ -542,6 +991,7 @@ def test_cache_shared_settings_link_opens_the_downloads_category(
     try:
         settings_link = page.locator(".cache-settings-link")
         expect(settings_link).to_have_count(1)
+        expect(settings_link).to_have_class(re.compile(r"\bsecondary-button\b"))
         expect(settings_link).to_have_attribute("href", "/settings#settings-downloads")
         expect(page.locator("#start_form section")).to_have_count(0)
         assert settings_link.evaluate("element => !element.closest('form')")
@@ -556,6 +1006,80 @@ def test_cache_shared_settings_link_opens_the_downloads_category(
         expect(page.locator("#settings-downloads")).to_be_visible()
         expect(page.locator('[data-settings-category="downloads"]')).to_have_class(
             re.compile(r"\bis-active\b")
+        )
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("width", "height", "touch"),
+    (
+        (1_034, 1_170, False),
+        (390, 844, True),
+    ),
+)
+def test_settings_reuse_shared_primary_and_numeric_control_contracts(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    width: int,
+    height: int,
+    touch: bool,
+) -> None:
+    """Verify Settings controls share the annotated visual and layout contracts."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/settings#settings-chatgpt",
+        width,
+        height,
+        touch=touch,
+    )
+    try:
+        expect(page.locator("#settings")).to_have_count(0)
+        expect(page.locator("#chatgpt_startup_timeout_seconds")).to_have_count(1)
+        assert page.locator("#chatgpt_startup_timeout_seconds").evaluate(
+            "element => getComputedStyle(element).fontWeight"
+        ) == "300"
+
+        terminal_button = page.locator("[data-agent-terminal-authorization-button]")
+        expect(terminal_button).to_have_count(1)
+        assert terminal_button.evaluate(
+            "element => getComputedStyle(element).fontWeight"
+        ) == "500"
+
+        page.goto(
+            f"{sidebar_server_url}/settings#settings-cloud",
+            wait_until="domcontentloaded",
+        )
+        expect(page.locator("#settings-cloud")).to_be_visible()
+        expect(page.locator("#shadow_backup_phase")).to_have_count(0)
+        expect(page.locator("[data-shadow-backup-status-copy]")).to_have_count(1)
+        sync_button = page.locator("#shadow_backup_sync_now")
+        expect(sync_button).to_have_count(1)
+        assert sync_button.evaluate(
+            "element => getComputedStyle(element).fontWeight"
+        ) == "500"
+
+        page.goto(
+            f"{sidebar_server_url}/settings#settings-maintenance",
+            wait_until="domcontentloaded",
+        )
+        expect(page.locator("#settings-maintenance")).to_be_visible()
+        for selector in ("#reset_button", "#reset_chatgpt_button"):
+            alignment = page.locator(selector).evaluate(
+                """button => {
+                    const form = button.closest("form");
+                    return {
+                        buttonRight: button.getBoundingClientRect().right,
+                        formRight: form.getBoundingClientRect().right,
+                    };
+                }"""
+            )
+            assert abs(alignment["buttonRight"] - alignment["formRight"]) <= 1
+
+        assert page.evaluate(
+            "() => document.documentElement.scrollWidth <= window.innerWidth"
         )
     finally:
         context.close()
@@ -1059,7 +1583,7 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
                 "session_title": "",
                 "session_mode": "new",
                 "platform": selected_platform,
-                "model": "gemini-3.1-pro" if selected_platform == "gemini" else "grok-auto",
+                "model": "gemini-3.1-pro" if selected_platform == "gemini" else "grok-build",
                 "finished_at": "",
             },
         }
@@ -1227,7 +1751,7 @@ def test_agent_provider_projects_submit_agentic_task_target(
                 "session_title": "",
                 "session_mode": "new",
                 "platform": selected_platform,
-                "model": "gemini-3.1-pro" if selected_platform == "gemini" else "grok-auto",
+                "model": "gemini-3.1-pro" if selected_platform == "gemini" else "grok-build",
                 "finished_at": "",
             },
         }
@@ -1353,7 +1877,11 @@ def test_agent_connection_selection_survives_cache_navigation(
         touch=False,
     )
     try:
-        page.get_by_role("button", name="Browser: Edge", exact=True).click()
+        browser_trigger = page.get_by_role("button", name="Browser: Edge", exact=True)
+        assert browser_trigger.evaluate(
+            "element => element.getBoundingClientRect().height"
+        ) == 36
+        browser_trigger.click()
         with page.expect_response(re.compile(r"/api/agent/preferences$")):
             page.get_by_role("option", name="Chrome", exact=True).click()
         expect(page.locator('#agent_runtime_form input[name="browser"]')).to_have_value(
@@ -1645,6 +2173,54 @@ def test_gemini_session_dom_does_not_treat_conversation_copy_as_a_region_failure
 
 
 @pytest.mark.integration
+def test_gemini_session_dom_rejects_an_anonymous_composer_shell(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <header><button>Sign in</button></header>
+            <nav><a href="https://gemini.google.com/app/anonymous-shell">Recent activity</a></nav>
+            <textarea placeholder="Ask Gemini"></textarea>
+            """
+        )
+
+        snapshot = inspect_gemini_session(page)
+
+        assert snapshot["conversationLinks"] == 1
+        assert snapshot["hasComposer"] is True
+        assert snapshot["hasAuthAction"] is True
+        assert snapshot["signedOut"] is True
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_gemini_session_dom_ignores_a_conversation_sign_in_decoy(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button aria-label="Google Account: Demo account">Account</button>
+            <model-response><button>Sign in</button></model-response>
+            <textarea placeholder="Ask Gemini"></textarea>
+            """
+        )
+
+        snapshot = inspect_gemini_session(page)
+
+        assert snapshot["hasAuthAction"] is False
+        assert snapshot["signedOut"] is False
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize(
     (
         "primary_text",
@@ -1761,6 +2337,71 @@ def test_gemini_model_dom_selection_requires_exact_controlled_selected_proof(
             is expected
         )
         assert page.evaluate("window.selectionAudit.optionClicks") == expected_option_clicks
+        assert page.locator("#mode-picker").get_attribute("aria-expanded") == "false"
+        assert page.locator("#mode-menu").is_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_gemini_model_dom_selection_rejects_the_anonymous_model_menu(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                id="mode-picker"
+                aria-label="Open mode picker, currently Flash-Lite"
+                aria-haspopup="true"
+                aria-expanded="false"
+                aria-controls="mode-menu"
+            >Flash-Lite</button>
+            <div id="mode-menu" role="menu" hidden>
+                <gem-menu-item class="selected" role="menuitem">
+                    <gem-icon aria-label="Selected"></gem-icon>
+                    <span class="label">3.5 Flash-Lite</span>
+                </gem-menu-item>
+                <gem-menu-item id="pro-option" role="menuitem">
+                    <span class="label">3.1 Pro</span>
+                    <span class="sublabel">Advanced reasoning</span>
+                </gem-menu-item>
+                <gem-menu-item role="menuitem">
+                    <span class="label">Sign in for all models</span>
+                </gem-menu-item>
+            </div>
+            <script>
+                window.selectionAudit = {triggerClicks: 0, optionClicks: 0};
+                const trigger = document.querySelector('#mode-picker');
+                const menu = document.querySelector('#mode-menu');
+                trigger.addEventListener('click', () => {
+                    window.selectionAudit.triggerClicks += 1;
+                    const opening = menu.hidden;
+                    menu.hidden = !opening;
+                    trigger.setAttribute('aria-expanded', String(opening));
+                });
+                document.querySelector('#pro-option').addEventListener('click', () => {
+                    window.selectionAudit.optionClicks += 1;
+                });
+            </script>
+            """
+        )
+        observation: dict[str, object] = {}
+
+        assert (
+            _select_web_model(
+                page,
+                "chromium",
+                "gemini",
+                "gemini-3.1-pro",
+                observation,
+            )
+            is False
+        )
+        assert observation["reason"] == "signed-out"
+        assert page.evaluate("window.selectionAudit.optionClicks") == 0
         assert page.locator("#mode-picker").get_attribute("aria-expanded") == "false"
         assert page.locator("#mode-menu").is_hidden()
     finally:
@@ -2210,25 +2851,28 @@ def test_gemini_model_dom_selection_fails_closed_when_menu_closure_is_unproved(
 
 @pytest.mark.integration
 @pytest.mark.parametrize(
-    ("platform", "model"),
-    (("grok", "grok-auto"), ("claude", "claude-auto")),
+    ("platform", "model", "label"),
+    (
+        ("claude", "claude-auto", "Auto"),
+    ),
 )
-def test_auto_model_dom_selection_accepts_a_semantic_model_trigger(
+def test_provider_model_dom_selection_accepts_a_semantic_model_trigger(
     disposable_browser: Browser,
     platform: str,
     model: str,
+    label: str,
 ) -> None:
     context = disposable_browser.new_context()
     page = context.new_page()
     try:
         page.set_content(
-            """
+            f"""
             <button
                 id="model-selector"
                 aria-label="Model select"
                 aria-haspopup="menu"
                 aria-expanded="false"
-            >Auto</button>
+            >{label}</button>
             """
         )
 
@@ -2240,7 +2884,7 @@ def test_auto_model_dom_selection_accepts_a_semantic_model_trigger(
 @pytest.mark.integration
 @pytest.mark.parametrize(
     ("platform", "model"),
-    (("grok", "grok-auto"), ("claude", "claude-auto")),
+    (("grok", "grok-build"), ("claude", "claude-auto")),
 )
 def test_auto_model_dom_selection_rejects_an_unrelated_auto_popup(
     disposable_browser: Browser,
@@ -2275,6 +2919,7 @@ def test_auto_model_dom_selection_rejects_an_unrelated_auto_popup(
             """
         )
         monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
+        monkeypatch.setattr(computer_use_agent, "GROK_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
 
         assert _select_web_model(page, "chromium", platform, model) is False
         assert page.evaluate("window.unrelatedAutoClicks") == 0
@@ -2286,8 +2931,8 @@ def test_auto_model_dom_selection_rejects_an_unrelated_auto_popup(
 @pytest.mark.parametrize(
     ("platform", "model", "decoy_id"),
     (
-        ("grok", "grok-auto", "modern-theme"),
-        ("grok", "grok-auto", "breakfast-options"),
+        ("grok", "grok-build", "modern-theme"),
+        ("grok", "grok-build", "breakfast-options"),
         ("claude", "claude-auto", "modern-theme"),
         ("claude", "claude-auto", "octopus-picker"),
     ),
@@ -2314,6 +2959,7 @@ def test_auto_model_dom_selection_rejects_metadata_substring_decoys(
             """
         )
         monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
+        monkeypatch.setattr(computer_use_agent, "GROK_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
 
         assert _select_web_model(page, "chromium", platform, model) is False
     finally:
@@ -2324,7 +2970,7 @@ def test_auto_model_dom_selection_rejects_metadata_substring_decoys(
 @pytest.mark.parametrize(
     ("platform", "model", "decoy_id", "decoy_label"),
     (
-        ("grok", "grok-auto", "grok-options", "Modern theme"),
+        ("grok", "grok-build", "grok-options", "Modern theme"),
         ("claude", "claude-auto", "claude-options", "Octopus picker"),
     ),
 )
@@ -2366,6 +3012,7 @@ def test_auto_model_dom_selection_rejects_label_substring_decoys(
             """
         )
         monkeypatch.setattr(computer_use_agent, "WEB_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
+        monkeypatch.setattr(computer_use_agent, "GROK_MODEL_CONTROL_WAIT_ATTEMPTS", 1)
 
         assert _select_web_model(page, "chromium", platform, model) is False
         assert page.evaluate("window.decoyClicks") == 0
@@ -2374,69 +3021,789 @@ def test_auto_model_dom_selection_rejects_label_substring_decoys(
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize("surface_role", ["listbox", "menu"])
-@pytest.mark.parametrize("updates_readback", [True, False])
-def test_grok_model_dom_selection_requires_semantic_trigger_and_verified_readback(
+@pytest.mark.parametrize(
+    ("aria_checked", "data_state", "trigger_label", "expected", "reason"),
+    (
+        ("true", "checked", "Build Beta", True, ""),
+        ("true", "unchecked", "Build Beta", False, "model-selection-proof-conflict"),
+        ("false", "checked", "Build Beta", False, "model-selection-proof-conflict"),
+        ("true", "checked", "Auto", False, "model-readback-mismatch"),
+        ("false", "unchecked", "Auto", False, "model-readback-mismatch"),
+    ),
+)
+def test_grok_model_dom_selection_requires_current_radix_contract_and_dual_proof(
     disposable_browser: Browser,
-    surface_role: str,
-    updates_readback: bool,
+    aria_checked: str,
+    data_state: str,
+    trigger_label: str,
+    expected: bool,
+    reason: str,
 ) -> None:
     context = disposable_browser.new_context()
     page = context.new_page()
     try:
-        option_role = "option" if surface_role == "listbox" else "menuitem"
         page.set_content(
             f"""
-            <button id="bare-auto">Auto</button>
-            <button id="autoplay" aria-label="Enable Auto-play">Auto</button>
+            <button id="bare-build">Build</button>
+            <button id="build-plan" aria-label="SuperGrok Build plan">Build</button>
             <button
-                id="model-trigger"
-                aria-label="Model selector"
-                aria-haspopup="{surface_role}"
+                id="model-select-trigger"
+                aria-label="Model select"
+                aria-haspopup="menu"
                 aria-expanded="false"
                 aria-controls="model-surface"
-            >Choose model</button>
-            <div id="model-surface" role="{surface_role}" hidden>
-                <button id="auto-option" role="{option_role}">Auto</button>
+            >Auto</button>
+            <div id="model-surface" role="menu" hidden>
+                <button
+                    id="build-option"
+                    role="menuitemradio"
+                    aria-label="Build"
+                    aria-checked="false"
+                    data-state="unchecked"
+                >Build</button>
             </div>
             <script>
                 window.selectionAudit = {{
-                    bareAutoClicks: 0,
-                    autoplayClicks: 0,
+                    bareBuildClicks: 0,
+                    buildPlanClicks: 0,
                     optionClicks: 0,
                 }};
-                const trigger = document.querySelector('#model-trigger');
+                const trigger = document.querySelector('#model-select-trigger');
                 const surface = document.querySelector('#model-surface');
-                document.querySelector('#bare-auto').addEventListener('click', () => {{
-                    window.selectionAudit.bareAutoClicks += 1;
+                const option = document.querySelector('#build-option');
+                document.querySelector('#bare-build').addEventListener('click', () => {{
+                    window.selectionAudit.bareBuildClicks += 1;
                 }});
-                document.querySelector('#autoplay').addEventListener('click', () => {{
-                    window.selectionAudit.autoplayClicks += 1;
+                document.querySelector('#build-plan').addEventListener('click', () => {{
+                    window.selectionAudit.buildPlanClicks += 1;
                 }});
                 trigger.addEventListener('click', () => {{
-                    trigger.setAttribute('aria-expanded', 'true');
-                    surface.hidden = false;
+                    const opening = trigger.getAttribute('aria-expanded') !== 'true';
+                    trigger.setAttribute('aria-expanded', String(opening));
+                    surface.hidden = !opening;
                 }});
-                document.querySelector('#auto-option').addEventListener('click', () => {{
+                option.addEventListener('click', () => {{
                     window.selectionAudit.optionClicks += 1;
                     surface.hidden = true;
                     trigger.setAttribute('aria-expanded', 'false');
-                    if ({str(updates_readback).lower()}) {{
-                        trigger.textContent = 'Auto';
-                    }}
+                    option.setAttribute('aria-checked', {json.dumps(aria_checked)});
+                    option.setAttribute('data-state', {json.dumps(data_state)});
+                    trigger.textContent = {json.dumps(trigger_label)};
                 }});
             </script>
             """
         )
+        observation: dict[str, object] = {}
         assert (
-            _select_web_model(page, "chromium", "grok", "grok-auto")
-            is updates_readback
+            _select_web_model(
+                page,
+                "chromium",
+                "grok",
+                "grok-build",
+                observation,
+            )
+            is expected
         )
         assert page.evaluate("window.selectionAudit") == {
-            "bareAutoClicks": 0,
-            "autoplayClicks": 0,
+            "bareBuildClicks": 0,
+            "buildPlanClicks": 0,
             "optionClicks": 1,
         }
+        if reason:
+            assert observation["reason"] == reason
+        assert page.get_attribute("#model-select-trigger", "aria-expanded") == "false"
+        assert page.locator("#model-surface").is_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_grok_build_selection_accepts_nested_controlled_menu_and_exact_aria_label(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                id="model-select-trigger"
+                aria-label="Model select"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="model-menu"
+            >Auto</button>
+            <div id="model-menu" role="menu" hidden>
+                <div class="nested-options">
+                    <button
+                        id="build-plan"
+                        role="menuitemradio"
+                        aria-label="SuperGrok Build plan"
+                        aria-checked="false"
+                        data-state="unchecked"
+                    >
+                        <span class="label">Build</span>
+                        <small>Upgrade your SuperGrok plan</small>
+                    </button>
+                    <button
+                        id="build-option"
+                        role="menuitemradio"
+                        aria-label="Build"
+                        aria-checked="false"
+                        data-state="unchecked"
+                    >
+                        <span class="label">Build</span>
+                        <small>Use Build mode for agentic tasks</small>
+                    </button>
+                </div>
+            </div>
+            <script>
+                window.selectionAudit = {planClicks: 0, optionClicks: 0};
+                const trigger = document.querySelector('#model-select-trigger');
+                const menu = document.querySelector('#model-menu');
+                const option = document.querySelector('#build-option');
+                trigger.addEventListener('click', () => {
+                    const opening = trigger.getAttribute('aria-expanded') !== 'true';
+                    trigger.setAttribute('aria-expanded', String(opening));
+                    menu.hidden = !opening;
+                });
+                document.querySelector('#build-plan').addEventListener('click', () => {
+                    window.selectionAudit.planClicks += 1;
+                });
+                option.addEventListener('click', () => {
+                    window.selectionAudit.optionClicks += 1;
+                    option.setAttribute('aria-checked', 'true');
+                    option.setAttribute('data-state', 'checked');
+                    trigger.textContent = 'Build Beta';
+                    trigger.setAttribute('aria-expanded', 'false');
+                    menu.hidden = true;
+                });
+            </script>
+            """
+        )
+
+        selected = _select_web_model(
+            page,
+            "chromium",
+            "grok",
+            "grok-build",
+        )
+
+        assert selected is True
+        assert page.evaluate("window.selectionAudit") == {
+            "planClicks": 0,
+            "optionClicks": 1,
+        }
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_grok_build_selection_accepts_an_already_selected_option(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                id="model-select-trigger"
+                aria-label="Model select"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="model-menu"
+            >Build Beta</button>
+            <div id="model-menu" role="menu" hidden>
+                <button
+                    id="build-option"
+                    role="menuitemradio"
+                    aria-label="Build"
+                    aria-checked="true"
+                    data-state="checked"
+                >Build</button>
+            </div>
+            <script>
+                window.optionClicks = 0;
+                const trigger = document.querySelector('#model-select-trigger');
+                const menu = document.querySelector('#model-menu');
+                trigger.addEventListener('click', () => {
+                    const opening = trigger.getAttribute('aria-expanded') !== 'true';
+                    trigger.setAttribute('aria-expanded', String(opening));
+                    menu.hidden = !opening;
+                });
+                document.querySelector('#build-option').addEventListener('click', () => {
+                    window.optionClicks += 1;
+                });
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", "grok", "grok-build") is True
+        assert page.evaluate("window.optionClicks") == 0
+        assert page.get_attribute("#model-select-trigger", "aria-expanded") == "false"
+        assert page.locator("#model-menu").is_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_grok_build_selection_dismisses_only_the_two_known_onboarding_dialogs(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                id="model-select-trigger"
+                aria-label="Model select"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="model-menu"
+            >Auto</button>
+            <div id="model-menu" role="menu" hidden>
+                <button
+                    id="build-option"
+                    role="menuitemradio"
+                    aria-label="Build"
+                    aria-checked="false"
+                    data-state="unchecked"
+                >Build</button>
+            </div>
+            <div id="first-promo" role="dialog" aria-label="Meet Grok Bot">
+                <button id="first-dismiss">Dismiss</button>
+            </div>
+            <script>
+                window.selectionAudit = {
+                    dismissClicks: 0,
+                    optionClicks: 0,
+                    triggerClicks: 0,
+                    untrustedClicks: 0,
+                };
+                const trigger = document.querySelector('#model-select-trigger');
+                const menu = document.querySelector('#model-menu');
+                const option = document.querySelector('#build-option');
+                trigger.addEventListener('click', (event) => {
+                    window.selectionAudit.triggerClicks += 1;
+                    if (!event.isTrusted) window.selectionAudit.untrustedClicks += 1;
+                    const opening = trigger.getAttribute('aria-expanded') !== 'true';
+                    trigger.setAttribute('aria-expanded', String(opening));
+                    menu.hidden = !opening;
+                });
+                document.querySelector('#first-dismiss').addEventListener('click', (event) => {
+                    window.selectionAudit.dismissClicks += 1;
+                    if (!event.isTrusted) window.selectionAudit.untrustedClicks += 1;
+                    document.querySelector('#first-promo').remove();
+                    document.body.insertAdjacentHTML(
+                        'beforeend',
+                        '<div id="second-promo" role="dialog" aria-label="Introducing Build Mode">'
+                            + '<button id="second-dismiss">Dismiss</button></div>'
+                    );
+                    document.querySelector('#second-dismiss').addEventListener('click', (event) => {
+                        window.selectionAudit.dismissClicks += 1;
+                        if (!event.isTrusted) window.selectionAudit.untrustedClicks += 1;
+                        document.querySelector('#second-promo').remove();
+                    });
+                });
+                option.addEventListener('click', (event) => {
+                    window.selectionAudit.optionClicks += 1;
+                    if (!event.isTrusted) window.selectionAudit.untrustedClicks += 1;
+                    option.setAttribute('aria-checked', 'true');
+                    option.setAttribute('data-state', 'checked');
+                    trigger.textContent = 'Build Beta';
+                    trigger.setAttribute('aria-expanded', 'false');
+                    menu.hidden = true;
+                });
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", "grok", "grok-build") is True
+        assert page.evaluate("window.selectionAudit") == {
+            "dismissClicks": 2,
+            "optionClicks": 1,
+            "triggerClicks": 3,
+            "untrustedClicks": 0,
+        }
+        assert page.locator('[role="dialog"]').count() == 0
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("dialog_role", "aria_modal", "dialog_label", "dismiss_disabled"),
+    (
+        ("dialog", "false", "Upgrade to SuperGrok", False),
+        ("dialog", "false", "Meet Grok Bot", True),
+        ("alertdialog", "false", "Upgrade to SuperGrok", False),
+        ("none", "true", "Upgrade to SuperGrok", False),
+    ),
+)
+def test_grok_build_selection_rejects_unknown_or_non_actionable_dialogs(
+    disposable_browser: Browser,
+    dialog_role: str,
+    aria_modal: str,
+    dialog_label: str,
+    dismiss_disabled: bool,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        disabled = "disabled" if dismiss_disabled else ""
+        page.set_content(
+            f"""
+            <button
+                id="model-select-trigger"
+                aria-label="Model select"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="model-menu"
+            >Auto</button>
+            <div id="model-menu" role="menu" hidden>
+                <button
+                    id="build-option"
+                    role="menuitemradio"
+                    aria-label="Build"
+                    aria-checked="false"
+                    data-state="unchecked"
+                >Build</button>
+            </div>
+            <div role="{dialog_role}" aria-modal="{aria_modal}" aria-label="{dialog_label}">
+                <button id="dismiss" {disabled}>Dismiss</button>
+            </div>
+            <script>
+                window.selectionAudit = {{dismissClicks: 0, triggerClicks: 0}};
+                document.querySelector('#dismiss').addEventListener('click', () => {{
+                    window.selectionAudit.dismissClicks += 1;
+                }});
+                document.querySelector('#model-select-trigger').addEventListener('click', () => {{
+                    window.selectionAudit.triggerClicks += 1;
+                }});
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", "grok", "grok-build") is False
+        assert page.evaluate("window.selectionAudit") == {
+            "dismissClicks": 0,
+            "triggerClicks": 0,
+        }
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("auto_aria_checked", "auto_data_state", "expected_option_clicks"),
+    (("true", "unchecked", 0), ("true", "checked", 1)),
+)
+def test_grok_build_selection_rejects_conflicting_or_duplicate_radio_proof(
+    disposable_browser: Browser,
+    auto_aria_checked: str,
+    auto_data_state: str,
+    expected_option_clicks: int,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            f"""
+            <button
+                id="model-select-trigger"
+                aria-label="Model select"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="model-menu"
+            >Auto</button>
+            <div id="model-menu" role="menu" hidden>
+                <button
+                    id="auto-option"
+                    role="menuitemradio"
+                    aria-label="Auto"
+                    aria-checked="{auto_aria_checked}"
+                    data-state="{auto_data_state}"
+                >Auto</button>
+                <button
+                    id="build-option"
+                    role="menuitemradio"
+                    aria-label="Build"
+                    aria-checked="false"
+                    data-state="unchecked"
+                >Build</button>
+            </div>
+            <script>
+                window.optionClicks = 0;
+                const trigger = document.querySelector('#model-select-trigger');
+                const menu = document.querySelector('#model-menu');
+                const build = document.querySelector('#build-option');
+                trigger.addEventListener('click', () => {{
+                    const opening = trigger.getAttribute('aria-expanded') !== 'true';
+                    trigger.setAttribute('aria-expanded', String(opening));
+                    menu.hidden = !opening;
+                }});
+                build.addEventListener('click', () => {{
+                    window.optionClicks += 1;
+                    build.setAttribute('aria-checked', 'true');
+                    build.setAttribute('data-state', 'checked');
+                    trigger.textContent = 'Build Beta';
+                    trigger.setAttribute('aria-expanded', 'false');
+                    menu.hidden = true;
+                }});
+            </script>
+            """
+        )
+        observation: dict[str, object] = {}
+
+        assert (
+            _select_web_model(
+                page,
+                "chromium",
+                "grok",
+                "grok-build",
+                observation,
+            )
+            is False
+        )
+        assert observation["reason"] == "model-selection-proof-conflict"
+        assert page.evaluate("window.optionClicks") == expected_option_clicks
+        assert page.get_attribute("#model-select-trigger", "aria-expanded") == "false"
+        assert page.locator("#model-menu").is_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("variant", "expected_reason"),
+    (
+        ("duplicate-trigger", "model-control-ambiguous"),
+        ("duplicate-surface", "model-surface-ambiguous"),
+        ("duplicate-choice", "model-option-ambiguous"),
+        ("unrelated-menu", "model-surface-not-found"),
+    ),
+)
+def test_grok_build_selection_binds_exactly_one_controlled_menu_and_choice(
+    disposable_browser: Browser,
+    variant: str,
+    expected_reason: str,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        trigger = """
+            <button
+                id="model-select-trigger"
+                aria-label="Model select"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="model-menu"
+            >Auto</button>
+        """
+        if variant == "duplicate-trigger":
+            trigger += trigger
+        choice = """
+            <button
+                class="build-option"
+                role="menuitemradio"
+                aria-label="Build"
+                aria-checked="false"
+                data-state="unchecked"
+            >Build</button>
+        """
+        surface_role = "listbox" if variant == "unrelated-menu" else "menu"
+        surface_choices = "" if variant == "unrelated-menu" else choice
+        if variant == "duplicate-choice":
+            surface_choices += choice
+        surface = f"""
+            <div id="model-menu" role="{surface_role}" hidden>{surface_choices}</div>
+        """
+        if variant == "duplicate-surface":
+            surface += surface
+        unrelated = (
+            f'<div id="unrelated-menu" role="menu">{choice}</div>'
+            if variant == "unrelated-menu"
+            else ""
+        )
+        page.set_content(
+            f"""
+            {trigger}
+            {surface}
+            {unrelated}
+            <script>
+                window.selectionAudit = {{triggerClicks: 0, choiceClicks: 0}};
+                document.querySelectorAll('#model-select-trigger').forEach((button) => {{
+                    button.addEventListener('click', () => {{
+                        window.selectionAudit.triggerClicks += 1;
+                        const opening = button.getAttribute('aria-expanded') !== 'true';
+                        button.setAttribute('aria-expanded', String(opening));
+                        document.querySelectorAll('[id="model-menu"]').forEach((menu) => {{
+                            menu.hidden = !opening;
+                        }});
+                    }});
+                }});
+                document.querySelectorAll('.build-option').forEach((button) => {{
+                    button.addEventListener('click', () => {{
+                        window.selectionAudit.choiceClicks += 1;
+                    }});
+                }});
+            </script>
+            """
+        )
+        observation: dict[str, object] = {}
+
+        assert (
+            _select_web_model(
+                page,
+                "chromium",
+                "grok",
+                "grok-build",
+                observation,
+            )
+            is False
+        )
+        assert observation["reason"] == expected_reason
+        assert page.evaluate("window.selectionAudit.choiceClicks") == 0
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_grok_build_selection_rebinds_a_remounted_radix_menu(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                id="model-select-trigger"
+                aria-label="Model select"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="model-menu"
+            >Auto</button>
+            <script>
+                window.selectionAudit = {
+                    menuMounts: 0,
+                    optionClicks: 0,
+                    triggerClicks: 0,
+                    selected: false,
+                };
+                const trigger = document.querySelector('#model-select-trigger');
+                const unmount = () => document.querySelector('#model-menu')?.remove();
+                const mount = () => {
+                    unmount();
+                    window.selectionAudit.menuMounts += 1;
+                    const menu = document.createElement('div');
+                    menu.id = 'model-menu';
+                    menu.setAttribute('role', 'menu');
+                    const option = document.createElement('button');
+                    option.setAttribute('role', 'menuitemradio');
+                    option.setAttribute('aria-label', 'Build');
+                    option.setAttribute(
+                        'aria-checked',
+                        String(window.selectionAudit.selected)
+                    );
+                    option.setAttribute(
+                        'data-state',
+                        window.selectionAudit.selected ? 'checked' : 'unchecked'
+                    );
+                    option.textContent = 'Build';
+                    option.addEventListener('click', () => {
+                        window.selectionAudit.optionClicks += 1;
+                        window.selectionAudit.selected = true;
+                        trigger.textContent = 'Build Beta';
+                        trigger.setAttribute('aria-expanded', 'false');
+                        unmount();
+                    });
+                    menu.append(option);
+                    document.body.append(menu);
+                };
+                trigger.addEventListener('click', () => {
+                    window.selectionAudit.triggerClicks += 1;
+                    const opening = trigger.getAttribute('aria-expanded') !== 'true';
+                    trigger.setAttribute('aria-expanded', String(opening));
+                    if (opening) mount();
+                    else unmount();
+                });
+            </script>
+            """
+        )
+
+        assert _select_web_model(page, "chromium", "grok", "grok-build") is True
+        assert page.evaluate("window.selectionAudit") == {
+            "menuMounts": 2,
+            "optionClicks": 1,
+            "triggerClicks": 3,
+            "selected": True,
+        }
+        assert page.locator("#model-menu").count() == 0
+        assert page.get_attribute("#model-select-trigger", "aria-expanded") == "false"
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_grok_build_selection_fails_before_an_extra_click_on_a_late_paywall(
+    disposable_browser: Browser,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(
+            """
+            <button
+                id="model-select-trigger"
+                aria-label="Model select"
+                aria-haspopup="menu"
+                aria-expanded="false"
+                aria-controls="model-menu"
+            >Auto</button>
+            <div id="model-menu" role="menu" hidden>
+                <button
+                    id="build-option"
+                    role="menuitemradio"
+                    aria-label="Build"
+                    aria-checked="false"
+                    data-state="unchecked"
+                >Build</button>
+            </div>
+            <script>
+                window.selectionAudit = {triggerClicks: 0, optionClicks: 0};
+                const trigger = document.querySelector('#model-select-trigger');
+                const menu = document.querySelector('#model-menu');
+                const option = document.querySelector('#build-option');
+                trigger.addEventListener('click', () => {
+                    window.selectionAudit.triggerClicks += 1;
+                    const opening = trigger.getAttribute('aria-expanded') !== 'true';
+                    trigger.setAttribute('aria-expanded', String(opening));
+                    menu.hidden = !opening;
+                });
+                option.addEventListener('click', () => {
+                    window.selectionAudit.optionClicks += 1;
+                    option.setAttribute('aria-checked', 'true');
+                    option.setAttribute('data-state', 'checked');
+                    trigger.textContent = 'Build Beta';
+                    trigger.setAttribute('aria-expanded', 'false');
+                    menu.hidden = true;
+                    document.body.insertAdjacentHTML(
+                        'beforeend',
+                        '<div role="alertdialog" aria-modal="true" '
+                            + 'aria-label="Upgrade to SuperGrok">Upgrade</div>'
+                    );
+                });
+            </script>
+            """
+        )
+        observation: dict[str, object] = {}
+
+        assert (
+            _select_web_model(
+                page,
+                "chromium",
+                "grok",
+                "grok-build",
+                observation,
+            )
+            is False
+        )
+        assert observation["reason"] == "blocking-dialog"
+        assert page.evaluate("window.selectionAudit") == {
+            "triggerClicks": 1,
+            "optionClicks": 1,
+        }
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    ("platform", "body"),
+    (
+        (
+            "gemini",
+            """
+            <user-query><div data-test-id="user-query-content">prompt</div></user-query>
+            <model-response>
+                <message-content>
+                    <div class="model-response-text"><pre><code>{"action":"bodycheck"}</code></pre></div>
+                </message-content>
+                <div class="response-actions"><button>Copy</button></div>
+            </model-response>
+            <rich-textarea>
+                <div contenteditable="true" aria-label="Enter a prompt"></div>
+            </rich-textarea>
+            """,
+        ),
+        (
+            "grok",
+            """
+            <article data-role="user">prompt</article>
+            <article data-testid="assistant-message">
+                <div data-testid="response-content"><pre><code>{"action":"bodycheck"}</code></pre></div>
+                <div data-testid="response-actions"><button>Copy</button></div>
+            </article>
+            <div data-testid="user-composer"><textarea aria-label="Ask Grok"></textarea></div>
+            """,
+        ),
+    ),
+)
+def test_provider_turn_snapshot_uses_canonical_outer_turn_roots(
+    disposable_browser: Browser,
+    platform: str,
+    body: str,
+) -> None:
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(body)
+
+        snapshot = _provider_turn_snapshot(page, platform)
+
+        assert snapshot["count"] == 1
+        assert snapshot["userCount"] == 1
+        assert snapshot["latestUserText"] == "prompt"
+        assert snapshot["assistantAfterLatestUser"] is True
+        assert snapshot["text"].startswith("```json\n")
+        assert parse_agent_action(snapshot["text"])["action"] == "bodycheck"
+        assert "Copy" not in snapshot["text"]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("platform", ["gemini", "grok"])
+def test_provider_turn_snapshot_rejects_assistant_before_latest_user(
+    disposable_browser: Browser,
+    platform: str,
+) -> None:
+    assistant = (
+        '<model-response><pre><code>{"action":"final","summary":"stale"}</code></pre></model-response>'
+        if platform == "gemini"
+        else '<article data-testid="assistant-message"><pre><code>{"action":"final","summary":"stale"}</code></pre></article>'
+    )
+    user = (
+        "<user-query>new prompt</user-query>"
+        if platform == "gemini"
+        else '<article data-role="user">new prompt</article>'
+    )
+    composer = (
+        '<rich-textarea><div contenteditable="true" aria-label="Enter a prompt"></div></rich-textarea>'
+        if platform == "gemini"
+        else '<textarea aria-label="Ask Grok"></textarea>'
+    )
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content(f"{assistant}{user}{composer}")
+
+        snapshot = _provider_turn_snapshot(page, platform)
+
+        assert snapshot["assistantAfterLatestUser"] is False
     finally:
         context.close()
 
@@ -2610,6 +3977,170 @@ def test_fresh_grok_send_accepts_the_expected_root_landing(
         expect(page.locator('[data-role="user"]')).to_have_text(prompt)
     finally:
         context.close()
+
+
+@pytest.mark.integration
+def test_grok_send_uses_visible_composer_and_nearest_bounded_semantic_scope(
+    disposable_browser: Browser,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS", 2)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "CHROMIUM_SUBMISSION_ACCEPT_TIMEOUT_SECONDS",
+        2,
+    )
+    landing_url = "https://grok.com/"
+    prompt = "Use the visible composer"
+    receipt_marker = "agent-turn-" + ("d" * 32)
+    wire_prompt = f"{prompt}\n\nController turn receipt: {receipt_marker}"
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    page.route(
+        landing_url,
+        lambda route: route.fulfill(
+            status=200,
+            content_type="text/html",
+            body="""
+                <!doctype html>
+                <html>
+                    <body>
+                        <button id="unrelated-send" type="button" aria-label="Send">Send</button>
+                        <div role="dialog" aria-label="Feedback">
+                            <textarea id="feedback-composer" aria-label="Feedback"></textarea>
+                            <button id="feedback-submit" type="button">Submit</button>
+                        </div>
+                        <main id="composer-scope">
+                            <textarea id="hidden-composer" hidden></textarea>
+                            <div><section><div>
+                                <div
+                                    id="visible-composer"
+                                    contenteditable="true"
+                                    role="textbox"
+                                    aria-label="Ask Grok anything"
+                                ></div>
+                            </div></section></div>
+                            <button
+                                id="provider-send"
+                                type="button"
+                                aria-label="Send"
+                                data-testid="chat-submit"
+                            >Send</button>
+                        </main>
+                        <script>
+                            window.sendAudit = {provider: 0, unrelated: 0, feedback: 0};
+                            window.injectTrailingComposerText = false;
+                            const buildComposer = document.querySelector('#visible-composer');
+                            const renderBuildText = (value) => {
+                                buildComposer.replaceChildren(
+                                    ...value.split('\\n').map((line) => {
+                                        const paragraph = document.createElement('p');
+                                        if (line) paragraph.textContent = line;
+                                        else paragraph.append(document.createElement('br'));
+                                        return paragraph;
+                                    })
+                                );
+                            };
+                            let pendingBuildText = '';
+                            buildComposer.addEventListener('beforeinput', (event) => {
+                                if (typeof event.data === 'string') {
+                                    pendingBuildText = event.data;
+                                }
+                            });
+                            buildComposer.addEventListener('input', () => {
+                                if (!pendingBuildText) return;
+                                const value = pendingBuildText;
+                                pendingBuildText = '';
+                                renderBuildText(value);
+                                if (window.injectTrailingComposerText) {
+                                    buildComposer.append(document.createTextNode(' unexpected'));
+                                }
+                            });
+                            document.querySelector('#unrelated-send').addEventListener('click', () => {
+                                window.sendAudit.unrelated += 1;
+                            });
+                            document.querySelector('#provider-send').addEventListener('click', () => {
+                                window.sendAudit.provider += 1;
+                                const composer = document.querySelector('#visible-composer');
+                                const message = document.createElement('article');
+                                message.setAttribute('data-role', 'user');
+                                message.textContent = [...composer.children]
+                                    .map((paragraph) => paragraph.textContent || '')
+                                        .join('\\n');
+                                document.querySelector('#composer-scope').append(message);
+                                composer.replaceChildren();
+                            });
+                            document.querySelector('#feedback-submit').addEventListener('click', () => {
+                                window.sendAudit.feedback += 1;
+                            });
+                        </script>
+                    </body>
+                </html>
+            """,
+        ),
+        )
+        try:
+            page.goto(landing_url, wait_until="domcontentloaded")
+            assert page.evaluate("window.sendAudit") == {
+                "provider": 0,
+                "unrelated": 0,
+                "feedback": 0,
+            }
+
+            accepted = _submit_chromium_web_prompt(
+            page,
+            "grok",
+            wire_prompt,
+            lambda: False,
+            expected_target_url=landing_url,
+            session_mode="new",
+            baseline_snapshot={
+                "url": landing_url,
+                "count": 0,
+                "userCount": 0,
+                "latestUserText": "",
+                "text": "",
+            },
+            submission_receipt_marker=receipt_marker,
+        )
+
+        assert accepted is True
+        assert page.evaluate("window.sendAudit") == {
+            "provider": 1,
+            "unrelated": 0,
+            "feedback": 0,
+        }
+        assert page.locator("#hidden-composer").input_value() == ""
+            assert page.locator("#visible-composer").inner_text() == ""
+            assert page.locator("#feedback-composer").input_value() == ""
+            expect(page.locator('[data-role="user"]')).to_have_text(wire_prompt)
+
+            page.evaluate("window.injectTrailingComposerText = true")
+            rejected_marker = "agent-turn-" + ("e" * 32)
+            rejected_prompt = (
+                "Reject an ambiguous composer"
+                f"\n\nController turn receipt: {rejected_marker}"
+            )
+            with pytest.raises(RuntimeError, match="did not preserve"):
+                _submit_chromium_web_prompt(
+                    page,
+                    "grok",
+                    rejected_prompt,
+                    lambda: False,
+                    expected_target_url=landing_url,
+                    session_mode="new",
+                    baseline_snapshot=_provider_turn_snapshot(page, "grok"),
+                    submission_receipt_marker=rejected_marker,
+                )
+            assert page.evaluate("window.sendAudit") == {
+                "provider": 1,
+                "unrelated": 0,
+                "feedback": 0,
+            }
+        finally:
+            context.close()
 
 
 @pytest.mark.integration
@@ -2845,8 +4376,8 @@ def test_fresh_grok_bootstrap_supersedes_a_stale_cached_catalog_error(
     agent_payload["agent"] = {
         **agent_payload["agent"],
         "platform": "grok",
-        "model": "grok-auto",
-        "actual_model": "Auto",
+        "model": "grok-build",
+        "actual_model": "Build Beta",
         "conversation_url": session_url,
     }
 

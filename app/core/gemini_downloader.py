@@ -1,6 +1,6 @@
 """Browser-backed Gemini session history caching."""
 
-# Code version: v1.10.2-codex.1
+# Code version: v1.10.4-codex.1
 
 from __future__ import annotations
 
@@ -317,7 +317,10 @@ class GeminiHistoryStore:
             else:
                 new_message_count += 1
             source_timestamp = str(message.get("message_timestamp") or "").strip()
-            last_seen_at = source_timestamp or captured_at
+            previous_source_timestamp = ""
+            if previous and str(previous.get("content_sha256") or "") == content_sha256:
+                previous_source_timestamp = str(previous.get("last_seen_at") or "").strip()
+            last_seen_at = source_timestamp or previous_source_timestamp or captured_at
             source_links = [
                 str(link).strip()
                 for link in message.get("source_links") or []
@@ -369,9 +372,22 @@ def inspect_gemini_session(page) -> dict[str, Any]:
     payload = page.evaluate(
         r"""() => {
             const bodyText = document.body ? (document.body.innerText || "") : "";
-            const account = document.querySelector(
+            const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const visible = (element) => {
+                if (!element || element.getClientRects().length === 0) return false;
+                for (let current = element; current; current = current.parentElement) {
+                    const style = getComputedStyle(current);
+                    const opacity = Number.parseFloat(style.opacity || '1');
+                    if (style.visibility === 'hidden'
+                        || style.visibility === 'collapse'
+                        || style.display === 'none'
+                        || (Number.isFinite(opacity) && opacity <= 0)) return false;
+                }
+                return true;
+            };
+            const account = [...document.querySelectorAll(
                 '[aria-label^="Google Account"], [aria-label*="Google Account:"]'
-            );
+            )].find(visible) || null;
             const conversationLinks = [...document.querySelectorAll('a[href]')].filter((link) => {
                 try {
                     return /^\/app\/[A-Za-z0-9_-]+\/?$/.test(new URL(link.href, location.href).pathname);
@@ -380,8 +396,18 @@ def inspect_gemini_session(page) -> dict[str, Any]:
                 }
             }).length;
             const hasComposer = Boolean(document.querySelector('textarea, [contenteditable="true"]'));
-            const signedOut = /(?:^|\n)\s*(?:Sign in|Log in)\s*(?:\n|$)/i.test(bodyText)
-                && !account && !conversationLinks && !hasComposer;
+            const authAction = [...document.querySelectorAll('a, button, [role="button"]')]
+                .filter(visible)
+                .filter((element) => !element.closest(
+                    'model-response, user-query, [data-test-id="model-response"], '
+                    + '[data-message-author-role], textarea, [contenteditable="true"]'
+                ))
+                .find((element) => /^(?:sign in|log in)$/i.test(normalize(
+                    element.getAttribute('aria-label')
+                    || element.innerText
+                    || element.textContent
+                )));
+            const signedOut = Boolean(authAction && !account);
             const unsupportedCopy = (
                 /gemini (?:isn['’]t|is not) (?:currently )?(?:supported|available) in your country/i
                     .test(bodyText)
@@ -397,6 +423,7 @@ def inspect_gemini_session(page) -> dict[str, Any]:
                 accountLabel: account ? (account.getAttribute("aria-label") || account.textContent || "") : "",
                 conversationLinks,
                 hasComposer,
+                hasAuthAction: Boolean(authAction),
                 signedOut,
                 unsupportedRegion,
             };
@@ -467,6 +494,7 @@ def _wait_for_gemini_ready(page, timeout_seconds: float = GEMINI_READY_TIMEOUT_S
     """Wait until Gemini exposes authenticated navigation or a chat composer."""
     remaining_checks = max(1, int(max(1.0, timeout_seconds) / 0.5))
     last_snapshot: dict[str, Any] = {}
+    consecutive_signed_out_checks = 0
     for _attempt in range(remaining_checks):
         last_snapshot = inspect_gemini_session(page)
         if last_snapshot.get("unsupportedRegion"):
@@ -474,7 +502,12 @@ def _wait_for_gemini_ready(page, timeout_seconds: float = GEMINI_READY_TIMEOUT_S
                 "Gemini Web is not available in the selected browser's current region."
             )
         if last_snapshot.get("signedOut"):
-            raise RuntimeError("The selected browser is not signed in to Gemini.")
+            consecutive_signed_out_checks += 1
+            if consecutive_signed_out_checks >= 2:
+                raise RuntimeError("The selected browser is not signed in to Gemini.")
+            page.wait_for_timeout(500)
+            continue
+        consecutive_signed_out_checks = 0
         if (
             last_snapshot.get("accountLabel")
             or int(last_snapshot.get("conversationLinks") or 0) > 0
@@ -770,7 +803,7 @@ def _fetch_gemini_conversation_rpc_payloads(
         r"""({ conversationId, stateKey }) => {
             const tokenMatch = (document.documentElement?.innerHTML || '')
                 .match(/(ADR[A-Za-z0-9:_-]{10,})/);
-            const at = tokenMatch ? tokenMatch[1] : '';
+            const at = String(window.WIZ_global_data?.SNlM0e || (tokenMatch ? tokenMatch[1] : ''));
             const state = { state: 'pending', ok: false, status: 0, text: '', error: '' };
             window[stateKey] = state;
             if (!at || typeof fetch !== 'function') {
@@ -787,7 +820,7 @@ def _fetch_gemini_conversation_rpc_payloads(
             const body = new URLSearchParams({ 'f.req': JSON.stringify(batch), at }).toString();
             const endpoint = new URL('/_/BardChatUi/data/batchexecute', location.origin);
             endpoint.searchParams.set('rpcids', 'hNvQHb');
-            endpoint.searchParams.set('source-path', location.pathname);
+            endpoint.searchParams.set('source-path', '/app/' + conversationId);
             endpoint.searchParams.set('hl', document.documentElement?.lang || 'en');
             endpoint.searchParams.set('rt', 'c');
             fetch(endpoint.toString(), {

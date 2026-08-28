@@ -1,6 +1,6 @@
 """Focused regression tests for persisted crawler settings.
 
-Code version: v1.3.1-codex.1
+Code version: v1.3.1-codex.2
 """
 
 from __future__ import annotations
@@ -17,6 +17,15 @@ class ConfigPersistenceTests(unittest.TestCase):
 
     def test_new_configuration_uses_non_disruptive_gemini_default(self) -> None:
         self.assertEqual(CrawlConfig().gemini_browser, "edge")
+
+    def test_explicit_blank_chatgpt_project_url_survives_restart(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            settings_path = Path(temp_dir) / "settings.json"
+            save_config(CrawlConfig(chatgpt_project_url=""), settings_path)
+
+            loaded = load_saved_config(settings_path)
+
+        self.assertEqual(loaded.chatgpt_project_url, "")
 
     def test_save_and_load_config_round_trip(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

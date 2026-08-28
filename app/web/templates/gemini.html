@@ -1,4 +1,4 @@
-{# Code version: v1.0.2-codex.1 #}
+{# Code version: v1.0.2-codex.2 #}
 {% extends "_cache_page.html" %}
 {% from "_cache_page_components.html" import render_metric, render_progress_metric %}
 {% from "_number_field.html" import render_number_field %}
@@ -10,18 +10,18 @@
 {% endblock %}
 
 {% block primary_metrics %}
-{{ render_metric("Sessions discovered", "discovered_tweets", snapshot.discovered_tweets, true, "discovered_tweets") }}
-{{ render_metric("Messages discovered", "discovered_images", snapshot.discovered_images, true, "discovered_images") }}
-{{ render_metric("Sessions cached", "downloaded_posts", snapshot.downloaded_posts, true, "downloaded_posts") }}
-{{ render_metric("Messages cached", "downloaded_tweets", snapshot.downloaded_tweets, true, "downloaded_tweets") }}
-{{ render_metric("Unchanged sessions", "skipped_tweets", snapshot.skipped_tweets, false, "skipped_tweets") }}
-{{ render_metric("Session failures", "failed_tweets", snapshot.failed_tweets, false, "failed_tweets") }}
+{{ render_metric("Sessions discovered", "discovered_tweets", snapshot.discovered_tweets, "discovered_tweets") }}
+{{ render_metric("Messages discovered", "discovered_images", snapshot.discovered_images, "discovered_images") }}
+{{ render_metric("Sessions cached", "downloaded_posts", snapshot.downloaded_posts, "downloaded_posts") }}
+{{ render_metric("Messages cached", "downloaded_tweets", snapshot.downloaded_tweets, "downloaded_tweets") }}
+{{ render_metric("Unchanged sessions", "skipped_tweets", snapshot.skipped_tweets, "skipped_tweets") }}
+{{ render_metric("Session failures", "failed_tweets", snapshot.failed_tweets, "failed_tweets") }}
 {% endblock %}
 
 {% block source_notice %}
-<div class="notice-floating notice-floating-banner notice-inline-banner" role="note" aria-label="Gemini history cache notice">
+<div class="metric-card foundation-metric-card metric-card-accent notice-floating notice-floating-banner notice-inline-banner" role="note" aria-label="Gemini history cache notice">
     <div class="notice-floating-copy">
-        <p class="notice-floating-label">Browser-rendered history</p>
+        <p class="metric-label notice-floating-label">Browser-rendered history</p>
         <p class="notice-floating-title">
             Gemini session links and rendered user/assistant messages are read through a background {{ selected_browser_label }} session. Each message is stored as one typed row in local_store/llm/gemini/history.parquet; no prompt is sent or edited.
         </p>

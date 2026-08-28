@@ -1,6 +1,6 @@
 # CacheLikesFromTwitter
 
-Documentation version: `v1.12.0-codex.1`
+Documentation version: `v1.13.0-codex.1`
 
 CacheLikesFromTwitter is a local Flask web console that caches media from the
 currently signed-in X account's Likes timeline, Grok's Files library, and a
@@ -12,6 +12,8 @@ The sidebar exposes one provider-neutral Project concept: ChatGPT Projects, Gemi
 Grok Projects, and Claude Projects are adapted behind the same Project selector and execution contract. It defaults to
 a new root-level session, while the sidebar can join one of the 20 most recent sessions, start a
 session in one of the 20 most recent Projects, or join one of a Project's 20 most recent sessions.
+Gemini's Project-new mode is a receipt-isolated controller task on the selected Notebook route; the
+provider route does not prove that Gemini created a distinct subconversation.
 The selected Web provider supplies reasoning while a bounded local Computer Use controller
 reads, changes, runs, and verifies only the selected project. This fallback uses no API,
 command-line coding-agent runtime, MCP connection, or third-party agent bridge.

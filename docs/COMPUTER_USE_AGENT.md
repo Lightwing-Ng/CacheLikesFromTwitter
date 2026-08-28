@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.34.0-codex.1`
+Documentation version: `v3.43.0-codex.1`
 
 ## Purpose
 
@@ -14,6 +14,8 @@ The default is a new root-level session. Every provider can also join one of the
 sessions or start a session in one of the 20 most recent Projects. ChatGPT, Grok, and Claude can
 also join one of that Project's 20 most recent sessions. Gemini Notebook session ownership cannot
 be proved from its current Web routes, so Gemini Projects fail closed to `New session in project`.
+For Gemini, that mode starts a receipt-isolated controller task on the selected Notebook surface;
+it does not prove that Gemini created a distinct provider-side subconversation.
 The adapter maps ChatGPT Projects, Gemini Notebooks, Grok Projects, and Claude
 Projects to the same Project contract, so the Agent UI and execution loop do not expose
 provider-specific container names. Claude source discovery reads rendered links only and does not
@@ -85,11 +87,13 @@ older task cannot be submitted accidentally through a different Web session.
    validation.
 4. Before attaching project data or submitting a prompt, every provider must expose a compatible
    model control and visibly read back the configured model. ChatGPT must prove `GPT-5.6 Sol` or
-   `5.6 Sol`, Gemini must prove `Gemini 3.1 Pro`, and Grok and Claude must prove `Auto`. A missing,
+   `5.6 Sol`, Gemini must prove `Gemini 3.1 Pro`, Grok must prove `Build`, and Claude must prove
+   `Auto`. A missing,
    changed, localized, or ambiguous selector fails closed without attaching context or sending a
    prompt. Only exact model labels and explicit model or mode selector wrappers are accepted;
-   compound controls such as `Auto-play` and unrelated popup buttons whose text happens to be
-   `Auto` are rejected. An `Auto` trigger must expose popup semantics plus model, mode, or
+   compound controls such as `Auto-play`, subscription labels such as `SuperGrok Build plan`, and
+   unrelated popup buttons whose text happens to match a model label are rejected. An `Auto`
+   trigger must expose popup semantics plus model, mode, or
    provider-model metadata. English metadata is matched as complete tokens, so unrelated identifiers
    such as `modern-theme`, `breakfast-options`, or `octopus-picker` cannot satisfy `mode`, `fast`,
    or `opus`. The current Grok `Model select` trigger is an accepted explicit model
@@ -112,7 +116,19 @@ older task cannot be submitted accidentally through a different Web session.
    still fails immediately. The wait changes only when proof is attempted, not what counts as proof.
    Gemini's account and region state is rechecked throughout composer readiness and after a missing
    model-control wait, so a late English, Simplified Chinese, or Traditional Chinese region-unavailable
-   landing page is reported as a provider availability failure rather than a model mismatch.
+   landing page is reported as a provider availability failure rather than a model mismatch. Gemini's
+   anonymous shell can expose both a composer and conversation-shaped links; a visible exact sign-in
+   action without a visible Google Account control therefore remains signed out. Its model menu's
+   exact `Sign in for all models` barrier is a second pre-transfer check and is never clicked as if it
+   were a model option. Grok uses only the exact visible `#model-select-trigger` whose accessible
+   name is `Model select` and whose popup type is `menu`. Trusted Playwright clicks open its exact
+   `aria-controls` surface; the selected candidate must be one exact `Build` or `Build Beta`
+   `menuitemradio` owned directly by that menu. The controller then reopens the menu and requires
+   both `aria-checked="true"` and `data-state="checked"`, closes it, and requires the trigger to
+   read back `Build Beta`. Nested menus, upgrade dialogs, duplicate controls or options, disabled
+   choices, and unknown overlays fail closed. Only the exact `Meet Grok Bot` and `Introducing Build
+   Mode` onboarding dialogs may be dismissed, through one visible enabled exact `Dismiss` button;
+   no forced click is used.
    Missing-control hydration diagnostics retain enumerated readiness and element counts, but never
    persist the remote page title or arbitrary visible DOM text.
    Chromium composer readiness is polled in 250 ms slices so Stop can terminate the initial page
@@ -123,6 +139,13 @@ older task cannot be submitted accidentally through a different Web session.
    stop is already pending. Grok's bounded Enter fallback is unavailable for an unbound fresh run;
    a reused or already bound session rechecks Stop after its last DOM send-button scan and before
    pressing Enter, so a Stop accepted during that scan cannot submit another controller observation.
+   Gemini CAPTCHA and Grok Cloudflare or human-verification interstitials are detected separately
+   from conversation text. A visible challenge control always pauses; marker-only detection also
+   requires the normal composer to be unavailable, so a prompt or response that mentions a CAPTCHA
+   cannot self-trigger the pause. The controller surfaces the same isolated Chromium clone once,
+   preserves the outstanding submit, and waits for both the challenge to clear and an explicit
+   Resume. Stop remains effective, provider deadlines exclude the paused interval, and the clone's
+   prior off-screen or minimized bounds are restored after the pause ends.
 5. The service builds one owner-readable Markdown context package containing the request,
    repository instruction files, a bounded file index, dirty-worktree status, and project entry
    files. Credential locations, environment files, cookie stores, and private-key formats are
@@ -134,22 +157,29 @@ older task cannot be submitted accidentally through a different Web session.
    exact context filename; a populated hidden file input alone is insufficient. If the filename
    never becomes visible or the page reports an upload failure, the run continues without claiming
    an attachment and requests only the bounded files needed for subsequent actions. After a
-   confirmed attachment or that on-demand fallback, the controller clicks the semantic send
-   control and confirms that the provider accepted the prompt. In the same browser evaluation that
-   clicks Send, the controller first checks the official host and exact selected landing or bound
-   conversation identity; a tab switch to an old conversation therefore cannot race the final click.
-   Grok uses its live `textarea` and
-   `chat-submit`/`Submit` contract; if that control is briefly absent after a follow-up observation,
-   the controller falls back to pressing Enter and still verifies prompt acceptance.
-   For every fresh root or Project run, the first prompt contains a high-entropy transfer ID. The
+   confirmed attachment or that on-demand fallback, the controller identifies exactly one visible,
+   enabled provider composer outside dialogs, menus, navigation, headers, and feedback surfaces.
+   It fills that exact element, reads back the complete prompt, and then clicks only a semantic Send
+   control in the same bounded chat scope. Every Gemini, Grok, or Claude turn carries a high-entropy
+   receipt that must remain in the latest visible user turn through response attribution. A challenge
+   or remount before Send can safely refill the still-uncommitted prompt; once a click or Enter may
+   have committed, recovery verifies the receipt and never sends that turn again. In the same browser
+   evaluation that clicks Send, the controller first checks the official host and exact selected
+   landing or bound conversation identity; a tab switch to an old conversation therefore cannot race
+   the final click. Grok accepts its known `chat-submit` control or a semantic chat composer and
+   bounded Send pair; if that control is briefly absent after a follow-up observation, the controller
+   falls back to pressing Enter and still verifies the per-turn receipt.
+   For every fresh root or Project run, the first prompt also contains a high-entropy transfer ID. The
    controller binds the new conversation only when the latest visible user message outside the
    composer echoes that ID and the URL atomically observed with the receipt still matches a second
-   canonical URL read. Merely reaching a same-scope old conversation cannot bind it. The binding
-   wait is bounded and Stop-aware; no local controller action executes before it succeeds. Before a
-   fresh Grok submit, the controller also enumerates the complete root or selected-Project
+   canonical URL read. This proves where the transfer landed; before a fresh Grok submit, the
+   controller additionally enumerates the complete root or selected-Project
    conversation catalog. Pagination loops, malformed rows, repeated cursors, and incomplete schemas
    fail closed, and a conversation present in that pre-submit baseline cannot be bound even if it
-   later displays the current transfer ID. Gemini
+   later displays the current transfer ID. Gemini does not expose an equivalent complete pre-submit
+   conversation catalog, so its transfer receipt does not independently prove that the destination
+   was absent from the account beforehand. The binding wait is bounded and Stop-aware; no local
+   controller action executes before it succeeds. Gemini
    Notebook routes converge on their typed `/app/<id>` identity and use the same receipt gate even
    when the provider remains on that URL.
 7. The selected Web provider returns exactly one JSON action at a time inside a fenced `json` code block so
@@ -346,8 +376,8 @@ The handoff never calls `activate`, so the current foreground application remain
 Stage Manager places the Edge window in the background. Clicking the handoff pill later opens the same
 URL in Edge normally.
 
-The model selector is provider-specific: ChatGPT exposes `5.6 Sol`, Gemini exposes `3.1 Pro`, and
-Grok and Claude expose `Auto`. Each provider is fail-closed: the controller must select or observe
+The model selector is provider-specific: ChatGPT exposes `5.6 Sol`, Gemini exposes `3.1 Pro`, Grok
+exposes `Build Beta`, and Claude exposes `Auto`. Each provider is fail-closed: the controller must select or observe
 and then visibly read back the exact configured model before any attachment or send. A localized
 or changed menu that cannot prove the selection stops the run without transferring project data.
 For an `Auto` readback, a generic popup wrapper is insufficient: the trigger must also identify

@@ -1,6 +1,6 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.10.0-codex.1
+# Code version: v1.11.1-codex.1
 
 from __future__ import annotations
 
@@ -212,6 +212,16 @@ def _message_from_row(row: dict[str, Any], source: str) -> ChatHistoryMessage | 
         )
     )
     stable_digest = hashlib.sha256(f"{source}:{message_key}".encode("utf-8")).hexdigest()[:24]
+    first_seen_at = str(row.get("first_seen_at") or "").strip()
+    persisted_last_seen_at = str(row.get("last_seen_at") or first_seen_at).strip()
+    first_seen_value = _timestamp_value(first_seen_at)
+    persisted_last_seen_value = _timestamp_value(persisted_last_seen_at)
+    gemini_capture_fallback = (
+        source == "gemini"
+        and first_seen_value > 0
+        and persisted_last_seen_value >= first_seen_value
+    )
+    last_seen_at = "" if gemini_capture_fallback else persisted_last_seen_at
     return ChatHistoryMessage(
         stable_id=f"chat-{stable_digest}",
         source=source,
@@ -226,8 +236,8 @@ def _message_from_row(row: dict[str, Any], source: str) -> ChatHistoryMessage | 
         content_html=content_html,
         source_links=source_links,
         model_label=str(row.get("model_label") or "").strip(),
-        first_seen_at=str(row.get("first_seen_at") or "").strip(),
-        last_seen_at=str(row.get("last_seen_at") or row.get("first_seen_at") or "").strip(),
+        first_seen_at=first_seen_at,
+        last_seen_at=last_seen_at,
     )
 
 
@@ -296,7 +306,11 @@ def _sort_messages(messages: Iterable[ChatHistoryMessage], sort: str) -> tuple[C
     return tuple(
         sorted(
             messages,
-            key=lambda item: (direction * _timestamp_value(item.last_seen_at), item.stable_id),
+            key=lambda item: (
+                not bool(item.last_seen_at),
+                direction * _timestamp_value(item.last_seen_at),
+                item.stable_id,
+            ),
         )
     )
 
@@ -351,7 +365,16 @@ def _sort_chat_history_sessions(
     if normalized_sort == "name":
         return tuple(sorted(sessions, key=lambda item: (item.conversation_title.casefold(), item.stable_id)))
     direction = -1 if normalized_sort == "newest" else 1
-    return tuple(sorted(sessions, key=lambda item: (direction * _timestamp_value(item.last_seen_at), item.stable_id)))
+    return tuple(
+        sorted(
+            sessions,
+            key=lambda item: (
+                not bool(item.last_seen_at),
+                direction * _timestamp_value(item.last_seen_at),
+                item.stable_id,
+            ),
+        )
+    )
 
 
 def _message_matches_query(message: ChatHistoryMessage, query_terms: tuple[str, ...]) -> bool:
@@ -383,22 +406,24 @@ def query_chat_history(
     session_view: bool = False,
     session: str = "",
 ) -> ChatHistoryPage:
-    """Read cached text sessions or one session's complete message history."""
+    """Read cached text sessions, global search results, or one session's complete history."""
     normalized_source = normalize_chat_history_source(source)
     normalized_query = str(query or "").strip()[:120].casefold()
     query_terms = tuple(normalized_query.split())
     all_messages = load_chat_history_messages(local_store_root, normalized_source)
     requested_session = str(session or "").strip()[:160]
     all_sessions = _sort_chat_history_sessions(_build_chat_history_sessions(all_messages), sort)
-    selected_session = next(
-        (
-            item
-            for item in all_sessions
-            if item.stable_id == requested_session
-            or f"{item.source}:{item.conversation_id}" == requested_session
-        ),
-        None,
-    )
+    selected_session = None
+    if not query_terms:
+        selected_session = next(
+            (
+                item
+                for item in all_sessions
+                if item.stable_id == requested_session
+                or f"{item.source}:{item.conversation_id}" == requested_session
+            ),
+            None,
+        )
     if selected_session is not None:
         selected_index = next(
             (index for index, item in enumerate(all_sessions) if item.stable_id == selected_session.stable_id),

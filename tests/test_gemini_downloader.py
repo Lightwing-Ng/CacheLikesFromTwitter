@@ -1,6 +1,6 @@
 """Focused tests for Gemini session history Parquet persistence."""
 
-# Code version: v1.10.2-codex.1
+# Code version: v1.10.4-codex.1
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from app.core.gemini_downloader import (
     GeminiNoCacheableMessagesError,
     _build_gemini_history_rpc_page_request,
     _decode_gemini_history_rpc_payloads,
+    _fetch_gemini_conversation_rpc_payloads,
     _gemini_message_timestamps_from_rpc_payloads,
     _gemini_links_and_cursor_from_rpc_payload,
     _open_gemini_sidebar,
@@ -43,6 +44,7 @@ from app.core.gemini_downloader import (
 from app.core.config import CrawlConfig
 from app.core.state import TaskSnapshot, TaskState
 from app.core.resource_persistence import GEMINI_HISTORY_SCHEMA
+from app.core.safari_automation import SafariPage
 
 
 def test_gemini_navigation_reuses_the_shared_transient_error_contract() -> None:
@@ -158,6 +160,32 @@ def test_gemini_conversation_rpc_response_exposes_source_turn_timestamps() -> No
     }
 
 
+def test_safari_conversation_rpc_uses_current_google_token_and_target_source_path() -> None:
+    class Page(SafariPage):
+        def __init__(self) -> None:
+            self.scripts: list[str] = []
+
+        def evaluate(self, expression: str, argument=None):
+            self.scripts.append(expression)
+            if "({ conversationId, stateKey })" in expression:
+                return {"started": True}
+            return {"state": "done", "ok": True, "status": 200, "length": 0, "error": ""}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = Page()
+    conversation = GeminiConversationLink(
+        "conversation-source-time",
+        "https://gemini.google.com/app/conversation-source-time",
+        "Source time",
+    )
+
+    assert _fetch_gemini_conversation_rpc_payloads(page, conversation) == []
+    assert "window.WIZ_global_data?.SNlM0e" in page.scripts[0]
+    assert "endpoint.searchParams.set('source-path', '/app/' + conversationId)" in page.scripts[0]
+
+
 def test_gemini_history_rpc_next_page_preserves_auth_fields() -> None:
     batch = [[["MaZiqc", "[39,null,[0,null,1]]", None, "generic"]]]
     request = SimpleNamespace(
@@ -253,7 +281,7 @@ def test_gemini_history_store_atomically_merges_and_replaces_conversations(tmp_p
     assert final_store.cached_conversation_ids == {"conversation-a", "conversation-b"}
     first_rows = [row for row in final_store.rows if row["conversation_id"] == "conversation-a"]
     assert {row["first_seen_at"] for row in first_rows} == {"2026-08-12T05:00:00Z"}
-    assert {row["last_seen_at"] for row in first_rows} == {"2026-08-12T06:00:00Z"}
+    assert {row["last_seen_at"] for row in first_rows} == {"2026-08-12T05:00:00Z"}
 
     added, unchanged = final_store.replace_conversation(
         first,
@@ -281,6 +309,34 @@ def test_gemini_history_store_prefers_source_timestamp_over_capture_time(tmp_pat
     store.replace_conversation(conversation, messages, "2026-08-15T17:38:42Z")
 
     assert {row["last_seen_at"] for row in store.rows} == {"2026-06-04T06:40:37.050958Z"}
+
+
+def test_gemini_history_store_preserves_source_timestamp_when_refresh_omits_it(
+    tmp_path: Path,
+) -> None:
+    history_path = gemini_history_path(tmp_path)
+    conversation = GeminiConversationLink(
+        "conversation-source-time",
+        "https://gemini.google.com/app/conversation-source-time",
+        "Source time",
+    )
+    timestamped_messages = _messages()
+    timestamped_messages[0]["message_timestamp"] = "2026-06-04T06:40:37.050958Z"
+    timestamped_messages[1]["message_timestamp"] = "2026-06-04T06:40:37.050958Z"
+    store = GeminiHistoryStore(history_path)
+    store.replace_conversation(conversation, timestamped_messages, "2026-08-15T17:38:42Z")
+    store.save()
+
+    refreshed_store = GeminiHistoryStore(history_path)
+    refreshed_store.replace_conversation(
+        conversation,
+        _messages(),
+        "2026-08-28T03:20:00Z",
+    )
+
+    assert {row["last_seen_at"] for row in refreshed_store.rows} == {
+        "2026-06-04T06:40:37.050958Z"
+    }
 
 
 def test_gemini_history_store_rejects_sessions_without_text_rows(tmp_path: Path) -> None:
@@ -501,3 +557,62 @@ def test_gemini_ready_gate_rejects_an_authenticated_region_unavailable_page() ->
     ):
         with pytest.raises(RuntimeError, match="not available.*current region"):
             _wait_for_gemini_ready(Page(), timeout_seconds=1)
+
+
+def test_gemini_ready_gate_tolerates_one_signed_out_hydration_frame() -> None:
+    waits: list[int] = []
+
+    class Page:
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            waits.append(milliseconds)
+
+    with patch(
+        "app.core.gemini_downloader.inspect_gemini_session",
+        side_effect=(
+            {
+                "href": "https://gemini.google.com/app",
+                "accountLabel": "",
+                "conversationLinks": 0,
+                "hasComposer": True,
+                "signedOut": True,
+                "unsupportedRegion": False,
+            },
+            {
+                "href": "https://gemini.google.com/app",
+                "accountLabel": "Google Account: Demo",
+                "conversationLinks": 1,
+                "hasComposer": True,
+                "signedOut": False,
+                "unsupportedRegion": False,
+            },
+        ),
+    ):
+        snapshot = _wait_for_gemini_ready(Page(), timeout_seconds=1)
+
+    assert snapshot["accountLabel"] == "Google Account: Demo"
+    assert waits == [500]
+
+
+def test_gemini_ready_gate_requires_two_signed_out_frames() -> None:
+    waits: list[int] = []
+
+    class Page:
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            waits.append(milliseconds)
+
+    signed_out_snapshot = {
+        "href": "https://gemini.google.com/app",
+        "accountLabel": "",
+        "conversationLinks": 1,
+        "hasComposer": True,
+        "signedOut": True,
+        "unsupportedRegion": False,
+    }
+    with patch(
+        "app.core.gemini_downloader.inspect_gemini_session",
+        side_effect=(signed_out_snapshot, signed_out_snapshot),
+    ):
+        with pytest.raises(RuntimeError, match="not signed in to Gemini"):
+            _wait_for_gemini_ready(Page(), timeout_seconds=1)
+
+    assert waits == [500]

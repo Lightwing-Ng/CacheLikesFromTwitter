@@ -1,6 +1,6 @@
 """Grok text history collection and local persistence.
 
-Code version: v1.0.1-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -37,6 +37,7 @@ GROK_CONVERSATION_PAGE_LIMIT = 500
 GROK_RESPONSE_BATCH_SIZE = 50
 GROK_API_RETRY_LIMIT = 3
 GROK_API_RETRY_DELAY_MS = 1_000
+GROK_API_REQUEST_TIMEOUT_MS = 30_000
 
 
 @dataclass(frozen=True)
@@ -190,20 +191,45 @@ def _grok_api_json(
     for attempt in range(1, GROK_API_RETRY_LIMIT + 1):
         result = page.evaluate(
             """
-            async ({url, method, body}) => {
-              const options = {method, credentials: "include", headers: {Accept: "application/json"}};
-              if (body !== null) {
-                options.headers["Content-Type"] = "application/json";
-                options.body = body;
+            async ({url, method, body, timeoutMs}) => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+              try {
+                const options = {
+                  method,
+                  credentials: "include",
+                  headers: {Accept: "application/json"},
+                  signal: controller.signal,
+                };
+                if (body !== null) {
+                  options.headers["Content-Type"] = "application/json";
+                  options.body = body;
+                }
+                const response = await fetch(url, options);
+                const text = await response.text();
+                let parsed = text;
+                try { parsed = text ? JSON.parse(text) : {}; } catch (_) {}
+                return {status: response.status, body: parsed};
+              } catch (error) {
+                if (controller.signal.aborted) {
+                  return {
+                    status: 408,
+                    body: {message: `Request timed out after ${timeoutMs} ms`},
+                    timedOut: true,
+                  };
+                }
+                throw error;
+              } finally {
+                clearTimeout(timeoutId);
               }
-              const response = await fetch(url, options);
-              const text = await response.text();
-              let parsed = text;
-              try { parsed = text ? JSON.parse(text) : {}; } catch (_) {}
-              return {status: response.status, body: parsed};
             }
             """,
-            {"url": url, "method": method, "body": serialized_body},
+            {
+                "url": url,
+                "method": method,
+                "body": serialized_body,
+                "timeoutMs": GROK_API_REQUEST_TIMEOUT_MS,
+            },
         )
         if isinstance(result, dict) and 200 <= int(result.get("status", 0)) < 300:
             payload = result.get("body")

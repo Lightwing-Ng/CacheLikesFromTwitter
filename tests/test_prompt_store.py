@@ -1,6 +1,6 @@
 """Tests for snapshot-backed prompt bookmarks and browser controls."""
 
-# Code version: v1.1.0-codex.1
+# Code version: v1.1.0-codex.2
 
 from pathlib import Path
 
@@ -159,7 +159,7 @@ def test_prompts_mode_renders_add_and_copy_controls(tmp_path: Path) -> None:
     assert 'class="browser-prompt-col-added">Saved</th>' not in prompt_body
     assert 'class="browser-prompt-col-source">Source</th>' in prompt_body
     assert 'class="browser-prompt-col-remarks">Remarks</th>' in prompt_body
-    assert 'browser-prompts-primary-metric' in prompt_body
+    assert 'foundation-metric-card' in prompt_body
     assert 'data-prompt-copy' in prompt_body
     assert 'data-prompt-remark-add' not in prompt_body
     assert 'data-prompt-remark-options' in prompt_body

@@ -1,6 +1,6 @@
 """Service orchestration and Flask contract tests.
 
-Code version: v1.8.1-codex.1
+Code version: v1.8.1-codex.3
 """
 
 from __future__ import annotations
@@ -249,6 +249,34 @@ def test_chatgpt_media_start_uses_safari_project_settings(tmp_path: Path, macos_
     runtime_config = start.call_args.args[0]
     assert runtime_config.chatgpt_browser == "safari"
     assert runtime_config.chatgpt_project_url == project_url
+    assert start.call_args.kwargs["content_mode"] == "media"
+
+
+def test_chatgpt_media_start_passes_blank_url_for_all_generated_media(
+    tmp_path: Path, macos_host
+) -> None:
+    saved_project_url = "https://chatgpt.com/g/g-p-saved/project"
+    initial_config = CrawlConfig(chatgpt_project_url=saved_project_url)
+
+    with patch("app.web.app.load_saved_config", return_value=initial_config), patch(
+        "app.web.app.save_config"
+    ) as save_config, patch("app.core.chatgpt_service.ChatGPTDownloadService.start") as start:
+        application = create_app(tmp_path / "local_store")
+        application.config.update(TESTING=True)
+        with application.test_client() as isolated_client:
+            response = isolated_client.post(
+                "/cache/chatgpt/start",
+                data={
+                    "chatgpt_browser": "safari",
+                    "chatgpt_content_mode": "media",
+                    "chatgpt_project_url": "",
+                },
+            )
+
+    assert response.status_code == 302
+    runtime_config = start.call_args.args[0]
+    assert runtime_config.chatgpt_project_url == ""
+    assert save_config.call_args.args[0].chatgpt_project_url == ""
     assert start.call_args.kwargs["content_mode"] == "media"
 
 

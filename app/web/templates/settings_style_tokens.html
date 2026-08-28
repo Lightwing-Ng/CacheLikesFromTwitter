@@ -1,6 +1,6 @@
-<!-- Code version: v1.2.7-codex.9 -->
+<!-- Code version: v1.3.0-codex.9 -->
 <!doctype html>
-<html lang="en-US" data-style-token-reference-skin>
+<html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -8,12 +8,12 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.80') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.86.0-codex.4') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.3-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.4-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='resizer.js', v='resizer-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.1.0-codex.7') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.2.0-codex.2') }}"></script>
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
@@ -62,67 +62,118 @@
                     {% for row in style_token_rows %}
                     <section id="{{ row.id }}" class="style-token-card" data-style-token-card="{{ row.id }}">
                         <div class="style-token-demo">
-                            {% if row.sample_kind == "metric-summary" %}
-                            <div class="metric-card metric-card-accent foundation-metric-card">
-                                <span class="metric-label">Messages</span>
-                                <strong>{{ "{:,}".format(style_token_message_count) }}</strong>
+                            {% if row.sample_kind == "round-icon-button" %}
+                            <button type="button" class="settings-round-icon-button style-token-round-icon-demo" aria-label="Add item">
+                                <span class="icon icon-style-token-plus" aria-hidden="true"></span>
+                            </button>
+                            {% elif row.sample_kind == "glass-surface" %}
+                            <section class="style-token-demo-surface" aria-label="Frosted glass demo">
+                                <div class="style-token-demo-backdrop" aria-hidden="true">
+                                    <p class="style-token-demo-title">{{ row.sample_title }}</p>
+                                    <p class="style-token-demo-copy">{{ row.sample_copy }}</p>
+                                </div>
+                                <div class="style-token-demo-card" aria-hidden="true"></div>
+                            </section>
+                            {% elif row.sample_kind == "modal-dialog" %}
+                            <div class="style-token-modal-shell">
+                                <section class="workspace-modal-dialog style-token-modal-demo" data-style-token-dismissible aria-label="Modal dialog demo">
+                                    <span class="workspace-modal-icon suggestion-loading-spinner" aria-hidden="true"></span>
+                                    <button type="button" class="workspace-modal-close" data-style-token-dismiss aria-label="Dismiss modal">×</button>
+                                    <h2 class="workspace-modal-title">{{ row.sample_title }}</h2>
+                                    <p class="workspace-modal-copy">{{ row.sample_copy }}</p>
+                                </section>
+                            </div>
+                            {% elif row.sample_kind == "floating-banner" %}
+                            <div class="style-token-modal-shell">
+                                <section class="notice-floating notice-floating-banner style-token-modal-demo" data-style-token-dismissible aria-label="Banner message demo">
+                                    <span class="workspace-modal-icon style-token-banner-icon" aria-hidden="true">i</span>
+                                    <button type="button" class="workspace-modal-close" data-style-token-dismiss aria-label="Dismiss banner">×</button>
+                                    <h2 class="workspace-modal-title">{{ row.sample_title }}</h2>
+                                    <p class="workspace-modal-copy">{{ row.sample_copy }}</p>
+                                </section>
+                            </div>
+                            {% elif row.sample_kind == "primary-inverted-button" %}
+                            <div class="style-token-component-action-row">
+                                <button type="button" class="primary-button primary-button--inverted style-token-action-button">{{ row.sample_title }}</button>
                             </div>
                             {% elif row.sample_kind == "range-mode" %}
                             <section class="style-token-range-mode-demo" data-style-token-demo="range-mode" aria-label="Segmented control">
                                 <div class="range-mode-shell" data-active="overview" data-option-count="3" data-segmented-pill="measured" data-segmented-active-index="0" style="--segmented-option-count: 3; --segmented-active-index: 0;" role="radiogroup" aria-label="Style token range mode">
-                                    <label class="range-mode-option" for="style_token_range_overview">
-                                        <input id="style_token_range_overview" name="style_token_range_mode" type="radio" value="overview" checked>
-                                        <span>Overview</span>
-                                    </label>
-                                    <label class="range-mode-option" for="style_token_range_details">
-                                        <input id="style_token_range_details" name="style_token_range_mode" type="radio" value="details">
-                                        <span>Details</span>
-                                    </label>
-                                    <label class="range-mode-option" for="style_token_range_metrics">
-                                        <input id="style_token_range_metrics" name="style_token_range_mode" type="radio" value="metrics">
-                                        <span>Metrics</span>
-                                    </label>
+                                    <label class="range-mode-option" for="style_token_range_overview"><input id="style_token_range_overview" name="style_token_range_mode" type="radio" value="overview" checked><span>Overview</span></label>
+                                    <label class="range-mode-option" for="style_token_range_details"><input id="style_token_range_details" name="style_token_range_mode" type="radio" value="details"><span>Details</span></label>
+                                    <label class="range-mode-option" for="style_token_range_metrics"><input id="style_token_range_metrics" name="style_token_range_mode" type="radio" value="metrics"><span>Metrics</span></label>
                                 </div>
                             </section>
-                            {% endif %}
-                        </div>
-                        <div class="style-token-meta">
-                            <div class="style-token-title-row">
-                                <p class="style-token-title">{{ row.name }}</p>
-                                <button
-                                    type="button"
-                                    class="settings-round-icon-button style-token-copy-button"
-                                    data-style-token-copy="{{ row.name }}"
-                                    aria-label="Copy style name"
-                                    title="Copy style name"
-                                >
-                                    <span class="icon icon-style-token-copy" aria-hidden="true"></span>
-                                </button>
+                            {% elif row.sample_kind == "action-package" %}
+                            <section class="settings-action-package style-token-action-package" data-style-token-action-package>
+                                <span class="settings-action-package-icon-shell settings-callout-card-primary"><span class="icon icon-store-maintain" aria-hidden="true"></span></span>
+                                <div class="settings-action-package-copy">
+                                    <p class="settings-service-name">{{ row.sample_title }}</p>
+                                    <p class="settings-service-note" data-style-token-action-copy>{{ row.sample_copy }}</p>
+                                    <span class="style-token-action-live" data-style-token-action-live hidden>Live</span>
+                                </div>
+                                <div class="settings-action-package-form">
+                                    <button type="button" class="primary-button style-token-action-button" data-style-token-action-button>Refresh</button>
+                                </div>
+                            </section>
+                            <label class="style-token-action-live-control"><input type="checkbox" data-style-token-action-live-control> Show live state</label>
+                            {% elif row.sample_kind == "settings-general-option" %}
+                            <fieldset class="style-token-settings-general-form">
+                                <legend class="sr-only">Execution option</legend>
+                                <label class="settings-general-option">
+                                    <input type="radio" name="style_token_execution_option" checked>
+                                    <span class="settings-general-option-copy"><strong>{{ row.sample_title }}</strong><span>{{ row.sample_copy }}</span></span>
+                                </label>
+                            </fieldset>
+                            {% elif row.sample_kind == "shared-select-dropdown" %}
+                            <label class="style-token-shared-select-field">
+                                <span>{{ row.sample_title }}</span>
+                                <span class="trade-strategy-combobox browser-filter-select" data-style-token-shared-filter data-style-token-menu-label="Period">
+                                    <select class="form-select browser-filter-native-select" data-style-token-shared-native aria-label="Period" hidden aria-hidden="true" tabindex="-1">
+                                        {% for option in row.sample_options %}<option value="{{ option.value }}"{% if option.value == row.sample_value %} selected{% endif %}>{{ option.label }}</option>{% endfor %}
+                                    </select>
+                                    <button type="button" class="trade-strategy-select form-select trade-strategy-trigger browser-filter-select-trigger" data-style-token-shared-filter-trigger aria-haspopup="listbox" aria-expanded="false" aria-controls="style_token_period_options" aria-label="Period: 1 year">
+                                        <span class="trade-strategy-trigger-label" data-style-token-shared-filter-label>1 year</span><span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                                    </button>
+                                    <span id="style_token_period_options" class="trade-strategy-dropdown browser-filter-select-dropdown" data-style-token-shared-filter-menu role="listbox" aria-label="Period" hidden>
+                                        {% for option in row.sample_options %}<button type="button" class="trade-strategy-dropdown-option browser-filter-select-option{% if option.value == row.sample_value %} is-selected is-active{% endif %}" data-style-token-shared-filter-option="{{ option.value }}" role="option" aria-selected="{{ 'true' if option.value == row.sample_value else 'false' }}"><span class="trade-strategy-dropdown-check" aria-hidden="true"></span><span class="trade-strategy-dropdown-text">{{ option.label }}</span></button>{% endfor %}
+                                    </span>
+                                </span>
+                            </label>
+                            {% elif row.sample_kind == "switch" %}
+                            <label class="switch-row style-token-switch-demo">
+                                <span>{{ row.sample_title }}</span>
+                                <span class="ios-switch-shell"><input type="checkbox" checked data-style-token-switch><span class="ios-switch-slider" aria-hidden="true"></span></span>
+                            </label>
+                            {% elif row.sample_kind == "text-input-control" %}
+                            <label class="style-token-text-input-demo">
+                                <span>{{ row.sample_title }}</span>
+                                <span class="style-token-text-input-shell">
+                                    <input type="text" class="text-input-control" value="{{ row.sample_value }}" data-style-token-text-input>
+                                    <button type="button" class="style-token-text-input-clear" data-style-token-text-input-clear aria-label="Clear cache label">×</button>
+                                </span>
+                            </label>
+                            {% elif row.sample_kind == "chart-tooltip" %}
+                            <div class="style-token-chart-tooltip-shell">
+                                <section class="chart-tooltip style-token-chart-tooltip-demo" aria-label="Tooltip demo">
+                                    <p class="chart-tooltip-title">{{ row.sample_title }}</p>
+                                    <dl class="chart-tooltip-list"><div><dt>Source</dt><dd>ChatGPT</dd></div><div><dt>Messages</dt><dd>12,486</dd></div><div><dt>Media</dt><dd>842</dd></div></dl>
+                                </section>
                             </div>
-                            <div class="style-token-table-wrap">
-                                <table class="style-token-table" aria-label="{{ row.name }} tokens">
-                                    <tbody>
-                                        {% for token in row.tokens %}
-                                        <tr data-style-token-row="{{ token.name }}" title="{{ token.reference_count }} stylesheet references · style.css:{{ token.line }}">
-                                            <td class="style-token-name">{{ token.name }}</td>
-                                            <td class="style-token-value"><span class="style-token-value-text">{{ token.value }}</span></td>
-                                        </tr>
-                                        {% endfor %}
-                                    </tbody>
-                                </table>
+                            {% elif row.sample_kind == "workspace-article" %}
+                            <article class="workspace-article-card style-token-workspace-article-demo">
+                                <div class="report-heading-row"><p class="report-heading">{{ row.sample_title }}</p><span>{{ row.sample_value }}</span></div>
+                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
+                            </article>
+                            {% elif row.sample_kind == "metric-value" %}
+                            <div class="style-token-metric-demo-shell">
+                                <article class="metric-card foundation-metric-card metric-card-accent style-token-metric-card-demo"><span class="metric-label">{{ row.sample_title }}</span><strong>{{ row.sample_value }}</strong></article>
                             </div>
-                        </div>
-                    </section>
-                    {% endfor %}
-                    {% for row in style_token_component_rows %}
-                    <section id="{{ row.id }}" class="style-token-card" data-style-token-card="{{ row.id }}">
-                        <div class="style-token-demo">
-                            {% if row.sample_kind == "secondary-button" %}
+                            {% elif row.sample_kind == "secondary-button" %}
                             <section class="style-token-component-demo style-token-secondary-button-demo" data-style-token-demo="secondary-button" aria-label="Secondary button demo">
                                 <div class="browser-filter-actions style-token-component-action-row">
                                     <button type="button" name="refresh" value="1" class="secondary-button browser-refresh-button" data-style-token-secondary-button data-source-xpath="/html/body/main/div[3]/aside/section[2]/form/div[2]/button">Refresh cache</button>
                                 </div>
-                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
                             </section>
                             {% elif row.sample_kind == "primary-button" %}
                             <section class="style-token-component-demo style-token-primary-button-demo" data-style-token-demo="primary-button" aria-label="Primary button demo">
@@ -136,7 +187,6 @@
                                         aria-label="Start"
                                     >{{ row.sample_title }}</button>
                                 </div>
-                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
                             </section>
                             {% elif row.sample_kind == "global-theme-toggle" %}
                             <section class="style-token-component-demo style-token-theme-toggle-demo" data-style-token-demo="global-theme-toggle" aria-label="Global theme toggle demo">
@@ -154,23 +204,9 @@
                                     </button>
                                     <span class="style-token-theme-toggle-label" data-style-token-theme-toggle-label>Switch to Dark mode</span>
                                 </div>
-                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
-                            </section>
-                            {% elif row.sample_kind == "shared-cache-settings-link" %}
-                            <section class="style-token-component-demo style-token-shared-cache-settings-link-demo" data-style-token-demo="shared-cache-settings-link" aria-label="Shared cache settings link demo">
-                                <div class="style-token-shared-cache-settings-link-preview">
-                                    <a
-                                        class="ghost-link ghost-link--compact cache-settings-link style-token-shared-cache-settings-link"
-                                        href="{{ url_for('settings') }}#settings-downloads"
-                                        data-style-token-shared-cache-settings-link
-                                        data-source-route="/cache/chatgpt"
-                                        data-source-selector="aside#app_sidebar > section.sidebar-section:nth-of-type(3) > a.ghost-link.ghost-link--compact"
-                                    >{{ row.sample_title }}</a>
-                                </div>
-                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
                             </section>
                             {% elif row.sample_kind == "prompt-tag" %}
-                            <section class="style-token-component-demo style-token-prompt-tag-demo" data-style-token-demo="prompt-tag" aria-label="Prompt tag demo">
+                            <section class="style-token-component-demo style-token-prompt-tag-demo" data-style-token-demo="prompt-tag" aria-label="Tag demo">
                                 <div class="style-token-prompt-tag-preview">
                                     <div class="browser-prompt-tags" data-style-token-prompt-tags>
                                         <span
@@ -190,7 +226,6 @@
                                         </span>
                                     </div>
                                 </div>
-                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
                             </section>
                             {% elif row.sample_kind == "local-store-pagination" %}
                             <section class="style-token-component-demo style-token-pagination-demo" data-style-token-demo="local-store-pagination" aria-label="Local store pagination demo">
@@ -216,7 +251,6 @@
                                     <button type="button" class="local-store-page-button" data-pagination-target="16" data-pagination-current="0" aria-label="Session page 16">16</button>
                                     <button type="button" class="local-store-page-button local-store-page-nav" data-pagination-target="2" aria-label="Next session page"><span class="icon icon-page-next" aria-hidden="true"></span></button>
                                 </nav>
-                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
                             </section>
                             {% elif row.sample_kind == "shared-select-filter" %}
                             <section class="style-token-component-demo style-token-shared-filter-demo" data-style-token-demo="shared-select-filter" aria-label="Shared select filter demo">
@@ -236,13 +270,12 @@
                                         <button type="button" class="trade-strategy-dropdown-option browser-filter-select-option" data-style-token-shared-filter-option="name" role="option" aria-selected="false"><span class="trade-strategy-dropdown-check" aria-hidden="true"></span><span class="trade-strategy-dropdown-text">Session title</span></button>
                                     </div>
                                 </div>
-                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
                             </section>
                             {% elif row.sample_kind == "agent-browser-selector" %}
                             <section class="style-token-component-demo style-token-agent-browser-demo" data-style-token-demo="agent-browser-selector" aria-label="Agent browser selector demo">
                                 <p class="style-token-component-kicker">{{ row.sample_title }}</p>
                                 <div
-                                    class="trade-strategy-combobox agent-combobox agent-browser-combobox style-token-agent-browser-combobox is-agent-combobox-open"
+                                    class="trade-strategy-combobox agent-combobox agent-browser-combobox style-token-agent-browser-combobox"
                                     data-style-token-agent-browser
                                     data-source-route="/agent/edge/claude"
                                     data-source-selector="label.field:nth-of-type(2) > div.agent-browser-session-field.is-browser-status-loading > div.trade-strategy-combobox.agent-combobox:nth-of-type(1) > button.trade-strategy-select.form-select"
@@ -253,7 +286,7 @@
                                         class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger"
                                         data-style-token-agent-browser-trigger
                                         aria-haspopup="listbox"
-                                        aria-expanded="true"
+                                        aria-expanded="false"
                                         aria-controls="style_token_agent_browser_options"
                                         aria-label="Browser: Edge"
                                     >
@@ -271,7 +304,8 @@
                                         data-style-token-agent-browser-menu
                                         role="listbox"
                                         aria-label="Choose browser"
-                                        aria-hidden="false"
+                                        aria-hidden="true"
+                                        hidden
                                     >
                                         {% for browser in (
                                             {"key": "safari", "label": "Safari", "icon": "images/browser.safari.png"},
@@ -301,7 +335,6 @@
                             <section class="style-token-component-demo style-token-table-demo-shell" data-style-token-demo="scrollable-data-table" data-style-token-table-demo data-style-token-table-page-size="6" aria-label="Scrollable data table demo">
                                 <div class="style-token-table-demo-summary-row">
                                     <p class="style-token-component-kicker">{{ row.sample_title }}</p>
-                                    <p class="style-token-demo-note">{{ row.sample_copy }}</p>
                                 </div>
                                 <div class="events-table-shell style-token-table-demo-surface">
                                     <div class="events-table-scroll style-token-table-demo-scroll" data-style-token-table-scroll>
@@ -366,7 +399,27 @@
                                         {% for token in row.tokens %}
                                         <tr data-style-token-row="{{ token.name }}" title="{{ token.reference_count }} stylesheet references · style.css:{{ token.line }}">
                                             <td class="style-token-name">{{ token.name }}</td>
-                                            <td class="style-token-value"><span class="style-token-value-text">{{ token.value }}</span></td>
+                                            <td class="style-token-value">
+                                                {% if token.reference_target_id %}
+                                                <a class="style-token-value-link" href="#{{ token.reference_target_id }}" data-style-token-reference="{{ token.reference_target_id }}">{{ token.reference_label }}</a>
+                                                {% elif token.editable %}
+                                                <span class="style-token-value-control" data-style-token-control data-style-token-name="{{ token.name }}" data-style-token-value="{{ token.numeric_value }}" data-style-token-unit="{{ token.unit }}" data-style-token-min="{{ token.min_value }}">
+                                                    <input class="style-token-value-input" value="{{ token.numeric_value }}{{ token.unit }}" readonly aria-label="{{ token.name }} value" data-style-token-value-input>
+                                                    <span class="cache-number-stepper style-token-value-stepper" aria-label="Adjust {{ token.name }}">
+                                                        <button type="button" class="cache-number-stepper-button" data-style-token-stepper="up" aria-label="Increase {{ token.name }}">▲</button>
+                                                        <button type="button" class="cache-number-stepper-button" data-style-token-stepper="down" aria-label="Decrease {{ token.name }}">▼</button>
+                                                    </span>
+                                                </span>
+                                                {% else %}
+                                                <span class="style-token-value-text" data-style-token-value-text>{{ token.value }}</span>
+                                                {% endif %}
+                                            </td>
+                                        </tr>
+                                        {% endfor %}
+                                        {% for related in row.related_styles %}
+                                        <tr class="style-token-related-row">
+                                            <td class="style-token-name">Related style</td>
+                                            <td class="style-token-value"><button type="button" class="style-token-reference style-token-related-value" data-style-token-reference="{{ related.target_id }}">{{ related.name }}</button></td>
                                         </tr>
                                         {% endfor %}
                                     </tbody>
@@ -384,6 +437,6 @@
     {% set dock_section = "settings" %}
     {% include "_sidebar_dock.html" %}
 </main>
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.19.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.20.0-codex.1') }}"></script>
 </body>
 </html>

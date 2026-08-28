@@ -1,6 +1,6 @@
 """Read the local CSS foundation token registry for the Style tokens page.
 
-Code version: v0.3.0-codex.5
+Code version: v0.4.0-codex.2
 """
 
 from __future__ import annotations
@@ -182,225 +182,254 @@ def build_reused_style_token_rows(
 
 
 def build_style_token_component_rows() -> list[dict[str, object]]:
-    """Return explicit browser and table specimens for the Style tokens page."""
+    """Return the explicit production-component catalog for Style tokens."""
     registry = load_css_token_registry()
 
-    def token_rows(names: tuple[str, ...]) -> list[dict[str, object]]:
+    def token_rows(
+        names: tuple[str, ...],
+        material_names: tuple[str, ...] = (),
+    ) -> list[dict[str, object]]:
         rows: list[dict[str, object]] = []
         for name in names:
             definition = registry.get(name)
             if definition is None:
                 continue
-            rows.append(
-                {
-                    "name": definition.name,
-                    "value": definition.value,
-                    "line": definition.line,
-                    "reference_count": definition.reference_count,
-                }
-            )
-        return rows
+            row: dict[str, object] = {
+                "name": definition.name,
+                "value": definition.value,
+                "line": definition.line,
+                "reference_count": definition.reference_count,
+                "editable": False,
+            }
+            numeric_match = re.fullmatch(r"(-?\d+)(px)?", definition.value)
+            if numeric_match:
+                numeric_value = int(numeric_match.group(1))
+                row.update(
+                    editable=True,
+                    numeric_value=numeric_value,
+                    unit=numeric_match.group(2) or "",
+                    min_value=0 if numeric_value >= 0 else numeric_value,
+                )
+            if name in material_names:
+                row.update(
+                    value="Frosted glass",
+                    editable=False,
+                    reference_label="Frosted glass",
+                    reference_target_id="frosted-glass",
+                )
+            rows.append(row)
+        return sorted(rows, key=lambda row: str(row["name"]).casefold())
 
-    def component_row(
-        *,
-        row_id: str,
-        name: str,
-        sample_kind: str,
-        token_names: tuple[str, ...],
-        sample_title: str = "",
-        sample_copy: str = "",
-    ) -> dict[str, object]:
-        return {
-            "id": row_id,
-            "name": name,
-            "sample_kind": sample_kind,
-            "sample_title": sample_title,
-            "sample_copy": sample_copy,
-            "tokens": token_rows(token_names),
-        }
+    period_options = (
+        {"value": "1d", "label": "1 day"},
+        {"value": "3d", "label": "3 days"},
+        {"value": "1w", "label": "1 week"},
+        {"value": "1mo", "label": "1 month"},
+        {"value": "3mo", "label": "3 months"},
+        {"value": "6mo", "label": "6 months"},
+        {"value": "1y", "label": "1 year"},
+        {"value": "2y", "label": "2 years"},
+        {"value": "3y", "label": "3 years"},
+        {"value": "5y", "label": "5 years"},
+        {"value": "10y", "label": "10 years"},
+        {"value": "max", "label": "Max"},
+    )
+    specs: tuple[dict[str, object], ...] = (
+        {
+            "id": "agent-browser-selector",
+            "name": "Agent browser selector",
+            "sample_kind": "agent-browser-selector",
+            "sample_title": "Browser",
+            "sample_copy": "The Agent selector keeps the active browser visible in the shared accessible menu.",
+            "token_names": ("--control-form-height", "--control-liquid-background", "--control-liquid-background-hover", "--control-liquid-border", "--control-liquid-shadow", "--control-liquid-shadow-focus", "--control-liquid-blur", "--shared-select-dropdown-material", "--shared-select-option-radius", "--theme-success-strong", "--radius-pill", "--font-table-body"),
+            "material_names": ("--shared-select-dropdown-material",),
+        },
+        {
+            "id": "circular-icon-button",
+            "name": "Circular icon button",
+            "sample_kind": "round-icon-button",
+            "token_names": ("--settings-round-icon-button-material", "--settings-round-icon-button-size", "--settings-round-icon-button-icon-size", "--settings-round-icon-button-radius", "--settings-round-icon-button-background", "--settings-round-icon-button-background-hover", "--settings-round-icon-button-shadow", "--settings-round-icon-button-shadow-hover", "--settings-round-icon-button-shadow-active", "--settings-round-icon-button-color", "--settings-round-icon-button-color-hover"),
+            "material_names": ("--settings-round-icon-button-material",),
+        },
+        {
+            "id": "frosted-glass",
+            "name": "Frosted glass",
+            "sample_kind": "glass-surface",
+            "sample_title": "The quick brown fox jumps over the lazy dog.",
+            "sample_copy": "Transparency and backdrop-filter are tested over a layered gradient.",
+            "token_names": ("--frosted-glass-background", "--frosted-glass-border", "--frosted-glass-shadow", "--frosted-glass-blur"),
+        },
+        {
+            "id": "global-theme-toggle",
+            "name": "Global theme toggle",
+            "sample_kind": "global-theme-toggle",
+            "sample_title": "Appearance",
+            "token_names": ("--settings-round-icon-button-size", "--settings-round-icon-button-icon-size", "--settings-round-icon-button-radius", "--settings-round-icon-button-background", "--settings-round-icon-button-background-hover", "--settings-round-icon-button-shadow", "--settings-round-icon-button-shadow-hover", "--settings-round-icon-button-color", "--settings-round-icon-button-color-hover", "--frosted-glass-blur"),
+        },
+        {
+            "id": "modal-dialog",
+            "name": "Modal dialog",
+            "sample_kind": "modal-dialog",
+            "sample_title": "Refreshing local cache",
+            "sample_copy": "We are checking the local catalog for new items. Keep this page open while the refresh finishes.",
+            "token_names": ("--workspace-modal-material", "--workspace-modal-radius", "--workspace-modal-pad-block", "--workspace-modal-pad-inline", "--workspace-modal-close-size", "--workspace-modal-icon-size", "--workspace-modal-column-gap", "--workspace-modal-row-gap"),
+            "material_names": ("--workspace-modal-material",),
+        },
+        {
+            "id": "modal-dialog-banner-message",
+            "name": "Modal dialog banner message",
+            "sample_kind": "floating-banner",
+            "sample_title": "Cache settings updated",
+            "sample_copy": "New browser sessions will use the saved settings.",
+            "token_names": ("--notice-floating-material", "--workspace-modal-radius", "--workspace-modal-pad-block", "--workspace-modal-pad-inline", "--workspace-modal-close-size", "--workspace-modal-icon-size", "--workspace-modal-column-gap"),
+            "material_names": ("--notice-floating-material",),
+            "related_styles": ({"name": "Modal dialog", "target_id": "modal-dialog"},),
+        },
+        {
+            "id": "pagination",
+            "name": "Pagination",
+            "sample_kind": "local-store-pagination",
+            "sample_title": "Sessions",
+            "token_names": ("--local-store-pagination-material", "--radius-pill", "--accent-fill", "--accent-shadow-strong", "--font-table-body", "--motion-duration-spatial", "--motion-bouncy"),
+            "material_names": ("--local-store-pagination-material",),
+        },
+        {
+            "id": "primary-inverted-button",
+            "name": "Primary (inverted) button",
+            "sample_kind": "primary-inverted-button",
+            "sample_title": "Start",
+            "token_names": ("--primary-button-inverted-background", "--primary-button-inverted-background-hover", "--primary-button-inverted-border", "--primary-button-inverted-border-hover", "--primary-button-inverted-color"),
+        },
+        {
+            "id": "primary-button",
+            "name": "Primary button",
+            "sample_kind": "primary-button",
+            "sample_title": "Start",
+            "token_names": ("--primary-button-background", "--primary-button-background-disabled", "--primary-button-background-hover", "--primary-button-background-pending", "--primary-button-border", "--primary-button-color", "--primary-button-color-disabled", "--primary-button-font-weight", "--primary-button-min-height", "--primary-button-pad-block", "--primary-button-pad-inline", "--primary-button-radius"),
+        },
+        {
+            "id": "prompt-tag",
+            "name": "Tag",
+            "sample_kind": "prompt-tag",
+            "sample_title": "PS",
+            "token_names": ("--accent-border-strong", "--accent-surface-soft", "--accent-text", "--radius-pill", "--font-ui-sm", "--font-weight-medium"),
+        },
+        {
+            "id": "scrollable-data-table",
+            "name": "Scrollable data table",
+            "sample_kind": "scrollable-data-table",
+            "sample_title": "Cache history",
+            "token_names": ("--scrollable-data-table-header-material", "--scrollable-data-table-header-padding", "--scrollable-data-table-cell-padding", "--scrollable-data-table-summary-padding", "--scrollable-data-table-header-height", "--scrollable-data-table-min-width", "--scrollable-data-table-header-color", "--scrollable-data-table-scrollbar-gutter", "--scrollable-data-table-row-background", "--scrollable-data-table-row-background-alt", "--scrollable-data-table-summary-background", "--scrollable-data-table-summary-border", "--scrollable-data-table-summary-shadow", "--scrollable-data-table-summary-blur"),
+            "material_names": ("--scrollable-data-table-header-material",),
+        },
+        {
+            "id": "secondary-button",
+            "name": "Secondary button",
+            "sample_kind": "secondary-button",
+            "sample_title": "Refresh cache",
+            "token_names": ("--glass-chip-background-strong", "--glass-chip-background-hover", "--glass-chip-border", "--glass-chip-shadow", "--glass-chip-shadow-hover", "--radius-pill", "--font-tooltip", "--font-weight-semibold"),
+        },
+        {
+            "id": "segmented-control",
+            "name": "Segmented control",
+            "sample_kind": "range-mode",
+            "token_names": ("--segmented-control-material", "--mode-switch-radius", "--mode-switch-pad", "--mode-switch-gap", "--mode-switch-min-height", "--mode-switch-thumb-inset", "--mode-switch-thumb-offset", "--mode-switch-label-pad-inline", "--mode-switch-label-min-height", "--mode-switch-thumb-background"),
+            "material_names": ("--segmented-control-material",),
+        },
+        {
+            "id": "settings-action-package",
+            "name": "Settings action package",
+            "sample_kind": "action-package",
+            "sample_title": "Refresh local metadata",
+            "sample_copy": "Refresh cached metadata and packaged browser assets without leaving Settings.",
+            "token_names": ("--settings-action-package-material", "--settings-action-package-column-gap", "--settings-action-package-row-gap", "--settings-action-package-copy-gap", "--settings-action-package-background", "--settings-action-package-border", "--settings-action-package-live-marker-size", "--settings-action-package-live-marker-color", "--settings-action-package-live-marker-duration", "--style-token-demo-width"),
+            "material_names": ("--settings-action-package-material",),
+            "related_styles": ({"name": "Settings execution option", "target_id": "settings-execution-option"},),
+        },
+        {
+            "id": "settings-execution-option",
+            "name": "Settings execution option",
+            "sample_kind": "settings-general-option",
+            "sample_title": "Update existing cache entries",
+            "sample_copy": "When enabled, refresh existing metadata as well as newly discovered items.",
+            "token_names": ("--settings-general-option-gap", "--settings-general-option-padding", "--settings-general-option-radius", "--settings-general-option-background", "--settings-general-option-border"),
+            "related_styles": ({"name": "Settings action package", "target_id": "settings-action-package"},),
+        },
+        {
+            "id": "shared-select-dropdown",
+            "name": "Shared select dropdown",
+            "sample_kind": "shared-select-dropdown",
+            "sample_title": "Period",
+            "sample_copy": "The standard Period trigger exposes the full shared option range.",
+            "sample_value": "1y",
+            "sample_options": period_options,
+            "token_names": ("--shared-select-dropdown-material",),
+            "material_names": ("--shared-select-dropdown-material",),
+            "related_styles": ({"name": "Shared select filter", "target_id": "shared-select-filter"},),
+        },
+        {
+            "id": "shared-select-filter",
+            "name": "Shared select filter",
+            "sample_kind": "shared-select-filter",
+            "sample_title": "Sort cached text",
+            "token_names": ("--shared-select-trigger-material", "--shared-select-dropdown-padding", "--shared-select-dropdown-radius", "--shared-select-dropdown-max-height", "--shared-select-option-padding", "--shared-select-option-radius", "--shared-select-option-gap", "--control-liquid-background", "--control-liquid-background-hover", "--control-liquid-border"),
+            "material_names": ("--shared-select-trigger-material", "--shared-select-dropdown-material"),
+        },
+        {
+            "id": "switch",
+            "name": "Switch",
+            "sample_kind": "switch",
+            "sample_title": "Update existing cache entries",
+            "token_names": ("--switch-width", "--switch-height", "--switch-radius", "--switch-track-background", "--switch-track-background-checked", "--switch-track-shadow", "--switch-track-shadow-checked", "--switch-thumb-inset", "--switch-thumb-size", "--switch-thumb-radius", "--switch-thumb-background", "--switch-thumb-shadow", "--switch-thumb-offset"),
+        },
+        {
+            "id": "text-input-control",
+            "name": "Text input control",
+            "sample_kind": "text-input-control",
+            "sample_title": "Cache label",
+            "sample_value": "Saved prompts",
+            "token_names": ("--text-input-control-radius", "--text-input-control-pad-block", "--text-input-control-pad-inline", "--text-input-control-background", "--text-input-control-border", "--text-input-control-color", "--text-input-control-font-size", "--text-input-control-shadow", "--text-input-control-shadow-hover"),
+        },
+        {
+            "id": "tooltip",
+            "name": "Tooltip",
+            "sample_kind": "chart-tooltip",
+            "sample_title": "28 Aug 2026 10:08",
+            "token_names": ("--tooltip-background", "--tooltip-border", "--tooltip-shadow", "--tooltip-blur", "--chart-tooltip-min-width", "--chart-tooltip-max-width", "--chart-tooltip-padding", "--chart-tooltip-radius", "--chart-tooltip-row-gap", "--chart-tooltip-item-gap"),
+            "material_names": ("--tooltip-background", "--tooltip-border", "--tooltip-shadow", "--tooltip-blur"),
+        },
+        {
+            "id": "workspace-article",
+            "name": "Workspace article",
+            "sample_kind": "workspace-article",
+            "sample_title": "General",
+            "sample_copy": "The desktop article baseline becomes a lighter heading surface at narrow widths.",
+            "sample_value": "Desktop baseline",
+            "token_names": ("--workspace-article-radius", "--workspace-article-pad-block-start", "--workspace-article-pad-inline", "--workspace-article-pad-block-end", "--workspace-article-background", "--workspace-article-shadow", "--workspace-article-blur", "--workspace-article-heading-min-height", "--workspace-article-heading-gap", "--workspace-article-heading-background", "--workspace-article-heading-border", "--workspace-article-heading-shadow", "--workspace-article-mobile-shadow"),
+        },
+        {
+            "id": "workspace-metric-value",
+            "name": "Workspace metric value",
+            "sample_kind": "metric-value",
+            "sample_title": "Cached messages",
+            "sample_value": "12,486",
+            "token_names": ("--workspace-metric-value-font-size", "--workspace-metric-value-line-height", "--workspace-metric-value-letter-spacing", "--workspace-metric-value-font-weight", "--workspace-metric-decimal-scale", "--workspace-metric-card-padding", "--workspace-metric-card-row-gap", "--workspace-metric-card-radius", "--workspace-metric-card-label-min-height"),
+        },
+    )
 
-    return [
-        component_row(
-            row_id="secondary-button",
-            name="Secondary button",
-            sample_kind="secondary-button",
-            sample_title="Refresh cache",
-            sample_copy="The Local resources action keeps the shared secondary-button surface and states.",
-            token_names=(
-                "--glass-chip-background-strong",
-                "--glass-chip-background-hover",
-                "--glass-chip-border",
-                "--glass-chip-shadow",
-                "--glass-chip-shadow-hover",
-                "--radius-pill",
-                "--font-tooltip",
-                "--font-weight-semibold",
-            ),
-        ),
-        component_row(
-            row_id="primary-button",
-            name="Primary button",
-            sample_kind="primary-button",
-            sample_title="Start",
-            sample_copy="The primary cache action uses a blue surface, white text, and explicit disabled-state tokens.",
-            token_names=(
-                "--sidebar-action-button-radius",
-                "--sidebar-action-button-min-height",
-                "--sidebar-action-button-padding-inline",
-                "--sidebar-action-primary-background",
-                "--sidebar-action-primary-background-hover",
-                "--sidebar-action-primary-background-disabled",
-                "--sidebar-action-primary-color",
-                "--sidebar-action-primary-color-disabled",
-                "--accent-focus-ring",
-                "--font-form-control",
-                "--font-weight-bold",
-            ),
-        ),
-        component_row(
-            row_id="global-theme-toggle",
-            name="Global theme toggle",
-            sample_kind="global-theme-toggle",
-            sample_title="Appearance",
-            sample_copy="The circular theme control keeps the current appearance visible and reverses its action label.",
-            token_names=(
-                "--settings-round-icon-button-size",
-                "--settings-round-icon-button-icon-size",
-                "--settings-round-icon-button-radius",
-                "--settings-round-icon-button-border",
-                "--settings-round-icon-button-background",
-                "--settings-round-icon-button-background-hover",
-                "--settings-round-icon-button-shadow",
-                "--settings-round-icon-button-shadow-hover",
-                "--settings-round-icon-button-shadow-active",
-                "--settings-round-icon-button-color",
-                "--settings-round-icon-button-color-hover",
-                "--frosted-glass-blur",
-                "--motion-standard",
-                "--motion-press",
-            ),
-        ),
-        component_row(
-            row_id="shared-cache-settings-link",
-            name="Shared cache settings link",
-            sample_kind="shared-cache-settings-link",
-            sample_title="Open shared cache settings",
-            sample_copy="A compact utility link uses a white glass surface and blue text for shared settings navigation.",
-            token_names=(
-                "--glass-chip-background-strong",
-                "--glass-chip-background-hover",
-                "--glass-chip-border",
-                "--glass-chip-shadow",
-                "--glass-chip-shadow-hover",
-                "--accent-text",
-                "--accent-text-hover",
-                "--control-compact-height",
-                "--radius-pill",
-                "--font-size-3",
-                "--font-weight-semibold",
-                "--motion-standard",
-                "--motion-press",
-            ),
-        ),
-        component_row(
-            row_id="prompt-tag",
-            name="Prompt tag",
-            sample_kind="prompt-tag",
-            sample_title="PS",
-            sample_copy="Saved prompt remarks use a compact blue pill with a clear remove affordance.",
-            token_names=(
-                "--accent-border-strong",
-                "--accent-surface-soft",
-                "--accent-text",
-                "--radius-pill",
-                "--font-ui-xs",
-            ),
-        ),
-        component_row(
-            row_id="local-store-pagination",
-            name="Local store pagination",
-            sample_kind="local-store-pagination",
-            sample_title="Sessions",
-            sample_copy="The floating pager keeps the active page in a blue spatial indicator.",
-            token_names=(
-                "--radius-pill",
-                "--accent-fill",
-                "--accent-shadow-strong",
-                "--theme-glass-highlight",
-                "--frosted-glass-background",
-                "--frosted-glass-border",
-                "--frosted-glass-shadow",
-                "--frosted-glass-blur",
-                "--font-table-body",
-                "--font-weight-medium",
-                "--font-weight-bold",
-                "--motion-duration-spatial",
-                "--motion-bouncy",
-            ),
-        ),
-        component_row(
-            row_id="shared-select-filter",
-            name="Shared select filter",
-            sample_kind="shared-select-filter",
-            sample_title="Sort cached text",
-            sample_copy="The browser sort trigger uses the same accessible menu pattern as shared table filters.",
-            token_names=(
-                "--control-liquid-background",
-                "--control-liquid-background-hover",
-                "--control-liquid-border",
-                "--control-liquid-shadow",
-                "--control-liquid-shadow-focus",
-                "--control-liquid-blur",
-                "--browser-picker-chevron-image",
-                "--radius-pill",
-                "--control-form-height",
-            ),
-        ),
-        component_row(
-            row_id="agent-browser-selector",
-            name="Agent browser selector",
-            sample_kind="agent-browser-selector",
-            sample_title="Browser",
-            sample_copy="The Agent browser selector keeps the active Edge choice visible in a shared frosted menu.",
-            token_names=(
-                "--control-liquid-background",
-                "--control-liquid-background-hover",
-                "--control-liquid-border",
-                "--control-liquid-shadow",
-                "--control-liquid-shadow-focus",
-                "--control-liquid-blur",
-                "--browser-picker-chevron-image",
-                "--theme-success-strong",
-                "--theme-glass-highlight",
-                "--radius-pill",
-                "--font-table-body",
-                "--font-weight-regular",
-            ),
-        ),
-        component_row(
-            row_id="scrollable-data-table",
-            name="Scrollable data table",
-            sample_kind="scrollable-data-table",
-            sample_title="Transaction history",
-            sample_copy="A sticky header, internally scrolling body, Type filter, and in-shell pagination stay synchronized.",
-            token_names=(
-                "--scrollable-data-table-header-padding",
-                "--scrollable-data-table-cell-padding",
-                "--scrollable-data-table-summary-line-height",
-                "--scrollable-data-table-summary-padding",
-                "--scrollable-data-table-header-height",
-                "--scrollable-data-table-min-width",
-                "--scrollable-data-table-header-color",
-                "--scrollable-data-table-scrollbar-gutter",
-                "--scrollable-data-table-row-background",
-                "--scrollable-data-table-row-background-alt",
-                "--scrollable-data-table-summary-background",
-                "--scrollable-data-table-summary-border",
-                "--scrollable-data-table-summary-shadow",
-                "--scrollable-data-table-summary-blur",
-            ),
-        ),
-    ]
+    rows: list[dict[str, object]] = []
+    for spec in specs:
+        token_names = tuple(str(name) for name in spec.get("token_names", ()))
+        material_names = tuple(str(name) for name in spec.get("material_names", ()))
+        row = {key: value for key, value in spec.items() if key not in {"token_names", "material_names"}}
+        row.setdefault("sample_title", "")
+        row.setdefault("sample_copy", "")
+        row.setdefault("sample_value", "")
+        row.setdefault("sample_options", ())
+        row.setdefault("related_styles", ())
+        row["tokens"] = token_rows(token_names, material_names)
+        rows.append(row)
+    return sorted(rows, key=lambda row: str(row["name"]).casefold())
 
 
 def _build_style_token_demo(

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.87.0-codex.4
+# Code version: v1.88.0-codex.11
 
 from __future__ import annotations
 
@@ -316,6 +316,13 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn('class="cache-common-config', body)
         self.assertIn('href="/settings#settings-downloads"', gemini_body)
         self.assertIn("ChatGPT cache overview", chatgpt_body)
+        self.assertIn("workspace-header cache-workspace-header", chatgpt_body)
+        self.assertIn("cache-overview-title-card", chatgpt_body)
+        self.assertIn("cache-workspace-content", chatgpt_body)
+        self.assertLess(
+            chatgpt_body.index("cache-overview-title-card"),
+            chatgpt_body.index('id="overview"'),
+        )
         self.assertIn("Sessions discovered", chatgpt_body)
         self.assertGreaterEqual(chatgpt_body.count('href="/cache/chatgpt"'), 2)
         self.assertIn(
@@ -329,6 +336,13 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-chatgpt-content-mode-input', chatgpt_body)
         self.assertIn('data-chatgpt-media-config', chatgpt_body)
         self.assertIn('name="chatgpt_project_url"', chatgpt_body)
+        project_url_input_end = chatgpt_body.index(
+            ">",
+            chatgpt_body.index('name="chatgpt_project_url"'),
+        )
+        project_url_input_start = chatgpt_body.rfind("<input", 0, project_url_input_end)
+        project_url_input = chatgpt_body[project_url_input_start:project_url_input_end]
+        self.assertNotIn("required", project_url_input)
         self.assertIn('name="chatgpt_startup_timeout_seconds"', chatgpt_body)
         self.assertIn('name="chatgpt_scan_wait_seconds"', chatgpt_body)
         self.assertIn("Project or chat URL", chatgpt_body)
@@ -473,14 +487,9 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('aria-haspopup', dock_markup)
                 self.assertNotIn('aria-expanded', dock_markup)
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
-                self.assertIn('src="/static/sidebar.js?v=sidebar-v1.19.0-codex.1"', body)
+                self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                if page_source in {"x", "grok", "chatgpt", "gemini"}:
-                    expected_style_version = "style-v2.82.17-codex.54"
-                elif page_source == "agent":
-                    expected_style_version = "style-v2.82.17-codex.68"
-                else:
-                    expected_style_version = "style-v2.82.17-codex.49"
+                expected_style_version = "style-v2.86.0-codex.4"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -576,7 +585,11 @@ class WebAppTests(unittest.TestCase):
                     'class="browser-pagination local-store-pagination local-store-pagination--floating events-pagination"',
                     body,
                 )
-                self.assertIn('aria-label="Recent event pages"\n                                hidden', body)
+                pagination_start = body.index('id="recent_events_pagination"')
+                pagination_end = body.index(">", pagination_start)
+                pagination_markup = body[pagination_start:pagination_end]
+                self.assertIn('aria-label="Recent event pages"', pagination_markup)
+                self.assertIn("hidden", pagination_markup)
                 self.assertNotIn('class="local-store-pagination-indicator" aria-hidden="true"></span>', body)
                 self.assertNotIn('class="events-page-button"', body)
                 self.assertNotIn('class="events-page-indicator"', body)
@@ -626,6 +639,9 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("Choose folder…", settings_body)
         self.assertEqual(settings_body.count("data-settings-directory-picker"), 2)
         self.assertIn('data-shadow-backup-status-spinner', settings_body)
+        self.assertIn('data-shadow-backup-status-copy', settings_body)
+        self.assertNotIn('id="shadow_backup_phase"', settings_body)
+        self.assertNotIn('class="sidebar-section anchor-section" id="settings"', settings_body)
         self.assertIn('formaction="/settings/shadow-backup/sync"', settings_body)
         self.assertEqual(settings_body.count('class="settings-action-package settings-callout-card-primary'), 2)
         self.assertIn('class="settings-action-package settings-callout-card-primary settings-agent-terminal-action"', settings_body)
@@ -633,8 +649,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('class="icon icon-settings-agent"', settings_body)
         self.assertIn('class="icon icon-settings-cloud"', settings_body)
         self.assertIn('data-agent-terminal-authorization-status aria-live="polite" hidden></span>', settings_body)
+        self.assertIn('data-agent-terminal-authorization-button', settings_body)
         self.assertIn('class="settings-inline-button settings-inline-button-primary shadow-backup-sync-button"', settings_body)
-        self.assertIn('shadow-backup-settings.js?v=shadow-backup-settings-v1.3.0-codex.1', settings_body)
+        self.assertIn('shadow-backup-settings.js?v=shadow-backup-settings-v1.3.0-codex.2', settings_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', settings_body)
         self.assertIn("Danger zone", settings_body)
 
@@ -825,7 +842,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-remote-label="Auto"', local_body)
         self.assertIn('ChatGPT · 5.6 Sol', local_body)
         self.assertIn('Gemini · 3.1 Pro', local_body)
-        self.assertIn('Grok · Auto', local_body)
+        self.assertIn('Grok · Build', local_body)
         self.assertIn('data-agent-combobox-option="safari"', local_body)
         self.assertIn('data-agent-heading', local_body)
         self.assertIn('data-agent-prompt-input', local_body)
@@ -1263,7 +1280,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-browser-session-platform="chatgpt"', body)
         self.assertIn('data-agent-combobox-option="gpt-5.6-sol"', body)
         self.assertIn('data-agent-combobox-option="gemini-3.1-pro"', body)
-        self.assertIn('data-agent-combobox-option="grok-auto"', body)
+        self.assertIn('data-agent-combobox-option="grok-build"', body)
         self.assertIn('data-agent-combobox-option="claude-auto"', body)
         self.assertIn('placeholder="Do anything"', body)
         self.assertIn('elements.promptInput.placeholder = "Do anything"', script)
@@ -1378,7 +1395,7 @@ class WebAppTests(unittest.TestCase):
                                 "operating_system": "macos",
                                 "platform": "grok",
                                 "browser": "chrome",
-                                "model": "grok-auto",
+                                "model": "grok-build",
                             },
                         )
 
@@ -1386,7 +1403,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(gemini_response.get_json()["settings"]["model"], "gemini-3.1-pro")
         self.assertEqual(grok_response.status_code, 200)
         self.assertEqual(grok_response.get_json()["settings"]["platform"], "grok")
-        self.assertEqual(grok_response.get_json()["settings"]["model"], "grok-auto")
+        self.assertEqual(grok_response.get_json()["settings"]["model"], "grok-build")
 
     def test_agent_source_routes_are_loopback_only_and_delegate_selected_browser(self) -> None:
         with TemporaryDirectory() as raw_root:
@@ -2056,9 +2073,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="browser_filter_form"', body)
         self.assertIn('form="browser_filter_form"', body)
         self.assertGreater(body.index("data-browser-search"), body.index("</aside>"))
-        self.assertIn("browser-search.css?v=browser-search-v1.3.2-codex.10", body)
+        self.assertIn("browser-search.css?v=browser-search-v1.3.3-codex.2", body)
         self.assertIn('type="module"', body)
-        self.assertIn("browser-search.js?v=browser-search-v2.0.1-codex.1", body)
+        self.assertIn("browser-search.js?v=browser-search-v2.0.2-codex.1", body)
         self.assertIn("browser-session-messages.js?v=browser-session-messages-v1.0.1-codex.1", body)
         self.assertIn("browser-filter-select.js?v=browser-filter-select-v1.0.0-codex.1", body)
         self.assertIn("data-browser-local-resources-header-actions", body)
@@ -2081,6 +2098,10 @@ class WebAppTests(unittest.TestCase):
             "submitSearch();",
             "form.requestSubmit();",
             "function parseServerCandidates",
+            "function findLiteralMatches",
+            "const literalMatches = findLiteralMatches(candidates, queryText);",
+            'input.dataset.browserSearchGlobalScope === "true"',
+            'sessionField.disabled = true;',
         ):
             with self.subTest(search_script_fragment=fragment):
                 self.assertIn(fragment, search_script)
@@ -2131,7 +2152,9 @@ class WebAppTests(unittest.TestCase):
             ".browser-session-detail-actions--session {",
             "flex-wrap: nowrap;",
             ".browser-session-detail-actions--session > .browser-search-field {",
-            "flex: 1 1 auto;",
+            "--browser-session-search-input-inline-size: 256px;",
+            "flex: 0 1 calc(var(--browser-session-search-input-inline-size) + 2px);",
+            "width: min(calc(var(--browser-session-search-input-inline-size) + 2px), 100%);",
             ".browser-search-input::placeholder {",
         ):
             with self.subTest(search_style_fragment=fragment):
@@ -2154,6 +2177,71 @@ class WebAppTests(unittest.TestCase):
         ):
             with self.subTest(session_message_script_fragment=fragment):
                 self.assertIn(fragment, session_message_script)
+
+    def test_browser_text_search_leaves_session_scope_and_lists_global_cjk_match(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            root = Path(raw_root) / "local_store"
+            history_path = root / "llm" / "gemini" / "history.parquet"
+            write_parquet_rows_atomic(
+                history_path,
+                [
+                    {
+                        "schema_version": 1,
+                        "platform": "gemini",
+                        "conversation_id": "selected",
+                        "conversation_url": "https://gemini.google.com/app/selected",
+                        "conversation_title": "Selected session",
+                        "message_key": "selected:0",
+                        "turn_index": 0,
+                        "message_index": 0,
+                        "role": "user",
+                        "author_label": "You",
+                        "content_text": "Current session message",
+                        "content_html": "",
+                        "content_sha256": "selected-hash",
+                        "source_links": [],
+                        "model_label": "",
+                        "first_seen_at": "2026-08-12T05:00:00Z",
+                        "last_seen_at": "2026-08-12T05:00:00Z",
+                    },
+                    {
+                        "schema_version": 1,
+                        "platform": "gemini",
+                        "conversation_id": "atour",
+                        "conversation_url": "https://gemini.google.com/app/atour",
+                        "conversation_title": "亚朵星球：体验驱动的睡眠专家",
+                        "message_key": "atour:0",
+                        "turn_index": 0,
+                        "message_index": 0,
+                        "role": "assistant",
+                        "author_label": "Gemini",
+                        "content_text": "A matching message in another session",
+                        "content_html": "",
+                        "content_sha256": "atour-hash",
+                        "source_links": [],
+                        "model_label": "",
+                        "first_seen_at": "2026-08-11T05:00:00Z",
+                        "last_seen_at": "2026-08-11T05:00:00Z",
+                    },
+                ],
+                GEMINI_HISTORY_SCHEMA,
+            )
+            app = create_app(root)
+            session_id = query_chat_history(root, source="gemini", session_view=True).sessions[0].stable_id
+            with app.test_client() as client:
+                response = client.get(
+                    f"/browser?view=text&source=gemini&sort=newest&session_view=1&session={session_id}&q=亚朵"
+                )
+
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("亚朵星球：体验驱动的睡眠专家", body)
+        self.assertIn("browser-session-index-table", body)
+        self.assertNotIn("browser-session-detail-actions--session", body)
+        self.assertNotIn('name="session" value=', body)
+        self.assertNotIn('data-chat-message-id=', body)
+        self.assertIn('data-browser-search-global-scope="true"', body)
+        self.assertIn('data-browser-search-submit-copy="Press Enter to search all cached text."', body)
 
     def test_browser_page_and_secure_media_route_use_isolated_cache(self) -> None:
         with TemporaryDirectory() as raw_root:
@@ -2196,7 +2284,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.82.17-codex.49", body)
+            self.assertIn("style-v2.86.0-codex.4", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.0-codex.1', body)
@@ -2353,17 +2441,21 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(detail_response.status_code, 200)
         self.assertIn("<strong>Rich</strong> cached text message", detail_body)
         self.assertEqual(filtered_detail_response.status_code, 200)
-        self.assertIn("<strong>Rich</strong> cached text message", filtered_detail_body)
-        self.assertEqual(filtered_detail_body.count('data-chat-message-id='), 1)
+        self.assertIn("Demo conversation", filtered_detail_body)
+        self.assertIn("browser-session-index-table", filtered_detail_body)
+        self.assertNotIn("browser-session-detail-actions--session", filtered_detail_body)
+        self.assertNotIn("<strong>Rich</strong> cached text message", filtered_detail_body)
+        self.assertEqual(filtered_detail_body.count('data-chat-message-id='), 0)
         self.assertEqual(empty_detail_response.status_code, 200)
-        self.assertIn("No matching messages found.", empty_detail_body)
+        self.assertIn("No text messages match these filters.", empty_detail_body)
         self.assertNotIn("<strong>Rich</strong> cached text message", empty_detail_body)
         self.assertIn("browser-session-message-toggle", detail_body)
         self.assertIn("browser-session-actions", detail_body)
         self.assertNotIn('<p class="workspace-kicker">Session</p>', detail_body)
         self.assertNotIn('class="browser-session-detail-summary"', detail_body)
         self.assertIn("browser-session-actions-trigger", detail_body)
-        self.assertIn("browser.safari.png", detail_body)
+        self.assertIn('class="icon browser-session-safari-icon"', detail_body)
+        self.assertNotIn("browser.safari.png", detail_body)
         self.assertIn("Open original in Safari", detail_body)
         self.assertIn("Export Markdown", detail_body)
         self.assertIn("Refresh current page", detail_body)
@@ -2460,7 +2552,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('class="browser-media-card-title" title="img_file.png">img_file.png</span>', body)
         self.assertNotIn("browser-media-card-description", body)
         self.assertNotIn("Session name:</dt>", body)
-        self.assertIn("browser-media-primary-metric", body)
+        self.assertIn("foundation-metric-card", body)
         self.assertIn("Created on:</dt><dd>9 Aug 2026 07:09</dd>", body)
         self.assertIn("Size:</dt><dd>1.72 MiB</dd>", body)
         self.assertIn('class="browser-media-prompt"', body)
@@ -2819,13 +2911,17 @@ class WebAppTests(unittest.TestCase):
             'setStylePropertyIfChanged(shell, "--segmented-option-count", String(optionCount));',
             'setStylePropertyIfChanged(shell, "--segmented-active-index", String(activeIndex));',
             'setAttributeIfChanged(option, "aria-checked", String(isActive));',
-            'attributeFilter: ["aria-checked", "class", "hidden"],',
+            "const includesSegmentedControl = records.some((record) => (",
+            "Array.from(record.addedNodes).some((node) => (",
+            "childList: true,",
             'window.CACHELIKES_SEGMENTED_CONTROLS = Object.freeze({sync, syncAll});',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)
 
-        self.assertNotIn("data-segmented-active-index", script.split("attributeFilter:", 1)[1])
+        observer_options = script.split("observer.observe(document.body, {", 1)[1]
+        self.assertNotIn("attributes: true", observer_options)
+        self.assertNotIn("attributeFilter:", observer_options)
 
     def test_text_browser_exposes_chatgpt_media_cache_entrypoint(self) -> None:
         app = create_app()

@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.40.0-codex.1
+Code version: v3.43.0-codex.1
 """
 
 from __future__ import annotations
@@ -88,9 +88,11 @@ MAX_INVALID_ACTION_RETRIES = 3
 CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
 WEB_MODEL_CONTROL_WAIT_ATTEMPTS = 61
 WEB_MODEL_CONTROL_POLL_SECONDS = 0.25
+GROK_MODEL_CONTROL_WAIT_ATTEMPTS = 121
 MAX_BASE64_DECODED_BYTES = MAX_FILE_READ_CHARS
 BROWSER_INTERRUPTION_TIMEOUT_SECONDS = 300
 BROWSER_INTERRUPTION_POLL_SECONDS = 1.0
+HUMAN_VERIFICATION_REASON_PREFIX = "Human verification required: "
 AGENT_EXIT_WORKER_JOIN_SECONDS = 8.0
 MAX_AGENT_SESSION_HISTORY = 100
 PERSISTED_AGENT_SNAPSHOT_FILENAME = "last-run.json"
@@ -137,10 +139,11 @@ GEMINI_MODEL_OPTIONS = (
 )
 GROK_MODEL_OPTIONS = (
     {
-        "key": "grok-auto",
-        "label": "Auto",
-        "ui_label": "Auto",
-        "remote_labels": ("Auto", "自動", "自动"),
+        "key": "grok-build",
+        "label": "Build",
+        "ui_label": "Build",
+        "remote_labels": ("Build",),
+        "remote_trigger_labels": ("Build Beta",),
         "strength": 100,
     },
 )
@@ -158,6 +161,10 @@ AGENT_MODEL_OPTIONS_BY_PLATFORM = {
     "gemini": GEMINI_MODEL_OPTIONS,
     "grok": GROK_MODEL_OPTIONS,
     "claude": CLAUDE_MODEL_OPTIONS,
+}
+LEGACY_AGENT_MODEL_KEYS = {
+    ("grok", "grok-auto"): "grok-build",
+    ("grok", "grok-heavy"): "grok-build",
 }
 
 
@@ -1000,6 +1007,7 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
 
     default_model = default_model_for_platform(platform)
     model = str(payload.get("model", default_model)).strip().lower()
+    model = LEGACY_AGENT_MODEL_KEYS.get((platform, model), model)
     supported_models = frozenset(option["key"] for option in _platform_model_options(platform))
     if model not in supported_models:
         platform_label = AGENT_PLATFORM_BY_KEY[platform]["label"]
@@ -1091,12 +1099,17 @@ def load_computer_use_settings(
         if not isinstance(payload, dict):
             raise ValueError("Agent settings must be a JSON object.")
         settings = validate_computer_use_settings(payload)
+        raw_model = str(payload.get("model", "")).strip().lower()
+        model_migrated = bool(
+            LEGACY_AGENT_MODEL_KEYS.get((settings.platform, raw_model))
+            == settings.model
+        )
         migrated = migrate_legacy_system_prompts(settings)
-        if migrated != settings:
+        if migrated != settings or model_migrated:
             try:
                 save_computer_use_settings(migrated, settings_path)
                 LOGGER.info(
-                    "Migrated legacy Computer Use Agent system prompts at %s.",
+                    "Migrated legacy Computer Use Agent settings at %s.",
                     settings_path,
                 )
             except OSError as exc:
@@ -4487,6 +4500,8 @@ class ComputerUseAgentService:
                     self._conversation_titles[final_history_key] = self._snapshot.session_title
                 completion = {
                     "phase": "stopped" if stopped else "finished",
+                    "paused": False,
+                    "pause_reason": "",
                     "message": (
                         "Agent request stopped."
                         if stopped
@@ -4547,6 +4562,8 @@ class ComputerUseAgentService:
             failure_message = str(exc).splitlines()[0][:500]
             completion = {
                 "phase": "failed",
+                "paused": False,
+                "pause_reason": "",
                 "message": (
                     f"{failure_message} {handoff_message}".strip()
                     if handoff_message
@@ -4561,6 +4578,8 @@ class ComputerUseAgentService:
             if stopped_after_error:
                 completion = {
                     "phase": "stopped",
+                    "paused": False,
+                    "pause_reason": "",
                     "message": "Agent request stopped.",
                     "response": "",
                     "conversation_url": recorded_conversation_url or target_url,
@@ -5082,38 +5101,15 @@ class _ProviderSessionBinding:
         """Return the page URL atomically observed with this run's latest user receipt."""
         if not self.submission_marker:
             return ""
-        selector = _web_user_selector(self.platform)
         try:
-            result = self.page.evaluate(
-                r"""({selector, marker}) => {
-                        const visible = (element) => {
-                            if (!element) return false;
-                            const style = getComputedStyle(element);
-                            return element.getClientRects().length > 0
-                                && style.visibility !== 'hidden'
-                                && style.display !== 'none';
-                        };
-                        const composer = document.querySelector(
-                            '#prompt-textarea, textarea, [contenteditable="true"]'
-                        );
-                        const messages = [...document.querySelectorAll(selector)].filter((element) =>
-                            visible(element)
-                            && element !== composer
-                            && !element.contains(composer)
-                            && !composer?.contains(element)
-                        );
-                        const latest = messages.at(-1);
-                        const markerEchoed = Boolean(
-                            latest
-                            && (latest.innerText || latest.textContent || '').includes(marker)
-                        );
-                        return {markerEchoed, url: location.href};
-                    }""",
-                    {"selector": selector, "marker": self.submission_marker},
+            snapshot = _provider_turn_snapshot(
+                self.page,
+                self.platform,
+                receipt_marker=self.submission_marker,
             )
-            if not isinstance(result, dict) or not result.get("markerEchoed"):
+            if not snapshot.get("markerEchoed"):
                 return ""
-            return str(result.get("url") or "").strip()
+            return str(snapshot.get("url") or "").strip()
         except Exception:
             return ""
 
@@ -5451,6 +5447,223 @@ def _macos_screen_is_locked() -> bool | None:
     return None
 
 
+def _provider_human_verification_reason(page: Any, platform: str) -> str:
+    """Return a structured human-verification reason without scanning live chat text alone."""
+    if platform not in {"gemini", "grok"}:
+        return ""
+    try:
+        result = page.evaluate(
+            r"""({composerSelector}) => {
+                const visible = (element) => {
+                    if (!element || element.getClientRects().length === 0) return false;
+                    for (let current = element; current; current = current.parentElement) {
+                        const style = getComputedStyle(current);
+                        const opacity = Number.parseFloat(style.opacity || '1');
+                        if (style.display === 'none'
+                            || style.visibility === 'hidden'
+                            || style.visibility === 'collapse'
+                            || (Number.isFinite(opacity) && opacity <= 0)) return false;
+                    }
+                    return true;
+                };
+                const challengeSelectors = [
+                    'iframe[src*="captcha" i]',
+                    'iframe[src*="recaptcha" i]',
+                    'iframe[src*="challenges.cloudflare.com" i]',
+                    'iframe[title*="captcha" i]',
+                    'iframe[title*="challenge" i]',
+                    '[data-sitekey]',
+                    '[data-testid*="captcha" i]',
+                    '[id*="captcha" i]',
+                    '[id*="challenge-running" i]',
+                    '[class*="cf-turnstile" i]',
+                    'form[action*="challenge" i]'
+                ];
+                const challengeElement = challengeSelectors
+                    .flatMap((selector) => [...document.querySelectorAll(selector)])
+                    .find(visible);
+                const composerAvailable = [...document.querySelectorAll(composerSelector)]
+                    .some((element) => visible(element)
+                        && !element.disabled
+                        && element.getAttribute('aria-disabled') !== 'true');
+                const title = (document.title || '').trim();
+                const bodyText = (document.body?.innerText || '').trim();
+                const markerText = `${title}\n${bodyText}`.toLowerCase();
+                const marker = [
+                    'unusual traffic',
+                    'verify you are human',
+                    "verify you're human",
+                    "verify that you're human",
+                    'are you a robot',
+                    'suspicious activity',
+                    'security check',
+                    "verify it's you",
+                    'verify it’s you',
+                    'complete the security check',
+                    'security verification',
+                    'performing security verification',
+                    'security service to protect against malicious bots',
+                    'performance and security by cloudflare',
+                    'checking your browser before accessing',
+                    'checking your browser',
+                    'just a moment',
+                    'attention required',
+                    'captcha',
+                    'recaptcha',
+                    'cloudflare ray id'
+                ].find((candidate) => markerText.includes(candidate)) || '';
+                return {
+                    detected: Boolean(challengeElement || (!composerAvailable && marker)),
+                    reason: challengeElement ? 'security challenge control' : marker,
+                    composerAvailable,
+                    title,
+                    url: location.href,
+                };
+            }""",
+            {"composerSelector": _web_composer_selector(platform)},
+        )
+    except Exception:
+        return ""
+    if not isinstance(result, dict) or not result.get("detected"):
+        return ""
+    provider_label = AGENT_PLATFORM_BY_KEY[platform]["label"]
+    detail = str(result.get("reason") or "security challenge").strip()
+    return f"{HUMAN_VERIFICATION_REASON_PREFIX}{provider_label} requires {detail}."
+
+
+def _is_human_verification_reason(reason: str) -> bool:
+    """Return whether one interruption reason requests manual verification."""
+    return str(reason or "").startswith(HUMAN_VERIFICATION_REASON_PREFIX)
+
+
+def _send_cdp_window_bounds(
+    session: Any,
+    window_id: Any,
+    bounds: dict[str, Any],
+) -> None:
+    """Restore Chromium geometry and window state with CDP-compatible calls."""
+    dimensions = {
+        key: bounds[key]
+        for key in ("left", "top", "width", "height")
+        if key in bounds
+    }
+    if dimensions:
+        session.send(
+            "Browser.setWindowBounds",
+            {"windowId": window_id, "bounds": dimensions},
+        )
+    window_state = str(bounds.get("windowState") or "").strip()
+    if window_state:
+        session.send(
+            "Browser.setWindowBounds",
+            {"windowId": window_id, "bounds": {"windowState": window_state}},
+        )
+
+
+def _surface_provider_challenge_window(page: Any) -> dict[str, Any] | None:
+    """Bring the existing controlled Chromium clone on screen for manual verification."""
+    context = getattr(page, "context", None)
+    session = None
+    original_state: dict[str, Any] | None = None
+    surfaced = False
+    bring_to_front = getattr(page, "bring_to_front", None)
+    if not callable(bring_to_front):
+        return None
+    try:
+        if context is not None:
+            new_cdp_session = getattr(context, "new_cdp_session", None)
+            if callable(new_cdp_session):
+                session = new_cdp_session(page)
+                window = session.send("Browser.getWindowForTarget")
+                window_id = window.get("windowId") if isinstance(window, dict) else None
+                if window_id is not None:
+                    original = session.send(
+                        "Browser.getWindowBounds",
+                        {"windowId": window_id},
+                    )
+                    original_bounds = (
+                        dict(original.get("bounds") or {})
+                        if isinstance(original, dict)
+                        else {}
+                    )
+                    required_bounds = {"left", "top", "width", "height", "windowState"}
+                    if not required_bounds.issubset(original_bounds):
+                        return None
+                    original_state = {
+                        "windowId": window_id,
+                        "bounds": original_bounds,
+                    }
+                    session.send(
+                        "Browser.setWindowBounds",
+                        {"windowId": window_id, "bounds": {"windowState": "normal"}},
+                    )
+                    session.send(
+                        "Browser.setWindowBounds",
+                        {
+                            "windowId": window_id,
+                            "bounds": {
+                                "left": 80,
+                                "top": 80,
+                                "width": 1_400,
+                                "height": 900,
+                            },
+                        },
+                    )
+        if original_state is None:
+            return None
+        bring_to_front()
+        surfaced = True
+    except Exception as exc:
+        LOGGER.warning("Could not surface the provider verification window: %s", exc)
+        if original_state is not None and session is not None:
+            try:
+                _send_cdp_window_bounds(
+                    session,
+                    original_state["windowId"],
+                    original_state["bounds"],
+                )
+            except Exception:
+                pass
+    finally:
+        detach = getattr(session, "detach", None)
+        if callable(detach):
+            try:
+                detach()
+            except Exception:
+                pass
+    return original_state if surfaced else None
+
+
+def _restore_provider_challenge_window(
+    page: Any,
+    original_state: dict[str, Any] | None,
+) -> None:
+    """Restore the controlled Chromium clone after manual verification ends."""
+    if not isinstance(original_state, dict):
+        return
+    window_id = original_state.get("windowId")
+    bounds = original_state.get("bounds")
+    if window_id is None or not isinstance(bounds, dict):
+        return
+    context = getattr(page, "context", None)
+    session = None
+    try:
+        new_cdp_session = getattr(context, "new_cdp_session", None)
+        if not callable(new_cdp_session):
+            return
+        session = new_cdp_session(page)
+        _send_cdp_window_bounds(session, window_id, bounds)
+    except Exception as exc:
+        LOGGER.warning("Could not restore the provider verification window: %s", exc)
+    finally:
+        detach = getattr(session, "detach", None)
+        if callable(detach):
+            try:
+                detach()
+            except Exception:
+                pass
+
+
 def _detect_browser_interruption(
     page: Any,
     expected_url: str,
@@ -5476,6 +5689,10 @@ def _detect_browser_interruption(
         except Exception:
             return True, "The selected provider page crashed or is no longer accessible."
 
+    verification_reason = _provider_human_verification_reason(page, platform)
+    if verification_reason:
+        return True, verification_reason
+
     tab_id, current_url, current_title = _provider_tab_identity(page)
     if expected_tab_id is not None and tab_id != expected_tab_id:
         return True, "The selected provider tab identity changed."
@@ -5490,10 +5707,11 @@ def _detect_browser_interruption(
         ):
             return True, "The selected provider tab navigated away from the chosen session."
     if expected_title and current_title and expected_title != current_title:
-        if current_url and expected_url and not _web_target_is_open(
+        if current_url and expected_url and not _provider_url_still_on_selected_target(
             platform,
             expected_url,
             current_url,
+            session_mode,
         ):
             return True, "The selected provider tab title no longer matches the chosen session."
 
@@ -5522,41 +5740,110 @@ def _wait_for_browser_recovery(
 
     Returns 'recovered', 'stopped', or 'timeout'. Does not submit a prompt.
     """
+    human_verification = _is_human_verification_reason(reason)
+    resume_required = human_verification and should_resume is not None
+    resume_armed = False
+    verification_cleared_notified = False
+    original_window_state = None
+    surface_warning = ""
+    if human_verification:
+        original_window_state = _surface_provider_challenge_window(page)
+        if original_window_state is None:
+            surface_warning = (
+                " The controlled browser window could not be surfaced safely; "
+                "bring that window forward manually."
+            )
+    initial_message = f"{reason}{surface_warning}"
     update(
         paused=True,
-        pause_reason=reason,
+        pause_reason=initial_message,
         phase="paused",
-        message=reason,
+        message=initial_message,
     )
     deadline = time.monotonic() + BROWSER_INTERRUPTION_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if should_stop():
-            return "stopped"
-        resume_requested = bool(should_resume and should_resume())
-        interrupted, current_reason = _detect_browser_interruption(
-            page,
-            expected_url,
-            browser_kind,
-            platform=platform,
-            session_mode=session_mode,
-            expected_tab_id=expected_tab_id,
-            expected_title=expected_title,
-        )
-        if not interrupted:
-            update(paused=False, pause_reason="", phase="running", message="Resumed the Web Agent after a browser interruption.")
-            return "recovered"
-        if resume_requested:
-            update(
-                paused=True,
-                pause_reason=current_reason or reason,
-                phase="paused",
-                message=(
-                    "Resume was requested, but the selected provider tab is still interrupted. "
-                    + (current_reason or reason)
-                ),
+    result = "timeout"
+    try:
+        while time.monotonic() < deadline:
+            if should_stop():
+                result = "stopped"
+                break
+            interrupted, current_reason = _detect_browser_interruption(
+                page,
+                expected_url,
+                browser_kind,
+                platform=platform,
+                session_mode=session_mode,
+                expected_tab_id=expected_tab_id,
+                expected_title=expected_title,
             )
-        time.sleep(BROWSER_INTERRUPTION_POLL_SECONDS)
-    return "timeout"
+            current_human_verification = _is_human_verification_reason(
+                current_reason
+            )
+            if current_human_verification and not human_verification:
+                human_verification = True
+                resume_required = should_resume is not None
+                resume_armed = False
+                verification_cleared_notified = False
+                original_window_state = _surface_provider_challenge_window(page)
+                surface_warning = ""
+                if original_window_state is None:
+                    surface_warning = (
+                        " The controlled browser window could not be surfaced safely; "
+                        "bring that window forward manually."
+                    )
+                challenge_message = f"{current_reason}{surface_warning}"
+                update(
+                    paused=True,
+                    pause_reason=challenge_message,
+                    phase="paused",
+                    message=challenge_message,
+                )
+            elif current_human_verification and verification_cleared_notified:
+                verification_cleared_notified = False
+                update(
+                    paused=True,
+                    pause_reason=current_reason,
+                    phase="paused",
+                    message=current_reason,
+                )
+            resume_requested = bool(should_resume and should_resume())
+            if resume_requested and (not human_verification or not interrupted):
+                resume_armed = True
+            if not interrupted and (not resume_required or resume_armed):
+                update(paused=False, pause_reason="", phase="running", message="Resumed the Web Agent after a browser interruption.")
+                result = "recovered"
+                break
+            if not interrupted and resume_required and not verification_cleared_notified:
+                verification_cleared_notified = True
+                cleared_message = (
+                    "Human verification cleared. Select Resume to continue the same "
+                    "Web Agent turn."
+                )
+                update(
+                    paused=True,
+                    pause_reason=cleared_message,
+                    phase="paused",
+                    message=cleared_message,
+                )
+            if resume_requested:
+                update(
+                    paused=True,
+                    pause_reason=current_reason or (reason if interrupted else ""),
+                    phase="paused",
+                    message=(
+                        "Resume was requested, but the selected provider tab is still interrupted. "
+                        + (current_reason or reason)
+                        if interrupted
+                        else "Resume requested after human verification cleared."
+                    ),
+                )
+            time.sleep(BROWSER_INTERRUPTION_POLL_SECONDS)
+    finally:
+        if human_verification:
+            _restore_provider_challenge_window(page, original_window_state)
+        if result != "recovered":
+            update(paused=False, pause_reason="")
+    return result
 
 
 def _run_web_action_loop(
@@ -5581,12 +5868,87 @@ def _run_web_action_loop(
         selected_target_url,
         session_mode,
     )
-    verified = _verify_agent_page(
-        page,
-        browser_kind,
-        platform,
-        selected_target_url,
-        should_stop,
+
+    def provider_availability_check() -> tuple[bool, float]:
+        if should_stop():
+            return False, 0.0
+        reason = _provider_human_verification_reason(page, platform)
+        if not reason:
+            return True, 0.0
+        paused_at = time.monotonic()
+        wait_result = _wait_for_browser_recovery(
+            page=page,
+            expected_url=session_binding.bound_conversation_url or selected_target_url,
+            browser_kind=browser_kind,
+            platform=platform,
+            session_mode=session_binding.session_mode,
+            expected_tab_id=session_binding.expected_tab_id,
+            expected_title=session_binding.expected_title,
+            should_stop=should_stop,
+            should_resume=should_resume,
+            update=update,
+            reason=reason,
+        )
+        paused_seconds = max(0.0, time.monotonic() - paused_at)
+        if wait_result == "stopped":
+            return False, paused_seconds
+        if wait_result != "recovered":
+            raise RuntimeError(
+                f"Browser did not recover after human verification: {reason}"
+            )
+        return True, paused_seconds
+
+    def run_with_provider_availability(action: Callable[[], Any]) -> Any:
+        navigation_retries = 0
+        while not should_stop():
+            available, _paused_seconds = _run_availability_gate(
+                provider_availability_check
+            )
+            if not available:
+                return None
+            try:
+                result = action()
+            except Exception as exc:
+                challenge_reason = _provider_human_verification_reason(
+                    page,
+                    platform,
+                )
+                if not challenge_reason and not (
+                    _is_transient_browser_navigation_error(exc)
+                    and navigation_retries < 20
+                ):
+                    raise
+                if challenge_reason:
+                    navigation_retries = 0
+                else:
+                    navigation_retries += 1
+                available, _paused_seconds = _run_availability_gate(
+                    provider_availability_check
+                )
+                if not available:
+                    return None
+                wait_for_timeout = getattr(page, "wait_for_timeout", None)
+                if callable(wait_for_timeout):
+                    wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+                continue
+            if not _provider_human_verification_reason(page, platform):
+                return result
+            available, _paused_seconds = _run_availability_gate(
+                provider_availability_check
+            )
+            if not available:
+                return None
+        return None
+
+    verified = run_with_provider_availability(
+        lambda: _verify_agent_page(
+            page,
+            browser_kind,
+            platform,
+            selected_target_url,
+            should_stop,
+            provider_availability_check,
+        )
     )
     if verified is False or should_stop():
         return (
@@ -5595,15 +5957,18 @@ def _run_web_action_loop(
             0,
             False,
         )
-    session_binding.check()
-    if not session_binding.prepare_fresh_session(should_stop) or should_stop():
+    run_with_provider_availability(session_binding.check)
+    prepared = run_with_provider_availability(
+        lambda: session_binding.prepare_fresh_session(should_stop)
+    )
+    if not prepared or should_stop():
         return (
             "",
             _current_agent_conversation_url(page, platform, selected_target_url),
             0,
             False,
         )
-    session_binding.check()
+    run_with_provider_availability(session_binding.check)
     if platform == "chatgpt":
         _select_chat_mode(page, browser_kind)
     if should_stop():
@@ -5617,15 +5982,18 @@ def _run_web_action_loop(
     session_type = session_type_for_mode(session_mode)
     page_url = str(getattr(page, "url", "") or "").strip()
     model_observation: dict[str, Any] = {}
-    model_selected = _select_web_model(
-        page,
-        browser_kind,
-        platform,
-        settings.model,
-        model_observation,
-        should_stop=should_stop,
+    model_selected = run_with_provider_availability(
+        lambda: _select_web_model(
+            page,
+            browser_kind,
+            platform,
+            settings.model,
+            model_observation,
+            should_stop=should_stop,
+            availability_check=provider_availability_check,
+        )
     )
-    session_binding.check()
+    run_with_provider_availability(session_binding.check)
     if should_stop():
         return (
             "",
@@ -5658,6 +6026,12 @@ def _run_web_action_loop(
         )
     else:
         provider_label = AGENT_PLATFORM_BY_KEY[platform]["label"]
+        model_failure_reason = str(model_observation.get("reason") or "").strip()
+        if platform == "gemini" and model_failure_reason == "signed-out":
+            raise RuntimeError(
+                f"The selected browser is not signed in to {provider_label} Web. "
+                "No project context or prompt was sent."
+            )
         observed = str(model_observation.get("observed") or "").strip() or "none"
         menu_text = str(model_observation.get("menu_text") or "").strip() or "none"
         available = model_observation.get("available") or []
@@ -5693,7 +6067,7 @@ def _run_web_action_loop(
             0,
             False,
         )
-    session_binding.check()
+    run_with_provider_availability(session_binding.check)
     attached = False
     if session_binding.session_mode not in {"new", "project_new"}:
         attached = _attach_context_file(
@@ -5703,7 +6077,7 @@ def _run_web_action_loop(
             should_stop,
             session_binding.check,
         )
-    session_binding.check()
+    run_with_provider_availability(session_binding.check)
     if should_stop():
         return (
             "",
@@ -5748,6 +6122,7 @@ def _run_web_action_loop(
         session_recover=session_binding.ensure_response_session,
         submission_target_url=selected_target_url,
         session_mode=session_binding.session_mode,
+        availability_check=provider_availability_check,
         on_submitted=lambda: update(
             phase="running",
             message=f"Prompt sent to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web; waiting for the first controller action.",
@@ -5880,6 +6255,7 @@ def _run_web_action_loop(
                 session_recover=session_binding.ensure_response_session,
                 submission_target_url=selected_target_url,
                 session_mode=session_binding.session_mode,
+                availability_check=provider_availability_check,
                 on_submitted=lambda: update(
                     phase="running",
                     message=f"Correction sent to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web; waiting for a valid controller action.",
@@ -5921,6 +6297,7 @@ def _run_web_action_loop(
                     session_recover=session_binding.ensure_response_session,
                     submission_target_url=selected_target_url,
                     session_mode=session_binding.session_mode,
+                    availability_check=provider_availability_check,
                     on_submitted=lambda: update(
                         phase="running",
                         message=f"Bodycheck requirement sent; waiting for the next {AGENT_PLATFORM_BY_KEY[platform]['label']} action.",
@@ -5983,6 +6360,7 @@ def _run_web_action_loop(
             session_recover=session_binding.ensure_response_session,
             submission_target_url=selected_target_url,
             session_mode=session_binding.session_mode,
+            availability_check=provider_availability_check,
             on_submitted=lambda: update(
                 phase="running",
                 message=f"Controller observation sent; waiting for the next {AGENT_PLATFORM_BY_KEY[platform]['label']} action.",
@@ -6066,13 +6444,30 @@ def _web_composer_selector(platform: str) -> str:
     """Return the least-specific composer contract accepted for one provider."""
     return {
         "chatgpt": "#prompt-textarea",
-        "gemini": 'textarea, [contenteditable="true"]',
-        "grok": "textarea",
+        "gemini": (
+            'rich-textarea [contenteditable="true"], '
+            '[data-test-id="input-area"] [contenteditable="true"], '
+            '[contenteditable="true"][aria-label*="prompt" i], '
+            'textarea[aria-label], textarea[placeholder]'
+        ),
+        "grok": (
+            'textarea, div[contenteditable="true"][role="textbox"]'
+            '[aria-label="Ask Grok anything"]'
+        ),
         "claude": (
             'textarea, [contenteditable="true"][role="textbox"], '
             'div.ProseMirror[contenteditable="true"], [contenteditable="true"]'
         ),
     }.get(platform, 'textarea, [contenteditable="true"]')
+
+
+def _visible_web_composer_selector(platform: str) -> str:
+    """Return a Playwright selector for visible, enabled provider composers."""
+    return ", ".join(
+        f'{candidate.strip()}:visible:not([disabled]):not([aria-disabled="true"])'
+        for candidate in _web_composer_selector(platform).split(",")
+        if candidate.strip()
+    )
 
 
 def _web_assistant_selector(platform: str) -> str:
@@ -6128,10 +6523,24 @@ def _is_composer_wait_timeout(exc: Exception) -> bool:
     return isinstance(exc, TimeoutError) or exc.__class__.__name__ == "TimeoutError"
 
 
+def _is_transient_browser_navigation_error(exc: Exception) -> bool:
+    """Recognize browser execution errors that can occur across one navigation commit."""
+    message = str(exc or "").casefold()
+    return any(
+        marker in message
+        for marker in (
+            "execution context was destroyed",
+            "cannot find context with specified id",
+            "frame was detached",
+            "most likely because of a navigation",
+        )
+    )
+
+
 def _wait_for_visible_composer(
     target: Any,
     should_stop: Callable[[], bool] | None = None,
-    readiness_check: Callable[[], None] | None = None,
+    readiness_check: Callable[[], float] | None = None,
 ) -> bool:
     """Poll one composer locator so Stop can interrupt the initial readiness gate."""
     deadline = time.monotonic() + CHATGPT_COMPOSER_TIMEOUT_SECONDS
@@ -6140,7 +6549,10 @@ def _wait_for_visible_composer(
         if callable(should_stop) and should_stop():
             return False
         if callable(readiness_check):
-            readiness_check()
+            paused_seconds = max(0.0, float(readiness_check() or 0.0))
+            deadline += paused_seconds
+            if callable(should_stop) and should_stop():
+                return False
         remaining_ms = max(1, int((deadline - time.monotonic()) * 1_000))
         try:
             target.wait_for(
@@ -6170,6 +6582,16 @@ def _require_gemini_agent_availability(page: Any) -> None:
             "No project context or prompt was sent."
         )
     if snapshot.get("signedOut"):
+        wait_for_timeout = getattr(page, "wait_for_timeout", None)
+        if callable(wait_for_timeout):
+            wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+        snapshot = inspect_gemini_session(page)
+        if snapshot.get("unsupportedRegion"):
+            raise RuntimeError(
+                "Gemini Web is not available in the selected browser's current region. "
+                "No project context or prompt was sent."
+            )
+    if snapshot.get("signedOut"):
         raise RuntimeError(
             "The selected browser is not signed in to Gemini Web. "
             "No project context or prompt was sent."
@@ -6180,15 +6602,21 @@ def _wait_for_web_composer(
     page: Any,
     platform: str,
     should_stop: Callable[[], bool] | None = None,
+    availability_check: Callable[[], bool | tuple[bool, float]] | None = None,
 ) -> bool:
     """Wait for a provider's composer without bringing its background window forward."""
-    selector = _web_composer_selector(platform)
+    selector = _visible_web_composer_selector(platform)
     last_error: Exception | None = None
-    readiness_check = (
-        (lambda: _require_gemini_agent_availability(page))
-        if platform == "gemini"
-        else None
-    )
+    def readiness_check() -> float:
+        paused_seconds = 0.0
+        if callable(availability_check):
+            available, paused_seconds = _run_availability_gate(availability_check)
+            if not available:
+                return paused_seconds
+        if platform == "gemini":
+            _require_gemini_agent_availability(page)
+        return paused_seconds
+
     for attempt in range(1, CHATGPT_COMPOSER_RELOAD_ATTEMPTS + 1):
         try:
             if not _wait_for_visible_composer(
@@ -6222,6 +6650,7 @@ def _verify_agent_page(
     platform: str,
     selected_target_url: str | None = None,
     should_stop: Callable[[], bool] | None = None,
+    availability_check: Callable[[], bool | tuple[bool, float]] | None = None,
 ) -> bool:
     """Verify one provider's authenticated composer before any project content is sent."""
     if platform == "chatgpt":
@@ -6233,7 +6662,16 @@ def _verify_agent_page(
         )
     if browser_kind == "safari":
         raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Agent sessions require Edge or Chrome.")
-    if not _wait_for_web_composer(page, platform, should_stop=should_stop):
+    if callable(availability_check):
+        available, _paused_seconds = _run_availability_gate(availability_check)
+        if not available:
+            return False
+    if not _wait_for_web_composer(
+        page,
+        platform,
+        should_stop=should_stop,
+        availability_check=availability_check,
+    ):
         return False
     if callable(should_stop) and should_stop():
         return False
@@ -6249,7 +6687,8 @@ def _verify_agent_page(
     if callable(should_stop) and should_stop():
         return False
     signed_out = bool(
-        page.evaluate(
+        platform != "gemini"
+        and page.evaluate(
             r"""({platform}) => {
                 const visible = (element) => element && element.getClientRects().length > 0
                     && getComputedStyle(element).visibility !== 'hidden'
@@ -7023,6 +7462,544 @@ def _select_chatgpt_model(
     return False
 
 
+def _dismiss_known_grok_onboarding_dialogs(
+    page: Any,
+    should_stop: Callable[[], bool],
+) -> tuple[bool, str]:
+    """Dismiss only exact Grok onboarding promos before touching the model picker."""
+    marker = f"grok-dismiss-{secrets.token_hex(8)}"
+    clear_rounds = 0
+    for _attempt in range(24):
+        if should_stop():
+            return False, "stop-requested"
+        state = page.evaluate(
+            r"""({labels, marker}) => {
+                const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                const visible = (element) => {
+                    if (!element || element.getClientRects().length === 0) return false;
+                    for (let current = element; current; current = current.parentElement) {
+                        const style = getComputedStyle(current);
+                        const opacity = Number.parseFloat(style.opacity || '1');
+                        if (style.visibility === 'hidden'
+                            || style.visibility === 'collapse'
+                            || style.display === 'none'
+                            || (Number.isFinite(opacity) && opacity <= 0)) return false;
+                    }
+                    return true;
+                };
+                document.querySelectorAll('[data-cachelikes-grok-dismiss]')
+                    .forEach((element) => element.removeAttribute('data-cachelikes-grok-dismiss'));
+                const dialogs = [...document.querySelectorAll(
+                    '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
+                )].filter(visible);
+                const known = dialogs.filter((dialog) => (
+                    dialog.getAttribute('role') === 'dialog'
+                    && labels.includes(normalize(dialog.getAttribute('aria-label')))
+                ));
+                if (dialogs.length !== known.length) {
+                    return {ok: false, reason: 'blocking-dialog'};
+                }
+                if (known.length === 0) return {ok: true, clear: true};
+                if (known.length !== 1) {
+                    return {ok: false, reason: 'onboarding-dialog-ambiguous'};
+                }
+                const dismissButtons = [...known[0].querySelectorAll('button, [role="button"]')]
+                    .filter(visible)
+                    .filter((button) => !button.disabled && button.getAttribute('aria-disabled') !== 'true')
+                    .filter((button) => normalize(
+                        button.getAttribute('aria-label')
+                        || button.innerText
+                        || button.textContent
+                    ) === 'Dismiss');
+                if (dismissButtons.length !== 1) {
+                    return {ok: false, reason: 'onboarding-dismiss-ambiguous'};
+                }
+                dismissButtons[0].setAttribute('data-cachelikes-grok-dismiss', marker);
+                return {ok: true, clear: false};
+            }""",
+            {
+                "labels": ["Meet Grok Bot", "Introducing Build Mode"],
+                "marker": marker,
+            },
+        )
+        if not isinstance(state, dict) or not state.get("ok"):
+            reason = str(state.get("reason") or "onboarding-inspection-failed") if isinstance(state, dict) else "onboarding-inspection-failed"
+            return False, reason
+        if state.get("clear"):
+            clear_rounds += 1
+            if clear_rounds >= 6:
+                return True, ""
+            page.wait_for_timeout(250)
+            continue
+        clear_rounds = 0
+        dismiss = page.locator(f'[data-cachelikes-grok-dismiss="{marker}"]')
+        if dismiss.count() != 1 or not dismiss.first.is_visible():
+            return False, "onboarding-dismiss-not-found"
+        dismiss.first.click(timeout=5_000)
+        page.wait_for_timeout(250)
+    return False, "onboarding-dialog-timeout"
+
+
+def _grok_model_trigger_snapshot(page: Any, marker: str) -> dict[str, Any]:
+    """Mark and describe exactly one visible semantic Grok model trigger."""
+    result = page.evaluate(
+        r"""({marker}) => {
+            const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const visible = (element) => {
+                if (!element || element.getClientRects().length === 0) return false;
+                for (let current = element; current; current = current.parentElement) {
+                    const style = getComputedStyle(current);
+                    const opacity = Number.parseFloat(style.opacity || '1');
+                    if (style.visibility === 'hidden'
+                        || style.visibility === 'collapse'
+                        || style.display === 'none'
+                        || (Number.isFinite(opacity) && opacity <= 0)) return false;
+                }
+                return true;
+            };
+            document.querySelectorAll('[data-cachelikes-grok-model-trigger]')
+                .forEach((element) => element.removeAttribute('data-cachelikes-grok-model-trigger'));
+            const candidates = [...document.querySelectorAll(
+                'button#model-select-trigger[aria-label="Model select"]'
+            )]
+                .filter(visible)
+                .filter((element) => !element.disabled && element.getAttribute('aria-disabled') !== 'true')
+                .filter((element) => !element.closest(
+                    '[role="menu"], [role="listbox"], [role="dialog"]'
+                ))
+                .filter((element) => element.getAttribute('aria-haspopup') === 'menu');
+            if (candidates.length !== 1) {
+                return {
+                    ok: false,
+                    reason: candidates.length ? 'model-control-ambiguous' : 'model-control-not-found',
+                };
+            }
+            candidates[0].setAttribute('data-cachelikes-grok-model-trigger', marker);
+            return {
+                ok: true,
+                current: normalize(candidates[0].innerText || candidates[0].textContent),
+                expanded: candidates[0].getAttribute('aria-expanded') === 'true',
+                controlledId: normalize(candidates[0].getAttribute('aria-controls')),
+            };
+        }""",
+        {"marker": marker},
+    )
+    return dict(result) if isinstance(result, dict) else {"ok": False, "reason": "model-control-unavailable"}
+
+
+def _grok_blocking_dialog_snapshot(page: Any) -> dict[str, Any]:
+    """Report any visible modal surface before a Grok model-menu click."""
+    result = page.evaluate(
+        r"""() => {
+            const visible = (element) => {
+                if (!element || element.getClientRects().length === 0) return false;
+                for (let current = element; current; current = current.parentElement) {
+                    const style = getComputedStyle(current);
+                    const opacity = Number.parseFloat(style.opacity || '1');
+                    if (style.visibility === 'hidden'
+                        || style.visibility === 'collapse'
+                        || style.display === 'none'
+                        || (Number.isFinite(opacity) && opacity <= 0)) return false;
+                }
+                return true;
+            };
+            const blockers = [...document.querySelectorAll(
+                '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
+            )].filter(visible);
+            return {blocking: blockers.length > 0, count: blockers.length};
+        }"""
+    )
+    return dict(result) if isinstance(result, dict) else {"blocking": True, "count": -1}
+
+
+def _inspect_open_grok_model_surface(
+    page: Any,
+    trigger_marker: str,
+    surface_marker: str,
+    choice_marker: str,
+    remote_labels: tuple[str, ...],
+) -> dict[str, Any]:
+    """Bind Grok's controlled Radix menu and exact configured radio option."""
+    result = page.evaluate(
+        r"""({triggerMarker, surfaceMarker, choiceMarker, remoteLabels}) => {
+            const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+            const normalized = (value) => normalize(value).toLowerCase();
+            const visible = (element) => {
+                if (!element || element.getClientRects().length === 0) return false;
+                for (let current = element; current; current = current.parentElement) {
+                    const style = getComputedStyle(current);
+                    const opacity = Number.parseFloat(style.opacity || '1');
+                    if (style.visibility === 'hidden'
+                        || style.visibility === 'collapse'
+                        || style.display === 'none'
+                        || (Number.isFinite(opacity) && opacity <= 0)) return false;
+                }
+                return true;
+            };
+            const matches = (value) => remoteLabels.some((label) => (
+                normalized(value) === normalized(label)
+            ));
+            document.querySelectorAll('[data-cachelikes-grok-model-surface]')
+                .forEach((element) => element.removeAttribute('data-cachelikes-grok-model-surface'));
+            document.querySelectorAll('[data-cachelikes-grok-model-choice]')
+                .forEach((element) => element.removeAttribute('data-cachelikes-grok-model-choice'));
+            const triggers = [...document.querySelectorAll(
+                `[data-cachelikes-grok-model-trigger="${triggerMarker}"]`
+            )].filter(visible);
+            if (triggers.length !== 1 || triggers[0].getAttribute('aria-expanded') !== 'true') {
+                return {ok: false, reason: 'model-menu-open-failed', available: []};
+            }
+            const trigger = triggers[0];
+            const controlledId = normalize(trigger.getAttribute('aria-controls'));
+            if (!controlledId) {
+                return {ok: false, reason: 'model-surface-not-found', available: []};
+            }
+            const controlledSurfaces = [...document.querySelectorAll('[id]')]
+                .filter((element) => element.id === controlledId);
+            if (controlledSurfaces.length !== 1) {
+                return {ok: false, reason: 'model-surface-ambiguous', available: []};
+            }
+            const surface = controlledSurfaces[0];
+            if (!surface || !visible(surface) || surface.getAttribute('role') !== 'menu') {
+                return {ok: false, reason: 'model-surface-not-found', available: []};
+            }
+            const blockers = [...document.querySelectorAll(
+                '[role="dialog"], [role="alertdialog"], [aria-modal="true"]'
+            )]
+                .filter(visible);
+            if (blockers.length) {
+                return {ok: false, reason: 'blocking-dialog', available: []};
+            }
+            surface.setAttribute('data-cachelikes-grok-model-surface', surfaceMarker);
+            const candidates = [...surface.querySelectorAll('[role="menuitemradio"]')]
+                .filter(visible)
+                .filter((element) => element.closest('[role="menu"]') === surface)
+                .filter((element) => !element.closest('[role="dialog"]'))
+                .filter((element) => !element.disabled && element.getAttribute('aria-disabled') !== 'true');
+            const candidateLabelFor = (element) => normalize(
+                element.getAttribute('aria-label')
+                || element.innerText
+                || element.textContent
+            );
+            const available = candidates.map(candidateLabelFor).filter(Boolean);
+            const choices = candidates.filter((element) => matches(candidateLabelFor(element)));
+            if (choices.length !== 1) {
+                return {
+                    ok: false,
+                    reason: choices.length ? 'model-option-ambiguous' : 'model-not-exposed',
+                    available,
+                };
+            }
+            choices[0].setAttribute('data-cachelikes-grok-model-choice', choiceMarker);
+            const ariaChecked = choices[0].getAttribute('aria-checked');
+            const dataState = normalize(choices[0].getAttribute('data-state')).toLowerCase();
+            const ariaSelected = ariaChecked === 'true';
+            const stateSelected = dataState === 'checked';
+            const proofFor = (element) => ({
+                ariaSelected: element.getAttribute('aria-checked') === 'true',
+                stateSelected: normalize(element.getAttribute('data-state')).toLowerCase() === 'checked',
+            });
+            const candidateProofs = candidates.map(proofFor);
+            const selectedCount = candidateProofs.filter((proof) => (
+                proof.ariaSelected && proof.stateSelected
+            )).length;
+            return {
+                ok: true,
+                available,
+                selected: ariaSelected && stateSelected,
+                selectionContradictory: candidateProofs.some((proof) => (
+                    proof.ariaSelected !== proof.stateSelected
+                )),
+                selectionAmbiguous: selectedCount > 1,
+            };
+        }""",
+        {
+            "triggerMarker": trigger_marker,
+            "surfaceMarker": surface_marker,
+            "choiceMarker": choice_marker,
+            "remoteLabels": list(remote_labels),
+        },
+    )
+    return dict(result) if isinstance(result, dict) else {"ok": False, "reason": "model-control-unavailable"}
+
+
+def _select_grok_model_with_trusted_clicks(
+    page: Any,
+    remote_labels: tuple[str, ...],
+    trigger_labels: tuple[str, ...],
+    observation: dict[str, Any] | None,
+    should_stop: Callable[[], bool],
+) -> bool:
+    """Select Grok's current Radix model menu with trusted, bound clicks."""
+    dismissed, dismiss_reason = _dismiss_known_grok_onboarding_dialogs(page, should_stop)
+    if not dismissed:
+        _record_model_observation(
+            observation,
+            reason=dismiss_reason,
+            attempted_labels=remote_labels,
+        )
+        return False
+    trigger_marker = f"grok-trigger-{secrets.token_hex(8)}"
+    surface_marker = f"grok-surface-{secrets.token_hex(8)}"
+    choice_marker = f"grok-choice-{secrets.token_hex(8)}"
+    available: list[str] = []
+    bound_controlled_id = ""
+
+    def close_after_safe_failure(reason: str) -> None:
+        if reason != "blocking-dialog":
+            close_menu()
+
+    def record_failure(reason: str, observed: str = "") -> bool:
+        _record_model_observation(
+            observation,
+            observed=observed,
+            available=available,
+            reason=reason,
+            attempted_labels=remote_labels,
+            menu_text=", ".join(dict.fromkeys(available)),
+        )
+        return False
+
+    def trigger_locator() -> tuple[dict[str, Any], Any | None]:
+        nonlocal bound_controlled_id
+        state = _grok_model_trigger_snapshot(page, trigger_marker)
+        if not state.get("ok"):
+            return state, None
+        controlled_id = str(state.get("controlledId") or "").strip()
+        if not controlled_id and state.get("expanded"):
+            return {"ok": False, "reason": "model-surface-not-found"}, None
+        if controlled_id and bound_controlled_id and controlled_id != bound_controlled_id:
+            return {"ok": False, "reason": "model-control-remounted"}, None
+        if controlled_id:
+            bound_controlled_id = controlled_id
+        locator = page.locator(
+            f'[data-cachelikes-grok-model-trigger="{trigger_marker}"]'
+        )
+        if locator.count() != 1 or not locator.first.is_visible():
+            return {"ok": False, "reason": "model-control-ambiguous"}, None
+        return state, locator.first
+
+    def wait_for_closed() -> tuple[bool, str]:
+        current = ""
+        for _attempt in range(20):
+            if should_stop():
+                return False, current
+            state, _trigger = trigger_locator()
+            current = str(state.get("current") or "").strip()
+            surface = page.locator(
+                f'[data-cachelikes-grok-model-surface="{surface_marker}"]'
+            )
+            surface_visible = bool(surface.count() and surface.first.is_visible())
+            if state.get("ok") and not state.get("expanded") and not surface_visible:
+                return True, current
+            page.wait_for_timeout(100)
+        return False, current
+
+    def close_menu() -> tuple[bool, str]:
+        state, trigger = trigger_locator()
+        current = str(state.get("current") or "").strip()
+        if not state.get("ok"):
+            return False, current
+        if not state.get("expanded"):
+            return wait_for_closed()
+        if should_stop():
+            return False, current
+        try:
+            trigger.click(timeout=3_000)
+        except Exception:
+            if _grok_blocking_dialog_snapshot(page).get("blocking"):
+                return False, current
+            keyboard = getattr(page, "keyboard", None)
+            press = getattr(keyboard, "press", None)
+            if not callable(press):
+                return False, current
+            press("Escape")
+        return wait_for_closed()
+
+    def open_menu() -> dict[str, Any]:
+        blocking_state = _grok_blocking_dialog_snapshot(page)
+        if blocking_state.get("blocking"):
+            return {"ok": False, "reason": "blocking-dialog"}
+        state, trigger = trigger_locator()
+        if not state.get("ok"):
+            return state
+        if state.get("expanded"):
+            closed, _current = close_menu()
+            if not closed:
+                return {"ok": False, "reason": "model-menu-close-failed"}
+            state, trigger = trigger_locator()
+        if should_stop():
+            return {"ok": False, "reason": "stop-requested"}
+        try:
+            trigger.click(timeout=3_000)
+        except Exception:
+            page.wait_for_timeout(150)
+            state, trigger = trigger_locator()
+            if not state.get("ok"):
+                return state
+            if not state.get("expanded"):
+                clear, reason = _dismiss_known_grok_onboarding_dialogs(
+                    page,
+                    should_stop,
+                )
+                if not clear:
+                    return {"ok": False, "reason": reason}
+                state, trigger = trigger_locator()
+                if not state.get("ok") or state.get("expanded"):
+                    return {"ok": False, "reason": "model-control-ambiguous"}
+                try:
+                    trigger.click(timeout=3_000)
+                except Exception:
+                    return {
+                        "ok": False,
+                        "reason": "model-selection-click-uncertain",
+                    }
+        surface_state: dict[str, Any] = {}
+        for _attempt in range(20):
+            if should_stop():
+                return {"ok": False, "reason": "stop-requested"}
+            page.wait_for_timeout(100)
+            if _grok_blocking_dialog_snapshot(page).get("blocking"):
+                return {"ok": False, "reason": "blocking-dialog"}
+            state, _trigger = trigger_locator()
+            if not state.get("ok"):
+                continue
+            surface_state = _inspect_open_grok_model_surface(
+                page,
+                trigger_marker,
+                surface_marker,
+                choice_marker,
+                remote_labels,
+            )
+            if surface_state.get("ok") or surface_state.get("reason") not in {
+                "model-menu-open-failed",
+                "model-surface-not-found",
+            }:
+                return surface_state
+        return surface_state or {"ok": False, "reason": "model-menu-open-failed"}
+
+    def open_menu_after_onboarding_retry() -> dict[str, Any]:
+        surface_state = open_menu()
+        if surface_state.get("reason") != "blocking-dialog":
+            return surface_state
+        clear, reason = _dismiss_known_grok_onboarding_dialogs(page, should_stop)
+        if not clear:
+            return {"ok": False, "reason": reason}
+        return open_menu()
+
+    initial_state: dict[str, Any] = {}
+    for attempt in range(GROK_MODEL_CONTROL_WAIT_ATTEMPTS):
+        if should_stop():
+            return record_failure("stop-requested")
+        initial_state, _initial_trigger = trigger_locator()
+        if initial_state.get("ok") or initial_state.get("reason") != "model-control-not-found":
+            break
+        if attempt + 1 < GROK_MODEL_CONTROL_WAIT_ATTEMPTS:
+            page.wait_for_timeout(int(WEB_MODEL_CONTROL_POLL_SECONDS * 1_000))
+    if not initial_state.get("ok"):
+        return record_failure(
+            str(initial_state.get("reason") or "model-control-unavailable")
+        )
+    if initial_state.get("expanded"):
+        closed, current = close_menu()
+        if not closed:
+            return record_failure("model-menu-close-failed", current)
+
+    first_surface = open_menu_after_onboarding_retry()
+    available = [
+        str(value)
+        for value in first_surface.get("available", [])
+        if str(value).strip()
+    ] if isinstance(first_surface, dict) else []
+    if not first_surface.get("ok"):
+        failure_reason = str(
+            first_surface.get("reason") or "model-control-unavailable"
+        )
+        close_after_safe_failure(failure_reason)
+        return record_failure(failure_reason)
+    if (
+        first_surface.get("selectionContradictory")
+        or first_surface.get("selectionAmbiguous")
+    ):
+        close_menu()
+        return record_failure("model-selection-proof-conflict")
+
+    if not first_surface.get("selected"):
+        choice = page.locator(
+            f'[data-cachelikes-grok-model-choice="{choice_marker}"]'
+        )
+        if choice.count() != 1 or not choice.first.is_visible():
+            close_menu()
+            return record_failure("model-option-ambiguous")
+        if should_stop():
+            return record_failure("stop-requested")
+        try:
+            choice.first.click(timeout=3_000)
+        except Exception:
+            page.wait_for_timeout(150)
+            state, _trigger = trigger_locator()
+            if state.get("ok") and state.get("expanded"):
+                reread = _inspect_open_grok_model_surface(
+                    page,
+                    trigger_marker,
+                    surface_marker,
+                    choice_marker,
+                    remote_labels,
+                )
+                if not reread.get("selected"):
+                    close_menu()
+                    return record_failure("model-selection-click-uncertain")
+        closed, current = wait_for_closed()
+        if not closed:
+            reread = _inspect_open_grok_model_surface(
+                page,
+                trigger_marker,
+                surface_marker,
+                choice_marker,
+                remote_labels,
+            )
+            if reread.get("selectionContradictory") or reread.get(
+                "selectionAmbiguous"
+            ):
+                close_menu()
+                return record_failure("model-selection-proof-conflict", current)
+            if not reread.get("selected"):
+                close_menu()
+                return record_failure("model-readback-mismatch", current)
+            closed, current = close_menu()
+            if not closed:
+                return record_failure("model-menu-close-failed", current)
+
+    verification_surface = open_menu_after_onboarding_retry()
+    if not verification_surface.get("ok"):
+        failure_reason = str(
+            verification_surface.get("reason") or "model-menu-reopen-failed"
+        )
+        close_after_safe_failure(failure_reason)
+        return record_failure(failure_reason)
+    if verification_surface.get("selectionContradictory") or verification_surface.get(
+        "selectionAmbiguous"
+    ):
+        close_menu()
+        return record_failure("model-selection-proof-conflict")
+    if not verification_surface.get("selected"):
+        close_menu()
+        return record_failure("model-readback-mismatch")
+    closed, current = close_menu()
+    if not closed:
+        return record_failure("model-menu-close-failed", current)
+    if not _web_model_text_matches(current, trigger_labels):
+        return record_failure("model-readback-mismatch", current)
+    _record_model_observation(
+        observation,
+        observed=current,
+        available=available,
+        attempted_labels=remote_labels,
+        menu_text=current,
+    )
+    return True
+
+
 def _select_web_model(
     page: Any,
     browser_kind: str,
@@ -7030,6 +8007,7 @@ def _select_web_model(
     model: str,
     observation: dict[str, Any] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    availability_check: Callable[[], bool | tuple[bool, float]] | None = None,
 ) -> bool:
     """Select a provider model when its page exposes a compatible model menu."""
     if platform == "chatgpt":
@@ -7053,6 +8031,46 @@ def _select_web_model(
             attempted_labels=remote_labels,
         )
         return False
+    if platform == "grok":
+        if not callable(getattr(page, "locator", None)):
+            _record_model_observation(
+                observation,
+                reason="trusted-model-selector-unavailable",
+                attempted_labels=remote_labels,
+            )
+            return False
+        trigger_labels = tuple(
+            option.get("remote_trigger_labels") or remote_labels
+        )
+        if callable(availability_check):
+            available, _paused_seconds = _run_availability_gate(
+                availability_check
+            )
+            if not available:
+                _record_model_observation(
+                    observation,
+                    reason="stop-requested",
+                    attempted_labels=remote_labels,
+                )
+                return False
+        executed, selected = _run_browser_action_unless_stopped(
+            stop_requested,
+            lambda: _select_grok_model_with_trusted_clicks(
+                page,
+                remote_labels,
+                trigger_labels,
+                observation,
+                stop_requested,
+            ),
+        )
+        if not executed:
+            _record_model_observation(
+                observation,
+                reason="stop-requested",
+                attempted_labels=remote_labels,
+            )
+            return False
+        return bool(selected)
 
     def evaluate_model_control() -> Any:
         return page.evaluate(
@@ -7086,6 +8104,27 @@ def _select_web_model(
                 const aria = (element.getAttribute('aria-label') || '').trim();
                 const text = (element.innerText || element.textContent || '').trim();
                 return normalize(aria) === normalize(text) ? (aria || text) : `${aria} ${text}`.trim();
+            };
+            const candidateLabelFor = (element) => {
+                if (!element) return '';
+                const metadata = normalize(
+                    `${element.getAttribute('aria-label') || ''} ${element.innerText || element.textContent || ''}`
+                );
+                if (/(?:^|\s)(?:plan|upgrade|subscription|supergrok)(?:$|\s)/u.test(metadata)) {
+                    return labelFor(element);
+                }
+                const aria = (element.getAttribute('aria-label') || '').trim();
+                if (aria && matches(aria)) return aria;
+                const primaryCandidates = [
+                    ...element.querySelectorAll(
+                        '.label, [data-testid*="label" i], [data-testid*="name" i]'
+                    ),
+                    ...element.children,
+                ].filter(isVisible);
+                const primary = primaryCandidates
+                    .map((candidate) => (candidate.innerText || candidate.textContent || '').trim())
+                    .find((value) => matches(value));
+                return primary || labelFor(element);
             };
             const hasEnglishToken = (value, tokens) => tokens.some((token) => (
                 new RegExp(`(?:^|[^a-z0-9])${token}(?:$|[^a-z0-9])`, 'u').test(value)
@@ -7176,9 +8215,13 @@ def _select_web_model(
             )]
                 .filter(isVisible)
                 .filter((element) => element !== activeTrigger)
-                .filter((element) => (
-                    element.closest('[role="menu"], [role="listbox"], [role="dialog"]') === surface
-                ))
+                .filter((element) => {
+                    const owner = element.closest(
+                        '[role="menu"], [role="listbox"], [role="dialog"]'
+                    );
+                    return owner === surface
+                        || (platform === 'grok' && surface.contains(owner));
+                })
                 .filter((element) => !/send|submit|attach|upload|dictate/i.test(labelFor(element)));
             const trigger = findTrigger();
             if (!trigger) {
@@ -7291,6 +8334,18 @@ def _select_web_model(
                 }
                 const candidates = surfaceCandidates(selectionSurface, selectionTrigger);
                 const available = candidates.map(geminiPrimaryLabel).filter(Boolean);
+                const authBarrier = candidates.some((element) => (
+                    normalize(geminiPrimaryLabel(element) || labelFor(element))
+                        === 'sign in for all models'
+                ));
+                if (authBarrier) {
+                    const closed = await closeControlledSurface();
+                    return {
+                        ok: false,
+                        reason: closed ? 'signed-out' : 'model-menu-close-failed',
+                        available,
+                    };
+                }
                 const choice = candidates.find((element) => (
                     geminiPrimaryLabel(element) === exactGeminiPrimary
                 ));
@@ -7370,10 +8425,10 @@ def _select_web_model(
                 if (!surface) continue;
                 openedSurface = surface;
                 candidates = surfaceCandidates(surface, trigger);
-                const choice = candidates.find((element) => matches(labelFor(element)));
+                const choice = candidates.find((element) => matches(candidateLabelFor(element)));
                 if (choice) {
                     choice.click();
-                    const available = candidates.map(labelFor).filter(Boolean);
+                    const available = candidates.map(candidateLabelFor).filter(Boolean);
                     for (let verifyAttempt = 0; verifyAttempt < 20; verifyAttempt += 1) {
                         await new Promise((resolve) => window.setTimeout(resolve, 100));
                         const currentTrigger = findTrigger();
@@ -7416,7 +8471,7 @@ def _select_web_model(
             return {
                 ok: false,
                 reason: closed ? 'model-not-exposed' : 'model-menu-close-failed',
-                available: candidates.map(labelFor).filter(Boolean),
+                available: candidates.map(candidateLabelFor).filter(Boolean),
             };
             }""",
             {
@@ -7429,6 +8484,13 @@ def _select_web_model(
     result: Any = None
     executed = False
     for attempt in range(WEB_MODEL_CONTROL_WAIT_ATTEMPTS):
+        if callable(availability_check):
+            available, _paused_seconds = _run_availability_gate(
+                availability_check
+            )
+            if not available:
+                executed = False
+                break
         executed, result = _run_browser_action_unless_stopped(
             stop_requested,
             evaluate_model_control,
@@ -7657,6 +8719,80 @@ def _attach_context_file(
         return False
 
 
+def _run_availability_gate(
+    availability_check: Callable[[], bool | tuple[bool, float]] | None,
+) -> tuple[bool, float]:
+    """Run one provider gate and return only its explicit recovery pause time."""
+    if not callable(availability_check):
+        return True, 0.0
+    result = availability_check()
+    if isinstance(result, tuple) and len(result) == 2:
+        available, paused_seconds = result
+        try:
+            explicit_pause = max(0.0, float(paused_seconds))
+        except (TypeError, ValueError):
+            explicit_pause = 0.0
+        return bool(available), explicit_pause
+    return bool(result), 0.0
+
+
+def _provider_mutating_action_may_have_committed(
+    page: Any,
+    platform: str,
+    exc: Exception,
+) -> bool:
+    """Fail closed against duplicate sends after navigation or challenge races."""
+    if _is_transient_browser_navigation_error(exc):
+        return True
+    try:
+        return bool(_provider_human_verification_reason(page, platform))
+    except Exception as detection_exc:
+        return _is_transient_browser_navigation_error(detection_exc)
+
+
+def _run_recoverable_provider_read(
+    action: Callable[[], Any],
+    *,
+    page: Any,
+    platform: str,
+    availability_check: Callable[[], bool | tuple[bool, float]] | None,
+) -> tuple[bool, Any, float]:
+    """Retry one read-only operation after explicit provider challenge recovery."""
+    paused_seconds = 0.0
+    navigation_retries = 0
+    while True:
+        available, current_pause = _run_availability_gate(availability_check)
+        paused_seconds += current_pause
+        if not available:
+            return False, None, paused_seconds
+        try:
+            return True, action(), paused_seconds
+        except Exception as exc:
+            challenge_reason = ""
+            if callable(availability_check):
+                try:
+                    challenge_reason = _provider_human_verification_reason(
+                        page,
+                        platform,
+                    )
+                except Exception as detection_exc:
+                    if not _is_transient_browser_navigation_error(detection_exc):
+                        raise exc from detection_exc
+            if challenge_reason:
+                navigation_retries = 0
+                continue
+            if (
+                _is_transient_browser_navigation_error(exc)
+                and navigation_retries < 20
+            ):
+                navigation_retries += 1
+                wait_for_timeout = getattr(page, "wait_for_timeout", None)
+                if callable(wait_for_timeout):
+                    wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+                continue
+            raise
+
+
 def _submit_and_wait(
     page: Any,
     browser_kind: str,
@@ -7668,26 +8804,59 @@ def _submit_and_wait(
     session_recover: Callable[[Callable[[], bool] | None], str] | None = None,
     submission_target_url: str = "",
     session_mode: str = "",
+    availability_check: Callable[[], bool | tuple[bool, float]] | None = None,
 ) -> str:
     """Submit one message and wait for one stable provider response."""
     if should_stop():
         return ""
+    turn_receipt_marker = ""
+    submitted_message = message
+    if browser_kind != "safari" and platform != "chatgpt":
+        turn_receipt_marker = f"agent-turn-{secrets.token_hex(16)}"
+        submitted_message = (
+            f"{message}\n\nController turn receipt: {turn_receipt_marker}"
+        )
     selector = _web_assistant_selector(platform)
-    checked_target_url = session_check(False) if session_check is not None else ""
-    atomic_target_url = checked_target_url or str(submission_target_url or "").strip()
-    if platform == "chatgpt" and browser_kind != "safari":
-        baseline_snapshot = _chatgpt_response_snapshot(page, selector)
+    if browser_kind != "safari":
+        def capture_baseline() -> tuple[str, dict[str, Any]]:
+            checked_url = session_check(False) if session_check is not None else ""
+            snapshot = (
+                _chatgpt_response_snapshot(page, selector)
+                if platform == "chatgpt"
+                else _provider_turn_snapshot(page, platform, selector)
+            )
+            return checked_url, snapshot
+
+        available, baseline_state, _paused_seconds = _run_recoverable_provider_read(
+            capture_baseline,
+            page=page,
+            platform=platform,
+            availability_check=availability_check,
+        )
+        if not available:
+            return ""
+        checked_target_url, baseline_snapshot = baseline_state
+        atomic_target_url = checked_target_url or str(submission_target_url or "").strip()
         if atomic_target_url and not _web_target_is_open(
-            "chatgpt",
+            platform,
             atomic_target_url,
             str(baseline_snapshot.get("url") or ""),
         ):
             raise RuntimeError(
-                "The selected ChatGPT tab changed before the response baseline was captured."
+                f"The selected {AGENT_PLATFORM_BY_KEY[platform]['label']} tab changed "
+                "before the response baseline was captured."
             )
         baseline = int(baseline_snapshot.get("count") or 0)
         baseline_response = str(baseline_snapshot.get("text") or "")
+        baseline_user_count = int(baseline_snapshot.get("userCount") or 0)
+        baseline_user_text = str(baseline_snapshot.get("latestUserText") or "")
+        user_receipt_contract = bool(turn_receipt_marker) or (
+            "userCount" in baseline_snapshot
+            and "latestUserText" in baseline_snapshot
+        )
     else:
+        checked_target_url = session_check(False) if session_check is not None else ""
+        atomic_target_url = checked_target_url or str(submission_target_url or "").strip()
         baseline = _platform_web_count(page, browser_kind, platform, selector)
         baseline_response = _platform_web_last_text(
             page,
@@ -7695,6 +8864,10 @@ def _submit_and_wait(
             platform,
             selector,
         )
+        baseline_snapshot = {}
+        baseline_user_count = 0
+        baseline_user_text = ""
+        user_receipt_contract = False
     if should_stop():
         return ""
     if browser_kind == "safari":
@@ -7710,22 +8883,39 @@ def _submit_and_wait(
             expected_target_url=atomic_target_url,
         )
     else:
-        _submit_chromium_web_prompt(
+        submission_accepted = _submit_chromium_web_prompt(
             page,
             platform,
-            message,
+            submitted_message,
             should_stop,
             session_check=session_check,
             expected_target_url=atomic_target_url,
             session_mode=session_mode,
+            availability_check=availability_check,
+            baseline_snapshot=baseline_snapshot,
+            submission_receipt_marker=turn_receipt_marker,
         )
+        if submission_accepted is False:
+            return ""
     if should_stop():
         _stop_web_generation(page, browser_kind)
         return ""
-    if session_recover is not None:
-        session_recover(should_stop)
-    elif session_check is not None:
-        session_check(True)
+    def confirm_response_session() -> str:
+        if session_recover is not None:
+            return session_recover(should_stop)
+        if session_check is not None:
+            return session_check(True)
+        return ""
+
+    available, _confirmed_session, _paused_seconds = _run_recoverable_provider_read(
+        confirm_response_session,
+        page=page,
+        platform=platform,
+        availability_check=availability_check,
+    )
+    if not available:
+        _stop_web_generation(page, browser_kind)
+        return ""
     if should_stop():
         _stop_web_generation(page, browser_kind)
         return ""
@@ -7737,25 +8927,65 @@ def _submit_and_wait(
     stable_since = submitted_at
     previous = ""
     response = ""
+    current_user_receipt_seen = platform == "chatgpt" or not user_receipt_contract
     deadline = submitted_at + WEB_TURN_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if should_stop():
             _stop_web_generation(page, browser_kind)
             return response
-        response_session_url_before_check = str(
-            getattr(page, "url", "") or ""
-        ).strip()
-        checked_response_session = ""
-        if session_recover is not None:
-            checked_response_session = session_recover(should_stop)
-        elif session_check is not None:
-            checked_response_session = session_check(True)
+        def read_response_state() -> dict[str, Any]:
+            before_url = str(getattr(page, "url", "") or "").strip()
+            checked_session = confirm_response_session()
+            if browser_kind != "safari":
+                snapshot = (
+                    _chatgpt_response_snapshot(page, selector)
+                    if platform == "chatgpt"
+                    else _provider_turn_snapshot(
+                        page,
+                        platform,
+                        selector,
+                        receipt_marker=turn_receipt_marker,
+                    )
+                )
+            else:
+                snapshot = {
+                    "count": _platform_web_count(
+                        page, browser_kind, platform, selector
+                    ),
+                    "text": _platform_web_last_text(
+                        page, browser_kind, platform, selector
+                    ),
+                    "generating": _web_is_generating(page, browser_kind),
+                    "assistantAfterLatestUser": True,
+                    "url": str(getattr(page, "url", "") or "").strip(),
+                }
+            return {
+                "beforeUrl": before_url,
+                "afterUrl": str(getattr(page, "url", "") or "").strip(),
+                "checkedSession": checked_session,
+                "snapshot": snapshot,
+            }
+
+        available, read_state, paused_seconds = _run_recoverable_provider_read(
+            read_response_state,
+            page=page,
+            platform=platform,
+            availability_check=availability_check,
+        )
+        if not available:
+            _stop_web_generation(page, browser_kind)
+            return response
+        if paused_seconds:
+            submitted_at += paused_seconds
+            session_bind_deadline += paused_seconds
+            deadline += paused_seconds
+            stable_since = time.monotonic()
+        response_session_url_before_check = str(read_state.get("beforeUrl") or "")
+        checked_response_session = str(read_state.get("checkedSession") or "")
         if should_stop():
             _stop_web_generation(page, browser_kind)
             return response
-        response_session_url_after_check = str(
-            getattr(page, "url", "") or ""
-        ).strip()
+        response_session_url_after_check = str(read_state.get("afterUrl") or "")
         if response_session_url_after_check != response_session_url_before_check:
             previous = ""
             stable_since = time.monotonic()
@@ -7770,11 +9000,12 @@ def _submit_and_wait(
                 )
             _web_wait(page, browser_kind, 500)
             continue
-        if platform == "chatgpt" and browser_kind != "safari":
-            response_snapshot = _chatgpt_response_snapshot(page, selector)
+        response_snapshot = read_state.get("snapshot") or {}
+        current_user_receipt_visible = current_user_receipt_seen
+        if browser_kind != "safari":
             response_target_url = checked_response_session or atomic_target_url
             if response_target_url and not _web_target_is_open(
-                "chatgpt",
+                platform,
                 response_target_url,
                 str(response_snapshot.get("url") or ""),
             ):
@@ -7788,17 +9019,57 @@ def _submit_and_wait(
             assistant_after_latest_user = bool(
                 response_snapshot.get("assistantAfterLatestUser")
             )
+            if user_receipt_contract:
+                latest_user_count = int(response_snapshot.get("userCount") or 0)
+                latest_user_text = str(
+                    response_snapshot.get("latestUserText") or ""
+                )
+                if turn_receipt_marker:
+                    marker_echoed = bool(response_snapshot.get("markerEchoed"))
+                    recognizable_latest_user = bool(
+                        latest_user_count > 0 and latest_user_text.strip()
+                    )
+                    if (
+                        current_user_receipt_seen
+                        and recognizable_latest_user
+                        and not marker_echoed
+                    ):
+                        raise RuntimeError(
+                            f"The latest {AGENT_PLATFORM_BY_KEY[platform]['label']} user turn "
+                            "superseded the current controller receipt."
+                        )
+                    current_user_receipt_seen = (
+                        current_user_receipt_seen or marker_echoed
+                    )
+                    current_user_receipt_visible = marker_echoed
+                else:
+                    current_user_receipt_seen = current_user_receipt_seen or (
+                        latest_user_count > baseline_user_count
+                        or bool(
+                            latest_user_text
+                            and latest_user_text != baseline_user_text
+                        )
+                    )
+                    current_user_receipt_visible = current_user_receipt_seen
         else:
-            count = _platform_web_count(page, browser_kind, platform, selector)
-            latest_response = _platform_web_last_text(
-                page,
-                browser_kind,
-                platform,
-                selector,
+            count = int(response_snapshot.get("count") or 0)
+            latest_response = str(response_snapshot.get("text") or "")
+            generating = bool(response_snapshot.get("generating"))
+            assistant_after_latest_user = bool(
+                response_snapshot.get("assistantAfterLatestUser", True)
             )
-            generating = _web_is_generating(page, browser_kind)
-            assistant_after_latest_user = True
-        if assistant_after_latest_user and (
+        if platform != "chatgpt" and user_receipt_contract:
+            if (
+                current_user_receipt_visible
+                and assistant_after_latest_user
+                and latest_response
+            ):
+                response = latest_response
+            elif turn_receipt_marker and not current_user_receipt_visible:
+                response = ""
+                previous = ""
+                stable_since = time.monotonic()
+        elif assistant_after_latest_user and (
             count > baseline
             or (latest_response and latest_response != baseline_response)
         ):
@@ -7824,7 +9095,10 @@ def _web_user_selector(platform: str) -> str:
     return {
         "chatgpt": '[data-message-author-role="user"]',
         "gemini": 'user-query, [data-test-id="user-query-content"]',
-        "grok": '[data-testid*="user" i], [data-role="user"], [data-message-author-role="user"]',
+        "grok": (
+            '[data-testid="user-message"], [data-testid*="user-message" i], '
+            '[data-role="user"], [data-message-author-role="user"]'
+        ),
         "claude": '[data-testid*="human" i], [data-testid*="user" i], [data-role="user"], [data-message-author-role="user"]',
     }.get(platform, '[data-message-author-role="user"]')
 
@@ -7837,22 +9111,348 @@ def _submit_chromium_web_prompt(
     session_check: Callable[[bool], str] | None = None,
     expected_target_url: str = "",
     session_mode: str = "",
-) -> None:
+    availability_check: Callable[[], bool | tuple[bool, float]] | None = None,
+    baseline_snapshot: dict[str, Any] | None = None,
+    submission_receipt_marker: str = "",
+) -> bool:
     """Fill a non-ChatGPT Chromium composer and click its enabled semantic send control."""
     if should_stop():
-        return
+        return False
+    if not str(expected_target_url or "").strip():
+        raise RuntimeError("Provider submission requires a verified target URL.")
+    available, _paused_seconds = _run_availability_gate(availability_check)
+    if not available:
+        return False
     if session_check is not None:
-        session_check(False)
+        available, _result, _paused_seconds = _run_recoverable_provider_read(
+            lambda: session_check(False),
+            page=page,
+            platform=platform,
+            availability_check=availability_check,
+        )
+        if not available:
+            return False
     user_selector = _web_user_selector(platform)
-    baseline_user_count = _web_count(page, "chromium", user_selector, platform)
+    baseline_state = baseline_snapshot or {}
+    baseline_user_count = int(
+        (
+            baseline_state.get("userCount")
+            if "userCount" in baseline_state
+            else _web_count(page, "chromium", user_selector, platform)
+        )
+        or 0
+    )
+    baseline_user_text = str(baseline_state.get("latestUserText") or "")
+    baseline_assistant_count = int(baseline_state.get("count") or 0)
+    baseline_assistant_text = str(baseline_state.get("text") or "")
     if should_stop():
-        return
-    composer = page.locator(_web_composer_selector(platform)).first
-    if should_stop():
-        return
-    composer.fill(message)
-    if should_stop():
-        return
+        return False
+    composer = None
+    if submission_receipt_marker:
+        composer_locator_token = f"agent-composer-{secrets.token_hex(16)}"
+        fill_deadline = time.monotonic() + CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS
+        last_fill_state: dict[str, Any] = {}
+        while time.monotonic() < fill_deadline:
+            if should_stop():
+                return False
+            available, paused_seconds = _run_availability_gate(availability_check)
+            if not available:
+                return False
+            fill_deadline += paused_seconds
+            if session_check is not None:
+                available, _result, session_pause = _run_recoverable_provider_read(
+                    lambda: session_check(False),
+                    page=page,
+                    platform=platform,
+                    availability_check=availability_check,
+                )
+                if not available:
+                    return False
+                fill_deadline += session_pause
+
+            def read_composer_inventory() -> Any:
+                return page.evaluate(
+                    r"""({composerSelector, platform, locatorToken}) => {
+                    const isVisible = (element) => {
+                        if (!element || element.getClientRects().length === 0) return false;
+                        for (let current = element; current; current = current.parentElement) {
+                            const style = getComputedStyle(current);
+                            if (style.display === 'none' || style.visibility === 'hidden') {
+                                return false;
+                            }
+                        }
+                        return true;
+                    };
+                    const isProviderComposer = (element) => {
+                        if (!isVisible(element)
+                            || element.disabled
+                            || element.getAttribute('aria-disabled') === 'true'
+                            || element.closest(
+                                '[role="dialog"], [role="menu"], [role="listbox"], nav, header, '
+                                + '[data-testid*="feedback" i], [class*="feedback" i]'
+                            )) return false;
+                        const metadata = `${element.getAttribute('aria-label') || ''} `
+                            + `${element.getAttribute('placeholder') || ''} `
+                            + `${element.getAttribute('data-testid') || ''} `
+                            + `${element.getAttribute('role') || ''}`;
+                        if (platform === 'gemini') {
+                            return Boolean(element.closest(
+                                'rich-textarea, [data-test-id="input-area"]'
+                            )) || /prompt|message|ask gemini|type.+message|输入|輸入|提问|提問/i.test(metadata);
+                        }
+                        if (platform === 'grok') {
+                            let scope = element.parentElement;
+                            while (scope && scope !== document.body) {
+                                if (scope.querySelector('button[data-testid="chat-submit"]')) {
+                                    return true;
+                                }
+                                if (scope.matches('main')) break;
+                                scope = scope.parentElement;
+                            }
+                            return /prompt|message|ask|grok|what do you|输入|輸入|提问|提問/i.test(metadata);
+                        }
+                        return true;
+                    };
+                    const composers = [...document.querySelectorAll(composerSelector)]
+                        .filter(isProviderComposer);
+                    document.querySelectorAll('[data-cachelikes-agent-composer]')
+                        .forEach((element) => element.removeAttribute(
+                            'data-cachelikes-agent-composer'
+                        ));
+                    if (composers.length === 1) {
+                        composers[0].setAttribute(
+                            'data-cachelikes-agent-composer',
+                            locatorToken
+                        );
+                    }
+                    return {composerCount: composers.length};
+                }""",
+                    {
+                        "composerSelector": _web_composer_selector(platform),
+                        "platform": platform,
+                        "locatorToken": composer_locator_token,
+                    },
+                )
+
+            available, inventory, inventory_pause = _run_recoverable_provider_read(
+                read_composer_inventory,
+                page=page,
+                platform=platform,
+                availability_check=availability_check,
+            )
+            if not available:
+                return False
+            fill_deadline += inventory_pause
+            last_fill_state = inventory if isinstance(inventory, dict) else {}
+            if int(last_fill_state.get("composerCount") or 0) != 1:
+                wait_for_timeout = getattr(page, "wait_for_timeout", None)
+                if callable(wait_for_timeout):
+                    wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+                continue
+            composer = page.locator(
+                f'[data-cachelikes-agent-composer="{composer_locator_token}"]'
+                ':visible:not([disabled]):not([aria-disabled="true"])'
+            ).first
+
+            def fill_checked_composer() -> None:
+                try:
+                    composer.fill(
+                        message,
+                        timeout=WEB_SEND_BUTTON_POLL_MILLISECONDS * 4,
+                    )
+                except TypeError as exc:
+                    if "timeout" not in str(exc).casefold():
+                        raise
+                    composer.fill(message)
+
+            try:
+                filled, _result = _run_browser_action_unless_stopped(
+                    should_stop,
+                    fill_checked_composer,
+                )
+            except Exception as exc:
+                recoverable_fill = _is_transient_browser_navigation_error(exc)
+                if not recoverable_fill and callable(availability_check):
+                    try:
+                        recoverable_fill = bool(
+                            _provider_human_verification_reason(page, platform)
+                        )
+                    except Exception as detection_exc:
+                        recoverable_fill = _is_transient_browser_navigation_error(
+                            detection_exc
+                        )
+                if not recoverable_fill:
+                    raise
+                wait_for_timeout = getattr(page, "wait_for_timeout", None)
+                if callable(wait_for_timeout):
+                    wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+                continue
+            if not filled or should_stop():
+                return False
+            available, paused_seconds = _run_availability_gate(availability_check)
+            if not available:
+                return False
+            fill_deadline += paused_seconds
+            if session_check is not None:
+                available, _result, session_pause = _run_recoverable_provider_read(
+                    lambda: session_check(False),
+                    page=page,
+                    platform=platform,
+                    availability_check=availability_check,
+                )
+                if not available:
+                    return False
+                fill_deadline += session_pause
+
+            def read_filled_composer() -> Any:
+                return page.evaluate(
+                    r"""({composerSelector, expectedMessage, receiptMarker, locatorToken}) => {
+                    const isVisible = (element) => {
+                        if (!element || element.getClientRects().length === 0) return false;
+                        for (let current = element; current; current = current.parentElement) {
+                            const style = getComputedStyle(current);
+                            if (style.display === 'none' || style.visibility === 'hidden') {
+                                return false;
+                            }
+                        }
+                        return true;
+                    };
+                    const normalize = (value) => String(value || '')
+                        .replace(/\r\n?/g, '\n')
+                        .trim();
+                    const composerValue = (element) => {
+                        if (!element) return '';
+                        if ('value' in element) return element.value;
+                        const directNodes = [...element.childNodes];
+                        const directParagraphs = directNodes.filter((node) => (
+                            node.nodeType === Node.ELEMENT_NODE && node.tagName === 'P'
+                        ));
+                        const paragraphOnly = directParagraphs.length
+                            && directNodes.every((node) => (
+                                (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'P')
+                                || (node.nodeType === Node.TEXT_NODE
+                                    && !(node.textContent || '').trim())
+                            ));
+                        const serializeParagraph = (paragraph) => {
+                            const paragraphNodes = [...paragraph.childNodes];
+                            if (paragraphNodes.length === 1
+                                && paragraphNodes[0].nodeType === Node.ELEMENT_NODE
+                                && paragraphNodes[0].tagName === 'BR') return '';
+                            let supported = true;
+                            const parts = [];
+                            const visit = (node) => {
+                                if (node.nodeType === Node.TEXT_NODE) {
+                                    parts.push(node.nodeValue || '');
+                                    return;
+                                }
+                                if (node.nodeType !== Node.ELEMENT_NODE
+                                    || node.getAttribute('contenteditable') === 'false'
+                                    || /^(?:IMG|AUDIO|VIDEO|IFRAME|OBJECT|EMBED)$/.test(node.tagName)) {
+                                    supported = false;
+                                    return;
+                                }
+                                if (node.tagName === 'BR') {
+                                    parts.push('\n');
+                                    return;
+                                }
+                                [...node.childNodes].forEach(visit);
+                            };
+                            paragraphNodes.forEach(visit);
+                            return supported ? parts.join('') : null;
+                        };
+                        if (paragraphOnly) {
+                            const paragraphs = directParagraphs.map(serializeParagraph);
+                            return paragraphs.every((value) => value !== null)
+                                ? paragraphs.join('\n')
+                                : null;
+                        }
+                        const selection = element.ownerDocument.defaultView?.getSelection();
+                        if (!selection) return element.innerText || element.textContent || '';
+                        const savedRanges = [];
+                        for (let index = 0; index < selection.rangeCount; index += 1) {
+                            savedRanges.push(selection.getRangeAt(index).cloneRange());
+                        }
+                        const range = element.ownerDocument.createRange();
+                        range.selectNodeContents(element);
+                        try {
+                            selection.removeAllRanges();
+                            selection.addRange(range);
+                            return selection.toString();
+                        } finally {
+                            selection.removeAllRanges();
+                            savedRanges.forEach((savedRange) => {
+                                try {
+                                    selection.addRange(savedRange);
+                                } catch (_) {
+                                    // A provider remount invalidates only the stale saved range.
+                                }
+                            });
+                        }
+                    };
+                    const composers = [...document.querySelectorAll(composerSelector)].filter(
+                        (element) => isVisible(element)
+                            && !element.disabled
+                            && element.getAttribute('aria-disabled') !== 'true'
+                            && element.getAttribute('data-cachelikes-agent-composer') === locatorToken
+                    );
+                    const composer = composers.length === 1 ? composers[0] : null;
+                    const value = composerValue(composer);
+                    return {
+                        composerCount: composers.length,
+                        composerPresent: Boolean(composer),
+                        exact: Boolean(composer)
+                            && normalize(value) === normalize(expectedMessage),
+                        markerPresent: Boolean(composer)
+                            && normalize(value).includes(receiptMarker),
+                    };
+                }""",
+                    {
+                        "composerSelector": _web_composer_selector(platform),
+                        "expectedMessage": message,
+                        "receiptMarker": submission_receipt_marker,
+                        "locatorToken": composer_locator_token,
+                    },
+                )
+
+            available, fill_state, readback_pause = _run_recoverable_provider_read(
+                read_filled_composer,
+                page=page,
+                platform=platform,
+                availability_check=availability_check,
+            )
+            if not available:
+                return False
+            fill_deadline += readback_pause
+            last_fill_state = fill_state if isinstance(fill_state, dict) else {}
+            if last_fill_state.get("exact") and last_fill_state.get("markerPresent"):
+                break
+            wait_for_timeout = getattr(page, "wait_for_timeout", None)
+            if callable(wait_for_timeout):
+                wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+        else:
+            details = json.dumps(
+                last_fill_state,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )[:500]
+            raise RuntimeError(
+                f"The {AGENT_PLATFORM_BY_KEY[platform]['label']} composer did not preserve "
+                f"the current controller prompt before Send: {details}"
+            )
+    else:
+        composer = page.locator(_visible_web_composer_selector(platform)).first
+        if should_stop():
+            return False
+
+        def fill_checked_composer() -> None:
+            composer.fill(message)
+
+        filled, _result = _run_browser_action_unless_stopped(
+            should_stop,
+            fill_checked_composer,
+        )
+        if not filled or should_stop():
+            return False
 
     deadline = time.monotonic() + CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS
     fresh_unbound_grok = (
@@ -7866,17 +9466,107 @@ def _submit_chromium_web_prompt(
         else None
     )
     last_state: dict[str, Any] = {}
+    send_outcome = ""
     while time.monotonic() < deadline:
         if should_stop():
-            return
+            return False
+        available, paused_seconds = _run_availability_gate(availability_check)
+        if not available:
+            return False
+        if paused_seconds:
+            deadline += paused_seconds
+            if keyboard_fallback_at is not None:
+                keyboard_fallback_at += paused_seconds
         if session_check is not None:
-            session_check(False)
+            available, _result, session_pause = _run_recoverable_provider_read(
+                lambda: session_check(False),
+                page=page,
+                platform=platform,
+                availability_check=availability_check,
+            )
+            if not available:
+                return False
+            if session_pause:
+                deadline += session_pause
+                if keyboard_fallback_at is not None:
+                    keyboard_fallback_at += session_pause
+
+        if submission_receipt_marker:
+            available, current_fill_state, readback_pause = (
+                _run_recoverable_provider_read(
+                    read_filled_composer,
+                    page=page,
+                    platform=platform,
+                    availability_check=availability_check,
+                )
+            )
+            if not available:
+                return False
+            if readback_pause:
+                deadline += readback_pause
+                if keyboard_fallback_at is not None:
+                    keyboard_fallback_at += readback_pause
+            current_fill_state = (
+                current_fill_state
+                if isinstance(current_fill_state, dict)
+                else {}
+            )
+            if not (
+                current_fill_state.get("exact")
+                and current_fill_state.get("markerPresent")
+            ):
+                available, inventory, inventory_pause = (
+                    _run_recoverable_provider_read(
+                        read_composer_inventory,
+                        page=page,
+                        platform=platform,
+                        availability_check=availability_check,
+                    )
+                )
+                if not available:
+                    return False
+                if inventory_pause:
+                    deadline += inventory_pause
+                    if keyboard_fallback_at is not None:
+                        keyboard_fallback_at += inventory_pause
+                last_state = inventory if isinstance(inventory, dict) else {}
+                if int(last_state.get("composerCount") or 0) != 1:
+                    page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+                    continue
+                composer = page.locator(
+                    f'[data-cachelikes-agent-composer="{composer_locator_token}"]'
+                    ':visible:not([disabled]):not([aria-disabled="true"])'
+                ).first
+                try:
+                    filled, _result = _run_browser_action_unless_stopped(
+                        should_stop,
+                        fill_checked_composer,
+                    )
+                except Exception as exc:
+                    recoverable_fill = _is_transient_browser_navigation_error(exc)
+                    if not recoverable_fill and callable(availability_check):
+                        recoverable_fill = bool(
+                            _provider_human_verification_reason(page, platform)
+                        )
+                    if not recoverable_fill:
+                        raise
+                    page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
+                    continue
+                if not filled or should_stop():
+                    return False
+                continue
 
         def scan_and_submit() -> Any:
-            if session_check is not None:
-                session_check(False)
             return page.evaluate(
-                r"""({platform, expectedTargetUrl, sessionMode}) => {
+                r"""({
+                    platform,
+                    expectedTargetUrl,
+                    sessionMode,
+                    composerSelector,
+                    expectedMessage,
+                    receiptMarker,
+                    locatorToken
+                }) => {
                 const isVisible = (element) => {
                     const style = window.getComputedStyle(element);
                     return element.getClientRects().length > 0
@@ -7943,20 +9633,162 @@ def _submit_chromium_web_prompt(
                         expectedTargetUrl,
                     };
                 }
-                const labelFor = (button) => `${button.getAttribute('aria-label') || ''} ${button.getAttribute('title') || ''} ${button.innerText || button.textContent || ''}`.trim();
-                const composer = document.querySelector('textarea, [contenteditable="true"]');
-                const scope = composer?.closest('form') || composer?.parentElement?.parentElement || document;
-                const scopedButtons = [...scope.querySelectorAll('button')].filter(isVisible);
-                const allButtons = [...document.querySelectorAll('button')].filter(isVisible);
-                const buttons = [...new Set([...scopedButtons, ...allButtons])];
-                const sendButtons = buttons.filter((button) => {
-                    const label = labelFor(button);
+                const semanticLabels = (button) => [
+                    button.getAttribute('aria-label') || '',
+                    button.getAttribute('title') || '',
+                    button.innerText || button.textContent || '',
+                ].map((value) => value.replace(/\s+/g, ' ').trim()).filter(Boolean);
+                const labelFor = (button) => semanticLabels(button).join(' ');
+                const normalize = (value) => String(value || '')
+                    .replace(/\r\n?/g, '\n')
+                    .trim();
+                const composerValue = (element) => {
+                    if (!element) return '';
+                    if ('value' in element) return element.value;
+                    const directNodes = [...element.childNodes];
+                    const directParagraphs = directNodes.filter((node) => (
+                        node.nodeType === Node.ELEMENT_NODE && node.tagName === 'P'
+                    ));
+                    const paragraphOnly = directParagraphs.length
+                        && directNodes.every((node) => (
+                            (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'P')
+                            || (node.nodeType === Node.TEXT_NODE
+                                && !(node.textContent || '').trim())
+                        ));
+                    const serializeParagraph = (paragraph) => {
+                        const paragraphNodes = [...paragraph.childNodes];
+                        if (paragraphNodes.length === 1
+                            && paragraphNodes[0].nodeType === Node.ELEMENT_NODE
+                            && paragraphNodes[0].tagName === 'BR') return '';
+                        let supported = true;
+                        const parts = [];
+                        const visit = (node) => {
+                            if (node.nodeType === Node.TEXT_NODE) {
+                                parts.push(node.nodeValue || '');
+                                return;
+                            }
+                            if (node.nodeType !== Node.ELEMENT_NODE
+                                || node.getAttribute('contenteditable') === 'false'
+                                || /^(?:IMG|AUDIO|VIDEO|IFRAME|OBJECT|EMBED)$/.test(node.tagName)) {
+                                supported = false;
+                                return;
+                            }
+                            if (node.tagName === 'BR') {
+                                parts.push('\n');
+                                return;
+                            }
+                            [...node.childNodes].forEach(visit);
+                        };
+                        paragraphNodes.forEach(visit);
+                        return supported ? parts.join('') : null;
+                    };
+                    if (paragraphOnly) {
+                        const paragraphs = directParagraphs.map(serializeParagraph);
+                        return paragraphs.every((value) => value !== null)
+                            ? paragraphs.join('\n')
+                            : null;
+                    }
+                    const selection = element.ownerDocument.defaultView?.getSelection();
+                    if (!selection) return element.innerText || element.textContent || '';
+                    const savedRanges = [];
+                    for (let index = 0; index < selection.rangeCount; index += 1) {
+                        savedRanges.push(selection.getRangeAt(index).cloneRange());
+                    }
+                    const range = element.ownerDocument.createRange();
+                    range.selectNodeContents(element);
+                    try {
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                        return selection.toString();
+                    } finally {
+                        selection.removeAllRanges();
+                        savedRanges.forEach((savedRange) => {
+                            try {
+                                selection.addRange(savedRange);
+                            } catch (_) {
+                                // A provider remount invalidates only the stale saved range.
+                            }
+                        });
+                    }
+                };
+                const isProviderComposer = (element) => {
+                    if (!isVisible(element)
+                        || element.disabled
+                        || element.getAttribute('aria-disabled') === 'true'
+                        || element.closest(
+                            '[role="dialog"], [role="menu"], [role="listbox"], nav, header, '
+                            + '[data-testid*="feedback" i], [class*="feedback" i]'
+                        )) return false;
+                    const metadata = `${element.getAttribute('aria-label') || ''} `
+                        + `${element.getAttribute('placeholder') || ''} `
+                        + `${element.getAttribute('data-testid') || ''} `
+                        + `${element.getAttribute('role') || ''}`;
+                    if (platform === 'gemini') {
+                        return Boolean(element.closest(
+                            'rich-textarea, [data-test-id="input-area"]'
+                        )) || /prompt|message|ask gemini|type.+message|输入|輸入|提问|提問/i.test(metadata);
+                    }
+                    if (platform === 'grok') {
+                        let candidateScope = element.parentElement;
+                        while (candidateScope && candidateScope !== document.body) {
+                            if (candidateScope.querySelector('button[data-testid="chat-submit"]')) {
+                                return true;
+                            }
+                            if (candidateScope.matches('main')) break;
+                            candidateScope = candidateScope.parentElement;
+                        }
+                        return /prompt|message|ask|grok|what do you|输入|輸入|提问|提問/i.test(metadata);
+                    }
+                    return true;
+                };
+                const visibleComposers = [...document.querySelectorAll(composerSelector)]
+                    .filter(isProviderComposer);
+                const composerCandidate = visibleComposers.length === 1
+                    ? visibleComposers[0]
+                    : null;
+                const composerCandidateValue = composerValue(composerCandidate);
+                const normalizedComposerValue = normalize(composerCandidateValue);
+                const composer = composerCandidate
+                    && (!receiptMarker || (
+                        composerCandidate.getAttribute('data-cachelikes-agent-composer') === locatorToken
+                        && normalizedComposerValue === normalize(expectedMessage)
+                        && normalizedComposerValue.includes(receiptMarker)
+                    ))
+                    ? composerCandidate
+                    : null;
+                const semanticSendButtons = (candidateScope) => [
+                    ...candidateScope.querySelectorAll('button')
+                ].filter(isVisible).filter((button) => {
                     const testId = button.getAttribute('data-testid') || '';
-                    return (
-                        /send|submit|ask|发送|傳送|傳送訊息|发送消息|提交|提問|提问/i.test(label)
+                    return semanticLabels(button).some((label) => (
+                        /^(?:send(?: prompt| message)?|submit|ask grok|发送|傳送|傳送訊息|发送消息|提交|提問|提问)$/i.test(label)
                         && !/attach|upload|share|feedback|copy|附加|上传|上傳/i.test(label)
-                    ) || /send|submit|ask|chat-submit/i.test(testId);
+                    )) || /^(?:send-button|submit-button|chat-submit)$/i.test(testId.trim());
                 });
+                let scope = null;
+                for (let candidate = composer?.parentElement;
+                    candidate && candidate !== document.body;
+                    candidate = candidate.parentElement) {
+                    const scopedComposers = [...candidate.querySelectorAll(composerSelector)]
+                        .filter(isProviderComposer);
+                    if (scopedComposers.length === 1
+                        && scopedComposers[0] === composer
+                        && semanticSendButtons(candidate).length) {
+                        scope = candidate;
+                        break;
+                    }
+                    if (candidate.matches('main')) break;
+                }
+                if (!composer || !scope) {
+                    return {
+                        clicked: false,
+                        platform,
+                        composerFound: Boolean(composer),
+                        composerCount: visibleComposers.length,
+                        sendButtons: [],
+                    };
+                }
+                const sendButtons = semanticSendButtons(scope);
                 const sendButton = sendButtons.find((button) =>
                     !button.disabled && button.getAttribute('aria-disabled') !== 'true'
                 );
@@ -7982,15 +9814,33 @@ def _submit_chromium_web_prompt(
                     "platform": platform,
                     "expectedTargetUrl": expected_target_url,
                     "sessionMode": session_mode,
+                    "composerSelector": _web_composer_selector(platform),
+                    "expectedMessage": message,
+                    "receiptMarker": submission_receipt_marker,
+                    "locatorToken": (
+                        composer_locator_token
+                        if submission_receipt_marker
+                        else ""
+                    ),
                 },
             )
 
-        executed, result = _run_browser_action_unless_stopped(
-            should_stop,
-            scan_and_submit,
-        )
+        try:
+            executed, result = _run_browser_action_unless_stopped(
+                should_stop,
+                scan_and_submit,
+            )
+        except Exception as exc:
+            if not _provider_mutating_action_may_have_committed(
+                page,
+                platform,
+                exc,
+            ):
+                raise
+            send_outcome = "uncertain"
+            break
         if not executed:
-            return
+            return False
         if isinstance(result, dict):
             last_state = result
             if result.get("targetMismatch"):
@@ -7999,8 +9849,7 @@ def _submit_chromium_web_prompt(
                     f"(expected={expected_target_url}, current={result.get('currentUrl') or 'unknown'})."
                 )
             if result.get("clicked"):
-                if session_check is not None:
-                    session_check(True)
+                send_outcome = "confirmed"
                 break
         if (
             platform == "grok"
@@ -8008,22 +9857,29 @@ def _submit_chromium_web_prompt(
             and time.monotonic() >= keyboard_fallback_at
         ):
             if should_stop():
-                return
+                return False
             press = getattr(composer, "press", None)
             if callable(press):
                 def press_enter() -> None:
-                    if session_check is not None:
-                        session_check(False)
                     press("Enter")
 
-                executed, _result = _run_browser_action_unless_stopped(
-                    should_stop,
-                    press_enter,
-                )
+                try:
+                    executed, _result = _run_browser_action_unless_stopped(
+                        should_stop,
+                        press_enter,
+                    )
+                except Exception as exc:
+                    if not _provider_mutating_action_may_have_committed(
+                        page,
+                        platform,
+                        exc,
+                    ):
+                        raise
+                    send_outcome = "uncertain"
+                    break
                 if not executed:
-                    return
-                if session_check is not None:
-                    session_check(True)
+                    return False
+                send_outcome = "confirmed"
                 break
         page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
     else:
@@ -8032,27 +9888,53 @@ def _submit_chromium_web_prompt(
             f"The Chromium browser did not expose an enabled {AGENT_PLATFORM_BY_KEY[platform]['label']} send button: {details}"
         )
 
+    if send_outcome not in {"confirmed", "uncertain"}:
+        raise RuntimeError(
+            f"{AGENT_PLATFORM_BY_KEY[platform]['label']} submission state was not committed."
+        )
+
     accepted_deadline = time.monotonic() + CHROMIUM_SUBMISSION_ACCEPT_TIMEOUT_SECONDS
     while time.monotonic() < accepted_deadline:
         if should_stop():
-            return
-        if session_check is not None:
-            session_check(True)
-        composer_empty = bool(
-            page.evaluate(
-                """() => {
-                    const composer = document.querySelector('textarea, [contenteditable="true"]');
-                    if (!composer) return true;
-                    return !(composer.value || composer.innerText || composer.textContent || '').trim();
-                }"""
+            return False
+
+        def read_acceptance() -> dict[str, Any]:
+            if session_check is not None:
+                session_check(True)
+            return _provider_turn_snapshot(
+                page,
+                platform,
+                receipt_marker=submission_receipt_marker,
+            )
+
+        available, acceptance, paused_seconds = _run_recoverable_provider_read(
+            read_acceptance,
+            page=page,
+            platform=platform,
+            availability_check=availability_check,
+        )
+        if not available:
+            return False
+        if paused_seconds:
+            accepted_deadline += paused_seconds
+        latest_user_count = int(acceptance.get("userCount") or 0)
+        latest_user_text = str(acceptance.get("latestUserText") or "")
+        assistant_new = bool(
+            acceptance.get("assistantAfterLatestUser")
+            and (
+                int(acceptance.get("count") or 0) > baseline_assistant_count
+                or str(acceptance.get("text") or "") != baseline_assistant_text
             )
         )
-        if (
-            composer_empty
-            or _web_count(page, "chromium", user_selector, platform) > baseline_user_count
-            or _web_is_generating(page, "chromium")
+        if submission_receipt_marker and acceptance.get("markerEchoed"):
+            return True
+        if not submission_receipt_marker and (
+            latest_user_count > baseline_user_count
+            or bool(latest_user_text and latest_user_text != baseline_user_text)
+            or bool(acceptance.get("generating"))
+            or assistant_new
         ):
-            return
+            return True
         page.wait_for_timeout(WEB_SEND_BUTTON_POLL_MILLISECONDS)
     raise RuntimeError(
         f"The Chromium browser clicked Send, but {AGENT_PLATFORM_BY_KEY[platform]['label']} did not accept the prompt."
@@ -8384,30 +10266,143 @@ def _platform_web_last_text(page: Any, browser_kind: str, platform: str, selecto
     return _web_last_text(page, browser_kind, selector, platform)
 
 
-def _chatgpt_response_snapshot(page: Any, selector: str) -> dict[str, Any]:
-    """Read ChatGPT URL, response text, count, and generation state atomically."""
+def _provider_turn_snapshot(
+    page: Any,
+    platform: str,
+    assistant_selector: str | None = None,
+    *,
+    receipt_marker: str = "",
+) -> dict[str, Any]:
+    """Read one provider turn, URL, composer, and generation state atomically."""
+    selector = assistant_selector or _web_assistant_selector(platform)
     result = page.evaluate(
-        r"""({selector}) => {
-            const elements = Array.from(document.querySelectorAll(selector));
+        r"""({platform, assistantSelector, userSelector, composerSelector, receiptMarker = ''}) => {
+            const visible = (element) => {
+                if (!element || element.getClientRects().length === 0) return false;
+                for (let current = element; current; current = current.parentElement) {
+                    const style = getComputedStyle(current);
+                    const opacity = Number.parseFloat(style.opacity || '1');
+                    if (style.display === 'none'
+                        || style.visibility === 'hidden'
+                        || style.visibility === 'collapse'
+                        || (Number.isFinite(opacity) && opacity <= 0)) return false;
+                }
+                return true;
+            };
+            const composers = [...document.querySelectorAll(composerSelector)].filter((element) =>
+                visible(element)
+                && !element.disabled
+                && element.getAttribute('aria-disabled') !== 'true'
+            );
+            const composer = composers[0];
+            const safeTurnRoot = (element) => {
+                if (!visible(element)) return false;
+                if (composers.some((candidate) => (
+                    element === candidate
+                    || element.contains(candidate)
+                    || candidate.contains(element)
+                ))) return false;
+                return !element.closest(
+                    'form, [role="menu"], [role="listbox"], [role="dialog"], nav, header'
+                );
+            };
+            const outerRoots = (candidates) => {
+                const unique = [...new Set(candidates.filter(Boolean))].filter(safeTurnRoot);
+                return unique.filter((element) => !unique.some((other) => (
+                    other !== element && other.contains(element)
+                )));
+            };
+            const selectRoots = (groups) => {
+                for (const group of groups) {
+                    let candidates = [...document.querySelectorAll(group.selector)].filter(visible);
+                    if (group.promote) {
+                        candidates = candidates.map((element) => element.closest(group.promote));
+                    }
+                    const roots = outerRoots(candidates);
+                    if (roots.length) return roots;
+                }
+                return [];
+            };
+            const documentOrder = (left, right) => {
+                if (left === right) return 0;
+                const relation = left.compareDocumentPosition(right);
+                if (relation & Node.DOCUMENT_POSITION_DISCONNECTED) return 0;
+                if (relation & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+                if (relation & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+                return 0;
+            };
+            const assistantGroups = platform === 'gemini'
+                ? [
+                    {selector: 'model-response'},
+                    {selector: '[data-test-id="model-response"]'},
+                    {
+                        selector: '.model-response-text, message-content, .response-content',
+                        promote: 'model-response, article, [role="article"]',
+                    },
+                ]
+                : platform === 'grok'
+                    ? [
+                        {selector: '[data-testid="assistant-message"]'},
+                        {
+                            selector: '[data-role="assistant"], [data-message-author-role="assistant"]',
+                        },
+                        {selector: '[data-testid*="assistant-message" i]'},
+                        {
+                            selector: '[data-testid*="response" i]',
+                            promote: (
+                                'article, [role="article"], [data-testid="assistant-message"], '
+                                + '[data-role="assistant"], [data-message-author-role="assistant"]'
+                            ),
+                        },
+                    ]
+                    : [{selector: assistantSelector}];
+            const userGroups = platform === 'gemini'
+                ? [
+                    {selector: 'user-query'},
+                    {
+                        selector: (
+                            '[data-test-id="user-query-content"], .query-text, '
+                            + '.user-query-bubble-with-background'
+                        ),
+                        promote: 'user-query, article, [role="article"]',
+                    },
+                ]
+                : platform === 'grok'
+                    ? [
+                        {selector: '[data-testid="user-message"]'},
+                        {
+                            selector: '[data-role="user"], [data-message-author-role="user"]',
+                        },
+                        {selector: '[data-testid*="user-message" i]'},
+                    ]
+                    : [{selector: userSelector}];
+            const elements = selectRoots(assistantGroups).sort(documentOrder);
+            const users = selectRoots(userGroups).sort(documentOrder);
             const latest = elements.at(-1);
-            const transcript = Array.from(document.querySelectorAll(
-                '[data-message-author-role="user"], [data-message-author-role="assistant"]'
-            ));
-            let latestUserIndex = -1;
-            let latestAssistantIndex = -1;
-            transcript.forEach((element, index) => {
-                const role = (element.getAttribute('data-message-author-role') || '').toLowerCase();
-                if (role === 'user') latestUserIndex = index;
-                if (role === 'assistant') latestAssistantIndex = index;
-            });
+            const latestUser = users.at(-1);
+            const latestUserText = latestUser
+                ? (latestUser.innerText || latestUser.textContent || '').trim()
+                : '';
+            const latestRelation = latest && latestUser
+                ? latestUser.compareDocumentPosition(latest)
+                : Node.DOCUMENT_POSITION_DISCONNECTED;
+            const assistantAfterLatestUser = Boolean(
+                latest
+                && latestUser
+                && !(latestRelation & Node.DOCUMENT_POSITION_DISCONNECTED)
+                && (latestRelation & Node.DOCUMENT_POSITION_FOLLOWING)
+            );
             let text = '';
             if (latest) {
                 const codeBlocks = Array.from(latest.querySelectorAll('pre code'));
                 const actionBlock = codeBlocks.slice(-8).reverse().find((block) =>
                     /[\"']action[\"']\s*:/.test(block.innerText || block.textContent || '')
                 );
-                text = actionBlock
+                const actionText = actionBlock
                     ? (actionBlock.innerText || actionBlock.textContent || '').trim()
+                    : '';
+                text = actionBlock
+                    ? `\`\`\`json\n${actionText}\n\`\`\``
                     : (latest.innerText || latest.textContent || '').trim();
             }
             const generating = Array.from(document.querySelectorAll('button')).some((button) => {
@@ -8425,23 +10420,48 @@ def _chatgpt_response_snapshot(page: Any, selector: str) -> dict[str, Any]:
             return {
                 url: location.href,
                 count: elements.length,
+                userCount: users.length,
+                latestUserText,
+                markerEchoed: Boolean(receiptMarker && latestUserText.includes(receiptMarker)),
                 text,
                 generating,
-                assistantAfterLatestUser: latestUserIndex >= 0
-                    && latestAssistantIndex > latestUserIndex,
+                composerPresent: Boolean(composer),
+                composerEmpty: Boolean(composer)
+                    && !(composer.value || composer.innerText || composer.textContent || '').trim(),
+                assistantAfterLatestUser,
             };
         }""",
-        {"selector": selector},
+        {
+            "platform": platform,
+            "assistantSelector": selector,
+            "userSelector": _web_user_selector(platform),
+            "composerSelector": _web_composer_selector(platform),
+            **({"receiptMarker": receipt_marker} if receipt_marker else {}),
+        },
     )
     if not isinstance(result, dict):
-        raise RuntimeError("ChatGPT returned an invalid atomic response snapshot.")
-    return {
+        raise RuntimeError(
+            f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned an invalid atomic turn snapshot."
+        )
+    snapshot = {
         "url": str(result.get("url") or "").strip(),
         "count": int(result.get("count") or 0),
+        "userCount": int(result.get("userCount") or 0),
+        "latestUserText": str(result.get("latestUserText") or ""),
         "text": str(result.get("text") or ""),
         "generating": bool(result.get("generating")),
+        "composerPresent": bool(result.get("composerPresent")),
+        "composerEmpty": bool(result.get("composerEmpty")),
         "assistantAfterLatestUser": bool(result.get("assistantAfterLatestUser")),
     }
+    if receipt_marker:
+        snapshot["markerEchoed"] = bool(result.get("markerEchoed"))
+    return snapshot
+
+
+def _chatgpt_response_snapshot(page: Any, selector: str) -> dict[str, Any]:
+    """Keep the ChatGPT snapshot entry point on the shared provider contract."""
+    return _provider_turn_snapshot(page, "chatgpt", selector)
 
 
 def _web_is_generating(page: Any, browser_kind: str) -> bool:

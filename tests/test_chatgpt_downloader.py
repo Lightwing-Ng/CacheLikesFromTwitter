@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.37.0-codex.1
+# Code version: v1.37.0-codex.2
 
 from __future__ import annotations
 
@@ -45,6 +45,7 @@ from app.core.chatgpt_downloader import (
     CHATGPT_HOME_URL,
     PlaywrightError,
     _chatgpt_file_download_url,
+    _chatgpt_conversation_worker,
     _extract_chatgpt_conversation_messages,
     _chatgpt_index_image_worker,
     _collect_all_chatgpt_conversation_urls_via_api,
@@ -1906,6 +1907,58 @@ def test_chatgpt_text_sync_uses_safari_home_and_skips_media_pipeline(
     assert snapshot["discovery_complete"] is True
 
 
+def test_chatgpt_blank_media_url_scans_all_sessions_as_assistant_only(
+    tmp_path: Path, macos_host
+) -> None:
+    state = TaskState("test")
+    browser_context = _ClosableBrowserContext()
+    conversation_urls = [
+        "https://chatgpt.com/c/session-1",
+        "https://chatgpt.com/c/session-2",
+    ]
+
+    with patch("app.core.chatgpt_downloader.sync_playwright", None), patch(
+        "app.core.chatgpt_downloader._launch_chatgpt_browser_context",
+        return_value=nullcontext(browser_context),
+    ) as launch_context, patch(
+        "app.core.chatgpt_downloader.open_chatgpt_page",
+    ) as open_page, patch(
+        "app.core.chatgpt_downloader._load_chatgpt_session_request_headers",
+        return_value={"authorization": "Bearer demo"},
+    ), patch(
+        "app.core.chatgpt_downloader._collect_all_chatgpt_conversation_urls_via_api",
+        return_value=conversation_urls,
+    ) as collect_all, patch(
+        "app.core.chatgpt_downloader.collect_project_conversation_urls",
+    ) as collect_project, patch(
+        "app.core.chatgpt_downloader.collect_chatgpt_project_index_images",
+    ) as collect_project_media, patch(
+        "app.core.chatgpt_downloader._iter_chatgpt_conversation_results",
+        return_value=iter(()),
+    ) as conversation_results:
+        result = sync_chatgpt_images(
+            state,
+            config=CrawlConfig(
+                chatgpt_browser="safari",
+                chatgpt_project_url="",
+            ),
+            target_dir=tmp_path / "media" / "chatgpt" / DEFAULT_CHATGPT_PROJECT_NAME,
+        )
+
+    assert result.discovered_conversations == 2
+    assert launch_context.call_args.args[1] == CHATGPT_HOME_URL
+    open_page.assert_called_once()
+    collect_all.assert_called_once()
+    collect_project.assert_not_called()
+    collect_project_media.assert_not_called()
+    conversation_results.assert_called_once()
+    assert conversation_results.call_args.kwargs["assistant_only"] is True
+    assert any(
+        "User-uploaded media will be excluded" in event
+        for event in state.snapshot()["recent_events"]
+    )
+
+
 def test_chatgpt_direct_session_refresh_skips_the_global_project_image_index(
     tmp_path: Path, macos_host
 ) -> None:
@@ -2076,6 +2129,64 @@ def test_chatgpt_parallel_iterator_partitions_conversations_across_bounded_worke
     assert sorted(result.conversation_index for result in results) == [1, 2, 3, 4, 5]
     assert len(assignments_seen) == 3
     assert sorted(index for assignment in assignments_seen for index in assignment) == [1, 2, 3, 4, 5]
+
+
+def test_chatgpt_assistant_only_worker_excludes_uploaded_and_unknown_media(
+    tmp_path: Path,
+) -> None:
+    conversation_url = "https://chatgpt.com/c/conversation-123"
+    candidates = [
+        ChatGPTImageCandidate(
+            source_url="https://chatgpt.com/backend-api/estuary/content?id=file_generated",
+            file_id="file_generated",
+            conversation_url=conversation_url,
+            message_role="assistant",
+        ),
+        ChatGPTImageCandidate(
+            source_url="https://chatgpt.com/backend-api/estuary/content?id=file_uploaded",
+            file_id="file_uploaded",
+            conversation_url=conversation_url,
+            message_role="user",
+        ),
+        ChatGPTImageCandidate(
+            source_url="https://chatgpt.com/backend-api/estuary/content?id=file_unknown",
+            file_id="file_unknown",
+            conversation_url=conversation_url,
+        ),
+    ]
+    result_queue: Queue[ChatGPTConversationWorkResult] = Queue()
+    page = object()
+
+    with patch(
+        "app.core.chatgpt_downloader._launch_chatgpt_browser_context",
+        return_value=nullcontext(object()),
+    ), patch(
+        "app.core.chatgpt_downloader._chatgpt_context_page",
+        return_value=page,
+    ), patch(
+        "app.core.chatgpt_downloader._collect_chatgpt_conversation_with_recovery",
+        return_value=(page, candidates, None),
+    ), patch(
+        "app.core.chatgpt_downloader.download_chatgpt_image",
+        return_value=True,
+    ) as download_image:
+        _chatgpt_conversation_worker(
+            [(1, conversation_url)],
+            object(),
+            object(),
+            tmp_path,
+            60,
+            0.5,
+            lambda: False,
+            result_queue,
+            assistant_only=True,
+        )
+
+    result = result_queue.get_nowait()
+    assert result.candidate_file_ids == ("file_generated",)
+    assert result.downloaded_count == 1
+    assert download_image.call_count == 1
+    assert download_image.call_args.args[3].file_id == "file_generated"
 
 
 def test_chatgpt_project_index_iterator_partitions_direct_image_downloads(tmp_path: Path) -> None:

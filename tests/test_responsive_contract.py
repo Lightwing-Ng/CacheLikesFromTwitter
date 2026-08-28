@@ -1,6 +1,6 @@
 """Responsive sidebar contract tests.
 
-Code version: v1.0.5-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ import re
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 STYLE_PATH = PROJECT_ROOT / "app/web/static/style.css"
 RESPONSIVE_SCRIPT_PATH = PROJECT_ROOT / "app/web/static/responsive.js"
+SIDEBAR_SCRIPT_PATH = PROJECT_ROOT / "app/web/static/sidebar.js"
 STATIC_SCRIPT_ROOT = PROJECT_ROOT / "app/web/static"
 TEMPLATE_ROOT = PROJECT_ROOT / "app/web/templates"
 EXPECTED_BREAKPOINTS = {
@@ -124,10 +125,64 @@ def test_reduced_motion_makes_sidebar_geometry_synchronous() -> None:
     assert ".sidebar," in reduced_motion_block
     assert ".sidebar-toggle {" in reduced_motion_block
     assert "transition: none !important;" in reduced_motion_block
+    assert "[data-sidebar-gel-content] {" in reduced_motion_block
+    assert "animation: none !important;" in reduced_motion_block
+    assert "transform: none !important;" in reduced_motion_block
+
+
+def test_sidebar_gel_contract_uses_shared_physics_without_layout_mutation() -> None:
+    """Pin the cross-project content boundary, lifecycle, and soft-body curve."""
+    stylesheet = _read(STYLE_PATH)
+    sidebar_script = _read(SIDEBAR_SCRIPT_PATH)
+
+    for token in (
+        '"workspace-sidebar-gel-open"',
+        '"workspace-sidebar-gel-close"',
+        'const sidebarGelTargetSelector = "[data-sidebar-gel-content]";',
+        'target.setAttribute("data-sidebar-gel-content", "")',
+        "sidebarOverlayMedia.matches",
+        "reducedMotionMedia.matches",
+        'appShell.addEventListener("animationend", sidebarMotionEndHandler);',
+        "clearSidebarMotionState();",
+    ):
+        assert token in sidebar_script
+
+    for token in (
+        ".app-shell.is-sidebar-animating [data-sidebar-gel-content] {",
+        "animation-duration: var(--sidebar-motion-duration);",
+        "animation-timing-function: var(--motion-bouncy);",
+        "transform-origin: left top;",
+        "@keyframes workspace-sidebar-gel-open",
+        "@keyframes workspace-sidebar-gel-close",
+        "translate3d(12px, 0, 0) scale3d(0.984, 1.024, 1)",
+        "translate3d(-5px, 0, 0) scale3d(1.01, 0.992, 1)",
+        "translate3d(2px, 0, 0) scale3d(0.997, 1.004, 1)",
+    ):
+        assert token in stylesheet
+
+    gel_target_block = stylesheet.split(
+        "/*\n * Apply shared soft-body physics only to registered content layers",
+        1,
+    )[1].split(".hero,", 1)[0]
+    for forbidden_layout_rule in (
+        "grid-template-columns",
+        "padding:",
+        "position: absolute",
+        "transform-origin: left center",
+        "width:",
+    ):
+        assert forbidden_layout_rule not in gel_target_block
+
+    assert ".app-shell.is-sidebar-animating .workspace-mobile-summary-shell" not in stylesheet
 
 
 def test_sidebar_pages_load_the_responsive_contract_before_bootstrap() -> None:
-    for template_name in ("_cache_page.html", "browser.html", "settings.html"):
+    for template_name in (
+        "_cache_page.html",
+        "browser.html",
+        "settings.html",
+        "settings_style_tokens.html",
+    ):
         source = _read(TEMPLATE_ROOT / template_name)
         assert "viewport-fit=cover" in source
         assert "responsive-v1.0.0-codex.1" in source
@@ -143,7 +198,13 @@ def test_sidebar_pages_load_the_responsive_contract_before_bootstrap() -> None:
 
 
 def test_sidebar_pages_render_a_closed_accessibility_state_before_bootstrap() -> None:
-    for template_name in ("_cache_page.html", "agent.html", "browser.html", "settings.html"):
+    for template_name in (
+        "_cache_page.html",
+        "agent.html",
+        "browser.html",
+        "settings.html",
+        "settings_style_tokens.html",
+    ):
         source = _read(TEMPLATE_ROOT / template_name)
         toggle_start = source.index('id="sidebar_toggle"')
         toggle_end = source.index(">", toggle_start)
@@ -158,7 +219,12 @@ def test_sidebar_pages_render_a_closed_accessibility_state_before_bootstrap() ->
 
 def test_sidebar_toggle_is_outside_the_shell_stacking_context() -> None:
     stylesheet = _read(STYLE_PATH)
-    for template_name in ("_cache_page.html", "browser.html", "settings.html"):
+    for template_name in (
+        "_cache_page.html",
+        "browser.html",
+        "settings.html",
+        "settings_style_tokens.html",
+    ):
         source = _read(TEMPLATE_ROOT / template_name)
         toggle_index = source.index('id="sidebar_toggle"')
         shell_index = source.index('class="app-shell')

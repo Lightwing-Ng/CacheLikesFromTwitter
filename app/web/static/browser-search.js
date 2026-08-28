@@ -1,4 +1,4 @@
-/* Code version: v2.0.1-codex.1 */
+/* Code version: v2.0.2-codex.1 */
 
 import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
 
@@ -114,6 +114,21 @@ import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
         });
     }
 
+    function findLiteralMatches(candidates, query) {
+        const normalizedQuery = normalizeSearch(query);
+        if (!normalizedQuery) return [];
+        return candidates
+            .filter((candidate) => (
+                normalizeSearch(candidate.value).includes(normalizedQuery)
+                || normalizeSearch(candidate.detail).includes(normalizedQuery)
+            ))
+            .map((candidate) => ({
+                ...candidate,
+                matches: [],
+                score: 0,
+            }));
+    }
+
     function searchCandidates(query) {
         const candidates = collectCandidates();
         const queryText = normalizeDisplay(query);
@@ -125,15 +140,20 @@ import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
             }));
         }
 
-        return createSearchIndex(candidates)
+        const literalMatches = findLiteralMatches(candidates, queryText);
+        const literalKeys = new Set(literalMatches.map((candidate) => normalizeSearch(candidate.value)));
+        const fuzzyMatches = createSearchIndex(candidates)
             .search(queryText)
             .filter((result) => result.score == null || result.score <= fuzzyScoreThreshold)
-            .slice(0, maximumSuggestions)
             .map((result) => ({
                 ...result.item,
                 matches: result.matches || [],
                 score: result.score,
             }));
+        return [
+            ...literalMatches,
+            ...fuzzyMatches.filter((candidate) => !literalKeys.has(normalizeSearch(candidate.value))),
+        ].slice(0, maximumSuggestions);
     }
 
     function appendHighlightedText(parent, text, matches, key) {
@@ -194,6 +214,10 @@ import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
     }
 
     function submitSearch() {
+        if (input.dataset.browserSearchGlobalScope === "true") {
+            const sessionField = form.querySelector('input[name="session"]');
+            if (sessionField) sessionField.disabled = true;
+        }
         rememberSearch(input.value);
         setMenuOpen(false);
         form.requestSubmit();
@@ -219,7 +243,7 @@ import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
         if (!matches.length) {
             const emptyState = document.createElement("div");
             emptyState.className = "browser-search-suggestions-empty";
-            emptyState.textContent = "Press Enter to search this cache.";
+            emptyState.textContent = input.dataset.browserSearchSubmitCopy || "Press Enter to search this cache.";
             menu.append(emptyState);
         } else {
             matches.forEach((candidate, index) => {

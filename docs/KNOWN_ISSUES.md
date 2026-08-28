@@ -1,6 +1,42 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.13.0-codex.1`
+Documentation version: `v1.15.0-codex.1`
+
+## Edge Gemini and Grok Agent parity hardening on 28 Aug 2026
+
+- Gemini now fails closed on an exact `Gemini 3.1 Pro` selection, and Grok fails closed on an
+  exact `Build` selection with a `Build Beta` trigger readback. The legacy persisted `grok-auto`
+  and `grok-heavy` keys migrate to `grok-build`; neither `Auto` nor the unavailable paid `Heavy`
+  mode is accepted as proof that Grok is using the agentic Build mode available to this account.
+- Grok model verification uses trusted clicks on the exact current Radix trigger and its controlled
+  menu. The exact `Build` radio must prove selection through both `aria-checked="true"` and
+  `data-state="checked"` after a reopen, and the closed trigger must read `Build Beta`. Nested menus,
+  duplicate candidates, upgrade dialogs, disabled controls, and unknown overlays fail closed. The
+  controller may dismiss only the exact `Meet Grok Bot` and `Introducing Build Mode` onboarding
+  dialogs through one enabled exact `Dismiss` control; it never force-clicks through an overlay.
+- Gemini's anonymous shell now exposes a usable-looking composer and conversation-shaped links.
+  A visible exact sign-in action without a visible Google Account control is still treated as
+  signed out, and an exact `Sign in for all models` menu barrier prevents the controller from
+  clicking `3.1 Pro`. Both checks run before context attachment or prompt submission.
+- All Chromium providers now capture URL, visible user and assistant order, raw fenced controller
+  text, generation state, and composer state in one DOM snapshot. Gemini and Grok therefore reject
+  assistant content that still appears before the latest user turn and never treat a missing
+  composer as proof that a prompt was accepted.
+- Every Gemini and Grok controller turn now carries a unique receipt. Submission and response reads
+  require that receipt in the current latest user turn, fail closed if another user turn supersedes
+  it, and treat a navigation-time Send exception as an uncertain commit that must never be retried.
+  Before Send, exactly one semantic chat composer must preserve the full prompt; a challenge reload
+  may safely refill it, while feedback, search, dialog, menu, navigation, and header textareas are
+  excluded.
+- Gemini CAPTCHA and Grok Cloudflare or human-verification pages pause the same in-flight browser
+  turn. The same isolated Edge or Chrome clone is surfaced for the user, restored afterward, and
+  the run continues only after the challenge clears and Resume is selected. Conversation text that
+  merely mentions verification does not pause while the normal composer remains usable.
+- Grok's authenticated browser fetches use a 30-second `AbortController` timeout before entering
+  the existing bounded retry path, so an unresponsive provider request cannot block Stop forever.
+- Gemini `New session in project` remains a receipt-isolated task on one selected Notebook route.
+  The route does not prove that Gemini created a distinct provider-side subconversation, so the UI
+  must not present that mode as equivalent to a ChatGPT Project subconversation.
 
 ## Four-provider Agent pre-transfer hardening on 27 Aug 2026
 

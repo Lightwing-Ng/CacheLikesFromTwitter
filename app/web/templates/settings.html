@@ -1,4 +1,4 @@
-<!-- Code version: v1.26.0-codex.2 -->
+<!-- Code version: v1.26.0-codex.8 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.49') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.86.0-codex.4') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
@@ -21,7 +21,6 @@
 {% include "_sidebar_bootstrap.html" %}
 {% from "_cache_common_config.html" import render_cache_common_config %}
 {% from "_number_field.html" import render_number_field %}
-{% set current_phase = snapshot.phase or "idle" %}
 <main class="page">
     <button
         type="button"
@@ -49,12 +48,6 @@
         <aside class="panel sidebar settings-category-sidebar" id="settings_sidebar">
             <section class="hero">
                 <h1>Settings</h1>
-            </section>
-            <section class="sidebar-section anchor-section" id="settings">
-                <div class="section-heading">
-                    <p class="section-kicker">Control plane</p>
-                    <span class="status-chip status-{{ current_phase }}">{{ current_phase }}</span>
-                </div>
             </section>
             {% set current_category = 'browser' %}
             {% include "_settings_category_nav.html" %}
@@ -285,9 +278,6 @@
                                             <p class="workspace-kicker">Mirror configuration</p>
                                             <h3 id="shadow_backup_heading">Destination &amp; policy</h3>
                                         </div>
-                                        <span class="status-chip status-{{ shadow_backup_snapshot.phase }}" id="shadow_backup_phase">
-                                            {{ shadow_backup_snapshot.phase }}
-                                        </span>
                                     </div>
                                     <p class="shadow-backup-copy">
                                         Cloud files never write back to this computer. Deletion mirroring remains optional.
@@ -507,7 +497,7 @@
 </main>
 
 {% include "_waiting_modal.html" %}
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.19.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='shadow-backup-settings.js', v='shadow-backup-settings-v1.3.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.20.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='shadow-backup-settings.js', v='shadow-backup-settings-v1.3.0-codex.2') }}"></script>
 </body>
 </html>

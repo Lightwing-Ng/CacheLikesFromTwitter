@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.52.1-codex.1
+# Code version: v1.52.1-codex.6
 
 from __future__ import annotations
 
@@ -113,7 +113,6 @@ from app.web.cache_sources import (
 )
 from app.web.navigation import build_agent_path, is_supported_agent_selection
 from app.web.token_registry import (
-    build_reused_style_token_rows,
     build_style_token_component_rows,
 )
 
@@ -658,10 +657,6 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             raise KeyError(source_key)
         return reconcile_cached_snapshot(runtime.state.snapshot(), asdict(runtime.hydrate_snapshot()))
 
-    def build_reconciled_snapshot() -> dict[str, Any]:
-        """Refresh X cache counters from disk without discarding live task status."""
-        return build_reconciled_cache_snapshot("x")
-
     def build_reconciled_grok_snapshot() -> dict[str, Any]:
         """Refresh Grok cache counters from disk without discarding live task status."""
         return build_reconciled_cache_snapshot("grok")
@@ -758,9 +753,10 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 source.gemini_stale_round_limit,
             ),
             chatgpt_project_url=(
-                request.form.get("chatgpt_project_url", source.chatgpt_project_url) or source.chatgpt_project_url
-            ).strip()
-            or source.chatgpt_project_url,
+                request.form["chatgpt_project_url"].strip()
+                if "chatgpt_project_url" in request.form
+                else source.chatgpt_project_url
+            ),
             chatgpt_project_name=(
                 request.form.get("chatgpt_project_name", source.chatgpt_project_name) or source.chatgpt_project_name
             ).strip()
@@ -878,12 +874,10 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.get("/settings")
     def settings():
-        snapshot = build_reconciled_snapshot()
         grok_snapshot = build_reconciled_grok_snapshot()
         chatgpt_snapshot = build_reconciled_chatgpt_snapshot()
         return render_template(
             "settings.html",
-            snapshot=snapshot,
             grok_snapshot=grok_snapshot,
             chatgpt_snapshot=chatgpt_snapshot,
             version=APP_VERSION,
@@ -899,25 +893,10 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
 
     @app.get("/settings/style-tokens")
     def settings_style_tokens():
-        style_token_rows = build_reused_style_token_rows(minimum_references=2)
-        style_token_component_rows = build_style_token_component_rows()
-        style_token_count = sum(len(row["tokens"]) for row in style_token_rows)
-        style_token_text_page = query_chat_history(
-            media_catalog.local_store_root,
-            source="all",
-            query="",
-            sort="newest",
-            page=1,
-            session_view=True,
-        )
         return render_template(
             "settings_style_tokens.html",
             version=APP_VERSION,
-            style_token_rows=style_token_rows,
-            style_token_component_rows=style_token_component_rows,
-            style_token_count=style_token_count,
-            minimum_references=2,
-            style_token_message_count=style_token_text_page.total_count,
+            style_token_rows=build_style_token_component_rows(),
         )
 
     def is_agent_access_unlocked() -> bool:
@@ -1371,6 +1350,9 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             media_id=request.args.get("media_id"),
             session_page=request.args.get("session_page"),
         )
+        if filters["view"] == "text" and filters["q"]:
+            filters["session"] = ""
+            filters["session_page"] = 1
         force_refresh = request.args.get("refresh") == "1"
         prompt_page = None
         saved_prompt_keys = prompt_store.saved_pointer_keys()
@@ -1449,7 +1431,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             filters=filters,
             browser_search_suggestions=browser_search_suggestions,
             has_any_media=bool(all_items),
-            has_any_text=bool(text_page and text_page.total_count),
+            has_any_text=bool(text_page and (text_page.total_count or filters["q"])),
             has_any_prompts=prompt_store.has_any(),
             saved_prompt_keys=saved_prompt_keys,
             prompt_remark_options=prompt_store.remark_options(),

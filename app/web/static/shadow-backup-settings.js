@@ -1,4 +1,4 @@
-/* Code version: v1.3.0-codex.1 */
+/* Code version: v1.3.0-codex.2 */
 
 (() => {
     const section = document.querySelector("[data-shadow-backup-section]");
@@ -8,7 +8,6 @@
     const statusCopy = document.getElementById("shadow_backup_status");
     const statusSpinner = statusCopy?.querySelector("[data-shadow-backup-status-spinner]");
     const statusMessage = statusCopy?.querySelector("[data-shadow-backup-status-copy]");
-    const statusPhase = document.getElementById("shadow_backup_phase");
     const lastSyncedCopy = document.getElementById("shadow_backup_last_synced");
     const mirrorWarning = document.querySelector("[data-shadow-backup-mirror-warning]");
 
@@ -47,15 +46,6 @@
     function renderStatus(snapshot) {
         isSyncRunning = Boolean(snapshot.running);
         renderStatusCopy(snapshot.message, snapshot.phase);
-        if (statusPhase) {
-            statusPhase.textContent = snapshot.phase || "idle";
-            for (const className of [...statusPhase.classList]) {
-                if (className.startsWith("status-")) {
-                    statusPhase.classList.remove(className);
-                }
-            }
-            statusPhase.classList.add(`status-${snapshot.phase || "idle"}`);
-        }
         if (lastSyncedCopy) {
             if (snapshot.last_synced_at) {
                 lastSyncedCopy.textContent = `Last successful sync: ${snapshot.last_synced_at}`;

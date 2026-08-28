@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.6.0-codex.1`
+Documentation version: `v1.6.1-codex.1`
 
 ## Launch
 
@@ -56,6 +56,8 @@ to override it. A successful unlock is stored in the signed Flask session for th
   Edge or Chrome. The Agent sidebar can also join one of the 20 most recent root
   sessions, start a session in one of the 20 most recent projects, or join one of a project's
   20 most recent sessions.
+- Gemini `New session in project` proves only a fresh transfer receipt on the selected Notebook
+  route; it does not prove that Gemini created an independent provider-side subconversation.
 - Settings → Agent controls the operating system, terminal permissions, context limit, turn limit,
   command timeout, and per-operating-system prompts. The operating-system setting detects the host and
   selects macOS or Windows automatically. The selected value must match the host; Windows uses

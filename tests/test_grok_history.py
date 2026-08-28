@@ -1,14 +1,16 @@
 """Focused tests for Grok text-history persistence and API pagination."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.1.0-codex.1
 
 from pathlib import Path
 
 from app.core.chat_history_browser import query_chat_history
 from app.core.grok_history import (
+    GROK_API_REQUEST_TIMEOUT_MS,
     GrokConversation,
     GrokHistoryStore,
     GrokTextMessage,
+    _grok_api_json,
     list_grok_conversations,
 )
 
@@ -118,3 +120,53 @@ def test_grok_conversation_pagination_uses_page_token(monkeypatch) -> None:
         "conversation-2",
     ]
     assert "pageToken=next-token" in calls[1]
+
+
+def test_grok_api_fetch_has_a_bounded_abort_controller_timeout() -> None:
+    """Bound browser-context API work and always clear its timer."""
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.script = ""
+            self.arguments = {}
+
+        def evaluate(self, script, arguments):
+            self.script = script
+            self.arguments = arguments
+            return {"status": 200, "body": {"ok": True}}
+
+    page = FakePage()
+
+    assert _grok_api_json(page, "/rest/test") == {"ok": True}
+    assert page.arguments["timeoutMs"] == GROK_API_REQUEST_TIMEOUT_MS
+    assert "new AbortController()" in page.script
+    assert "signal: controller.signal" in page.script
+    assert "setTimeout(() => controller.abort(), timeoutMs)" in page.script
+    assert "clearTimeout(timeoutId)" in page.script
+
+
+def test_grok_api_timeout_uses_existing_retry_backoff() -> None:
+    """Retry a browser-aborted request through the existing 408 path."""
+
+    class FakePage:
+        def __init__(self) -> None:
+            self.results = [
+                {
+                    "status": 408,
+                    "body": {"message": "Request timed out after 30000 ms"},
+                    "timedOut": True,
+                },
+                {"status": 200, "body": {"ok": True}},
+            ]
+            self.waits = []
+
+        def evaluate(self, _script, _arguments):
+            return self.results.pop(0)
+
+        def wait_for_timeout(self, milliseconds):
+            self.waits.append(milliseconds)
+
+    page = FakePage()
+
+    assert _grok_api_json(page, "/rest/test") == {"ok": True}
+    assert page.waits == [1_000]

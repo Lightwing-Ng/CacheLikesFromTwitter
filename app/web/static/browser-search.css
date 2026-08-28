@@ -1,4 +1,4 @@
-/* Code version: v1.3.2-codex.10 */
+/* Code version: v1.3.3-codex.2 */
 
 .browser-heading-copy {
     display: flex;
@@ -47,8 +47,9 @@
     }
 
     .browser-session-detail-actions--session > .browser-search-field {
-        flex: 1 1 auto;
-        width: auto;
+        --browser-session-search-input-inline-size: 256px;
+        flex: 0 1 calc(var(--browser-session-search-input-inline-size) + 2px);
+        width: min(calc(var(--browser-session-search-input-inline-size) + 2px), 100%);
         min-width: 0;
         margin-left: auto;
     }

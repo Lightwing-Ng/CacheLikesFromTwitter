@@ -1,8 +1,9 @@
 """Regression tests for the Settings → Style tokens registry.
 
-Code version: v1.1.0-codex.15
+Code version: v1.2.0-codex.3
 """
 
+import re
 from pathlib import Path
 
 from app.web.token_registry import (
@@ -49,44 +50,100 @@ def test_style_token_rows_pair_every_category_with_a_live_component_demo() -> No
     assert rows[-1]["sample_kind"] == "range-mode"
 
 
-def test_style_token_component_rows_include_browser_sources_and_scrollable_table() -> None:
+def test_style_token_component_rows_form_a_complete_sorted_component_catalog() -> None:
     rows = build_style_token_component_rows()
 
-    assert [row["id"] for row in rows] == [
-        "secondary-button",
-        "primary-button",
-        "global-theme-toggle",
-        "shared-cache-settings-link",
-        "prompt-tag",
-        "local-store-pagination",
-        "shared-select-filter",
+    expected_ids = {
         "agent-browser-selector",
-        "scrollable-data-table",
-    ]
-    assert [row["sample_kind"] for row in rows] == [
-        "secondary-button",
-        "primary-button",
+        "circular-icon-button",
+        "frosted-glass",
         "global-theme-toggle",
-        "shared-cache-settings-link",
+        "modal-dialog",
+        "modal-dialog-banner-message",
+        "pagination",
+        "primary-inverted-button",
+        "primary-button",
         "prompt-tag",
-        "local-store-pagination",
-        "shared-select-filter",
-        "agent-browser-selector",
         "scrollable-data-table",
-    ]
+        "secondary-button",
+        "segmented-control",
+        "settings-action-package",
+        "settings-execution-option",
+        "shared-select-dropdown",
+        "shared-select-filter",
+        "switch",
+        "text-input-control",
+        "tooltip",
+        "workspace-article",
+        "workspace-metric-value",
+    }
+    assert len(rows) == 22
+    assert {row["id"] for row in rows} == expected_ids
+    assert len({row["id"] for row in rows}) == len(rows)
+    assert [row["name"] for row in rows] == sorted(
+        (row["name"] for row in rows),
+        key=str.casefold,
+    )
     assert all(row["tokens"] for row in rows)
-    assert {
-        token["name"] for token in rows[4]["tokens"]
-    } == {
+    rows_by_id = {row["id"]: row for row in rows}
+    assert {token["name"] for token in rows_by_id["prompt-tag"]["tokens"]} == {
         "--accent-border-strong",
         "--accent-surface-soft",
         "--accent-text",
         "--radius-pill",
-        "--font-ui-xs",
+        "--font-ui-sm",
+        "--font-weight-medium",
     }
+    assert rows_by_id["prompt-tag"]["name"] == "Tag"
+    for row_id in (
+        "global-theme-toggle",
+        "pagination",
+        "primary-button",
+        "prompt-tag",
+        "scrollable-data-table",
+        "secondary-button",
+        "shared-select-filter",
+    ):
+        assert rows_by_id[row_id]["sample_copy"] == ""
     assert "--scrollable-data-table-min-width" in {
-        token["name"] for token in rows[-1]["tokens"]
+        token["name"] for token in rows_by_id["scrollable-data-table"]["tokens"]
     }
+    assert len(rows_by_id["shared-select-dropdown"]["sample_options"]) == 12
+    assert rows_by_id["shared-select-dropdown"]["sample_options"][-1] == {
+        "value": "max",
+        "label": "Max",
+    }
+    assert rows_by_id["settings-action-package"]["related_styles"] == (
+        {"name": "Settings execution option", "target_id": "settings-execution-option"},
+    )
+    assert any(
+        token.get("editable") and token.get("unit") == "px"
+        for row in rows
+        for token in row["tokens"]
+    )
+    core_material_cards = {
+        "circular-icon-button",
+        "modal-dialog",
+        "modal-dialog-banner-message",
+        "scrollable-data-table",
+        "segmented-control",
+        "settings-action-package",
+        "shared-select-filter",
+    }
+    for row_id in core_material_cards:
+        assert any(
+            token.get("reference_target_id") == "frosted-glass"
+            for token in rows_by_id[row_id]["tokens"]
+        )
+    assert not expected_ids.intersection(
+        {
+            "investment-holdings-allocation-badge",
+            "portfolio-donut-orbit",
+            "ticker-identity-row",
+            "ticker-input-control",
+            "trade-strategy-stepper",
+        }
+    )
 
 
 def test_style_tokens_route_renders_live_demos_and_settings_navigation(client) -> None:
@@ -94,7 +151,7 @@ def test_style_tokens_route_renders_live_demos_and_settings_navigation(client) -
     html = response.get_data(as_text=True)
 
     assert response.status_code == 200
-    assert "data-style-token-reference-skin" in html
+    assert "data-style-token-reference-skin" not in html
     assert 'aria-current="page"' in html
     assert 'data-style-token-card="style-token-surfaces-and-effects"' not in html
     assert 'data-style-token-card="style-token-typography"' not in html
@@ -102,9 +159,9 @@ def test_style_tokens_route_renders_live_demos_and_settings_navigation(client) -
     assert 'data-style-token-copy="Surfaces and effects"' not in html
     assert 'class="style-token-card style-token-card--demo-only"' not in html
     assert 'data-style-token-demo="type-specimen"' not in html
-    assert 'data-style-token-demo="glass-surface"' not in html
-    assert 'class="metric-card metric-card-accent foundation-metric-card"' in html
-    assert ">Messages</span>" in html
+    assert 'aria-label="Frosted glass demo"' in html
+    assert 'class="metric-card foundation-metric-card metric-card-accent style-token-metric-card-demo"' in html
+    assert ">Cached messages</span>" in html
     for dead_demo in (
         "status-states",
         "control-playground",
@@ -118,12 +175,15 @@ def test_style_tokens_route_renders_live_demos_and_settings_navigation(client) -
     assert 'data-style-token-card="style-token-color-and-status"' not in html
     assert 'data-style-token-card="style-token-layout-and-motion"' not in html
     assert 'data-style-token-card="style-token-product-components"' not in html
-    assert 'data-style-token-card="style-token-controls"' in html
-    assert 'data-style-token-copy="Controls"' in html
+    assert 'data-style-token-card="segmented-control"' in html
+    assert 'data-style-token-copy="Segmented control"' in html
     assert 'data-style-token-inventory-demo' not in html
+    assert html.count('data-style-token-card=') == 22
+    assert 'href="#frosted-glass"' in html
+    assert 'data-style-token-control' in html
     assert 'href="/settings/style-tokens"' in html
-    assert 'sidebar.js?v=sidebar-v1.19.0-codex.1' in html
-    assert 'segmented-control.js?v=segmented-control-v1.0.3-codex.1' in html
+    assert 'sidebar.js?v=sidebar-v1.20.0-codex.1' in html
+    assert 'segmented-control.js?v=segmented-control-v1.0.4-codex.1' in html
 
 
 def test_cache_summary_metrics_reuse_the_foundation_metric_contract(client) -> None:
@@ -133,8 +193,42 @@ def test_cache_summary_metrics_reuse_the_foundation_metric_contract(client) -> N
     assert response.status_code == 200
     assert 'class="metric-grid foundation-metric-grid"' in html
     assert 'class="progress-metric-grid foundation-metric-grid"' in html
-    assert html.count("foundation-metric-card") == 10
-    assert 'class="progress-metric-card foundation-metric-card"' in html
+    assert html.count("foundation-metric-card") == 11
+    assert html.count('class="metric-card foundation-metric-card metric-card-accent"') == 7
+    assert html.count('class="metric-card foundation-metric-card metric-card-accent progress-metric-card"') == 3
+    assert 'class="metric-card foundation-metric-card metric-card-accent notice-floating notice-floating-banner notice-inline-banner chatgpt-warning-banner"' in html
+    assert 'class="metric-card foundation-metric-card">' not in html
+
+
+def test_every_metric_card_instance_reuses_the_foundation_contract(client) -> None:
+    """Keep rendered and retained metric-card markup on the single Foundation contract."""
+    template_root = Path(__file__).parents[1] / "app/web/templates"
+    template_markups = [
+        path.read_text(encoding="utf-8")
+        for path in sorted(template_root.glob("*.html"))
+    ]
+    rendered_markups = [
+        client.get(route).get_data(as_text=True)
+        for route in (
+            "/cache/x",
+            "/cache/grok",
+            "/cache/chatgpt",
+            "/cache/gemini",
+            "/browser?view=media",
+            "/browser?view=prompts",
+            "/browser?view=text",
+        )
+    ]
+
+    for markup in template_markups + rendered_markups:
+        metric_classes = [
+            set(class_attribute.split())
+            for class_attribute in re.findall(r'class="([^"]*)"', markup)
+            if "metric-card" in class_attribute.split()
+        ]
+        for classes in metric_classes:
+            assert "foundation-metric-card" in classes
+            assert "metric-card-accent" in classes
 
 
 def test_style_tokens_route_renders_requested_browser_components_and_table(client) -> None:
@@ -145,13 +239,24 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
     for card_id in (
         "secondary-button",
         "primary-button",
+        "primary-inverted-button",
         "global-theme-toggle",
-        "shared-cache-settings-link",
         "prompt-tag",
-        "local-store-pagination",
+        "pagination",
         "shared-select-filter",
+        "shared-select-dropdown",
         "agent-browser-selector",
         "scrollable-data-table",
+        "switch",
+        "text-input-control",
+        "modal-dialog",
+        "modal-dialog-banner-message",
+        "settings-action-package",
+        "settings-execution-option",
+        "tooltip",
+        "workspace-article",
+        "workspace-metric-value",
+        "frosted-glass",
     ):
         assert f'data-style-token-card="{card_id}"' in html
     assert 'data-source-xpath="/html/body/main/div[3]/aside/section[2]/form/div[2]/button"' in html
@@ -167,12 +272,10 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
     assert 'data-style-token-demo="primary-button"' in html
     assert 'data-style-token-primary-button' in html
     assert 'data-source-selector="button#start_button"' in html
-    assert 'data-style-token-demo="shared-cache-settings-link"' in html
-    assert 'data-style-token-shared-cache-settings-link' in html
-    assert 'data-source-route="/cache/chatgpt"' in html
-    assert 'data-source-selector="aside#app_sidebar > section.sidebar-section:nth-of-type(3) > a.ghost-link.ghost-link--compact"' in html
-    assert 'href="/settings#settings-downloads"' in html
+    assert 'data-style-token-demo="shared-cache-settings-link"' not in html
+    assert 'data-style-token-shared-cache-settings-link' not in html
     assert 'data-style-token-demo="prompt-tag"' in html
+    assert 'aria-label="Tag demo"' in html
     assert 'data-style-token-prompt-tag' in html
     assert 'data-source-route="/browser"' in html
     assert 'aria-label="Remove remark PS"' in html
@@ -180,6 +283,25 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
     assert 'data-style-token-table-filter-option="buy"' in html
     assert 'data-style-token-table-pagination' in html
     assert html.count('data-style-token-table-row') == 12
+    assert html.count('data-style-token-shared-filter-option=') == 15
+    assert html.count('data-style-token-table-filter-option=') == 3
+    assert 'data-style-token-switch' in html
+    assert 'data-style-token-text-input-clear' in html
+    assert html.count(' data-style-token-dismiss aria-label=') == 2
+    assert 'data-style-token-action-package' in html
+    assert 'data-style-token-action-live-control' in html
+    assert 'data-style-token-reference="frosted-glass"' in html
+    assert 'data-style-token-reference="settings-execution-option"' in html
+    for removed_copy in (
+        "The Local resources action keeps the production secondary-button surface and states.",
+        "The primary cache action uses the shared blue surface and pending and disabled states.",
+        "The live theme control keeps the current appearance visible and reverses its action label.",
+        "The floating pager keeps the active page in a blue spatial indicator.",
+        "Saved prompt remarks use a compact blue pill with a working remove and restore affordance.",
+        "The standard trigger, dropdown, selected state, and filter options are shared by table headers and forms.",
+        "The sticky header, internal scroll, Type filter, and in-shell pagination remain synchronized.",
+    ):
+        assert removed_copy not in html
 
     script = (Path(__file__).parents[1] / "app/web/static/settings-style-tokens.js").read_text()
     for fragment in (
@@ -189,7 +311,15 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
         "bindStyleTokenPagination",
         "bindStyleTokenThemeToggleDemo",
         "bindStyleTokenPrimaryButtonDemo",
+        "attachStyleTokenControls",
+        "attachTextInputClearHandlers",
+        "attachStyleTokenReferences",
+        "bindPromptTagDemo",
+        "bindDismissibleDemos",
+        "bindActionPackageDemo",
+        "bindStyleTokenDensity",
         "__styleTokenOnSelect",
+        "Tag removed; restoring preview",
     ):
         assert fragment in script
     for fragment in (
@@ -213,13 +343,14 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
         assert fragment in segmented_script
 
 
-def test_style_token_reference_skin_respects_light_theme_override() -> None:
+def test_style_token_page_inherits_the_global_theme_contract() -> None:
+    template = (
+        Path(__file__).parents[1] / "app/web/templates/settings_style_tokens.html"
+    ).read_text()
     stylesheet = (Path(__file__).parents[1] / "app/web/static/style.css").read_text()
 
-    assert (
-        ':root[data-style-token-reference-skin]:not([data-theme-override="light"])'
-        in stylesheet
-    )
+    assert "data-style-token-reference-skin" not in template
+    assert 'theme-mode.js' in template
     assert '.style-token-page .global-theme-toggle[data-effective-theme="light"] .icon' in stylesheet
 
 

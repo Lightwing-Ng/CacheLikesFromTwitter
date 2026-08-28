@@ -1,4 +1,4 @@
-<!-- Code version: v1.48.0-codex.1 -->
+<!-- Code version: v1.48.0-codex.5 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.4-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.85.0-codex.5') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.3.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -193,7 +193,7 @@
                             type="submit"
                             name="refresh"
                             value="1"
-                            class="ghost-link browser-refresh-button"
+                            class="secondary-button browser-refresh-button"
                             data-wait-title="Refreshing cache"
                             data-wait-copy="Scanning the local cache for newly available resources."
                         >Refresh cache</button>
@@ -332,28 +332,28 @@
                         aria-label="{{ 'ChatGPT session metrics' if media_page.pagination_unit == 'session' else 'Cached media totals' }}"
                     >
                         {% if media_page.pagination_unit == "session" %}
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Total resources</span>
                             <strong>{{ "{:,}".format(media_page.total_count) }}</strong>
                         </div>
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Sessions</span>
                             <strong>{{ "{:,}".format(media_page.current_page if media_page.session_count else 0) }} / {{ "{:,}".format(media_page.session_count) }}</strong>
                         </div>
-                        <div class="metric-card browser-session-name-metric">
+                        <div class="metric-card foundation-metric-card metric-card-accent browser-session-name-metric">
                             <span class="metric-label">Current session</span>
                             <strong title="{{ media_page.current_session_label }}">{{ media_page.current_session_label or "No session" }}</strong>
                         </div>
                         {% else %}
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Total results</span>
                             <strong>{{ "{:,}".format(media_page.total_count) }}</strong>
                         </div>
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Images</span>
                             <strong>{{ "{:,}".format(media_page.image_count) }}</strong>
                         </div>
-                        <div class="metric-card">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Videos</span>
                             <strong>{{ "{:,}".format(media_page.video_count) }}</strong>
                         </div>
@@ -361,15 +361,15 @@
                     </div>
                     {% else %}
                     <div class="metric-grid browser-metric-grid browser-text-metric-grid" aria-label="Cached text totals">
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Messages</span>
                             <strong>{{ "{:,}".format(text_page.current_session.message_count if text_page.session_detail else text_page.total_count) }}</strong>
                         </div>
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Sessions</span>
                             <strong>{{ "{:,}".format(1 if text_page.session_detail else text_page.conversation_count) }}</strong>
                         </div>
-                        <div class="metric-card">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">{{ "Messages shown" if text_page.session_detail else "Sessions shown" }}</span>
                             <strong>{{ "{:,}".format(text_page.items|length if text_page.session_detail else text_page.sessions|length) }}</strong>
                         </div>

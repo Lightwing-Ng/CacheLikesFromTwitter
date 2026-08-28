@@ -1,4 +1,4 @@
-/* Code version: v1.1.0-codex.7 */
+/* Code version: v1.2.0-codex.2 */
 
 (() => {
     "use strict";
@@ -147,9 +147,23 @@
             label.textContent = option.textContent.trim();
         }
         if (trigger && option) {
-            trigger.setAttribute("aria-label", `${container.hasAttribute("data-style-token-table-filter") ? "Type filter" : "Sort cached text"}: ${option.textContent.trim()}`);
+            const menuLabel = container.dataset.styleTokenMenuLabel
+                || (container.hasAttribute("data-style-token-table-filter") ? "Type filter" : "Sort cached text");
+            trigger.setAttribute("aria-label", `${menuLabel}: ${option.textContent.trim()}`);
         }
         return value;
+    };
+
+    const moveStyleTokenMenuFocus = (options, current, key) => {
+        const currentIndex = Math.max(0, options.indexOf(current));
+        if (key === "Home") {
+            return options[0];
+        }
+        if (key === "End") {
+            return options.at(-1);
+        }
+        const direction = key === "ArrowUp" ? -1 : 1;
+        return options[(currentIndex + direction + options.length) % options.length];
     };
 
     const bindStyleTokenFilterMenus = () => {
@@ -174,6 +188,14 @@
                     event.preventDefault();
                     setStyleTokenMenuOpen(container, trigger, menu, false);
                     trigger.focus({preventScroll: true});
+                    return;
+                }
+                if (["ArrowDown", "ArrowUp", "Home", "End", "Enter", " "].includes(event.key)) {
+                    event.preventDefault();
+                    setStyleTokenMenuOpen(container, trigger, menu, true);
+                    const current = options.find((option) => option.getAttribute("aria-selected") === "true") || selected;
+                    const focusTarget = ["ArrowUp", "End"].includes(event.key) ? options.at(-1) : current;
+                    focusTarget?.focus({preventScroll: true});
                 }
             });
             options.forEach((option) => {
@@ -182,9 +204,28 @@
                     const nativeSelect = container.querySelector("select");
                     if (nativeSelect instanceof HTMLSelectElement) {
                         nativeSelect.value = value;
+                        nativeSelect.dispatchEvent(new Event("change", {bubbles: true}));
                     }
                     setStyleTokenMenuOpen(container, trigger, menu, false);
                     container.__styleTokenOnSelect?.(value);
+                });
+                option.addEventListener("keydown", (event) => {
+                    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+                        event.preventDefault();
+                        moveStyleTokenMenuFocus(options, option, event.key)?.focus({preventScroll: true});
+                        return;
+                    }
+                    if (["Enter", " "].includes(event.key)) {
+                        event.preventDefault();
+                        option.click();
+                        trigger.focus({preventScroll: true});
+                        return;
+                    }
+                    if (event.key === "Escape") {
+                        event.preventDefault();
+                        setStyleTokenMenuOpen(container, trigger, menu, false);
+                        trigger.focus({preventScroll: true});
+                    }
                 });
             });
         });
@@ -283,18 +324,43 @@
                 setStyleTokenAgentBrowserMenuOpen(container, trigger, menu, !isOpen);
             });
             trigger.addEventListener("keydown", (event) => {
-                if (event.key !== "Escape") {
+                if (event.key === "Escape") {
+                    event.preventDefault();
+                    setStyleTokenAgentBrowserMenuOpen(container, trigger, menu, false);
+                    trigger.focus({preventScroll: true});
                     return;
                 }
-                event.preventDefault();
-                setStyleTokenAgentBrowserMenuOpen(container, trigger, menu, false);
-                trigger.focus({preventScroll: true});
+                if (["ArrowDown", "ArrowUp", "Home", "End", "Enter", " "].includes(event.key)) {
+                    event.preventDefault();
+                    setStyleTokenAgentBrowserMenuOpen(container, trigger, menu, true);
+                    const current = options.find((option) => option.getAttribute("aria-selected") === "true") || options[0];
+                    const focusTarget = ["ArrowUp", "End"].includes(event.key) ? options.at(-1) : current;
+                    focusTarget?.focus({preventScroll: true});
+                }
             });
             options.forEach((option) => {
                 option.addEventListener("click", () => {
                     syncStyleTokenAgentBrowserSelection(container, option);
                     setStyleTokenAgentBrowserMenuOpen(container, trigger, menu, false);
                     showStatus(`Browser preview: ${option.dataset.styleTokenAgentBrowserLabel || option.textContent.trim()}`);
+                });
+                option.addEventListener("keydown", (event) => {
+                    if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+                        event.preventDefault();
+                        moveStyleTokenMenuFocus(options, option, event.key)?.focus({preventScroll: true});
+                        return;
+                    }
+                    if (["Enter", " "].includes(event.key)) {
+                        event.preventDefault();
+                        option.click();
+                        trigger.focus({preventScroll: true});
+                        return;
+                    }
+                    if (event.key === "Escape") {
+                        event.preventDefault();
+                        setStyleTokenAgentBrowserMenuOpen(container, trigger, menu, false);
+                        trigger.focus({preventScroll: true});
+                    }
                 });
             });
         });
@@ -372,21 +438,34 @@
             const rangeTrigger = range?.querySelector("[data-style-token-pagination-range-trigger]");
             const rangeMenu = range?.querySelector("[data-style-token-pagination-range-menu]");
             if (range instanceof HTMLElement && rangeTrigger instanceof HTMLButtonElement && rangeMenu instanceof HTMLElement) {
+                const setRangeOpen = (isOpen) => {
+                    range.classList.toggle("is-open", isOpen);
+                    rangeTrigger.setAttribute("aria-expanded", String(isOpen));
+                    rangeMenu.hidden = !isOpen;
+                    rangeMenu.setAttribute("aria-hidden", String(!isOpen));
+                };
                 rangeTrigger.addEventListener("click", () => {
-                    const isOpen = range.classList.contains("is-open");
-                    range.classList.toggle("is-open", !isOpen);
-                    rangeTrigger.setAttribute("aria-expanded", String(!isOpen));
-                    rangeMenu.hidden = isOpen;
-                    rangeMenu.setAttribute("aria-hidden", String(isOpen));
+                    setRangeOpen(!range.classList.contains("is-open"));
                 });
                 range.querySelectorAll("[data-pagination-target]").forEach((option) => {
                     option.addEventListener("click", () => {
-                        range.classList.remove("is-open");
-                        rangeTrigger.setAttribute("aria-expanded", "false");
-                        rangeMenu.hidden = true;
-                        rangeMenu.setAttribute("aria-hidden", "true");
+                        setRangeOpen(false);
+                        setStyleTokenPaginationPage(pagination, option.dataset.paginationTarget);
                         showStatus(`Range ${option.textContent.trim()} selected`);
                     });
+                });
+                range.addEventListener("keydown", (event) => {
+                    if (event.key === "Escape") {
+                        event.preventDefault();
+                        setRangeOpen(false);
+                        rangeTrigger.focus({preventScroll: true});
+                    }
+                });
+                document.addEventListener("click", (event) => {
+                    if (!(event.target instanceof Node) || range.contains(event.target)) {
+                        return;
+                    }
+                    setRangeOpen(false);
                 });
             }
             syncStyleTokenPaginationIndicator(pagination);
@@ -504,6 +583,197 @@
         });
     };
 
+    const attachStyleTokenControls = () => {
+        const shell = document.querySelector("[data-style-token-shell]");
+        if (!(shell instanceof HTMLElement)) {
+            return;
+        }
+        shell.querySelectorAll("[data-style-token-control]").forEach((control) => {
+            if (!(control instanceof HTMLElement) || control.dataset.bound === "1") {
+                return;
+            }
+            control.dataset.bound = "1";
+            control.querySelectorAll("[data-style-token-stepper]").forEach((button) => {
+                button.addEventListener("click", () => {
+                    const direction = button.dataset.styleTokenStepper === "down" ? -1 : 1;
+                    const currentValue = Number(control.dataset.styleTokenValue || 0);
+                    const minimum = Number(control.dataset.styleTokenMin || 0);
+                    const nextValue = Math.max(minimum, currentValue + direction);
+                    const tokenName = control.dataset.styleTokenName || "";
+                    const unit = control.dataset.styleTokenUnit || "";
+                    shell.style.setProperty(tokenName, `${nextValue}${unit}`);
+                    shell.querySelectorAll("[data-style-token-control]").forEach((peerControl) => {
+                        if (!(peerControl instanceof HTMLElement) || peerControl.dataset.styleTokenName !== tokenName) {
+                            return;
+                        }
+                        peerControl.dataset.styleTokenValue = String(nextValue);
+                        const input = peerControl.querySelector("[data-style-token-value-input]");
+                        if (input instanceof HTMLInputElement) {
+                            input.value = `${nextValue}${unit}`;
+                        }
+                    });
+                    showStatus(`${tokenName}: ${nextValue}${unit}`);
+                });
+            });
+        });
+    };
+
+    const attachTextInputClearHandlers = () => {
+        document.querySelectorAll("[data-style-token-text-input-clear]").forEach((button) => {
+            if (!(button instanceof HTMLButtonElement) || button.dataset.bound === "1") {
+                return;
+            }
+            button.dataset.bound = "1";
+            const shell = button.closest(".style-token-text-input-shell");
+            const input = shell?.querySelector("[data-style-token-text-input]");
+            if (!(input instanceof HTMLInputElement)) {
+                return;
+            }
+            const sync = () => {
+                button.hidden = input.value.length === 0;
+            };
+            button.addEventListener("click", () => {
+                input.value = "";
+                input.dispatchEvent(new Event("input", {bubbles: true}));
+                input.focus({preventScroll: true});
+                sync();
+                showStatus("Text input cleared");
+            });
+            input.addEventListener("input", sync);
+            sync();
+        });
+    };
+
+    const attachStyleTokenReferences = () => {
+        const shell = document.querySelector("[data-style-token-shell]");
+        if (!(shell instanceof HTMLElement)) {
+            return;
+        }
+        const reveal = (targetId, shouldScroll) => {
+            const targetCard = shell.querySelector(`[data-style-token-card="${CSS.escape(targetId)}"]`);
+            if (!(targetCard instanceof HTMLElement)) {
+                return;
+            }
+            targetCard.classList.remove("is-linked-highlight");
+            void targetCard.offsetWidth;
+            targetCard.classList.add("is-linked-highlight");
+            window.setTimeout(() => targetCard.classList.remove("is-linked-highlight"), 700);
+            if (shouldScroll) {
+                targetCard.scrollIntoView({behavior: "smooth", block: "center"});
+            }
+        };
+        shell.querySelectorAll("[data-style-token-reference]").forEach((reference) => {
+            if (!(reference instanceof HTMLElement) || reference.dataset.bound === "1") {
+                return;
+            }
+            reference.dataset.bound = "1";
+            const targetId = reference.dataset.styleTokenReference || "";
+            reference.addEventListener("mouseenter", () => reveal(targetId, false));
+            reference.addEventListener("focus", () => reveal(targetId, false));
+            reference.addEventListener("click", (event) => {
+                event.preventDefault();
+                history.replaceState(null, "", `#${targetId}`);
+                reveal(targetId, true);
+            });
+        });
+        const initialTarget = decodeURIComponent(window.location.hash.slice(1));
+        if (initialTarget) {
+            window.requestAnimationFrame(() => reveal(initialTarget, true));
+        }
+    };
+
+    const bindPromptTagDemo = () => {
+        document.querySelectorAll("[data-style-token-prompt-tag-remove]").forEach((button) => {
+            if (!(button instanceof HTMLButtonElement) || button.dataset.bound === "1") {
+                return;
+            }
+            button.dataset.bound = "1";
+            const tag = button.closest("[data-style-token-prompt-tag]");
+            button.addEventListener("click", () => {
+                if (!(tag instanceof HTMLElement)) {
+                    return;
+                }
+                tag.classList.add("style-token-dismissible-hidden");
+                showStatus("Tag removed; restoring preview");
+                window.setTimeout(() => tag.classList.remove("style-token-dismissible-hidden"), 800);
+            });
+        });
+    };
+
+    const bindDismissibleDemos = () => {
+        document.querySelectorAll("[data-style-token-dismiss]").forEach((button) => {
+            if (!(button instanceof HTMLButtonElement) || button.dataset.bound === "1") {
+                return;
+            }
+            button.dataset.bound = "1";
+            const surface = button.closest("[data-style-token-dismissible]");
+            button.addEventListener("click", () => {
+                if (!(surface instanceof HTMLElement)) {
+                    return;
+                }
+                surface.classList.add("style-token-dismissible-hidden");
+                showStatus("Demo dismissed; restoring preview");
+                window.setTimeout(() => surface.classList.remove("style-token-dismissible-hidden"), 800);
+            });
+        });
+    };
+
+    const bindActionPackageDemo = () => {
+        document.querySelectorAll("[data-style-token-action-package]").forEach((actionPackage) => {
+            if (!(actionPackage instanceof HTMLElement) || actionPackage.dataset.bound === "1") {
+                return;
+            }
+            actionPackage.dataset.bound = "1";
+            const button = actionPackage.querySelector("[data-style-token-action-button]");
+            const copy = actionPackage.querySelector("[data-style-token-action-copy]");
+            const live = actionPackage.querySelector("[data-style-token-action-live]");
+            const control = actionPackage.parentElement?.querySelector("[data-style-token-action-live-control]");
+            const setLive = (isLive) => {
+                if (live instanceof HTMLElement) {
+                    live.hidden = !isLive;
+                }
+            };
+            if (control instanceof HTMLInputElement) {
+                control.addEventListener("change", () => setLive(control.checked));
+            }
+            if (button instanceof HTMLButtonElement) {
+                const originalCopy = copy?.textContent || "";
+                button.addEventListener("click", () => {
+                    button.disabled = true;
+                    button.classList.add("is-pending");
+                    button.textContent = "Refreshing…";
+                    if (copy) {
+                        copy.textContent = "Refreshing local metadata and packaged assets.";
+                    }
+                    setLive(true);
+                    window.setTimeout(() => {
+                        button.disabled = false;
+                        button.classList.remove("is-pending");
+                        button.textContent = "Refresh";
+                        if (copy) {
+                            copy.textContent = originalCopy;
+                        }
+                        setLive(control instanceof HTMLInputElement && control.checked);
+                    }, 1200);
+                });
+            }
+        });
+    };
+
+    const bindStyleTokenDensity = () => {
+        const demos = Array.from(document.querySelectorAll(".style-token-demo"));
+        const sync = (demo) => {
+            const width = demo.getBoundingClientRect().width;
+            demo.dataset.styleTokenDensity = width <= 320 ? "tight" : width <= 360 ? "compact" : "comfortable";
+        };
+        if (typeof ResizeObserver === "function") {
+            const observer = new ResizeObserver((entries) => entries.forEach((entry) => sync(entry.target)));
+            demos.forEach((demo) => observer.observe(demo));
+            return;
+        }
+        window.requestAnimationFrame(() => demos.forEach(sync));
+    };
+
     bindRangeModeDemos();
     bindStyleTokenResizer();
     bindStyleTokenTableDemos();
@@ -513,6 +783,13 @@
     bindSecondaryButtonDemo();
     bindStyleTokenPrimaryButtonDemo();
     bindStyleTokenThemeToggleDemo();
+    attachStyleTokenControls();
+    attachTextInputClearHandlers();
+    attachStyleTokenReferences();
+    bindPromptTagDemo();
+    bindDismissibleDemos();
+    bindActionPackageDemo();
+    bindStyleTokenDensity();
 
     document.addEventListener("click", (event) => {
         const button = event.target.closest("[data-style-token-copy]");

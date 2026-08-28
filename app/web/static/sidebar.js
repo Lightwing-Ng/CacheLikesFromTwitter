@@ -1,4 +1,4 @@
-/* Code version: v1.19.0-codex.1 */
+/* Code version: v1.20.0-codex.1 */
 
 (function initializeSidebar() {
     "use strict";
@@ -15,6 +15,19 @@
     const dockLocationMemoryPrefix = "cachelikes:dock-location:v1:";
     const dockSections = new Set(["agent", "cache", "local-resources", "settings"]);
     const cacheSectionPaths = new Set(["/cache/x", "/cache/grok", "/cache/chatgpt", "/cache/gemini"]);
+    const reducedMotionMedia = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const sidebarGelAnimationNames = new Set([
+        "workspace-sidebar-gel-open",
+        "workspace-sidebar-gel-close",
+    ]);
+    const sidebarGelCandidateSelector = [
+        ".workspace-mobile-summary-shell > :not(.workspace-summary-card)",
+        ".settings-workspace-header > :not(.settings-summary-card)",
+        ".agent-workspace > .agent-workspace-grid",
+        "#settings_workspace .settings-category-shell",
+    ].join(", ");
+    const sidebarGelTargetSelector = "[data-sidebar-gel-content]";
+    const sidebarTitleTargetSelector = ".workspace-summary-card > .report-heading-row";
     const legacyCachePathMap = new Map([
         ["/", "/cache/x"],
         ["/grok", "/cache/grok"],
@@ -27,9 +40,11 @@
     const dockLinks = sidebarDock
         ? Array.from(sidebarDock.querySelectorAll("[data-dock-section], [data-section-link]"))
         : [];
-    const sidebarMotionDurationMs = window.matchMedia("(prefers-reduced-motion: reduce)").matches ? 1 : 500;
+    const sidebarMotionDurationMs = 560;
     let isSidebarOpen = sidebarToggle.getAttribute("aria-expanded") === "true";
     let sidebarMotionResetTimer = 0;
+    let sidebarMotionEndHandler = null;
+    let sidebarTitleAnimations = [];
     let dockPositionFrame = 0;
 
     function readSidebarMemory() {
@@ -204,24 +219,81 @@
         syncDockDestinations();
     }
 
-    function setSidebarMotionState(direction) {
+    function clearSidebarMotionState() {
         if (sidebarMotionResetTimer) {
             window.clearTimeout(sidebarMotionResetTimer);
             sidebarMotionResetTimer = 0;
         }
-
+        if (sidebarMotionEndHandler) {
+            appShell.removeEventListener("animationend", sidebarMotionEndHandler);
+        }
+        sidebarMotionEndHandler = null;
         appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
+    }
+
+    function syncSidebarGelTargets() {
+        const targets = Array.from(appShell.querySelectorAll(sidebarGelCandidateSelector));
+        targets.forEach((target) => target.setAttribute("data-sidebar-gel-content", ""));
+        return targets;
+    }
+
+    function clearSidebarTitleMotion() {
+        sidebarTitleAnimations.forEach((animation) => animation.cancel());
+        sidebarTitleAnimations = [];
+    }
+
+    function animateSidebarTitlesFrom(firstRects, targets) {
+        if (reducedMotionMedia.matches || sidebarOverlayMedia.matches) return;
+        sidebarTitleAnimations = targets.map((target, index) => {
+            if (typeof target.animate !== "function") return null;
+            const first = firstRects[index];
+            const last = target.getBoundingClientRect();
+            const deltaX = first.left - last.left;
+            const deltaY = first.top - last.top;
+            if (Math.abs(deltaX) < 0.5 && Math.abs(deltaY) < 0.5) return null;
+            const animation = target.animate(
+                [
+                    {transform: `translate3d(${deltaX.toFixed(2)}px, ${deltaY.toFixed(2)}px, 0)`},
+                    {transform: "none"},
+                ],
+                {
+                    duration: sidebarMotionDurationMs,
+                    easing: "cubic-bezier(0.16, 1, 0.3, 1)",
+                    fill: "both",
+                },
+            );
+            animation.finished.catch(() => {}).finally(() => animation.cancel());
+            return animation;
+        }).filter(Boolean);
+    }
+
+    function setSidebarMotionState(direction) {
+        clearSidebarMotionState();
+        const targets = syncSidebarGelTargets();
+        if (
+            !direction
+            || sidebarOverlayMedia.matches
+            || reducedMotionMedia.matches
+            || !targets.length
+            || !appShell.querySelector(sidebarGelTargetSelector)
+        ) {
+            return;
+        }
+
         void appShell.offsetWidth;
-        if (!direction) return;
 
         appShell.classList.add(
             "is-sidebar-animating",
             direction === "opening" ? "is-sidebar-opening" : "is-sidebar-closing",
         );
+        sidebarMotionEndHandler = (event) => {
+            if (!sidebarGelAnimationNames.has(event.animationName)) return;
+            clearSidebarMotionState();
+        };
+        appShell.addEventListener("animationend", sidebarMotionEndHandler);
         sidebarMotionResetTimer = window.setTimeout(() => {
-            appShell.classList.remove("is-sidebar-animating", "is-sidebar-opening", "is-sidebar-closing");
-            sidebarMotionResetTimer = 0;
-        }, sidebarMotionDurationMs);
+            clearSidebarMotionState();
+        }, sidebarMotionDurationMs + 120);
     }
 
     function scheduleDockPosition() {
@@ -264,16 +336,49 @@
 
         if (animate && wasOpen !== isSidebarOpen) {
             setSidebarMotionState(isSidebarOpen ? "opening" : "closing");
-            window.setTimeout(scheduleDockPosition, sidebarMotionDurationMs + 20);
+            const settleDelay = reducedMotionMedia.matches || sidebarOverlayMedia.matches
+                ? 0
+                : sidebarMotionDurationMs + 20;
+            window.setTimeout(scheduleDockPosition, settleDelay);
         }
         if (persist) writeSidebarMemory(isSidebarOpen);
         scheduleDockPosition();
     }
 
+    function applySidebarStateWithMotion(nextIsOpen, options = {}) {
+        clearSidebarTitleMotion();
+        const shouldAnimate = options.animate !== false;
+        const commit = () => applySidebarState(nextIsOpen, {...options, animate: shouldAnimate});
+        if (
+            !shouldAnimate
+            || nextIsOpen
+            || reducedMotionMedia.matches
+            || sidebarOverlayMedia.matches
+        ) {
+            commit();
+            return;
+        }
+
+        const targets = Array.from(appShell.querySelectorAll(sidebarTitleTargetSelector))
+            .filter((target) => target.getClientRects().length > 0);
+        if (!targets.length) {
+            commit();
+            return;
+        }
+        const firstRects = targets.map((target) => target.getBoundingClientRect());
+        commit();
+        animateSidebarTitlesFrom(firstRects, targets);
+    }
+
     window.setSidebarOpen = function setSidebarOpen(isOpen, options = {}) {
+        if (options.animate) {
+            applySidebarStateWithMotion(isOpen, options);
+            return;
+        }
         applySidebarState(isOpen, options);
     };
 
+    syncSidebarGelTargets();
     applySidebarState(readSidebarMemory(), { persist: false });
     syncDockActiveState();
     rememberCurrentDockLocation();
@@ -305,15 +410,17 @@
     window.addEventListener("popstate", rememberCurrentDockLocation);
 
     sidebarToggle.addEventListener("click", () => {
-        applySidebarState(!isSidebarOpen, { animate: true });
+        applySidebarStateWithMotion(!isSidebarOpen, { animate: true });
     });
 
     sidebarBackdrop?.addEventListener("click", () => {
         if (!sidebarOverlayMedia.matches || !isSidebarOpen) return;
-        applySidebarState(false);
+        applySidebarStateWithMotion(false, { animate: true });
     });
 
     const handleViewportChange = () => {
+        clearSidebarMotionState();
+        clearSidebarTitleMotion();
         applySidebarState(isSidebarOpen, { persist: false });
     };
     if (typeof sidebarOverlayMedia.addEventListener === "function") {
@@ -322,11 +429,25 @@
         sidebarOverlayMedia.addListener(handleViewportChange);
     }
 
+    if (typeof reducedMotionMedia.addEventListener === "function") {
+        reducedMotionMedia.addEventListener("change", () => {
+            clearSidebarMotionState();
+            clearSidebarTitleMotion();
+        });
+    } else if (typeof reducedMotionMedia.addListener === "function") {
+        reducedMotionMedia.addListener(() => {
+            clearSidebarMotionState();
+            clearSidebarTitleMotion();
+        });
+    }
+
     window.addEventListener("resize", scheduleDockPosition);
     window.addEventListener("orientationchange", () => {
         scheduleDockPosition();
     });
     window.addEventListener("pageshow", () => {
+        clearSidebarMotionState();
+        clearSidebarTitleMotion();
         scheduleDockPosition();
         syncDockActiveState();
         rememberCurrentDockLocation();

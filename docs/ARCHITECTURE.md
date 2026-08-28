@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.7.1-codex.1`
+Documentation version: `v1.7.2-codex.1`
 
 ## Runtime flow
 
@@ -226,6 +226,8 @@ Controller actions travel in fenced `json` code blocks, and the browser reader p
 code-block text so Markdown rendering cannot consume source-code punctuation before parsing.
 The provider adapter validates each official root session, Project, or Project session before the
 task; the selection is run-scoped and the default remains a new root session.
+For Gemini, Project-new binds a fresh transfer receipt to the selected Notebook route but does not
+claim an independent provider-side subconversation identity.
 Source discovery is persisted separately from message history through a three-level read-through
 path: process memory, the shared Parquet catalog, and the authenticated browser collector. The
 `/agent` source routes reuse a 15-minute entry by default, coalesce concurrent refreshes by cache

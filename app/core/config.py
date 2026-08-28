@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.13.1-codex.1
+# Code version: v1.13.1-codex.2
 
 from __future__ import annotations
 
@@ -220,8 +220,9 @@ def load_saved_config(settings_path: Path | None = None) -> CrawlConfig:
             1,
             int(payload.get("gemini_stale_round_limit", defaults.gemini_stale_round_limit)),
         ),
-        chatgpt_project_url=str(payload.get("chatgpt_project_url", defaults.chatgpt_project_url)).strip()
-        or defaults.chatgpt_project_url,
+        chatgpt_project_url=str(
+            payload.get("chatgpt_project_url", defaults.chatgpt_project_url)
+        ).strip(),
         chatgpt_project_name=str(payload.get("chatgpt_project_name", defaults.chatgpt_project_name)).strip()
         or defaults.chatgpt_project_name,
         chatgpt_startup_timeout_seconds=_clamp_float_setting(

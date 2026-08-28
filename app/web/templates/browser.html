@@ -1,4 +1,4 @@
-<!-- Code version: v1.60.0-codex.22 -->
+<!-- Code version: v1.60.0-codex.34 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -9,15 +9,15 @@
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.82.17-codex.49') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.3.2-codex.10') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.86.0-codex.4') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.3.3-codex.2') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='notice-banner.js', v='notice-banner-v0.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.31.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
-    <script type="module" src="{{ url_for('static', filename='browser-search.js', v='browser-search-v2.0.1-codex.1') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='browser-search.js', v='browser-search-v2.0.2-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-source-filter.js', v='browser-source-filter-v1.2.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-filter-select.js', v='browser-filter-select-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-actions.js', v='browser-session-actions-v1.1.0-codex.1') }}"></script>
@@ -265,7 +265,7 @@
                                 aria-label="Open original in Safari"
                                 title="Open original in Safari"
                             >
-                                <img src="{{ url_for('static', filename='images/browser.safari.png') }}" alt="" aria-hidden="true">
+                                <span class="icon browser-session-safari-icon" aria-hidden="true"></span>
                             </button>
                             <button
                                 type="button"
@@ -350,6 +350,8 @@
                                         aria-label="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
                                         placeholder="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
                                         data-browser-search-input
+                                        data-browser-search-global-scope="{{ 'true' if filters.view == 'text' else 'false' }}"
+                                        data-browser-search-submit-copy="{{ 'Press Enter to search all cached text.' if filters.view == 'text' else 'Press Enter to search this cache.' }}"
                                     >
                                     <div
                                         class="browser-search-suggestions"
@@ -369,28 +371,28 @@
                         aria-label="{{ 'ChatGPT session metrics' if media_page.pagination_unit == 'session' else 'Cached media totals' }}"
                     >
                         {% if media_page.pagination_unit == "session" %}
-                        <div class="metric-card metric-card-accent browser-media-primary-metric">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Total resources</span>
                             <strong>{{ "{:,}".format(media_page.total_count) }}</strong>
                         </div>
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Sessions</span>
                             <strong>{{ "{:,}".format(media_page.current_page if media_page.session_count else 0) }} / {{ "{:,}".format(media_page.session_count) }}</strong>
                         </div>
-                        <div class="metric-card browser-session-name-metric">
+                        <div class="metric-card foundation-metric-card metric-card-accent browser-session-name-metric">
                             <span class="metric-label">Current session</span>
                             <strong title="{{ media_page.current_session_label }}">{{ media_page.current_session_label or "No session" }}</strong>
                         </div>
                         {% else %}
-                        <div class="metric-card metric-card-accent browser-media-primary-metric">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Total results</span>
                             <strong>{{ "{:,}".format(media_page.total_count) }}</strong>
                         </div>
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Images</span>
                             <strong>{{ "{:,}".format(media_page.image_count) }}</strong>
                         </div>
-                        <div class="metric-card">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Videos</span>
                             <strong>{{ "{:,}".format(media_page.video_count) }}</strong>
                         </div>
@@ -398,30 +400,30 @@
                     </div>
                     {% elif filters.view == "prompts" %}
                     <div class="metric-grid browser-metric-grid browser-text-metric-grid" aria-label="Saved prompt totals">
-                        <div class="metric-card metric-card-accent browser-prompts-primary-metric">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Saved prompts</span>
                             <strong>{{ "{:,}".format(prompt_page.total_count) }}</strong>
                         </div>
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Sources</span>
                             <strong>{{ "{:,}".format(prompt_page.items|map(attribute="source")|unique|list|length) }}</strong>
                         </div>
-                        <div class="metric-card">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Page</span>
                             <strong>{{ "{:,}".format(prompt_page.current_page) }} / {{ "{:,}".format(prompt_page.total_pages) }}</strong>
                         </div>
                     </div>
                     {% else %}
                     <div class="metric-grid browser-metric-grid browser-text-metric-grid" aria-label="Cached text totals">
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Messages</span>
                             <strong>{{ "{:,}".format(text_page.current_session.message_count if text_page.session_detail else text_page.total_count) }}</strong>
                         </div>
-                        <div class="metric-card metric-card-accent">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Sessions</span>
                             <strong>{{ "{:,}".format(1 if text_page.session_detail else text_page.conversation_count) }}</strong>
                         </div>
-                        <div class="metric-card">
+                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">{{ "Messages shown" if text_page.session_detail else "Sessions shown" }}</span>
                             <strong>{{ "{:,}".format(text_page.items|length if text_page.session_detail else text_page.sessions|length) }}</strong>
                         </div>
@@ -891,7 +893,7 @@
                                     <tr data-chat-session-id="{{ session.stable_id }}">
                                         <td class="browser-session-table-number">{{ ((text_page.current_page - 1) * text_page.page_size) + loop.index }}</td>
                                         <td>
-                                            <a class="browser-session-table-title" lang="zh-CN" href="{{ url_for('browser', view='text', source=filters.source, q=filters.q, sort=filters.sort, session_view='1', session=session.stable_id, session_page=filters.page, page=1) }}">{{ session.conversation_title }}</a>
+                                            <a class="browser-session-table-title" lang="zh-CN" href="{{ url_for('browser', view='text', source=filters.source, q='', sort=filters.sort, session_view='1', session=session.stable_id, session_page=filters.page, page=1) }}">{{ session.conversation_title }}</a>
                                             <span class="browser-session-table-id">{{ session.conversation_id }}</span>
                                         </td>
                                         <td class="browser-session-table-source">
@@ -1075,6 +1077,6 @@
 
 {% include "_waiting_modal.html" %}
 <script type="application/json" id="browser_media_data">{{ media_payload|tojson }}</script>
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.19.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.20.0-codex.1') }}"></script>
 </body>
 </html>

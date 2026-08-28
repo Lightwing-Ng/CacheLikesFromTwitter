@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.42.0-codex.1
+# Code version: v1.42.0-codex.2
 
 from __future__ import annotations
 
@@ -2841,6 +2841,7 @@ def _chatgpt_conversation_worker(
     should_stop,
     result_queue: Queue[ChatGPTConversationWorkResult],
     max_file_size_bytes: int = 0,
+    assistant_only: bool = False,
 ) -> None:
     """Scan and download one partition of conversations in an isolated browser context."""
     next_assignment = 0
@@ -2877,6 +2878,13 @@ def _chatgpt_conversation_worker(
                         )
                         next_assignment = assignment_position + 1
                         continue
+
+                    if assistant_only:
+                        candidates = [
+                            candidate
+                            for candidate in candidates
+                            if candidate.message_role.strip().lower() == "assistant"
+                        ]
 
                     downloaded_count = 0
                     skipped_known = 0
@@ -2946,6 +2954,7 @@ def _iter_chatgpt_conversation_results(
     should_stop,
     worker_count: int,
     max_file_size_bytes: int = 0,
+    assistant_only: bool = False,
 ) -> Iterator[ChatGPTConversationWorkResult]:
     """Yield conversation results while bounded browser workers run in parallel."""
     if not conversation_urls:
@@ -2957,6 +2966,11 @@ def _iter_chatgpt_conversation_results(
         for worker_index in range(worker_count)
     ]
     result_queue: Queue[ChatGPTConversationWorkResult] = Queue()
+    optional_worker_args = (
+        (max_file_size_bytes, True)
+        if assistant_only
+        else ((max_file_size_bytes,) if max_file_size_bytes > 0 else ())
+    )
     workers = [
         Thread(
             target=_chatgpt_conversation_worker,
@@ -2969,7 +2983,7 @@ def _iter_chatgpt_conversation_results(
                 scan_wait_seconds,
                 should_stop,
                 result_queue,
-            ) + ((max_file_size_bytes,) if max_file_size_bytes > 0 else ()),
+            ) + optional_worker_args,
             daemon=True,
             name=f"chatgpt-worker-{worker_index + 1}",
         )
@@ -3512,7 +3526,7 @@ def sync_chatgpt_images(
     should_stop=lambda: False,
     content_mode: str = "media",
 ) -> ChatGPTSyncResult:
-    """Cache ChatGPT text history or project media through the selected browser."""
+    """Cache ChatGPT text history or scoped/account media through the selected browser."""
     runtime_config = config or CrawlConfig()
     normalized_content_mode = "media" if content_mode == "media" else "text"
     descriptor = browser_descriptors(runtime_config).get(runtime_config.chatgpt_browser)
@@ -3527,7 +3541,13 @@ def sync_chatgpt_images(
         )
 
     project_name = runtime_config.chatgpt_project_name or DEFAULT_CHATGPT_PROJECT_NAME
-    project_url = runtime_config.chatgpt_project_url or DEFAULT_CHATGPT_PROJECT_URL
+    configured_project_url = runtime_config.chatgpt_project_url.strip()
+    all_generated_media = normalized_content_mode == "media" and not configured_project_url
+    project_url = (
+        CHATGPT_HOME_URL
+        if all_generated_media
+        else configured_project_url or DEFAULT_CHATGPT_PROJECT_URL
+    )
     direct_session_refresh = is_chatgpt_conversation_url(project_url)
     startup_timeout_seconds = min(
         max(
@@ -3641,23 +3661,51 @@ def sync_chatgpt_images(
         project_request_headers: dict[str, str] = {}
         conversation_titles_by_id: dict[str, str] = {}
         project_index_candidates: list[ChatGPTImageCandidate] = []
-        state.append_event(
-            f"Starting an offscreen {descriptor.label} session for the authorized ChatGPT sync."
-        )
+        conversation_urls: list[str] = []
+        if all_generated_media:
+            state.append_event(
+                f"Starting an offscreen {descriptor.label} session for all generated ChatGPT media. "
+                "User-uploaded media will be excluded."
+            )
+        else:
+            state.append_event(
+                f"Starting an offscreen {descriptor.label} session for the authorized ChatGPT sync."
+            )
         with _launch_chatgpt_browser_context(descriptor, project_url) as discovery_context:
             if discovery_context is not None:
                 page = _chatgpt_context_page(discovery_context)
-                conversation_urls = collect_project_conversation_urls(
-                    page,
-                    project_url,
-                    state,
-                    should_stop,
-                    startup_timeout_seconds=startup_timeout_seconds,
-                    scan_wait_seconds=scan_wait_seconds,
-                    request_headers=project_request_headers,
-                    conversation_titles_by_id=conversation_titles_by_id,
-                )
-                if not should_stop() and not direct_session_refresh:
+                if all_generated_media:
+                    open_chatgpt_page(
+                        page,
+                        CHATGPT_HOME_URL,
+                        startup_timeout_seconds=startup_timeout_seconds,
+                    )
+                    project_request_headers.update(
+                        _load_chatgpt_session_request_headers(
+                            discovery_context,
+                            CHATGPT_HOME_URL,
+                        )
+                    )
+                    conversation_urls = _collect_all_chatgpt_conversation_urls_via_api(
+                        discovery_context,
+                        CHATGPT_HOME_URL,
+                        project_request_headers,
+                        state,
+                        should_stop,
+                        conversation_titles_by_id,
+                    )
+                else:
+                    conversation_urls = collect_project_conversation_urls(
+                        page,
+                        project_url,
+                        state,
+                        should_stop,
+                        startup_timeout_seconds=startup_timeout_seconds,
+                        scan_wait_seconds=scan_wait_seconds,
+                        request_headers=project_request_headers,
+                        conversation_titles_by_id=conversation_titles_by_id,
+                    )
+                if not all_generated_media and not should_stop() and not direct_session_refresh:
                     project_index_candidates = collect_chatgpt_project_index_images(
                         discovery_context,
                         project_url,
@@ -3707,7 +3755,14 @@ def sync_chatgpt_images(
                     processed_tweets=0,
                     progress_unit="images" if project_index_candidates else "sessions",
                 )
-                state.append_event(f"Found {len(conversation_urls):,} ChatGPT sessions in the project.")
+                if all_generated_media:
+                    state.append_event(
+                        f"Found {len(conversation_urls):,} ChatGPT sessions across the account."
+                    )
+                else:
+                    state.append_event(
+                        f"Found {len(conversation_urls):,} ChatGPT sessions in the project."
+                    )
                 if project_index_candidates:
                     state.append_event(
                         f"Found {len(project_index_candidates):,} current original images in "
@@ -3736,6 +3791,12 @@ def sync_chatgpt_images(
             worker_count = 1
             state.append_event(
                 f"Starting 1 ChatGPT worker in an isolated {descriptor.label} context for this session."
+            )
+        elif all_generated_media:
+            state.append_event(
+                f"Starting {worker_count} ChatGPT worker{'' if worker_count == 1 else 's'} "
+                f"with one isolated {descriptor.label} context per worker. "
+                "Only assistant-generated media will be cached."
             )
         else:
             state.append_event(
@@ -3808,7 +3869,14 @@ def sync_chatgpt_images(
         elif should_stop():
             conversation_results = ()
         else:
-            state.append_event("Starting ChatGPT session scans because no project image index was available.")
+            if all_generated_media:
+                state.append_event(
+                    "Starting all-account ChatGPT session scans for generated media."
+                )
+            else:
+                state.append_event(
+                    "Starting ChatGPT session scans because no project image index was available."
+                )
             conversation_results = _iter_chatgpt_conversation_results(
                 conversation_urls,
                 descriptor,
@@ -3819,6 +3887,7 @@ def sync_chatgpt_images(
                 should_stop,
                 worker_count,
                 max_file_size_bytes=runtime_config.max_media_file_size_bytes,
+                assistant_only=all_generated_media,
             )
         for result in conversation_results:
             processed_conversations += 1

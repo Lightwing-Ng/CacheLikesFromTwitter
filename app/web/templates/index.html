@@ -1,4 +1,4 @@
-{# Code version: v1.12.0-codex.1 #}
+{# Code version: v1.12.0-codex.2 #}
 {% extends "_cache_page.html" %}
 {% from "_cache_page_components.html" import render_metric, render_progress_metric %}
 {% from "_number_field.html" import render_number_field %}
@@ -13,11 +13,11 @@
 {% endblock %}
 
 {% block primary_metrics %}
-{{ render_metric("Posts discovered", "discovered_tweets", snapshot.discovered_tweets, true, "discovered_tweets") }}
-{{ render_metric("Posts", "downloaded_posts", snapshot.downloaded_posts, true, "downloaded_posts") }}
-{{ render_metric("Images", "downloaded_images", snapshot.downloaded_images, true, "downloaded_images") }}
-{{ render_metric("Videos", "downloaded_videos", snapshot.downloaded_videos, false, "downloaded_videos") }}
-{{ render_metric("Skipped", "skipped_tweets", snapshot.skipped_tweets, false, "skipped_tweets") }}
+{{ render_metric("Posts discovered", "discovered_tweets", snapshot.discovered_tweets, "discovered_tweets") }}
+{{ render_metric("Posts", "downloaded_posts", snapshot.downloaded_posts, "downloaded_posts") }}
+{{ render_metric("Images", "downloaded_images", snapshot.downloaded_images, "downloaded_images") }}
+{{ render_metric("Videos", "downloaded_videos", snapshot.downloaded_videos, "downloaded_videos") }}
+{{ render_metric("Skipped", "skipped_tweets", snapshot.skipped_tweets, "skipped_tweets") }}
 {% endblock %}
 
 {% block progress_metrics %}

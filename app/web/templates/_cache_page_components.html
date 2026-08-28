@@ -1,4 +1,4 @@
-{# Code version: v1.1.0-codex.1 #}
+{# Code version: v1.1.0-codex.2 #}
 
 {% from "_browser_session_status.html" import render_browser_session_status %}
 
@@ -63,8 +63,8 @@
 {%- endmacro %}
 
 
-{% macro render_metric(label, field, value, accent=false, element_id=None) -%}
-<div class="metric-card foundation-metric-card{% if accent %} metric-card-accent{% endif %}">
+{% macro render_metric(label, field, value, element_id=None) -%}
+<div class="metric-card foundation-metric-card metric-card-accent">
     <span class="metric-label">{{ label }}</span>
     <strong
         {% if element_id %}id="{{ element_id }}"{% endif %}
@@ -76,7 +76,7 @@
 
 
 {% macro render_progress_metric(label, field, value, element_id=None, dynamic_label=false) -%}
-<div class="progress-metric-card foundation-metric-card">
+<div class="metric-card foundation-metric-card metric-card-accent progress-metric-card">
     <span
         class="progress-metric-label"
         {% if dynamic_label %}id="progress_processed_label" data-progress-unit-label{% endif %}
