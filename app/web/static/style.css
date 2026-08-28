@@ -4576,11 +4576,6 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 
     .cache-overview-title-card {
         padding-inline-end: 68px;
-        padding-inline-end: calc(
-            var(--settings-round-icon-button-size)
-            + (var(--page-edge-pad) * 2)
-            + var(--sidebar-toggle-quick-action-clearance)
-        );
     }
 
     .cache-overview-title-card .report-heading {
