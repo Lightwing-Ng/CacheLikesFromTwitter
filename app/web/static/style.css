@@ -4590,14 +4590,6 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
         padding-inline-end: 68px;
     }
 
-    .app-shell.is-sidebar-collapsed .cache-overview-title-card,
-    html.sidebar-memory-collapsed .app-shell .cache-overview-title-card {
-        padding: var(--workspace-title-rail-pad-block-start)
-            68px
-            0
-            var(--workspace-title-rail-collapsed-pad-inline-start);
-    }
-
     .cache-overview-title-card .report-heading {
         min-width: 0;
         max-width: 100%;
@@ -5246,7 +5238,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     padding-top: var(--workspace-article-pad-block-start);
 }
 
-html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-child > .workspace-summary-card:first-child {
+html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-child > .workspace-summary-card:first-child:not(.cache-overview-title-card) {
     padding-inline-start: var(--workspace-title-rail-collapsed-pad-inline-start);
 }
 

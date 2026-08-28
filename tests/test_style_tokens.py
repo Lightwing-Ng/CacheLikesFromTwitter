@@ -1626,7 +1626,7 @@ def test_browser_workspace_reuses_the_shared_title_rail_and_content_card() -> No
     assert "padding: 0 var(--workspace-article-pad-inline) var(--sidebar-dock-bottom-gap);" in content_rule
     assert "overflow: visible;" in text_card_rule
     assert ".workspace > .workspace-header:first-child > .browser-summary-card {" in stylesheet
-    assert "html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-child > .workspace-summary-card:first-child {" in stylesheet
+    assert "html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-child > .workspace-summary-card:first-child:not(.cache-overview-title-card) {" in stylesheet
     assert "padding-inline-start: var(--workspace-title-rail-collapsed-pad-inline-start);" in stylesheet
     assert ".browser-workspace-header {" in stylesheet
     assert "grid-template-rows: auto minmax(0, 1fr);" in stylesheet
