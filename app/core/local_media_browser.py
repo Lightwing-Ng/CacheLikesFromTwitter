@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.21.0-codex.2
+# Code version: v1.21.2-codex.1
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from threading import Condition, RLock
 from time import monotonic
 from typing import Any, Iterable, Iterator, Mapping
 from urllib.parse import unquote, urlsplit
+from zoneinfo import ZoneInfo
 
 from . import config
 from .cache_catalog import LocalTweetCacheIndex
@@ -56,6 +57,7 @@ _CHATGPT_BRANCH_MARKER_RE = re.compile(r"\bbranch\b", re.IGNORECASE)
 _CHATGPT_BRANCH_LABEL_RE = re.compile(r"\bbranch\b\s*(?:[·•]|[-–—])?\s*", re.IGNORECASE)
 _CHATGPT_MASTER_REVISION_RE = re.compile(r"\bmaster\s+([0-9]{4}[a-z0-9._-]*)\b", re.IGNORECASE)
 _DATE_ONLY_DISPLAY_RE = re.compile(r"^(?:\d{4}[-/]\d{2}[-/]\d{2}|\d{8})$")
+DISPLAY_TIMEZONE = ZoneInfo("Asia/Hong_Kong")
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,14 +154,14 @@ def format_datetime_label(
     *,
     date_only: bool = False,
 ) -> str:
-    """Format one user-visible date or timestamp in the local timezone."""
+    """Format one user-visible date or timestamp in Hong Kong time."""
     parsed = _parse_datetime(value)
     if parsed is None:
         return "Unknown date"
     if date_only or _is_date_only_value(value):
         return f"{parsed.day:02d}/{parsed.month:02d}/{parsed.year:04d}"
 
-    localized = parsed.astimezone()
+    localized = parsed.astimezone(DISPLAY_TIMEZONE)
     timezone_code = _timezone_code(localized)
     return (
         f"{localized.day:02d}/{localized.month:02d}/{localized.year:04d} "
@@ -810,7 +812,21 @@ def paginate_chatgpt_sessions(
         current_session_key, current_group = ordered_groups[current_page - 1]
         latest = latest_image(current_group)
         page_items = sort_media_items(current_group, sort)
-        current_session_label = latest.creator or latest.project_name or "Unknown session"
+        explicit_branch_titles = [
+            item
+            for item in current_group
+            if _CHATGPT_BRANCH_MARKER_RE.search(_display_text(item.creator))
+        ]
+        branch_title = max(
+            explicit_branch_titles,
+            key=lambda item: (timestamp_value(item), item.relative_path),
+            default=None,
+        )
+        current_session_label = (
+            branch_title.creator
+            if branch_title is not None and branch_title.creator
+            else latest.creator or latest.project_name or "Unknown session"
+        )
         current_session_latest_at = latest.captured_at
         current_session_url = latest.source_url
     else:
@@ -1642,7 +1658,7 @@ def _timezone_code(value: datetime) -> str:
         return timezone_name.upper()
     offset = value.utcoffset()
     if offset is not None and offset.total_seconds() == 8 * 60 * 60:
-        return "CST"
+        return "HKT"
     if offset is not None and offset.total_seconds() == 0:
         return "UTC"
     return "UTC"

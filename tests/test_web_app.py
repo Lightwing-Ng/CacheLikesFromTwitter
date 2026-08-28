@@ -2088,7 +2088,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="browser_filter_form"', body)
         self.assertIn('form="browser_filter_form"', body)
         self.assertGreater(body.index("data-browser-search"), body.index("</aside>"))
-        self.assertIn("browser-search.css?v=browser-search-v1.3.3-codex.2", body)
+        self.assertIn("browser-search.css?v=browser-search-v1.3.5-codex.1", body)
         self.assertIn('type="module"', body)
         self.assertIn("browser-search.js?v=browser-search-v2.0.2-codex.1", body)
         self.assertIn("browser-session-messages.js?v=browser-session-messages-v1.0.1-codex.1", body)
@@ -2140,6 +2140,14 @@ class WebAppTests(unittest.TestCase):
         search_style = BROWSER_SEARCH_STYLE_PATH.read_text(encoding="utf-8")
         self.assertIn(".browser-content-card {", search_style)
         self.assertIn("min-width: 0;", search_style)
+        controls_layer_start = search_style.index(
+            ".browser-session-controls-row:has(.browser-session-control-button:hover, .browser-session-control-button:focus-visible) {"
+        )
+        controls_layer_rule = search_style[
+            controls_layer_start:search_style.index("\n}", controls_layer_start)
+        ]
+        self.assertIn("position: relative;", controls_layer_rule)
+        self.assertIn("z-index: var(--layer-global-popover);", controls_layer_rule)
         self.assertIn(".browser-filter-select-dropdown .trade-strategy-dropdown-option {", search_style)
         self.assertIn("grid-template-columns: 16px minmax(0, 1fr);", search_style)
         self.assertIn(".browser-heading-copy {", search_style)
@@ -2157,6 +2165,8 @@ class WebAppTests(unittest.TestCase):
             "width: min(322px, 34vw);",
             "border: 1px solid var(--theme-glass-border);",
             "background: var(--liquid-glass-background);",
+            "background: var(--frosted-glass-opaque-background, var(--glass-popover-background));",
+            "background-clip: padding-box;",
             ".browser-search-control:focus-within {",
             "box-shadow: var(--glass-chip-shadow-hover);",
             "min-height: 32px;",
@@ -2568,7 +2578,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("browser-media-card-description", body)
         self.assertNotIn("Session name:</dt>", body)
         self.assertIn("foundation-metric-card", body)
-        self.assertIn("Created on:</dt><dd>09/08/2026 15:09:50 (CST)</dd>", body)
+        self.assertIn("Created on:</dt><dd>09/08/2026 15:09:50 (HKT)</dd>", body)
         self.assertIn("Size:</dt><dd>1.72 MiB</dd>", body)
         self.assertIn('class="browser-media-prompt"', body)
         self.assertIn('data-media-prompt-toggle', body)

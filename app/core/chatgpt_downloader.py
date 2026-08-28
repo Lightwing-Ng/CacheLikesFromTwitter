@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.42.0-codex.2
+# Code version: v1.42.1-codex.1
 
 from __future__ import annotations
 
@@ -149,6 +149,7 @@ class ChatGPTImageCandidate:
     message_role: str = ""
     conversation_title: str = ""
     created_at: str = ""
+    prompt_metadata_authoritative: bool = False
     request_headers: dict[str, str] = field(default_factory=dict, repr=False)
 
 
@@ -827,19 +828,31 @@ class ChatGPTImageCatalog:
         self,
         candidates: Iterable[ChatGPTImageCandidate],
     ) -> list[ChatGPTImageCandidate]:
-        """Reuse immutable prompt metadata from healthy catalog entries before API backfill."""
+        """Reuse cached metadata unless one session needs authoritative prompt backfill."""
         with self._lock:
+            materialized = tuple(candidates)
+            sessions_needing_prompt_backfill = {
+                candidate.conversation_url
+                for candidate in materialized
+                if candidate.conversation_url and not candidate.prompt_markdown
+            }
             merged_candidates: list[ChatGPTImageCandidate] = []
-            for candidate in candidates:
+            for candidate in materialized:
                 existing = self.entries_by_file_id.get(candidate.file_id)
                 if existing is None:
                     merged_candidates.append(candidate)
                     continue
+                reuse_cached_prompt = (
+                    candidate.conversation_url not in sessions_needing_prompt_backfill
+                )
                 merged_candidates.append(
                     replace(
                         candidate,
                         alt_text=candidate.alt_text or existing.alt_text,
-                        prompt_markdown=candidate.prompt_markdown or existing.prompt_markdown,
+                        prompt_markdown=(
+                            candidate.prompt_markdown
+                            or (existing.prompt_markdown if reuse_cached_prompt else "")
+                        ),
                         conversation_title=(
                             candidate.conversation_title or existing.conversation_title
                         ),
@@ -866,7 +879,14 @@ class ChatGPTImageCatalog:
                 if candidate.created_at and candidate.created_at != existing.created_at:
                     existing.created_at = candidate.created_at
                     changed = True
-                if candidate.prompt_markdown and candidate.prompt_markdown != existing.prompt_markdown:
+                if (
+                    candidate.prompt_metadata_authoritative
+                    and candidate.prompt_markdown != existing.prompt_markdown
+                ) or (
+                    not candidate.prompt_metadata_authoritative
+                    and candidate.prompt_markdown
+                    and candidate.prompt_markdown != existing.prompt_markdown
+                ):
                     existing.prompt_markdown = candidate.prompt_markdown
                     changed = True
                 if changed:
@@ -948,8 +968,11 @@ class ChatGPTImageCatalog:
                 height=height,
                 first_seen_at=existing.first_seen_at if existing else seen_at,
                 last_seen_at=seen_at,
-                prompt_markdown=candidate.prompt_markdown
-                or (existing.prompt_markdown if existing else ""),
+                prompt_markdown=(
+                    candidate.prompt_markdown
+                    if candidate.prompt_metadata_authoritative
+                    else candidate.prompt_markdown or (existing.prompt_markdown if existing else "")
+                ),
                 conversation_title=candidate.conversation_title
                 or (existing.conversation_title if existing else ""),
                 created_at=candidate.created_at or (existing.created_at if existing else ""),
@@ -1741,7 +1764,8 @@ def enrich_chatgpt_project_index_prompts(
             replacement = replace(
                 current,
                 alt_text=current.alt_text or str(raw_candidate.get("altText") or "").strip(),
-                prompt_markdown=prompt_markdown or current.prompt_markdown,
+                prompt_markdown=prompt_markdown,
+                prompt_metadata_authoritative=True,
                 message_role=current.message_role or str(raw_candidate.get("messageRole") or "").strip(),
                 conversation_title=current.conversation_title or conversation_title,
             )
@@ -2531,6 +2555,7 @@ def _merge_chatgpt_conversation_payload_images(
             height=int(raw_candidate.get("height") or 0),
             message_role=str(raw_candidate.get("messageRole") or "").strip(),
             conversation_title=authoritative_title,
+            prompt_metadata_authoritative=True,
             request_headers=dict(request_headers),
         )
         if not should_cache_chatgpt_candidate(candidate):
@@ -2611,19 +2636,18 @@ def _merge_current_conversation_images(
             continue
         previous = candidates_by_file_id.get(file_id)
         if previous is not None:
-            authoritative_prompt = (
-                previous.prompt_markdown
-                if previous.request_headers and previous.prompt_markdown
-                else ""
+            has_authoritative_prompt_metadata = (
+                previous.prompt_metadata_authoritative or bool(previous.request_headers)
             )
             candidate = replace(
                 candidate,
                 alt_text=candidate.alt_text or previous.alt_text,
                 prompt_markdown=(
-                    authoritative_prompt
-                    or candidate.prompt_markdown
-                    or previous.prompt_markdown
+                    previous.prompt_markdown
+                    if has_authoritative_prompt_metadata
+                    else candidate.prompt_markdown or previous.prompt_markdown
                 ),
+                prompt_metadata_authoritative=has_authoritative_prompt_metadata,
                 message_role=candidate.message_role or previous.message_role,
                 conversation_title=previous.conversation_title or candidate.conversation_title,
                 created_at=candidate.created_at or previous.created_at,

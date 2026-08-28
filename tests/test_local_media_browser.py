@@ -1,6 +1,6 @@
 """Read-only local media browser tests.
 
-Code version: v1.11.0-codex.2
+Code version: v1.11.1-codex.1
 """
 
 from __future__ import annotations
@@ -11,6 +11,7 @@ from datetime import datetime
 from dataclasses import replace
 from pathlib import Path
 from threading import Event, Thread
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -668,6 +669,32 @@ def test_chatgpt_pagination_uses_one_session_per_page_ordered_by_latest_image() 
     assert targeted_page.current_session_label == "Older session"
 
 
+def test_chatgpt_pagination_prefers_explicit_branch_title_over_project_label() -> None:
+    items = (
+        replace(
+            _item("latest.png", "2026-08-09T12:00:00Z"),
+            source="chatgpt",
+            creator="Studio208cm",
+            project_name="Studio208cm",
+            source_url="https://chatgpt.com/g/g-p-demo-studio/c/demo-session",
+            chatgpt_session_key="demo-session",
+        ),
+        replace(
+            _item("branch.png", "2026-08-08T12:00:00Z"),
+            source="chatgpt",
+            creator="Branch · master 0809b",
+            project_name="Studio208cm",
+            source_url="https://chatgpt.com/g/g-p-demo-studio/c/demo-session",
+            chatgpt_session_key="demo-session",
+            chatgpt_branch_key="studio208cm:master:0809b",
+        ),
+    )
+
+    page = paginate_chatgpt_sessions(items)
+
+    assert page.current_session_label == "Branch · master 0809b"
+
+
 def test_chatgpt_pagination_recovers_legacy_tombstone_session_from_url() -> None:
     conversation_url = "https://chatgpt.com/g/project/c/shared-session"
     items = (
@@ -747,12 +774,13 @@ def test_chatgpt_catalog_missing_falls_back_to_filename(tmp_path: Path) -> None:
 
 
 def test_formats_captured_timestamp_with_seconds_and_timezone() -> None:
-    expected = datetime.fromisoformat("2026-08-09T07:09:50+00:00").astimezone()
-    expected_timezone = expected.tzname() or "UTC"
+    expected = datetime.fromisoformat("2026-08-09T07:09:50+00:00").astimezone(
+        ZoneInfo("Asia/Hong_Kong")
+    )
     assert format_captured_at_timestamp_label("2026-08-09T07:09:50Z") == (
         f"{expected.day:02d}/{expected.month:02d}/{expected.year:04d} "
         f"{expected.hour:02d}:{expected.minute:02d}:{expected.second:02d} "
-        f"({expected_timezone})"
+        "(HKT)"
     )
 
 

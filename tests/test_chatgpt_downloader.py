@@ -660,6 +660,41 @@ def test_chatgpt_conversation_mapping_replaces_a_stale_project_index_prompt() ->
     api_get.assert_called_once()
 
 
+def test_chatgpt_authoritative_empty_prompt_clears_stale_catalog_metadata(tmp_path: Path) -> None:
+    target_dir = tmp_path / "media" / "chatgpt" / "demo-project"
+    conversation_url = "https://chatgpt.com/c/project-first"
+    candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_project_first",
+        file_id="file_project_first",
+        conversation_url=conversation_url,
+        prompt_markdown="Stale prompt from a different image",
+    )
+    catalog = ChatGPTImageCatalog.build(target_dir)
+    catalog.entries_by_file_id[candidate.file_id] = ChatGPTCatalogEntry(
+        file_id=candidate.file_id,
+        relative_path="img_file_project_first.png",
+        content_sha256="",
+        content_bytes=0,
+        source_url=candidate.source_url,
+        conversation_url=conversation_url,
+        alt_text="",
+        width=1_024,
+        height=1_536,
+        first_seen_at="2026-08-12T00:00:00Z",
+        last_seen_at="2026-08-12T00:00:00Z",
+        prompt_markdown=candidate.prompt_markdown,
+    )
+
+    cleared = replace(
+        candidate,
+        prompt_markdown="",
+        prompt_metadata_authoritative=True,
+    )
+
+    assert catalog.update_metadata_batch((cleared,)) == 1
+    assert catalog.entries_by_file_id[candidate.file_id].prompt_markdown == ""
+
+
 def test_chatgpt_project_index_backfills_a_missing_session_title_even_with_a_prompt() -> None:
     conversation_url = "https://chatgpt.com/c/project-first"
     candidate = ChatGPTImageCandidate(
@@ -1190,7 +1225,7 @@ def test_chatgpt_catalog_registers_downloads_and_skips_complete_files(tmp_path: 
     assert (target_dir / entry.relative_path).read_bytes() == PNG_PAYLOAD
 
 
-def test_chatgpt_catalog_merges_known_prompt_metadata_into_current_candidates(tmp_path: Path) -> None:
+def test_chatgpt_catalog_does_not_reuse_prompt_for_an_unindexed_candidate(tmp_path: Path) -> None:
     target_dir = tmp_path / "media" / "chatgpt" / "demo-project"
     catalog = ChatGPTImageCatalog.build(target_dir)
     cached_candidate = ChatGPTImageCandidate(
@@ -1213,9 +1248,98 @@ def test_chatgpt_catalog_merges_known_prompt_metadata_into_current_candidates(tm
     merged = catalog.merge_known_metadata((current_candidate,))[0]
 
     assert merged.source_url == current_candidate.source_url
-    assert merged.prompt_markdown == "Cached prompt"
+    assert merged.prompt_markdown == ""
     assert merged.conversation_title == "Current session title"
     assert merged.created_at == "2026-08-11T00:00:00Z"
+
+
+def test_chatgpt_prompt_backfill_rechecks_sibling_images_when_one_lacks_prompt(tmp_path: Path) -> None:
+    conversation_url = "https://chatgpt.com/c/project-first"
+    old_candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_old",
+        file_id="file_old",
+        conversation_url=conversation_url,
+        prompt_markdown="Stale index prompt",
+        conversation_title="Session title",
+    )
+    new_candidate = ChatGPTImageCandidate(
+        source_url="https://chatgpt.com/backend-api/estuary/content?id=file_new",
+        file_id="file_new",
+        conversation_url=conversation_url,
+        conversation_title="Session title",
+    )
+    catalog = ChatGPTImageCatalog.build(tmp_path / "media" / "chatgpt" / "demo-project")
+    merged = catalog.merge_known_metadata((old_candidate, new_candidate))
+    assert [candidate.prompt_markdown for candidate in merged] == [
+        "Stale index prompt",
+        "",
+    ]
+    payload = {
+        "title": "Session title",
+        "mapping": {
+            "old-user": {
+                "parent": None,
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"parts": ["Original image prompt"]},
+                },
+            },
+            "old-assistant": {
+                "parent": "old-user",
+                "message": {
+                    "author": {"role": "assistant"},
+                    "content": {
+                        "parts": [
+                            {
+                                "asset_pointer": "sediment://file_old",
+                                "content_type": "image_asset_pointer",
+                            }
+                        ]
+                    },
+                },
+            },
+            "new-user": {
+                "parent": "old-assistant",
+                "message": {
+                    "author": {"role": "user"},
+                    "content": {"parts": ["Latest image correction"]},
+                },
+            },
+            "new-assistant": {
+                "parent": "new-user",
+                "message": {
+                    "author": {"role": "assistant"},
+                    "content": {
+                        "parts": [
+                            {
+                                "asset_pointer": "sediment://file_new",
+                                "content_type": "image_asset_pointer",
+                            }
+                        ]
+                    },
+                },
+            },
+        },
+    }
+
+    with patch(
+        "app.core.chatgpt_downloader._get_chatgpt_api_json",
+        return_value=payload,
+    ) as api_get:
+        enriched = enrich_chatgpt_project_index_prompts(
+            object(),
+            conversation_url,
+            list(merged),
+            {"authorization": "Bearer test-token"},
+            TaskState("test"),
+            should_stop=lambda: False,
+        )
+
+    assert [candidate.prompt_markdown for candidate in enriched] == [
+        "Original image prompt",
+        "Latest image correction",
+    ]
+    api_get.assert_called_once()
 
 
 def test_chatgpt_catalog_prunes_missing_entries_during_load(tmp_path: Path) -> None:

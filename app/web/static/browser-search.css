@@ -1,4 +1,4 @@
-/* Code version: v1.3.3-codex.2 */
+/* Code version: v1.3.5-codex.1 */
 
 .browser-heading-copy {
     display: flex;
@@ -19,6 +19,11 @@
 
 .browser-content-card {
     min-width: 0;
+}
+
+.browser-session-controls-row:has(.browser-session-control-button:hover, .browser-session-control-button:focus-visible) {
+    position: relative;
+    z-index: var(--layer-global-popover);
 }
 
 .browser-filter-select-dropdown .trade-strategy-dropdown-option {
@@ -130,7 +135,8 @@
     overflow-y: auto;
     border: var(--glass-popover-border);
     border-radius: var(--radius-soft);
-    background: var(--glass-popover-background);
+    background: var(--frosted-glass-opaque-background, var(--glass-popover-background));
+    background-clip: padding-box;
     box-shadow: var(--glass-popover-shadow), 0 12px 24px var(--theme-shadow-ambient);
     backdrop-filter: var(--glass-popover-blur);
     -webkit-backdrop-filter: var(--glass-popover-blur);
