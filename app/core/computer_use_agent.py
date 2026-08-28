@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.43.0-codex.1
+Code version: v3.45.0-codex.1
 """
 
 from __future__ import annotations
@@ -256,6 +256,37 @@ _BASE64_CORRECTION_INSTRUCTION = (
     "Do not attempt to manually escape the problematic characters."
 )
 
+
+def _invalid_action_correction_instruction(
+    parser_error: ValueError,
+    *,
+    retry_number: int,
+    repeated_response: bool,
+) -> str:
+    """Build one bounded, escalating correction without relaxing strict parsing."""
+    error_text = str(parser_error).lower()
+    parts = [
+        "The previous response was rejected, and no controller action was executed.",
+        f"This is strict-format correction {retry_number:,} of {MAX_INVALID_ACTION_RETRIES:,}.",
+    ]
+    if repeated_response:
+        parts.append(
+            "You repeated the same invalid response. Do not repeat it, explain it, or return a plan."
+        )
+    if "exactly one" in error_text or "more than one" in error_text:
+        parts.append(
+            "Choose only the single next unfinished controller action. If the task needs multiple "
+            "steps, return the first action now and wait for its controller observation."
+        )
+    if repeated_response and retry_number >= MAX_INVALID_ACTION_RETRIES:
+        parts.append(
+            'If you are unsure which action comes next, return only '
+            '```json\n{"action":"list","path":".","depth":2}\n```.'
+        )
+    if "quote" in error_text or "base64" in error_text:
+        parts.append(_BASE64_CORRECTION_INSTRUCTION)
+    return " ".join(parts)
+
 _CURRENT_SEARCH_ACTION_EXAMPLE = (
     '{"action":"search","query":"literal text","path":".",'
     '"glob":"*.py","max_results":80}'
@@ -385,7 +416,41 @@ _SAFE_GIT_STATUS_FLAGS = frozenset(
         "-s",
     }
 )
-_SAFE_PYTHON_MODULES = frozenset({"compileall", "mypy", "py_compile", "pytest", "ruff"})
+_SAFE_PYTHON_MODULES = frozenset(
+    {"compileall", "mypy", "py_compile", "pytest", "ruff", "unittest"}
+)
+_SAFE_UNITTEST_FLAGS = frozenset(
+    {"--buffer", "--catch", "--failfast", "--locals", "--quiet", "--verbose", "-b", "-c", "-f", "-q", "-v"}
+)
+_SAFE_PYTHON_RUNNER = "\n".join(
+    (
+        "import importlib, os, runpy, sys",
+        "mode = sys.argv.pop(1)",
+        "target = sys.argv.pop(1)",
+        "workspace = os.path.realpath(os.getcwd())",
+        "if mode == 'module':",
+        "    module = importlib.import_module(target)",
+        "    spec = getattr(module, '__spec__', None)",
+        "    origin = str(getattr(spec, 'origin', '') or '')",
+        "    if origin not in {'', 'built-in', 'frozen'}:",
+        "        origin = os.path.realpath(origin)",
+        "        try:",
+        "            shadowed = os.path.commonpath((workspace, origin)) == workspace",
+        "        except ValueError:",
+        "            shadowed = False",
+        "        if shadowed:",
+        "            raise RuntimeError('Approved Python module resolved inside the workspace.')",
+        "    sys.path.insert(0, workspace)",
+        "    sys.argv[0] = target",
+        "    runpy.run_module(target, run_name='__main__', alter_sys=True)",
+        "elif mode == 'script':",
+        "    sys.path.insert(0, workspace)",
+        "    sys.argv[0] = target",
+        "    runpy.run_path(target, run_name='__main__')",
+        "else:",
+        "    raise RuntimeError('Unknown safe Python runner mode.')",
+    )
+)
 _SAFE_PACKAGE_SCRIPTS = re.compile(
     r"^(?:build|check|ci|lint|test|test:[\w:-]+|typecheck|verify)$",
     re.IGNORECASE,
@@ -2261,6 +2326,33 @@ _PRE_CODE_RE = re.compile(
 )
 
 
+class _StrictActionJSONError(ValueError):
+    """Reject JSON extensions or object ambiguity before action validation."""
+
+
+def _strict_action_object(
+    pairs: list[tuple[str, Any]],
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in payload:
+            raise _StrictActionJSONError(f"duplicate JSON object key: {key}")
+        payload[key] = value
+    return payload
+
+
+def _reject_action_json_constant(value: str) -> None:
+    raise _StrictActionJSONError(f"non-finite JSON constant: {value}")
+
+
+def _strict_action_json_loads(value: str) -> Any:
+    return json.loads(
+        value,
+        object_pairs_hook=_strict_action_object,
+        parse_constant=_reject_action_json_constant,
+    )
+
+
 def _mask_regions(text: str, regions: list[tuple[int, int]]) -> str:
     """Replace selected spans with spaces so raw_decode cannot repair them."""
     if not regions:
@@ -2281,7 +2373,9 @@ def parse_agent_action(response: str) -> dict[str, Any]:
     3. Strict json.loads on the remaining response.
     4. raw_decode scanning of the remaining response.
 
-    Same-action duplicates keep the final candidate. Different actions reject.
+    Byte-equivalent action objects are de-duplicated. Any two distinct action
+    objects, duplicate object keys, non-finite constants, or malformed
+    structured blocks reject the entire response before execution.
     """
     text = str(response or "").strip()
     if len(text) > MAX_ACTION_JSON_CHARS:
@@ -2289,13 +2383,18 @@ def parse_agent_action(response: str) -> dict[str, Any]:
 
     ordered: list[tuple[int, dict[str, Any]]] = []
     candidate_signatures: set[str] = set()
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(
+        object_pairs_hook=_strict_action_object,
+        parse_constant=_reject_action_json_constant,
+    )
     masked_regions: list[tuple[int, int]] = []
-    malformed_fenced = False
+    malformed_structured = False
 
     def register(payload: Any, position: int) -> None:
         if not isinstance(payload, dict) or not isinstance(payload.get("action"), str):
-            return
+            raise ValueError(
+                "The Web provider returned a JSON value that is not a controller action."
+            )
         signature = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         if signature not in candidate_signatures:
             candidate_signatures.add(signature)
@@ -2306,51 +2405,67 @@ def parse_agent_action(response: str) -> dict[str, Any]:
         if len(candidates) == 1:
             return candidates[0]
         if len(candidates) > 1:
-            action_names = {
-                str(candidate.get("action") or "").strip().lower() for candidate in candidates
-            }
-            if len(action_names) == 1:
-                LOGGER.warning(
-                    "The Web provider returned %s same-action controller candidates; using the final candidate.",
-                    len(candidates),
-                )
-                return candidates[-1]
             raise ValueError("The Web provider returned more than one JSON controller action.")
-        if malformed_fenced:
-            raise ValueError(
-                "The Web provider returned a fenced JSON block that is not valid strict JSON. "
-                "Use replace_base64 or write_base64 for content containing HTML quotes or backslashes."
-            )
         raise ValueError("The Web provider must return exactly one JSON controller action.")
 
     for match in _FENCED_JSON_RE.finditer(text):
         masked_regions.append((match.start(), match.end()))
         try:
-            register(json.loads(match.group(1).strip()), match.start())
-        except json.JSONDecodeError:
-            malformed_fenced = True
+            register(_strict_action_json_loads(match.group(1).strip()), match.start())
+        except (json.JSONDecodeError, _StrictActionJSONError):
+            malformed_structured = True
 
     for match in _PRE_CODE_RE.finditer(text):
         masked_regions.append((match.start(), match.end()))
         try:
-            register(json.loads(match.group(1).strip()), match.start())
-        except json.JSONDecodeError:
-            pass
+            register(_strict_action_json_loads(match.group(1).strip()), match.start())
+        except (json.JSONDecodeError, _StrictActionJSONError):
+            malformed_structured = True
+
+    for opening in re.finditer(r"```json\b", text, flags=re.IGNORECASE):
+        if not any(start <= opening.start() < end for start, end in masked_regions):
+            malformed_structured = True
+    for opening in re.finditer(
+        r"<pre>\s*<code(?:\s[^>]*)?>",
+        text,
+        flags=re.IGNORECASE,
+    ):
+        if not any(start <= opening.start() < end for start, end in masked_regions):
+            malformed_structured = True
+
+    if malformed_structured:
+        raise ValueError(
+            "The Web provider returned a structured JSON block that is not valid strict JSON. "
+            "Use replace_base64 or write_base64 for content containing HTML quotes or backslashes."
+        )
 
     remainder = _mask_regions(text, masked_regions)
     try:
-        register(json.loads(remainder.strip()), 0)
+        register(_strict_action_json_loads(remainder.strip()), 0)
+    except _StrictActionJSONError as exc:
+        raise ValueError(
+            f"The Web provider returned JSON that is not valid strict JSON: {exc}."
+        ) from exc
     except json.JSONDecodeError:
         cursor = 0
         while cursor < len(remainder):
-            start = remainder.find("{", cursor)
+            object_start = remainder.find("{", cursor)
+            array_start = remainder.find("[", cursor)
+            starts = [index for index in (object_start, array_start) if index >= 0]
+            start = min(starts) if starts else -1
             if start < 0:
                 break
             try:
                 payload, end = decoder.raw_decode(remainder, start)
-            except json.JSONDecodeError:
-                cursor = start + 1
-                continue
+            except _StrictActionJSONError as exc:
+                raise ValueError(
+                    f"The Web provider returned JSON that is not valid strict JSON: {exc}."
+                ) from exc
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "The Web provider returned a malformed JSON-like value before its "
+                    "controller action."
+                ) from exc
             register(payload, start)
             cursor = end
 
@@ -3394,6 +3509,93 @@ def _safe_workspace_script(
     return resolved_candidate, "direct"
 
 
+def _safe_python_workspace_script(
+    token: str,
+    workspace: Path | None,
+) -> Path | None:
+    """Resolve one real, non-linked Python verification script in the workspace."""
+    if workspace is None:
+        return None
+    portable_token = token.replace("\\", "/")
+    relative = Path(portable_token)
+    if (
+        relative.is_absolute()
+        or ".." in relative.parts
+        or not relative.parts
+        or relative.suffix.casefold() != ".py"
+        or not _SAFE_SCRIPT_NAME.fullmatch(relative.name)
+    ):
+        return None
+    try:
+        resolved_workspace = workspace.resolve(strict=True)
+        candidate = workspace / relative
+        current = workspace
+        for part in relative.parts:
+            current /= part
+            if _path_is_link_like(current):
+                return None
+        resolved_candidate = candidate.resolve(strict=True)
+        resolved_candidate.relative_to(resolved_workspace)
+        if not candidate.is_file():
+            return None
+    except (OSError, ValueError):
+        return None
+    return resolved_candidate
+
+
+def _validate_unittest_arguments(
+    arguments: list[str],
+    workspace: Path | None,
+) -> None:
+    """Allow focused unittest files while blocking installed-module imports."""
+    targets: list[str] = []
+    for argument in arguments:
+        if argument.startswith("-"):
+            if argument.casefold() not in _SAFE_UNITTEST_FLAGS:
+                raise ValueError("Run does not allow this unittest option.")
+            continue
+        targets.append(argument)
+    if not targets:
+        raise ValueError("Unittest run actions require a focused project test file.")
+    for target in targets:
+        relative = Path(target.replace("\\", "/"))
+        if (
+            relative.is_absolute()
+            or ".." in relative.parts
+            or len(relative.parts) != 1
+            or relative.suffix.casefold() != ".py"
+            or not re.fullmatch(
+                r"(?:test[A-Za-z0-9_]*|[A-Za-z_][A-Za-z0-9_]*_test)\.py",
+                relative.name,
+            )
+        ):
+            raise ValueError(
+                "Unittest run actions are limited to top-level project test Python files."
+            )
+        if workspace is None:
+            continue
+        try:
+            resolved_workspace = workspace.resolve(strict=True)
+            candidate = workspace / relative
+            current = workspace
+            for part in relative.parts:
+                current /= part
+                if _path_is_link_like(current):
+                    raise ValueError(
+                        "Unittest targets cannot traverse symlinks or junctions."
+                    )
+            resolved_candidate = candidate.resolve(strict=True)
+            resolved_candidate.relative_to(resolved_workspace)
+            if not candidate.is_file():
+                raise ValueError("Unittest targets must be existing regular files.")
+        except (OSError, ValueError) as exc:
+            if isinstance(exc, ValueError) and str(exc).startswith("Unittest"):
+                raise
+            raise ValueError(
+                "Unittest targets must stay inside the selected project."
+            ) from exc
+
+
 def _validate_inspection_arguments(
     parts: list[str],
     workspace: Path | None = None,
@@ -3460,6 +3662,8 @@ def _validate_inspection_arguments(
         for argument in effective_arguments
     ):
         raise ValueError("Run does not allow unsafe compileall output or file lists.")
+    if effective_tool == "unittest":
+        _validate_unittest_arguments(effective_arguments, workspace)
     if effective_tool == "cargo" and any(
         argument.casefold() == "--config"
         or argument.casefold().startswith("--config=")
@@ -3655,9 +3859,36 @@ def inspection_command_parts(
     if executable in {"pytest", "ruff", "mypy", "pyright", "eslint", "tsc"}:
         return [canonical_executable, *arguments]
     if python_executable:
-        if len(arguments) < 2 or arguments[0] != "-m" or arguments[1] not in _SAFE_PYTHON_MODULES:
-            raise ValueError("Python run actions must use an approved verification module.")
-        return [canonical_executable, *arguments]
+        if len(arguments) >= 2 and arguments[0] == "-m":
+            if arguments[1] not in _SAFE_PYTHON_MODULES:
+                raise ValueError("Python run actions must use an approved verification module.")
+            return [
+                canonical_executable,
+                "-I",
+                "-c",
+                _SAFE_PYTHON_RUNNER,
+                "module",
+                arguments[1],
+                *arguments[2:],
+            ]
+        safe_python_script = (
+            _safe_python_workspace_script(arguments[0], workspace)
+            if arguments
+            else None
+        )
+        if safe_python_script is not None:
+            return [
+                canonical_executable,
+                "-I",
+                "-c",
+                _SAFE_PYTHON_RUNNER,
+                "script",
+                str(safe_python_script),
+                *arguments[1:],
+            ]
+        raise ValueError(
+            "Python run actions must use an approved verification module or project verification script."
+        )
     if executable == "node":
         if (
             len(arguments) != 2
@@ -3877,14 +4108,19 @@ class _LinearizedStopSignal:
     def __init__(self) -> None:
         self._event = Event()
         self._lock = RLock()
+        self._completion_claimed = False
 
     def clear(self) -> None:
         with self._lock:
             self._event.clear()
+            self._completion_claimed = False
 
-    def set(self) -> None:
+    def set(self) -> bool:
         with self._lock:
+            if self._completion_claimed:
+                return False
             self._event.set()
+            return True
 
     def is_set(self) -> bool:
         return self._event.is_set()
@@ -3895,6 +4131,14 @@ class _LinearizedStopSignal:
             if self._event.is_set():
                 return False, None
             return True, action()
+
+    def claim_completion(self) -> bool:
+        """Linearize final publication before a later Stop request can win."""
+        with self._lock:
+            if self._event.is_set():
+                return False
+            self._completion_claimed = True
+            return True
 
 
 class ComputerUseAgentService:
@@ -4236,7 +4480,9 @@ class ComputerUseAgentService:
         with self._lock:
             if not self._snapshot.running or self._completion_started:
                 return False
-            self._stop_requested.set()
+            stop_accepted = self._stop_requested.set()
+            if stop_accepted is False:
+                return False
             self._snapshot.phase = "stopping"
             self._snapshot.message = "Stop requested. Ending the browser turn and active local command."
             self._persist_snapshot_locked()
@@ -6157,7 +6403,8 @@ def _run_web_action_loop(
 
     turn_index = 0
     invalid_action_retries = 0
-    _seen_failure_hashes: set[str] = set()
+    last_failure_hash = ""
+    consecutive_failure_count = 0
     while turn_index < settings.max_turns:
         if should_stop():
             _stop_web_generation(page, browser_kind)
@@ -6209,6 +6456,14 @@ def _run_web_action_loop(
         try:
             action = parse_agent_action(response)
         except ValueError as exc:
+            if should_stop():
+                _stop_web_generation(page, browser_kind)
+                return (
+                    "",
+                    _current_agent_conversation_url(page, platform, conversation_url),
+                    turn_index,
+                    controller.state.bodycheck_current,
+                )
             invalid_action_retries += 1
             response_hash = hashlib.sha256(
                 str(response or "").encode("utf-8", errors="replace")
@@ -6221,28 +6476,46 @@ def _run_web_action_loop(
                 len(str(response or "")),
                 response_hash,
             )
-            # Fail immediately if the same malformed response appears twice
-            if response_hash in _seen_failure_hashes:
-                raise RuntimeError(
-                    f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned the same invalid "
-                    f"controller action twice (sha256={response_hash}). "
-                    f"Parser reason: {exc}"
-                ) from exc
-            _seen_failure_hashes.add(response_hash)
+            if response_hash == last_failure_hash:
+                consecutive_failure_count += 1
+            else:
+                last_failure_hash = response_hash
+                consecutive_failure_count = 1
+            repeated_response = consecutive_failure_count > 1
             if invalid_action_retries > MAX_INVALID_ACTION_RETRIES:
+                if should_stop():
+                    _stop_web_generation(page, browser_kind)
+                    return (
+                        "",
+                        _current_agent_conversation_url(
+                            page,
+                            platform,
+                            conversation_url,
+                        ),
+                        turn_index,
+                        controller.state.bodycheck_current,
+                    )
+                repeat_detail = (
+                    f" The last invalid response repeated "
+                    f"{consecutive_failure_count:,} consecutive times "
+                    f"(sha256={response_hash})."
+                    if repeated_response
+                    else ""
+                )
                 raise RuntimeError(
                     f"{AGENT_PLATFORM_BY_KEY[platform]['label']} returned too many invalid "
-                    f"controller actions in a row. Last parser reason: {exc}"
+                    f"controller actions in a row.{repeat_detail} Last parser reason: {exc}"
                 ) from exc
-            # Request base64 safe transport on correction
-            correction_instruction = (
-                _BASE64_CORRECTION_INSTRUCTION
-                if "quote" in str(exc).lower() or "base64" in str(exc).lower()
-                else JSON_ACTION_RESPONSE_INSTRUCTION
+            correction_instruction = _invalid_action_correction_instruction(
+                exc,
+                retry_number=invalid_action_retries,
+                repeated_response=repeated_response,
             )
             observation = {
                 "ok": False,
                 "error": str(exc),
+                "retry": invalid_action_retries,
+                "repeated_response": repeated_response,
                 "instruction": correction_instruction,
             }
             response = _submit_and_wait(
@@ -6263,7 +6536,17 @@ def _run_web_action_loop(
             )
             continue
 
+        if should_stop():
+            _stop_web_generation(page, browser_kind)
+            return (
+                "",
+                _current_agent_conversation_url(page, platform, conversation_url),
+                turn_index,
+                controller.state.bodycheck_current,
+            )
         invalid_action_retries = 0
+        last_failure_hash = ""
+        consecutive_failure_count = 0
         turn_index += 1
         action_name = str(action.get("action") or "").strip().lower()
         if action_name == "final":
@@ -6304,6 +6587,25 @@ def _run_web_action_loop(
                     ),
                 )
                 continue
+            stop_signal = getattr(should_stop, "__self__", None)
+            claim_completion = getattr(stop_signal, "claim_completion", None)
+            completion_claimed = (
+                bool(claim_completion())
+                if callable(claim_completion)
+                else not should_stop()
+            )
+            if not completion_claimed:
+                _stop_web_generation(page, browser_kind)
+                return (
+                    "",
+                    _current_agent_conversation_url(
+                        page,
+                        platform,
+                        conversation_url,
+                    ),
+                    turn_index - 1,
+                    controller.state.bodycheck_current,
+                )
             final_response = _render_final_action(action)
             conversation_url = _current_agent_conversation_url(
                 page, platform, conversation_url

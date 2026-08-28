@@ -1,9 +1,25 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.15.0-codex.1`
+Documentation version: `v1.17.0-codex.1`
 
 ## Edge Gemini and Grok Agent parity hardening on 28 Aug 2026
 
+- Controller action parsing now rejects duplicate JSON keys, non-finite constants, malformed
+  structured blocks, and distinct same-name actions instead of applying last-value or last-candidate
+  semantics. Exact duplicate actions remain safe to de-duplicate. Stop is rechecked inside terminal
+  invalid-response handling so cancellation cannot be replaced by a retry-exhaustion error. Final
+  publication atomically claims the same Stop signal: an accepted Stop wins, and a later Stop is
+  rejected once finalization has linearized.
+- The verification allowlist now supports focused top-level project `unittest` files and non-linked
+  Python scripts named for `check`, `lint`, `test`, or `verify`. This covers standard-library
+  playground gates without allowing arbitrary Python entrypoints or installed unittest modules.
+  Approved modules start through isolated Python and load before the workspace is added to the
+  import path, blocking same-name modules and `sitecustomize` from replacing the approved runner;
+  `unittest` targets are existing top-level files with import-safe names.
+- Repeated malformed provider output no longer aborts on the first duplicate. The controller uses
+  all three strict-format retries with escalating, non-identical instructions, never executes the
+  malformed response, and offers only a read-only `list` action on the final correction when the
+  model cannot choose its next step. Strict parsing and the bounded terminal failure remain intact.
 - Gemini now fails closed on an exact `Gemini 3.1 Pro` selection, and Grok fails closed on an
   exact `Build` selection with a `Build Beta` trigger readback. The legacy persisted `grok-auto`
   and `grok-heavy` keys migrate to `grok-build`; neither `Auto` nor the unavailable paid `Heavy`
@@ -14,6 +30,9 @@ Documentation version: `v1.15.0-codex.1`
   duplicate candidates, upgrade dialogs, disabled controls, and unknown overlays fail closed. The
   controller may dismiss only the exact `Meet Grok Bot` and `Introducing Build Mode` onboarding
   dialogs through one enabled exact `Dismiss` control; it never force-clicks through an overlay.
+  The control may hydrate for about 30 seconds, may expose `aria-controls` only while open, and may
+  require a trusted `Escape` keypress when Radix intercepts the closing trigger click. Every closure
+  path still requires the controlled menu to be absent or hidden.
 - Gemini's anonymous shell now exposes a usable-looking composer and conversation-shaped links.
   A visible exact sign-in action without a visible Google Account control is still treated as
   signed out, and an exact `Sign in for all models` menu barrier prevents the controller from
@@ -27,7 +46,9 @@ Documentation version: `v1.15.0-codex.1`
   it, and treat a navigation-time Send exception as an uncertain commit that must never be retried.
   Before Send, exactly one semantic chat composer must preserve the full prompt; a challenge reload
   may safely refill it, while feedback, search, dialog, menu, navigation, and header textareas are
-  excluded.
+  excluded. Grok Build's `Ask Grok anything` ProseMirror composer is read from its direct paragraph
+  structure so blank lines remain canonical. Non-empty text beside those paragraphs, unsupported
+  atomic nodes, or any other extra content makes the proof ambiguous and prevents Send.
 - Gemini CAPTCHA and Grok Cloudflare or human-verification pages pause the same in-flight browser
   turn. The same isolated Edge or Chrome clone is surfaced for the user, restored afterward, and
   the run continues only after the challenge clears and Resume is selected. Conversation text that

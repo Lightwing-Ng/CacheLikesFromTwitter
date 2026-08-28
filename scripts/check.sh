@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Code version: v1.1.0-codex.1
+# Code version: v1.2.0-codex.1
 
 set -euo pipefail
 
@@ -29,10 +29,10 @@ export COVERAGE_FILE="$ROOT_DIR/test-results/.coverage"
 
 echo "Quality gate configuration: Python=$PYTHON_BIN, branch coverage minimum=${COVERAGE_MINIMUM}%"
 
-echo "[1/3] Python static checks"
+echo "[1/4] Python static checks"
 "$PYTHON_BIN" -m ruff check main.py app tests
 
-echo "[2/3] JavaScript syntax checks"
+echo "[2/4] JavaScript syntax checks"
 JS_FILE_COUNT=0
 while IFS= read -r script_file; do
 	JS_FILE_COUNT=$((JS_FILE_COUNT + 1))
@@ -44,7 +44,10 @@ if (( JS_FILE_COUNT == 0 )); then
 	exit 1
 fi
 
-echo "[3/3] Python tests with branch coverage"
+echo "[3/4] JavaScript unit tests"
+node --test tests/test_agent_optimization.mjs
+
+echo "[4/4] Python tests with branch coverage"
 "$ROOT_DIR/scripts/test.sh" \
 	--cov=app \
 	--cov-branch \

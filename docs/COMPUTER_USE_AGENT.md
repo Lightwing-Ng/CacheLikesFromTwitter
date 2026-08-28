@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.43.0-codex.1`
+Documentation version: `v3.45.0-codex.1`
 
 ## Purpose
 
@@ -110,8 +110,10 @@ older task cannot be submitted accidentally through a different Web session.
    configured model. Every exit either confirms that the controlled menu is closed or fails the run.
    Chromium first reuses the matching official provider tab, without focusing it, before navigation.
    Some provider shells expose a composer before their model picker has hydrated. A missing
-   non-ChatGPT model control is therefore rechecked up to 61 times in 250 ms Stop-aware slices, for a
-   maximum wait of about 15 seconds. Only `model-control-not-found` is eligible for this outer wait;
+   Gemini or Claude control is therefore rechecked up to 61 times in 250 ms Stop-aware slices, for a
+   maximum wait of about 15 seconds. Grok's trusted selector independently waits up to 121 slices,
+   or about 30 seconds, for its current Radix control to hydrate. Only `model-control-not-found` is
+   eligible for either wait;
    an ambiguous control, invalid surface, unavailable option, failed readback, or unproved menu close
    still fails immediately. The wait changes only when proof is attempted, not what counts as proof.
    Gemini's account and region state is rechecked throughout composer readiness and after a missing
@@ -121,12 +123,15 @@ older task cannot be submitted accidentally through a different Web session.
    action without a visible Google Account control therefore remains signed out. Its model menu's
    exact `Sign in for all models` barrier is a second pre-transfer check and is never clicked as if it
    were a model option. Grok uses only the exact visible `#model-select-trigger` whose accessible
-   name is `Model select` and whose popup type is `menu`. Trusted Playwright clicks open its exact
-   `aria-controls` surface; the selected candidate must be one exact `Build` or `Build Beta`
+   name is `Model select` and whose popup type is `menu`. The closed trigger may omit
+   `aria-controls`; after a trusted Playwright click, the controller requires that attribute to
+   identify exactly one visible controlled surface. The selected candidate must be one exact `Build` or `Build Beta`
    `menuitemradio` owned directly by that menu. The controller then reopens the menu and requires
    both `aria-checked="true"` and `data-state="checked"`, closes it, and requires the trigger to
    read back `Build Beta`. Nested menus, upgrade dialogs, duplicate controls or options, disabled
-   choices, and unknown overlays fail closed. Only the exact `Meet Grok Bot` and `Introducing Build
+   choices, and unknown overlays fail closed. When Radix intercepts the closing trigger click after
+   unmounting the menu, the controller may use one trusted `Escape` keypress and still requires a
+   closed-surface readback. Only the exact `Meet Grok Bot` and `Introducing Build
    Mode` onboarding dialogs may be dismissed, through one visible enabled exact `Dismiss` button;
    no forced click is used.
    Missing-control hydration diagnostics retain enumerated readiness and element counts, but never
@@ -166,8 +171,11 @@ older task cannot be submitted accidentally through a different Web session.
    have committed, recovery verifies the receipt and never sends that turn again. In the same browser
    evaluation that clicks Send, the controller first checks the official host and exact selected
    landing or bound conversation identity; a tab switch to an old conversation therefore cannot race
-   the final click. Grok accepts its known `chat-submit` control or a semantic chat composer and
-   bounded Send pair; if that control is briefly absent after a follow-up observation, the controller
+   the final click. Grok Build may replace its textarea with the exact visible `Ask Grok anything`
+   contenteditable ProseMirror composer. Direct paragraph children are serialized with blank lines
+   and inline breaks preserved; non-empty sibling text and unsupported atomic nodes make the
+   readback ambiguous and block Send. Grok accepts its known `chat-submit` control or a semantic
+   chat composer and bounded Send pair; if that control is briefly absent after a follow-up observation, the controller
    falls back to pressing Enter and still verifies the per-turn receipt.
    For every fresh root or Project run, the first prompt also contains a high-entropy transfer ID. The
    controller binds the new conversation only when the latest visible user message outside the
@@ -185,9 +193,8 @@ older task cannot be submitted accidentally through a different Web session.
 7. The selected Web provider returns exactly one JSON action at a time inside a fenced `json` code block so
    rendered Markdown cannot consume action quotes, backslashes, asterisks, or source-code delimiters. The
    controller prefers that code block's literal text and supports `list`, `read`, `search`, `replace`, `write`,
-   `run`, `bodycheck`, and `final`. If a provider emits multiple complete
-   candidates with the same action name in one response, the controller uses the final candidate in textual
-   response order; mixed action types remain rejected as ambiguous.
+   `run`, `bodycheck`, and `final`. Multiple exact copies of one action are harmlessly de-duplicated;
+   any distinct second candidate is rejected as ambiguous, even when both use the same action name.
    `search` uses project-confined `rg` when available, with structured UTF-8 JSON output, a 2 MiB
    file-size cap, an 8,000-character single-line literal-query cap, and case-insensitive root and
    recursive command-layer exclusions for ignored,
@@ -208,10 +215,17 @@ older task cannot be submitted accidentally through a different Web session.
    individual returned lines are also bounded. If the service cannot launch `rg`, a bounded Python
    literal-text fallback skips ignored, symlinked, sensitive, and oversized files and still
    enforces the requested path, glob, result, file-count, and time limits.
-8. A malformed non-JSON reply receives up to three strict-format corrections that repeat the fenced JSON and
-   escaping contract without spending the
-   configured controller-action budget. This keeps a recoverable web-model formatting lapse from
-   prematurely ending a valid task, while still bounding retries.
+8. A malformed non-JSON reply receives up to three strict-format corrections without spending the
+   configured controller-action budget. Corrections identify repeated invalid output, require only
+   the single next unfinished action, and on the last retry offer one exact read-only `list` action
+   as a safe way to resume. Strict JSON parsing rejects duplicate keys, non-finite constants,
+   malformed JSON-like containers, fenced or preformatted blocks, and any two distinct action objects, including actions
+   with the same name but different arguments. Exact duplicate objects may be de-duplicated. No
+   malformed or ambiguous action is executed, and the run still fails after the bounded retry budget.
+   Stop is rechecked inside the parser-error path, including immediately before terminal retry
+   exhaustion, so cancellation remains authoritative at that boundary. A valid `final` must then
+   atomically claim completion against the same linearized Stop signal before rendering or
+   publishing; a Stop accepted first wins, while later Stop requests are rejected as already finalizing.
 9. After an edit, the controller rejects a final answer until at least one approved verification
    command and `bodycheck` both succeed for the current edit generation. If an
    Edge and ChatGPT run still fails after an exact conversation URL exists, the service preserves the
@@ -243,9 +257,15 @@ older task cannot be submitted accidentally through a different Web session.
   explicit write action.
 - Shell commands are restricted to bounded inspection, build, lint, and test work. Approved PATH
   tools are resolved once to an absolute executable outside the workspace before launch; Python
-  verification is pinned to the service's own Python runtime. A workspace script must be a real,
-  platform-compatible executable below `scripts/`, with no symbolic link, junction, or hard-linked
-  regular file in its path.
+  verification is pinned to the service's own Python runtime. Approved Python modules are imported
+  under isolated interpreter startup before the workspace enters `sys.path`, preventing project
+  modules, `sitecustomize`, and environment paths from shadowing the approved tool. Focused
+  `unittest` runs may target only existing top-level project test Python files with import-safe
+  names. Python may also launch an existing non-linked
+  project verification script whose filename begins with `check`, `lint`, `test`, or `verify`;
+  other directly named Python scripts remain blocked. A directly executable workspace script must
+  be a real, platform-compatible executable below `scripts/`, with no symbolic link, junction, or
+  hard-linked regular file in its path.
   `git status` is filtered inspection only and never satisfies the post-edit verification gate. The
   command layer rejects direct `rg` execution in favor of `search`, paths or network targets outside
   the selected project, linked or sensitive path arguments, pytest configuration/package/plugin

@@ -1,6 +1,6 @@
 # Engineering and test contract
 
-Documentation version: `v1.1.0-codex.1`
+Documentation version: `v1.2.0-codex.1`
 
 This document supplements the repository-root [AGENTS.md](../AGENTS.md), which remains
 authoritative. It records the project-specific documentation, testing, and handoff practices
@@ -18,6 +18,8 @@ adapted from the sibling project's quality model.
   Text/Media behavior, LLM history persistence, or Grok synchronization.
 - Read [STYLE_REFERENCE.md](STYLE_REFERENCE.md) before any markup, CSS, asset, or UI behavior
   change.
+- Read [AGENT_OPTIMIZATION.md](AGENT_OPTIMIZATION.md) and the canonical shared contract it names
+  before changing Site tools, WebMCP registration, capability metadata, or agent-facing schemas.
 
 ## Runtime safety boundary
 

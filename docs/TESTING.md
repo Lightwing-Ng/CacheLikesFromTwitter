@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.4.0-codex.1`
+Documentation version: `v1.5.1-codex.1`
 
 ## Supported commands
 
@@ -42,6 +42,15 @@ Run the responsive contract and sidebar browser layers independently with:
 ./scripts/test.sh tests/test_sidebar_e2e.py
 ```
 
+Run the OpenAI Site tools contract and disposable-browser layers independently with:
+
+```bash
+node --test tests/test_agent_optimization.mjs
+./scripts/test.sh \
+  tests/test_agent_optimization.py \
+  tests/test_agent_optimization_browser.py
+```
+
 `CACHELIKES_PYTHON` may override the interpreter only when it resolves to Python 3.13 or 3.14.
 The resolver prefers a supported host `python3`, `python`, or Windows `py -3.13` launcher, then
 falls back to known platform-specific Python
@@ -53,7 +62,8 @@ installations.
 
 1. Ruff static checks over `main.py`, `app/`, and `tests/`.
 2. `node --check` for every first-party JavaScript file in `app/web/static/`.
-3. The full pytest suite with branch coverage for `app/`, including the disposable-browser
+3. Node unit tests for the shared Agent Optimization and Site tools runtime contract.
+4. The full pytest suite with branch coverage for `app/`, including the disposable-browser
    responsive sidebar E2E flow.
 
 The coverage report is written to `test-results/coverage.json`; all generated test artifacts are
@@ -61,12 +71,13 @@ ignored by Git. The gate currently enforces a 55% combined statement-and-branch 
 Override `CACHELIKES_COVERAGE_MINIMUM` only for an intentional local diagnostic, never to make a
 regression pass.
 
-Baseline measured on 20 Aug 2026 with Python 3.13, pytest 9.0.3,
+Baseline remeasured on 28 Aug 2026 with Python 3.13.0, pytest 9.0.3,
 pytest-cov 7.1.0, and Ruff 0.15.21:
 
-- 538 tests passed, with 301 unittest subtests passed.
-- Combined coverage for `app/` was 64.37% using branch coverage.
-- All 26 first-party JavaScript files passed syntax checks.
+- 1,119 tests passed, with 380 unittest subtests passed.
+- Combined coverage for `app/` was 69.31% using branch coverage.
+- All first-party JavaScript files passed syntax checks.
+- All 9 shared Agent Optimization Node contract cases passed.
 
 Raise the coverage floor only after adding behavior-level tests. Do not exclude production modules
 or lower the threshold to mask a gap.
@@ -137,6 +148,9 @@ environment assumption.
   `document.elementFromPoint()`, and the shared Chinese language boundary across startup and
   dynamic DOM mutations. The language test checks source-text preservation, `:lang(zh-CN)`
   matching, and the macOS-oriented glyph fixture without converting Unicode text.
+- Agent Optimization tests validate manifest bounds, schema closure, read/write annotations,
+  same-origin navigation, unsupported-browser fallback, iframe exclusion, registration idempotence,
+  partial registration failure, protected-page exclusion, and a real random-port Chromium lifecycle.
 
 The current detailed module-to-behavior map is maintained in [TEST_COVERAGE.md](TEST_COVERAGE.md).
 

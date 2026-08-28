@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.7.2-codex.1`
+Documentation version: `v1.8.0-codex.1`
 
 ## Runtime flow
 
@@ -84,6 +84,23 @@ export only the symbols needed by its caller and should not become a second impl
 Web routes may orchestrate core services and present serialized state. Core modules must not
 depend on templates or browser DOM details. Source-specific automation belongs at a browser or
 transport boundary, while durable cache and state rules stay in core modules.
+
+## OpenAI Site tools and Agent Optimization boundary
+
+The top-level human pages include `_agent_optimization.html` through the shared sidebar bootstrap.
+That adapter owns one static, project-convention manifest; the byte-identical shared runtime in
+`app/web/static/agent-optimization.js` validates the manifest and conditionally registers three
+OpenAI Site tools through `document.modelContext.registerTool`.
+
+The v1 tools expose only bounded capability metadata, bounded current-page metadata, and navigation
+to a manifest-owned same-origin route. They do not read cached records or settings values, invoke a
+Cache lifecycle route, submit an Agent prompt, authorize a terminal command, or mutate persisted
+data. The Agent password unlock template is outside the registration surface. If the WebMCP API is
+absent or the page is inside an iframe, registration is a no-op and the normal UI remains complete.
+
+The cross-project naming, schema, result envelope, effects, security, evaluation, and promotion
+rules live in `/Users/lightwing/Desktop/SHARED_AGENT_OPTIMIZATION.md`. Project-specific routes and
+evidence live in [AGENT_OPTIMIZATION.md](AGENT_OPTIMIZATION.md).
 
 ## Responsive application-shell contract
 

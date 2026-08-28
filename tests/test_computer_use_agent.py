@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.43.0-codex.1
+Code version: v3.45.0-codex.1
 """
 
 from __future__ import annotations
@@ -3785,29 +3785,34 @@ def test_action_parser_requires_one_json_object() -> None:
         "action": "read",
         "path": "README.md",
     }
+    with pytest.raises(ValueError, match="more than one"):
+        parse_agent_action(
+            '{"action":"replace","path":"app.css","old":"font-size: 14px;","new":"font-size: var(--font-size-5);"}\n'
+            '{"action":"replace","path":"app.css","old":"font-size: 15px;","new":"font-size: var(--font-size-5);"}'
+        )
+    with pytest.raises(ValueError, match="more than one"):
+        parse_agent_action(
+            '{"action":"read","path":"first.txt"}\n'
+            '```json\n{"action":"read","path":"final.txt"}\n```'
+        )
+    with pytest.raises(ValueError, match="more than one"):
+        parse_agent_action(
+            '```json\n{"action":"read","path":"first.txt"}\n```\n'
+            '{"action":"read","path":"final.txt"}'
+        )
     assert parse_agent_action(
-        '{"action":"replace","path":"app.css","old":"font-size: 14px;","new":"font-size: var(--font-size-5);"}\n'
-        '{"action":"replace","path":"app.css","old":"font-size: 15px;","new":"font-size: var(--font-size-5);"}'
-    ) == {
-        "action": "replace",
-        "path": "app.css",
-        "old": "font-size: 15px;",
-        "new": "font-size: var(--font-size-5);",
-    }
-    assert parse_agent_action(
-        '{"action":"read","path":"first.txt"}\n'
-        '```json\n{"action":"read","path":"final.txt"}\n```'
-    ) == {
-        "action": "read",
-        "path": "final.txt",
-    }
-    assert parse_agent_action(
-        '```json\n{"action":"read","path":"first.txt"}\n```\n'
-        '{"action":"read","path":"final.txt"}'
-    ) == {
-        "action": "read",
-        "path": "final.txt",
-    }
+        '```json\n{"action":"read","path":"same.txt"}\n```\n'
+        '{"action":"read","path":"same.txt"}'
+    ) == {"action": "read", "path": "same.txt"}
+    with pytest.raises(ValueError, match="duplicate JSON object key"):
+        parse_agent_action(
+            '{"action":"read","action":"write","path":"x.txt","content":"changed"}'
+        )
+    with pytest.raises(ValueError, match="structured JSON block"):
+        parse_agent_action(
+            '```json\n{"action":"write","path":"x.txt",}\n```\n'
+            '{"action":"list","path":"."}'
+        )
     with pytest.raises(ValueError, match="more than one"):
         parse_agent_action(
             '{"action":"read","path":"README.md"}\n'
@@ -7050,7 +7055,8 @@ def test_command_policy_allows_focused_checks() -> None:
         "python3 -m pytest tests/test_example.py -q"
     )
     assert Path(command[0]).is_absolute()
-    assert command[1:3] == ["-m", "pytest"]
+    assert command[1:3] == ["-I", "-c"]
+    assert command[-4:] == ["module", "pytest", "tests/test_example.py", "-q"]
     ruff_command = inspection_command_parts("ruff --isolated check .")
     assert Path(ruff_command[0]).is_absolute()
     assert ruff_command[1:] == ["--isolated", "check", "."]
@@ -7087,6 +7093,117 @@ def test_python_verification_uses_the_controller_runtime(
     other_minor = 14 if sys.version_info.minor != 14 else 13
     with pytest.raises(ValueError, match="controller runtime version"):
         inspection_command_parts(f"python3.{other_minor} -m pytest -q")
+
+
+def test_python_verification_allows_focused_unittest_and_workspace_scripts(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    test_file = workspace / "test_verify.py"
+    test_file.write_text("import unittest\n", encoding="utf-8")
+    verify_script = workspace / "verify.py"
+    verify_script.write_text("raise SystemExit(0)\n", encoding="utf-8")
+
+    unittest_command = inspection_command_parts(
+        f'"{sys.executable}" -m unittest -v test_verify.py',
+        workspace=workspace,
+    )
+    script_command = inspection_command_parts(
+        f'"{sys.executable}" verify.py --start-server',
+        workspace=workspace,
+    )
+
+    assert Path(unittest_command[0]).samefile(Path(sys.executable).resolve())
+    assert unittest_command[1:3] == ["-I", "-c"]
+    assert unittest_command[-4:] == ["module", "unittest", "-v", "test_verify.py"]
+    assert Path(script_command[0]).samefile(Path(sys.executable).resolve())
+    assert script_command[1:3] == ["-I", "-c"]
+    assert script_command[-3] == "script"
+    assert Path(script_command[-2]).samefile(verify_script)
+    assert script_command[-1] == "--start-server"
+
+
+def test_python_module_runner_blocks_workspace_and_sitecustomize_shadowing(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    unittest_marker = tmp_path / "unittest-shadowed.txt"
+    site_marker = tmp_path / "sitecustomize-loaded.txt"
+    (workspace / "unittest.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(unittest_marker)!r}).write_text('unsafe', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (workspace / "sitecustomize.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(site_marker)!r}).write_text('unsafe', encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    (workspace / "test_verify.py").write_text(
+        "import unittest\n\n"
+        "class VerificationTest(unittest.TestCase):\n"
+        "    def test_safe_runner(self):\n"
+        "        self.assertTrue(True)\n",
+        encoding="utf-8",
+    )
+    command = inspection_command_parts(
+        f'"{sys.executable}" -m unittest -v test_verify.py',
+        workspace=workspace,
+    )
+
+    completed = subprocess.run(
+        command,
+        cwd=workspace,
+        text=True,
+        capture_output=True,
+        timeout=10,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert "test_safe_runner" in completed.stderr
+    assert not unittest_marker.exists()
+    assert not site_marker.exists()
+
+
+def test_python_verification_rejects_arbitrary_or_linked_workspace_scripts(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    arbitrary = workspace / "arbitrary.py"
+    arbitrary.write_text("raise SystemExit(0)\n", encoding="utf-8")
+    verify_script = workspace / "verify.py"
+    verify_script.write_text("raise SystemExit(0)\n", encoding="utf-8")
+    linked = workspace / "verify-linked.py"
+    try:
+        linked.symlink_to(verify_script)
+    except OSError:
+        pytest.skip("This host cannot create the symlink required by this regression test.")
+
+    with pytest.raises(ValueError, match="verification module or project verification script"):
+        inspection_command_parts(
+            f'"{sys.executable}" arbitrary.py',
+            workspace=workspace,
+        )
+    with pytest.raises(ValueError, match="symlinks or junctions"):
+        inspection_command_parts(
+            f'"{sys.executable}" verify-linked.py',
+            workspace=workspace,
+        )
+    with pytest.raises(ValueError, match="top-level project test Python files"):
+        inspection_command_parts(
+            f'"{sys.executable}" -m unittest -v arbitrary.py',
+            workspace=workspace,
+        )
+    dotted = workspace / "test.test_bool.py"
+    dotted.write_text("", encoding="utf-8")
+    with pytest.raises(ValueError, match="top-level project test Python files"):
+        inspection_command_parts(
+            f'"{sys.executable}" -m unittest -q test.test_bool.py',
+            workspace=workspace,
+        )
 
 
 def test_command_policy_rewrites_trusted_tools_and_rejects_workspace_path_hijack(

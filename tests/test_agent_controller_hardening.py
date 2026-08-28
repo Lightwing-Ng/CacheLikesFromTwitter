@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.26.1-codex.1
+Code version: v3.27.0-codex.1
 """
 
 from __future__ import annotations
@@ -386,13 +386,44 @@ class TestActionParserFencedJSON:
         result = parse_agent_action(response)
         assert result["action"] == "bodycheck"
 
-    def test_fenced_json_followed_by_later_bare_json_keeps_final_same_action(self) -> None:
+    def test_fenced_json_followed_by_later_bare_json_rejects_distinct_same_action(self) -> None:
         response = (
             '```json\n{"action":"read","path":"first.txt"}\n```\n'
             '{"action":"read","path":"final.txt"}'
         )
-        result = parse_agent_action(response)
-        assert result == {"action": "read", "path": "final.txt"}
+        with pytest.raises(ValueError, match="more than one"):
+            parse_agent_action(response)
+
+    def test_duplicate_keys_and_malformed_structured_blocks_reject(self) -> None:
+        with pytest.raises(ValueError, match="duplicate JSON object key"):
+            parse_agent_action(
+                '{"action":"read","action":"write","path":"x.txt","content":"changed"}'
+            )
+        with pytest.raises(ValueError, match="structured JSON block"):
+            parse_agent_action(
+                '```json\n{"action":"write","path":"x.txt",}\n```\n'
+                '{"action":"list","path":"."}'
+            )
+        with pytest.raises(ValueError, match="structured JSON block"):
+            parse_agent_action(
+                '```json\n{"action":"write","path":"x.txt",}\n'
+                '{"action":"list","path":"."}'
+            )
+        with pytest.raises(ValueError, match="malformed JSON-like value"):
+            parse_agent_action(
+                'prefix {"wrapper":oops,"payload":'
+                '{"action":"write","path":"x.txt","content":"changed"}} suffix'
+            )
+
+    def test_exact_duplicate_actions_are_safe_to_deduplicate(self) -> None:
+        response = (
+            '```json\n{"action":"read","path":"same.txt"}\n```\n'
+            '{"action":"read","path":"same.txt"}'
+        )
+        assert parse_agent_action(response) == {
+            "action": "read",
+            "path": "same.txt",
+        }
 
     def test_fenced_json_followed_by_later_bare_json_rejects_different_actions(self) -> None:
         response = (
@@ -418,7 +449,7 @@ class TestAriaDescribedbyRegression:
         with pytest.raises(ValueError, match="not valid strict JSON|base64"):
             parse_agent_action(malformed)
 
-    def test_same_malformed_response_fails_immediately_in_retry_tracker(
+    def test_same_malformed_response_uses_the_bounded_escalating_retry_budget(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -460,7 +491,7 @@ class TestAriaDescribedbyRegression:
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
 
-        with pytest.raises(RuntimeError, match="same invalid"):
+        with pytest.raises(RuntimeError, match="too many invalid"):
             _run_web_action_loop(
                 page=_Page(),
                 browser_kind="chromium",
@@ -473,8 +504,311 @@ class TestAriaDescribedbyRegression:
                 should_stop=lambda: False,
                 update=lambda **_changes: None,
             )
-        assert len(submitted) == 2
-        assert len(submitted) < MAX_INVALID_ACTION_RETRIES + 2
+        assert len(submitted) == MAX_INVALID_ACTION_RETRIES + 1
+        assert "strict-format correction 1 of 3" in submitted[1]
+        assert submitted[1].count("Return exactly one strict JSON controller action") == 1
+        assert "You repeated the same invalid response" in submitted[2]
+        final_correction = json.loads(submitted[3].splitlines()[1])
+        assert '{"action":"list","path":".","depth":2}' in final_correction["instruction"]
+        assert len(set(submitted[1:])) == MAX_INVALID_ACTION_RETRIES
+
+    def test_repeated_malformed_response_can_recover_before_the_retry_limit(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import app.core.computer_use_agent as computer_use_agent
+
+        class _Page:
+            url = "https://chatgpt.com/c/recovered"
+
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        controller = WorkspaceController(
+            workspace,
+            ComputerUseSettings(workspace_path=str(workspace), max_turns=8),
+            lambda: False,
+        )
+        malformed = "I should inspect several files before editing."
+        responses = iter(
+            (
+                malformed,
+                malformed,
+                '{"action":"bodycheck"}',
+                (
+                    '{"action":"final","summary":"Recovered",'
+                    '"verification":["bodycheck passed"],"limitations":[]}'
+                ),
+            )
+        )
+        submitted: list[str] = []
+
+        def submit(
+            _page: object,
+            _browser: str,
+            message: str,
+            _should_stop: object,
+            **_kwargs: object,
+        ) -> str:
+            submitted.append(message)
+            return next(responses)
+
+        monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+        monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_select_web_model",
+            lambda *_args, **_kwargs: True,
+        )
+        monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+        monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+        result = _run_web_action_loop(
+            page=_Page(),
+            browser_kind="chromium",
+            initial_message="Inspect the project.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=ComputerUseSettings(workspace_path=str(workspace), max_turns=8),
+            session_mode="recent",
+            selected_target_url="https://chatgpt.com/c/recovered",
+            should_stop=lambda: False,
+            update=lambda **_changes: None,
+        )
+
+        assert result == (
+            "Recovered\n\nVerification\n- bodycheck passed",
+            "https://chatgpt.com/c/recovered",
+            2,
+            True,
+        )
+        assert len(submitted) == 4
+        assert "repeated_response" in submitted[2]
+
+    def test_stop_wins_when_the_terminal_invalid_response_is_parsed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import app.core.computer_use_agent as computer_use_agent
+
+        class _Page:
+            url = "https://chatgpt.com/c/stopped-invalid"
+
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        controller = WorkspaceController(
+            workspace,
+            ComputerUseSettings(workspace_path=str(workspace), max_turns=8),
+            lambda: stop_state["requested"],
+        )
+        stop_state = {"requested": False}
+        parse_calls = 0
+        submitted: list[str] = []
+        stopped: list[str] = []
+
+        def parse(_response: str) -> dict[str, object]:
+            nonlocal parse_calls
+            parse_calls += 1
+            if parse_calls == MAX_INVALID_ACTION_RETRIES + 1:
+                stop_state["requested"] = True
+            raise ValueError("invalid controller response")
+
+        def submit(
+            _page: object,
+            _browser: str,
+            message: str,
+            _should_stop: object,
+            **_kwargs: object,
+        ) -> str:
+            submitted.append(message)
+            return "invalid"
+
+        monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+        monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_select_web_model",
+            lambda *_args, **_kwargs: True,
+        )
+        monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+        monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+        monkeypatch.setattr(computer_use_agent, "parse_agent_action", parse)
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_stop_web_generation",
+            lambda *_args: stopped.append("stopped"),
+        )
+
+        result = _run_web_action_loop(
+            page=_Page(),
+            browser_kind="chromium",
+            initial_message="Inspect the project.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=ComputerUseSettings(workspace_path=str(workspace), max_turns=8),
+            session_mode="recent",
+            selected_target_url="https://chatgpt.com/c/stopped-invalid",
+            should_stop=lambda: stop_state["requested"],
+            update=lambda **_changes: None,
+        )
+
+        assert result == (
+            "",
+            "https://chatgpt.com/c/stopped-invalid",
+            0,
+            False,
+        )
+        assert parse_calls == MAX_INVALID_ACTION_RETRIES + 1
+        assert len(submitted) == MAX_INVALID_ACTION_RETRIES + 1
+        assert stopped == ["stopped"]
+
+    def test_stop_wins_when_a_valid_final_response_is_parsed(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import app.core.computer_use_agent as computer_use_agent
+
+        class _Page:
+            url = "https://chatgpt.com/c/stopped-final"
+
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        stop_state = {"requested": False}
+        controller = WorkspaceController(
+            workspace,
+            ComputerUseSettings(workspace_path=str(workspace), max_turns=8),
+            lambda: stop_state["requested"],
+        )
+        controller.state.bodycheck_generation = controller.state.edit_generation
+        submitted: list[str] = []
+        stopped: list[str] = []
+
+        def parse(_response: str) -> dict[str, object]:
+            stop_state["requested"] = True
+            return {
+                "action": "final",
+                "summary": "Published after Stop",
+                "verification": ["bodycheck passed"],
+                "limitations": [],
+            }
+
+        def submit(
+            _page: object,
+            _browser: str,
+            message: str,
+            _should_stop: object,
+            **_kwargs: object,
+        ) -> str:
+            submitted.append(message)
+            return "valid final"
+
+        monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+        monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_select_web_model",
+            lambda *_args, **_kwargs: True,
+        )
+        monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+        monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+        monkeypatch.setattr(computer_use_agent, "parse_agent_action", parse)
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_stop_web_generation",
+            lambda *_args: stopped.append("stopped"),
+        )
+
+        result = _run_web_action_loop(
+            page=_Page(),
+            browser_kind="chromium",
+            initial_message="Inspect the project.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=ComputerUseSettings(workspace_path=str(workspace), max_turns=8),
+            session_mode="recent",
+            selected_target_url="https://chatgpt.com/c/stopped-final",
+            should_stop=lambda: stop_state["requested"],
+            update=lambda **_changes: None,
+        )
+
+        assert result == ("", "https://chatgpt.com/c/stopped-final", 0, True)
+        assert len(submitted) == 1
+        assert stopped == ["stopped"]
+
+    def test_final_completion_claim_rejects_a_later_stop_during_render(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import app.core.computer_use_agent as computer_use_agent
+
+        class _Page:
+            url = "https://chatgpt.com/c/completion-claimed"
+
+        workspace = tmp_path / "project"
+        workspace.mkdir()
+        stop_signal = computer_use_agent._LinearizedStopSignal()
+        controller = WorkspaceController(
+            workspace,
+            ComputerUseSettings(workspace_path=str(workspace), max_turns=8),
+            stop_signal.is_set,
+        )
+        controller.state.bodycheck_generation = controller.state.edit_generation
+        submitted: list[str] = []
+        stop_attempts: list[bool] = []
+
+        def submit(
+            _page: object,
+            _browser: str,
+            message: str,
+            _should_stop: object,
+            **_kwargs: object,
+        ) -> str:
+            submitted.append(message)
+            return (
+                '{"action":"final","summary":"Claimed final",'
+                '"verification":["bodycheck passed"],"limitations":[]}'
+            )
+
+        def render(_action: dict[str, object]) -> str:
+            stop_attempts.append(stop_signal.set())
+            return "Claimed final\n\nVerification\n- bodycheck passed"
+
+        monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+        monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_select_web_model",
+            lambda *_args, **_kwargs: True,
+        )
+        monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+        monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+        monkeypatch.setattr(computer_use_agent, "_render_final_action", render)
+
+        result = _run_web_action_loop(
+            page=_Page(),
+            browser_kind="chromium",
+            initial_message="Inspect the project.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=ComputerUseSettings(workspace_path=str(workspace), max_turns=8),
+            session_mode="recent",
+            selected_target_url="https://chatgpt.com/c/completion-claimed",
+            should_stop=stop_signal.is_set,
+            update=lambda **_changes: None,
+        )
+
+        assert result == (
+            "Claimed final\n\nVerification\n- bodycheck passed",
+            "https://chatgpt.com/c/completion-claimed",
+            1,
+            True,
+        )
+        assert len(submitted) == 1
+        assert stop_attempts == [False]
+        assert not stop_signal.is_set()
 
 
 # ---------------------------------------------------------------------------

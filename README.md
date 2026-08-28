@@ -1,6 +1,6 @@
 # CacheLikesFromTwitter
 
-Documentation version: `v1.13.0-codex.1`
+Documentation version: `v1.14.0-codex.1`
 
 CacheLikesFromTwitter is a local Flask web console that caches media from the
 currently signed-in X account's Likes timeline, Grok's Files library, and a
@@ -17,6 +17,12 @@ provider route does not prove that Gemini created a distinct subconversation.
 The selected Web provider supplies reasoning while a bounded local Computer Use controller
 reads, changes, runs, and verifies only the selected project. This fallback uses no API,
 command-line coding-agent runtime, MCP connection, or third-party agent bridge.
+
+Top-level application pages also publish a conservative OpenAI Site tools (WebMCP) adapter for
+Agent Optimization. It exposes bounded capability discovery, current-page metadata, and allowlisted
+same-origin navigation while keeping cached records, Cache lifecycle actions, Agent execution,
+terminal authorization, and settings writes outside the v1 tool boundary. Browsers without Site
+tools retain the complete human interface.
 
 ## Visual Style Reference
 
@@ -82,8 +88,9 @@ Run the complete local quality gate with:
 ./scripts/check.sh
 ```
 
-The quality gate runs Ruff, JavaScript syntax checks, the Python suite with branch coverage,
-and a disposable Chromium sidebar E2E flow. It is the same command executed by GitHub Actions.
+The quality gate runs Ruff, JavaScript syntax checks, the shared Agent Optimization Node contract,
+the Python suite with branch coverage, and disposable Chromium browser flows. It is the same command
+executed by GitHub Actions.
 The browser flow uses a clean context against an isolated local server; the suite never opens
 an authenticated profile, downloads media, or writes to user-owned caches, logs, or settings.
 The CI portability rules and failure-triage contract are documented in
@@ -97,6 +104,7 @@ The CI portability rules and failure-triage contract are documented in
 - [Operations guide](docs/OPERATIONS.md)
 - [Known operating constraints](docs/KNOWN_ISSUES.md)
 - [ChatGPT Web Computer Use Agent](docs/COMPUTER_USE_AGENT.md)
+- [OpenAI Site tools and Agent Optimization](docs/AGENT_OPTIMIZATION.md)
 - [Third-party notices](docs/THIRD_PARTY_NOTICES.md)
 - [Engineering and test contract](docs/AGENTS.md)
 - [Test coverage map](docs/TEST_COVERAGE.md)
