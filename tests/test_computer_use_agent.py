@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.46.0-codex.5
+Code version: v3.46.0-codex.6
 """
 
 from __future__ import annotations
@@ -5879,6 +5879,47 @@ def test_fresh_chatgpt_binding_rejects_a_different_conversation() -> None:
 
     with pytest.raises(RuntimeError, match="navigated away from the newly created session"):
         binding.check(allow_transition=True)
+
+
+def test_fresh_chatgpt_binding_waits_for_transient_navigation_to_settle() -> None:
+    created_url = "https://chatgpt.com/c/fresh-session"
+    other_url = "https://chatgpt.com/c/other-session"
+
+    class _Page:
+        url = created_url
+
+        def __init__(self) -> None:
+            self.wait_calls = 0
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+        def title(self) -> str:
+            return "Fresh session"
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            self.wait_calls += 1
+            self.url = created_url
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+
+    assert binding.check(allow_transition=True) == created_url
+    binding.initial_transition_confirmed = True
+    page.url = other_url
+
+    assert binding.check(allow_transition=True) == created_url
+    assert page.wait_calls == 1
 
 
 def test_fresh_session_receipt_excludes_the_composer_and_requires_latest_user_message(

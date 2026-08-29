@@ -1,4 +1,4 @@
-<!-- Code version: v3.22.1-codex.10 -->
+<!-- Code version: v3.23.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.86.0-codex.6') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.87.0-codex.2') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -338,6 +338,15 @@
                             <span class="suggestion-loading-spinner agent-empty-response-spinner" data-agent-session-history-spinner aria-hidden="true" hidden></span>
                             <span data-agent-empty-response-copy>{{ agent_snapshot.message }}</span>
                         </p>
+                        <details class="agent-error-record" id="agent_error_record"{% if agent_snapshot.error_traceback or agent_snapshot.last_error %} open{% endif %}{% if not (agent_snapshot.error_traceback or agent_snapshot.last_error) %} hidden{% endif %}>
+                            <summary>
+                                <span>Execution record</span>
+                                <span class="agent-error-record-label">Error details</span>
+                            </summary>
+                            <div class="agent-error-record-scroll" role="region" aria-label="Agent error record">
+                                <pre class="agent-error-record-content" id="agent_error_record_content" data-agent-error-record-content>{{ agent_snapshot.error_traceback or agent_snapshot.last_error }}</pre>
+                            </div>
+                        </details>
                     </article>
 
                     <form id="agent_prompt_form" class="agent-prompt-form">
@@ -414,6 +423,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.6.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.22.0-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.22.0-codex.2') }}"></script>
 </body>
 </html>

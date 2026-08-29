@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.0-codex.15
+# Code version: v1.88.0-codex.16
 
 from __future__ import annotations
 
@@ -491,11 +491,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = (
-                    "style-v2.86.0-codex.8"
-                    if page_source in {"x", "grok", "chatgpt", "gemini"}
-                    else "style-v2.86.0-codex.6"
-                )
+                expected_style_version = "style-v2.87.0-codex.2"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -830,7 +826,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.6.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.22.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.22.0-codex.2', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -860,6 +856,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-model-strength="100"', local_body)
         self.assertIn('GPT-5.6 Sol', local_body)
         self.assertIn('id="agent_activity_panel"', local_body)
+        self.assertIn('id="agent_error_record"', local_body)
+        self.assertIn('data-agent-error-record-content', local_body)
+        self.assertIn('class="agent-error-record-scroll"', local_body)
 
         self.assertIn('class="agent-response-output"', local_body)
         self.assertIn('class="agent-response-question-header', local_body)
@@ -1001,6 +1000,31 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("<strong>History</strong>", history_html)
         self.assertNotIn("<script>", history_html)
         self.assertIn("&lt;script&gt;", history_html)
+
+    def test_agent_page_renders_error_traceback_in_a_collapsible_record(self) -> None:
+        app = create_app()
+        agent_service = app.extensions["computer_use_agent_service"]
+        snapshot = agent_service.snapshot()
+        snapshot.update(
+            {
+                "last_error": "The selected provider tab navigated away from the newly created session.",
+                "error_traceback": "Traceback (most recent call last):\nRuntimeError: <unsafe>",
+                "message": "The selected provider tab navigated away from the newly created session.",
+                "phase": "failed",
+                "platform": "chatgpt",
+                "browser": "edge",
+            }
+        )
+
+        with patch.object(agent_service, "snapshot", return_value=snapshot):
+            with app.test_client() as client:
+                body = client.get("/agent/edge/chatgpt").get_data(as_text=True)
+
+        self.assertIn('<details class="agent-error-record" id="agent_error_record" open>', body)
+        self.assertIn('class="agent-error-record-scroll"', body)
+        self.assertIn('data-agent-error-record-content', body)
+        self.assertIn("Traceback (most recent call last):", body)
+        self.assertIn("RuntimeError: &lt;unsafe&gt;", body)
 
     def test_agent_page_isolates_completed_snapshots_by_provider_and_browser(self) -> None:
         app = create_app()
@@ -1256,7 +1280,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.22.0-codex.1',
+            'computer-use-agent-v3.22.0-codex.2',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
@@ -1663,6 +1687,9 @@ class WebAppTests(unittest.TestCase):
             'event.key !== "Enter" || event.shiftKey || event.isComposing',
             "promptForm.requestSubmit()",
             "renderActivity(agent.activity, running)",
+            "function renderErrorRecord(agent)",
+            "errorRecordContent.textContent = errorText",
+            "elements.errorRecord.hidden = !errorText",
             "renderAgentResponse(agent)",
             "renderTerminalExecution(lastPayload.runtime)",
             'elements.responseAnswer.innerHTML = entry?.response_html || ""',
@@ -2311,7 +2338,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.86.0-codex.6", body)
+            self.assertIn("style-v2.87.0-codex.2", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

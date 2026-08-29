@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.45.0-codex.3`
+Documentation version: `v3.45.0-codex.4`
 
 ## Purpose
 
@@ -190,8 +190,10 @@ older task cannot be submitted accidentally through a different Web session.
    later displays the current transfer ID. Gemini does not expose an equivalent complete pre-submit
    conversation catalog, so its transfer receipt does not independently prove that the destination
    was absent from the account beforehand. The binding wait is bounded and Stop-aware; no local
-   controller action executes before it succeeds. Gemini
-   Notebook routes converge on their typed `/app/<id>` identity and use the same receipt gate even
+   controller action executes before it succeeds. After a fresh ChatGPT conversation is bound, a
+   same-tab navigation is given one bounded settle window; the controller may recover only when the
+   bound conversation or its transfer receipt is observed, and still rejects an unproved session.
+   Gemini Notebook routes converge on their typed `/app/<id>` identity and use the same receipt gate even
    when the provider remains on that URL.
 7. The selected Web provider returns exactly one JSON action at a time inside a fenced `json` code block so
    rendered Markdown cannot consume action quotes, backslashes, asterisks, or source-code delimiters. The

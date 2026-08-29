@@ -1,6 +1,6 @@
 # Engineering and test contract
 
-Documentation version: `v1.2.0-codex.1`
+Documentation version: `v1.3.0-codex.1`
 
 This document supplements the repository-root [AGENTS.md](../AGENTS.md), which remains
 authoritative. It records the project-specific documentation, testing, and handoff practices
@@ -20,6 +20,9 @@ adapted from the sibling project's quality model.
   change.
 - Read [AGENT_OPTIMIZATION.md](AGENT_OPTIMIZATION.md) and the canonical shared contract it names
   before changing Site tools, WebMCP registration, capability metadata, or agent-facing schemas.
+- Read [STATIC_FILE_HOUSEKEEPING.md](STATIC_FILE_HOUSEKEEPING.md) and its canonical shared
+  contract before creating, copying, exporting, restoring, or removing static files. Complete the
+  numbered-copy scan after the operation and before a commit, handoff, or final response.
 
 ## Runtime safety boundary
 
@@ -46,7 +49,9 @@ a default test into a live test merely to increase coverage.
    boundary.
 2. Add or update behavior-level tests when regression risk is meaningful. Prefer deterministic
    fakes at the browser, subprocess, and transport boundaries.
-3. Run the narrowest relevant test first, then run `./scripts/check.sh` for a complete change.
+3. Run the narrowest relevant test first, then run `./scripts/check.sh` for a complete change. After
+   any static-file-producing operation, run the shared numbered-copy housekeeping workflow and
+   record unresolved candidates.
 4. Update the matching architecture, operations, testing, or known-constraints document when a
    contract changes.
 5. Give every new or materially changed source file an explicit `Code version:` or

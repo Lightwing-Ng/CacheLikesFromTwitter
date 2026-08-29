@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.49.0-codex.12
+Code version: v1.49.0-codex.13
 """
 
 from pathlib import Path
@@ -1404,6 +1404,10 @@ def test_cache_workspace_reuses_the_shared_title_rail_and_scroll_layer() -> None
     stylesheet = _stylesheet()
 
     for token in (
+        "--layout-edge-gap: var(--page-edge-pad);",
+        "--layout-global-anchor-inset: calc(var(--layout-edge-gap) * 2);",
+        "--layout-global-action-gap: 10px;",
+        "--layout-sidebar-dock-bottom-gap: var(--layout-edge-gap);",
         "--workspace-title-rail-pad-block-start: var(--page-edge-pad);",
         "--workspace-title-rail-height: calc(var(--workspace-title-rail-pad-block-start) + var(--workspace-title-rail-control-height));",
         ".cache-overview-title-card {",
@@ -1642,8 +1646,8 @@ def test_global_quick_actions_reuse_the_sibling_shell_positioning_contract() -> 
     action_start = stylesheet.index(".global-quick-actions {")
     action_rule = stylesheet[action_start:stylesheet.index("\n}", action_start)]
 
-    assert token_line == "--global-quick-actions-right: max(calc(var(--page-edge-pad) * 2), calc(((100vw - 1560px) / 2) + (var(--page-edge-pad) * 2)));"
-    assert "top: calc(var(--page-edge-pad) + var(--sidebar-toggle-top));" in action_rule
+    assert token_line == "--global-quick-actions-right: var(--layout-global-anchor-inset);"
+    assert "top: var(--layout-global-anchor-inset);" in action_rule
     assert "right: var(--global-quick-actions-right);" in action_rule
 
     touch_contract_start = stylesheet.index("/* Keep the touch target stationary")
@@ -1655,12 +1659,10 @@ def test_global_quick_actions_reuse_the_sibling_shell_positioning_contract() -> 
     narrow_end = touch_contract_start
     narrow_rule = stylesheet[narrow_start:narrow_end]
     for token in (
-        "--sidebar-toggle-quick-action-clearance: 12px;",
-        "var(--sidebar-overlay-available-inline-size)",
+        "--sidebar-toggle-x: calc(",
+        "var(--layout-sidebar-overlay-inline-size)",
         "var(--sidebar-overlay-inset-left)",
-        "- 44px",
         "var(--settings-round-icon-button-size)",
-        "var(--global-quick-actions-right)",
     ):
         assert token in narrow_rule
 
@@ -1720,7 +1722,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.86.0-codex.8 */",
+            "/* Code version: v2.87.0-codex.2 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -2044,3 +2046,22 @@ def test_agent_response_header_and_answer_pin_the_composer() -> None:
     assert "position: sticky;" in composer_rule
     assert "bottom: 0;" in composer_rule
     assert "flex: 0 0 auto;" in composer_rule
+
+
+def test_agent_error_record_is_collapsible_and_vertically_scrollable() -> None:
+    """Keep long Agent tracebacks inside a bounded accessible record."""
+    stylesheet = _stylesheet()
+
+    record_start = stylesheet.index(".agent-error-record {")
+    record_rule = stylesheet[record_start:stylesheet.index("\n}", record_start)]
+    scroll_start = stylesheet.index(".agent-error-record-scroll {")
+    scroll_rule = stylesheet[scroll_start:stylesheet.index("\n}", scroll_start)]
+    content_start = stylesheet.index(".agent-error-record-content {")
+    content_rule = stylesheet[content_start:stylesheet.index("\n}", content_start)]
+
+    assert "overflow: hidden;" in record_rule
+    assert "max-height: min(22rem, 38svh);" in scroll_rule
+    assert "overflow-y: auto;" in scroll_rule
+    assert "overscroll-behavior: contain;" in scroll_rule
+    assert "white-space: pre-wrap;" in content_rule
+    assert "overflow-wrap: anywhere;" in content_rule

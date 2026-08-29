@@ -1,4 +1,4 @@
-/* Code version: v3.22.0-codex.1 */
+/* Code version: v3.22.0-codex.2 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -12,6 +12,8 @@
         statusMessage: document.getElementById("agent_empty_response"),
         statusMessageCopy: document.querySelector("[data-agent-empty-response-copy]"),
         statusSpinner: document.querySelector("[data-agent-session-history-spinner]"),
+        errorRecord: document.getElementById("agent_error_record"),
+        errorRecordContent: document.querySelector("[data-agent-error-record-content]"),
         responseOutput: document.getElementById("agent_response_output"),
         responseQuestion: document.querySelector("[data-agent-response-question]"),
         responseAnswer: document.querySelector("[data-agent-response-answer]"),
@@ -1182,6 +1184,17 @@
         }
     }
 
+    function renderErrorRecord(agent) {
+        if (!elements.errorRecord || !elements.errorRecordContent) return;
+        const errorText = String(agent?.error_traceback || agent?.last_error || "");
+        const changed = elements.errorRecordContent.textContent !== errorText;
+        if (changed) {
+            elements.errorRecordContent.textContent = errorText;
+            if (errorText) elements.errorRecord.open = true;
+        }
+        elements.errorRecord.hidden = !errorText;
+    }
+
     function normalizePaginationPage(value, fallback = 1) {
         const numericValue = Number(value);
         if (!Number.isFinite(numericValue)) return fallback;
@@ -1633,6 +1646,7 @@
 
         setChip(elements.phaseChip, agent.phase || "idle", agent.phase || "idle");
         const hasAgentResponse = renderAgentResponse(agent);
+        renderErrorRecord(agent);
         if (elements.statusMessage) {
             const sessionMessage = remoteSessionHistoryLoading
                 ? "Loading the selected ChatGPT session history…"
@@ -1686,6 +1700,11 @@
             if (elements.statusMessage) {
                 elements.statusMessage.hidden = false;
                 elements.statusMessage.textContent = error.message;
+            }
+            if (elements.errorRecord && elements.errorRecordContent) {
+                elements.errorRecordContent.textContent = error.message;
+                elements.errorRecord.hidden = false;
+                elements.errorRecord.open = true;
             }
             if (elements.responseOutput && !responseHistory.length) elements.responseOutput.hidden = true;
             setChip(elements.phaseChip, "failed", "failed");

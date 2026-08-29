@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Code policy version: v1.2.0-agent-contract.3
+Code policy version: v1.3.0-agent-contract.0
 
 This file defines mandatory collaboration rules for all coding agents in this repository (Claude, Codex, Antigravity, Trae, and future agents).
 
@@ -15,6 +15,12 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Do not refactor unrelated code unless explicitly requested.
 - Do not modify files outside task scope.
 - Preserve existing behavior unless behavior change is required by the request.
+- For any operation that can create, copy, rename, export, compile, or restore a static file, read
+  [`docs/STATIC_FILE_HOUSEKEEPING.md`](docs/STATIC_FILE_HOUSEKEEPING.md) and its canonical shared
+  contract, then complete the numbered-copy scan before continuing, committing, handing off, or
+  responding. A ` 2`, ` 3`, or other numbered name is only a review candidate; exact-byte,
+  untracked or reproducible duplicates require active-process and protected-path checks before
+  recoverable cleanup.
 
 ## 3) Read Before Edit
 - Read target files and closely related call sites before editing.
@@ -59,6 +65,8 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Never revert unrelated local changes made by the user.
 - Do not amend commits unless explicitly requested.
 - Keep commits logically grouped and easy to review.
+- Do not use a broad ignore rule or recursive deletion as a substitute for the numbered-copy
+  housekeeping workflow.
 
 ## 8) Host Runtime and Local Tooling
 - Treat the authenticated likes page for the currently signed-in X account as the canonical entry page for this project.

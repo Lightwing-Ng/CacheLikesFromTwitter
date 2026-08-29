@@ -1,4 +1,4 @@
-/* Code version: v2.86.0-codex.8 */
+/* Code version: v2.87.0-codex.2 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -205,7 +205,11 @@
     --control-glass-background: transparent;
     --control-glass-background-hover: color-mix(in srgb, var(--theme-muted) 8%, transparent);
     --page-edge-pad: 10px;
-    --global-quick-actions-right: max(calc(var(--page-edge-pad) * 2), calc(((100vw - 1560px) / 2) + (var(--page-edge-pad) * 2)));
+    --layout-edge-gap: var(--page-edge-pad);
+    --layout-global-anchor-inset: calc(var(--layout-edge-gap) * 2);
+    --layout-global-action-gap: 10px;
+    --layout-global-action-inline-size: var(--settings-round-icon-button-size);
+    --global-quick-actions-right: var(--layout-global-anchor-inset);
     /*
      * Responsive breakpoint registry. CSS repeats these values in media
      * conditions because custom properties are not valid there without a
@@ -214,11 +218,25 @@
     --responsive-breakpoint-compact-content-max: 600px;
     --responsive-breakpoint-sidebar-overlay-max: 900px;
     --sidebar-width: 312px;
+    --layout-sidebar-overlay-inline-size: min(
+        var(--sidebar-width),
+        max(
+            0px,
+            calc(
+                100vw
+                - var(--sidebar-overlay-inset-left)
+                - var(--global-quick-actions-right)
+                - var(--layout-global-action-inline-size)
+                - var(--layout-edge-gap)
+            )
+        )
+    );
     --sidebar-toggle-top: var(--page-edge-pad);
     --sidebar-toggle-left: var(--page-edge-pad);
     --sidebar-bottom-pad: 96px;
     --sidebar-dock-hit-size: 56px;
-    --sidebar-dock-bottom-gap: 14px;
+    --layout-sidebar-dock-bottom-gap: var(--layout-edge-gap);
+    --sidebar-dock-bottom-gap: var(--layout-sidebar-dock-bottom-gap);
     --sidebar-dock-mobile-bottom-gap: 4px;
     --sidebar-dock-mobile-shadow: 0 -10px 24px var(--theme-glass-border), 0 0 0 1px color-mix(in srgb, var(--theme-glass-highlight) 44%, transparent);
     --settings-round-icon-button-size: 36px;
@@ -517,7 +535,12 @@ button {
 }
 
 .page {
-    --sidebar-toggle-x: calc(var(--sidebar-width) - 56px);
+    --sidebar-toggle-x: calc(
+        var(--sidebar-width)
+        - var(--settings-round-icon-button-size)
+        - var(--layout-edge-gap)
+        - var(--sidebar-toggle-left)
+    );
     width: min(1560px, 100%);
     max-width: 100%;
     height: var(--viewport-block-size);
@@ -578,7 +601,12 @@ html.sidebar-memory-collapsed .page {
 }
 
 .app-shell {
-    --sidebar-toggle-x: calc(var(--sidebar-width) - 56px);
+    --sidebar-toggle-x: calc(
+        var(--sidebar-width)
+        - var(--settings-round-icon-button-size)
+        - var(--layout-edge-gap)
+        - var(--sidebar-toggle-left)
+    );
     display: grid;
     grid-template-columns: minmax(0, var(--sidebar-width)) minmax(0, 1fr);
     gap: var(--app-shell-gap);
@@ -680,13 +708,13 @@ html.sidebar-memory-collapsed .page {
 }
 
 .page > .sidebar-toggle {
-    top: calc(var(--page-edge-pad) + var(--sidebar-toggle-top));
-    left: calc(var(--page-edge-pad) + var(--sidebar-toggle-left));
+    top: calc(var(--layout-edge-gap) + var(--sidebar-toggle-top));
+    left: calc(var(--layout-edge-gap) + var(--sidebar-toggle-left));
 }
 
 .global-quick-actions {
     position: fixed;
-    top: calc(var(--page-edge-pad) + var(--sidebar-toggle-top));
+    top: var(--layout-global-anchor-inset);
     right: var(--global-quick-actions-right);
     z-index: var(--layer-fixed-dock);
     width: var(--settings-round-icon-button-size);
@@ -3350,6 +3378,58 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     --loading-spinner-size: 16px;
 }
 
+.agent-error-record {
+    margin-top: 12px;
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-soft);
+    background: var(--glass-surface-background-soft);
+    overflow: hidden;
+}
+
+.agent-error-record > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 40px;
+    padding: 0 12px;
+    color: var(--text);
+    font-size: var(--font-table-body);
+    cursor: pointer;
+    list-style: none;
+}
+
+.agent-error-record > summary::-webkit-details-marker {
+    display: none;
+}
+
+.agent-error-record-label {
+    color: var(--theme-error);
+    font-size: var(--font-ui-sm);
+}
+
+.agent-error-record-scroll {
+    max-height: min(22rem, 38svh);
+    padding: 12px;
+    border-top: var(--frosted-glass-border);
+    overflow-x: auto;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
+}
+
+.agent-error-record-content {
+    min-width: 0;
+    margin: 0;
+    color: var(--text);
+    font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-size: var(--font-ui-sm);
+    line-height: 1.45;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
 .agent-runtime-form a,
 .settings-agent-privacy-note a {
     color: var(--accent);
@@ -4364,7 +4444,7 @@ body::before,
 .sidebar {
     flex: 0 0 var(--sidebar-width);
     height: auto;
-    padding: 10px 10px var(--sidebar-bottom-pad);
+    padding: calc(var(--layout-edge-gap) - 1px) var(--layout-edge-gap) var(--sidebar-bottom-pad);
     border: var(--frosted-glass-border);
     background: var(--frosted-glass-background);
     box-shadow: var(--frosted-glass-shadow);
@@ -4424,10 +4504,28 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 
 @media (max-width: 900px) {
     .page {
+        --settings-round-icon-button-size: 44px;
+        --workspace-title-rail-control-height: var(--settings-round-icon-button-size);
+        --workspace-title-rail-height: calc(var(--workspace-title-rail-pad-block-start) + var(--workspace-title-rail-control-height));
+        --workspace-title-rail-collapsed-pad-inline-start: calc(var(--settings-round-icon-button-size) + 22px);
+        --layout-global-action-inline-size: var(--settings-round-icon-button-size);
+        --layout-sidebar-overlay-inline-size: min(
+            var(--sidebar-width),
+            max(
+                0px,
+                calc(
+                    100vw
+                    - var(--sidebar-overlay-inset-left)
+                    - var(--global-quick-actions-right)
+                    - var(--layout-global-action-inline-size)
+                    - var(--layout-edge-gap)
+                )
+            )
+        );
         --sidebar-toggle-x: calc(
-            min(var(--sidebar-width), var(--sidebar-overlay-available-inline-size))
+            var(--layout-sidebar-overlay-inline-size)
             - var(--sidebar-overlay-toggle-inset)
-            - 44px
+            - var(--settings-round-icon-button-size)
         );
     }
 
@@ -4453,7 +4551,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
         right: auto;
         bottom: var(--sidebar-overlay-inset-bottom);
         left: var(--sidebar-overlay-inset-left);
-        width: min(var(--sidebar-width), var(--sidebar-overlay-available-inline-size));
+        width: var(--layout-sidebar-overlay-inline-size);
         height: min(
             calc(var(--viewport-block-size) - var(--sidebar-overlay-inset-top) - var(--sidebar-overlay-inset-bottom)),
             calc(100vh - var(--sidebar-overlay-inset-top) - var(--sidebar-overlay-inset-bottom))
@@ -4465,13 +4563,18 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
         );
         flex: none;
         margin: 0;
-        padding: 56px 18px calc(18px + var(--sidebar-dock-bottom-gap) + var(--sidebar-dock-hit-size));
+        padding: calc(var(--layout-edge-gap) - 1px) 18px calc(18px + var(--sidebar-dock-bottom-gap) + var(--sidebar-dock-hit-size));
         overflow-y: auto;
         z-index: calc(var(--layer-fixed-dock) - 2);
         transform: translate3d(0, 0, 0);
         opacity: 1;
         visibility: visible;
         pointer-events: auto;
+    }
+
+    .sidebar h1 {
+        min-height: var(--workspace-title-rail-control-height);
+        align-items: center;
     }
 
     .workspace {
@@ -4516,19 +4619,19 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 
     .page > .sidebar-toggle {
         position: fixed;
-        top: calc(var(--sidebar-overlay-inset-top) + var(--sidebar-overlay-toggle-inset));
+        top: var(--layout-global-anchor-inset);
         left: var(--sidebar-overlay-inset-left);
-        width: 44px;
-        min-width: 44px;
-        height: 44px;
-        min-height: 44px;
+        width: var(--settings-round-icon-button-size);
+        min-width: var(--settings-round-icon-button-size);
+        height: var(--settings-round-icon-button-size);
+        min-height: var(--settings-round-icon-button-size);
         margin: 0;
         z-index: var(--layer-sidebar-toggle);
         touch-action: manipulation;
     }
 
     .global-quick-actions {
-        top: var(--sidebar-overlay-inset-top);
+        top: var(--layout-global-anchor-inset);
     }
 
     .notice-floating-banner-global {
@@ -4536,13 +4639,13 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     }
 
     .sidebar-dock {
-        left: calc(var(--sidebar-overlay-inset-left) + (min(var(--sidebar-width), var(--sidebar-overlay-available-inline-size)) / 2));
+        left: calc(var(--sidebar-overlay-inset-left) + (var(--layout-sidebar-overlay-inline-size) / 2));
         right: auto;
         bottom: calc(var(--sidebar-overlay-inset-bottom) + var(--sidebar-dock-bottom-gap));
         transform: translateX(-50%);
         margin: 0;
         width: fit-content;
-        max-width: calc(min(var(--sidebar-width), var(--sidebar-overlay-available-inline-size)) - 20px);
+        max-width: calc(var(--layout-sidebar-overlay-inline-size) - (var(--layout-edge-gap) * 2));
         z-index: var(--layer-fixed-dock);
         box-shadow: var(--sidebar-dock-mobile-shadow);
         opacity: 1;
@@ -4559,31 +4662,20 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 
 @media (max-width: 560px) {
     .page {
-        --sidebar-toggle-quick-action-clearance: 12px;
-        --sidebar-toggle-x: min(
-            calc(
-                var(--sidebar-overlay-available-inline-size)
-                - var(--sidebar-overlay-toggle-inset)
-                - 44px
-            ),
-            calc(
-                100vw
-                - var(--sidebar-overlay-inset-left)
-                - 44px
-                - var(--global-quick-actions-right)
-                - var(--settings-round-icon-button-size)
-                - var(--sidebar-toggle-quick-action-clearance)
-            )
+        --sidebar-toggle-x: calc(
+            var(--layout-sidebar-overlay-inline-size)
+            - var(--sidebar-overlay-toggle-inset)
+            - var(--settings-round-icon-button-size)
         );
     }
 
     .sidebar {
-        width: var(--sidebar-overlay-available-inline-size);
+        width: var(--layout-sidebar-overlay-inline-size);
     }
 
     .sidebar-dock {
-        left: calc(var(--sidebar-overlay-inset-left) + (var(--sidebar-overlay-available-inline-size) / 2));
-        max-width: calc(var(--sidebar-overlay-available-inline-size) - 16px);
+        left: calc(var(--sidebar-overlay-inset-left) + (var(--layout-sidebar-overlay-inline-size) / 2));
+        max-width: calc(var(--layout-sidebar-overlay-inline-size) - (var(--layout-edge-gap) * 2));
     }
 
     .cache-overview-title-card {

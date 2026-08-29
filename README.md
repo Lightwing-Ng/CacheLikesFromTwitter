@@ -1,6 +1,6 @@
 # CacheLikesFromTwitter
 
-Documentation version: `v1.14.0-codex.1`
+Documentation version: `v1.15.0-codex.1`
 
 CacheLikesFromTwitter is a local Flask web console that caches media from the
 currently signed-in X account's Likes timeline, Grok's Files library, and a
@@ -105,6 +105,7 @@ The CI portability rules and failure-triage contract are documented in
 - [Known operating constraints](docs/KNOWN_ISSUES.md)
 - [ChatGPT Web Computer Use Agent](docs/COMPUTER_USE_AGENT.md)
 - [OpenAI Site tools and Agent Optimization](docs/AGENT_OPTIMIZATION.md)
+- [Static-file numbered-copy housekeeping](docs/STATIC_FILE_HOUSEKEEPING.md)
 - [Third-party notices](docs/THIRD_PARTY_NOTICES.md)
 - [Engineering and test contract](docs/AGENTS.md)
 - [Test coverage map](docs/TEST_COVERAGE.md)

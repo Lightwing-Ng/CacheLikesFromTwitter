@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.23.1-codex.2
+Code version: v1.24.0-codex.1
 """
 
 from __future__ import annotations
@@ -1415,6 +1415,12 @@ def test_overlay_sidebar_is_touch_safe_across_phone_and_ipad_portraits(
                 return {height: rect.height, left: rect.left, top: rect.top, width: rect.width};
             }"""
         )
+        closed_theme_geometry = page.locator("#global_theme_toggle").evaluate(
+            """theme => {
+                const rect = theme.getBoundingClientRect();
+                return {top: rect.top, right: rect.right};
+            }"""
+        )
         assert closed_geometry["width"] >= 44, device_name
         assert closed_geometry["height"] >= 44, device_name
         assert closed_geometry["left"] >= 0, device_name
@@ -1430,14 +1436,26 @@ def test_overlay_sidebar_is_touch_safe_across_phone_and_ipad_portraits(
         expect(backdrop).not_to_have_attribute("hidden", "")
         assert sidebar.evaluate("element => getComputedStyle(element).pointerEvents") == "auto"
         _assert_toggle_hit_target(page)
+        page.wait_for_function(
+            """() => {
+                const dock = document.querySelector(".sidebar-dock");
+                if (!(dock instanceof HTMLElement)) return false;
+                const matrix = new DOMMatrix(getComputedStyle(dock).transform);
+                return matrix.a > 0.999 && matrix.d > 0.999
+                    && Number.parseFloat(getComputedStyle(dock).opacity) > 0.999;
+            }"""
+        )
 
         layout = page.evaluate(
             """() => {
                 const toggle = document.querySelector("#sidebar_toggle").getBoundingClientRect();
-                const title = document.querySelector(".sidebar .hero").getBoundingClientRect();
+                const title = document.querySelector(".sidebar .hero h1").getBoundingClientRect();
                 const dock = document.querySelector(".sidebar-dock").getBoundingClientRect();
                 const actions = document.querySelector(".global-quick-actions").getBoundingClientRect();
+                const theme = document.querySelector("#global_theme_toggle").getBoundingClientRect();
                 const sidebar = document.querySelector(".sidebar").getBoundingClientRect();
+                const centerX = rect => rect.left + (rect.width / 2);
+                const centerY = rect => rect.top + (rect.height / 2);
                 const overlaps = (left, right) => !(
                     left.right <= right.left
                     || left.left >= right.right
@@ -1451,6 +1469,16 @@ def test_overlay_sidebar_is_touch_safe_across_phone_and_ipad_portraits(
                     dockOverlapsToggle: overlaps(dock, toggle),
                     actionsOverlapToggle: overlaps(actions, toggle),
                     titleOverlapsToggle: overlaps(title, toggle),
+                    sidebarTopGap: sidebar.top,
+                    sidebarLeftGap: sidebar.left,
+                    sidebarBottomGap: window.innerHeight - sidebar.bottom,
+                    dockCenterDelta: Math.abs(centerX(dock) - centerX(sidebar)),
+                    dockBottomGap: sidebar.bottom - dock.bottom,
+                    toggleRightGap: sidebar.right - toggle.right,
+                    toggleTop: toggle.top,
+                    themeTop: theme.top,
+                    themeRightGap: window.innerWidth - theme.right,
+                    titleCenterDelta: Math.abs(centerY(title) - centerY(toggle)),
                     horizontalOverflow: Math.max(
                         document.documentElement.scrollWidth,
                         document.body.scrollWidth,
@@ -1468,6 +1496,15 @@ def test_overlay_sidebar_is_touch_safe_across_phone_and_ipad_portraits(
         assert not layout["titleOverlapsToggle"], device_name
         assert not layout["horizontalOverflow"], device_name
         assert layout["sidebarInsideViewport"], device_name
+        for key in ("sidebarTopGap", "sidebarLeftGap", "sidebarBottomGap", "dockBottomGap", "toggleRightGap"):
+            assert abs(layout[key] - 10) <= 1, f"{device_name}: {key}={layout[key]}"
+        assert layout["dockCenterDelta"] <= 1, device_name
+        assert abs(layout["toggleTop"] - 20) <= 1, device_name
+        assert abs(layout["themeTop"] - 20) <= 1, device_name
+        assert abs(layout["themeRightGap"] - 20) <= 1, device_name
+        assert layout["titleCenterDelta"] <= 1, device_name
+        assert abs(closed_geometry["top"] - layout["toggleTop"]) <= 1, device_name
+        assert abs(closed_theme_geometry["top"] - layout["themeTop"]) <= 1, device_name
 
         backdrop_hit = page.evaluate(
             """({x, y}) => document.elementFromPoint(x, y)?.id""",

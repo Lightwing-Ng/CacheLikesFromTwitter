@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.46.0-codex.5
+Code version: v3.46.0-codex.6
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ import sys
 import tempfile
 from threading import Event, RLock, Thread, current_thread
 import time
+import traceback
 from typing import Any, Callable
 from urllib.parse import urlencode, urlsplit
 
@@ -626,6 +627,7 @@ class AgentRunSnapshot:
     started_at: str = ""
     finished_at: str = ""
     last_error: str = ""
+    error_traceback: str = ""
     context_file: str = ""
     context_bytes: int = 0
     context_attached: bool = False
@@ -4821,6 +4823,7 @@ class ComputerUseAgentService:
                     else failure_message
                 ),
                 "last_error": str(exc),
+                "error_traceback": traceback.format_exc(),
                 "traditional_handoff_available": handoff_available,
                 "traditional_handoff_opened": handoff_opened,
                 "traditional_handoff_message": handoff_message,
@@ -4837,6 +4840,7 @@ class ComputerUseAgentService:
                     "turn_count": recorded_turn_count,
                     "bodycheck_passed": False,
                     "last_error": "",
+                    "error_traceback": "",
                     "traditional_handoff_available": False,
                     "traditional_handoff_opened": False,
                     "traditional_handoff_message": "",
@@ -5296,6 +5300,50 @@ class _ProviderSessionBinding:
         )
         self.initial_landing_bounce_detected = True
 
+    def _chatgpt_bound_receipt_is_visible(self, current_url: str) -> bool:
+        """Prove that a transient URL mismatch still shows this run's bound turn."""
+        return bool(
+            self.platform == "chatgpt"
+            and self.session_mode in {"new", "project_new"}
+            and self.bound_conversation_url
+            and self.submission_marker
+            and (urlsplit(str(current_url or "")).hostname or "").lower()
+            in CHATGPT_HOSTS
+            and normalize_agent_conversation_url(
+                "chatgpt",
+                self._current_submission_receipt_url(),
+            )
+            == self.bound_conversation_url
+        )
+
+    def _wait_for_bound_chatgpt_session(self) -> bool:
+        """Give one same-tab ChatGPT navigation a bounded time to settle."""
+        wait_for_timeout = getattr(self.page, "wait_for_timeout", None)
+        if self.platform != "chatgpt" or not callable(wait_for_timeout):
+            return False
+        deadline = time.monotonic() + PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
+        while True:
+            tab_id, settled_url, _title = _provider_tab_identity(self.page)
+            if tab_id != self.expected_tab_id:
+                raise RuntimeError(
+                    "The selected provider tab identity changed before the controller transfer completed."
+                )
+            if _web_target_is_open(
+                self.platform,
+                self.bound_conversation_url,
+                settled_url,
+            ):
+                return True
+            if self._initial_chatgpt_landing_recovery_allowed(settled_url):
+                self._record_initial_chatgpt_landing_bounce()
+                return True
+            if self._chatgpt_bound_receipt_is_visible(settled_url):
+                self._record_initial_chatgpt_landing_bounce()
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            wait_for_timeout(PROVIDER_SESSION_BIND_POLL_MILLISECONDS)
+
     def _chatgpt_receipt_landing_race_allowed(
         self,
         receipt_url: str,
@@ -5456,9 +5504,20 @@ class _ProviderSessionBinding:
                 self.bound_conversation_url,
                 current_url,
             ):
-                if self._initial_chatgpt_landing_recovery_allowed(current_url):
+                if (
+                    self._initial_chatgpt_landing_recovery_allowed(current_url)
+                    or self._chatgpt_bound_receipt_is_visible(current_url)
+                    or self._wait_for_bound_chatgpt_session()
+                ):
                     self._record_initial_chatgpt_landing_bounce()
                     return self.bound_conversation_url
+                LOGGER.warning(
+                    "event=chatgpt_session_binding_rejected session_mode=%s expected_url=%s current_url=%s initial_transition_confirmed=%s",
+                    self.session_mode,
+                    self.bound_conversation_url,
+                    current_url,
+                    self.initial_transition_confirmed,
+                )
                 raise RuntimeError(
                     "The selected provider tab navigated away from the newly created session."
                 )
@@ -5547,7 +5606,10 @@ class _ProviderSessionBinding:
         if not (
             self.platform == "chatgpt"
             and self.session_mode in {"new", "project_new"}
-            and not self.initial_transition_confirmed
+            and (
+                not self.initial_transition_confirmed
+                or self.initial_landing_bounce_detected
+            )
         ):
             return conversation
 
@@ -5558,7 +5620,7 @@ class _ProviderSessionBinding:
         )
         if not recovery_needed:
             return conversation
-        if self._initial_chatgpt_landing_recovery_allowed(current_url):
+        if self._chatgpt_initial_bounce_target_is_open(current_url):
             if self.initial_landing_recovery_attempted:
                 raise RuntimeError(
                     "ChatGPT repeatedly returned the fresh conversation to its landing page."
