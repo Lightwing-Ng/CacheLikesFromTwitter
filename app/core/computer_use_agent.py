@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.46.0-codex.6
+Code version: v3.47.0-codex.1
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import tempfile
 from threading import Event, RLock, Thread, current_thread
 import time
 import traceback
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import urlencode, urlsplit
 
 from .agent_session_sources import (
@@ -57,9 +57,26 @@ from .grok_history import _grok_api_json
 from .safari_automation import SafariContext
 from .state import utc_now
 
+if TYPE_CHECKING:
+    from .agent.event_chain import AgentEventChain
+
 
 LOGGER = logging.getLogger(__name__)
 _SUBPROCESS_POPEN_TYPE = subprocess.Popen
+
+
+def _registered_action_capability(action_name: str):
+    """Resolve an Agent Action lazily to avoid coupling the core module to its facade package."""
+    from .agent.capability_registry import capability_for_action
+
+    return capability_for_action(action_name)
+
+
+def _registered_page_observation(observation_name: str):
+    """Resolve a page observation lazily to avoid an import cycle during module loading."""
+    from .agent.capability_registry import capability_for_observation
+
+    return capability_for_observation(observation_name)
 CHATGPT_HOME_URL = "https://chatgpt.com/"
 CHATGPT_HOSTS = {"chatgpt.com", "www.chatgpt.com"}
 GEMINI_HOME_URL = "https://gemini.google.com/app"
@@ -99,6 +116,7 @@ MAX_BASE64_DECODED_BYTES = MAX_FILE_READ_CHARS
 BROWSER_INTERRUPTION_TIMEOUT_SECONDS = 300
 BROWSER_INTERRUPTION_POLL_SECONDS = 1.0
 HUMAN_VERIFICATION_REASON_PREFIX = "Human verification required: "
+SCREEN_LOCK_INTERRUPTION_REASON = "The screen is locked."
 AGENT_EXIT_WORKER_JOIN_SECONDS = 8.0
 MAX_AGENT_SESSION_HISTORY = 100
 PERSISTED_AGENT_SNAPSHOT_FILENAME = "last-run.json"
@@ -647,6 +665,12 @@ class AgentRunSnapshot:
     traditional_handoff_available: bool = False
     traditional_handoff_opened: bool = False
     traditional_handoff_message: str = ""
+    run_id: str = ""
+    last_action_id: str = ""
+    event_count: int = 0
+    event_chain_state: str = "idle"
+    last_event_kind: str = ""
+    verification_passed: bool = False
 
 
 @dataclass(slots=True)
@@ -2527,6 +2551,13 @@ class WorkspaceController:
         if self.should_stop():
             return {"ok": False, "stopped": True, "error": "Stop requested."}
         action = str(payload.get("action") or "").strip().lower()
+        registered_capability = _registered_action_capability(action)
+        if registered_capability is None:
+            return {
+                "ok": False,
+                "action": action,
+                "error": f"Unsupported controller action: {action or '[missing]'}",
+            }
         if self.read_only and action not in {"list", "read", "search", "bodycheck"}:
             return {
                 "ok": False,
@@ -2546,7 +2577,11 @@ class WorkspaceController:
         }
         handler = handlers.get(action)
         if handler is None:
-            return {"ok": False, "error": f"Unsupported controller action: {action or '[missing]'}"}
+            return {
+                "ok": False,
+                "action": action,
+                "error": f"Registered action has no controller handler: {action}",
+            }
         try:
             return handler(payload)
         except (OSError, RuntimeError, ValueError) as exc:
@@ -4164,6 +4199,9 @@ class ComputerUseAgentService:
         self._browser_opener = browser_opener or open_agent_in_browser
         self._lock = RLock()
         self._snapshot = self._load_persisted_snapshot()
+        from .agent.event_chain import event_chain_for_snapshot
+
+        self._event_chain = event_chain_for_snapshot(self._runtime_root, self._snapshot.run_id)
         self._stop_requested = _LinearizedStopSignal()
         self._resume_requested = Event()
         self._worker: Thread | None = None
@@ -4193,6 +4231,15 @@ class ComputerUseAgentService:
             )
         if self._snapshot.phase == "interrupted":
             with self._lock:
+                if self._event_chain is not None:
+                    if not self._event_chain.has_terminal_event():
+                        self._event_chain.terminal(
+                            "run.interrupted",
+                            status="interrupted",
+                            detail="Previous Agent worker ended before recording a final result.",
+                            action_id=self._snapshot.last_action_id,
+                        )
+                self._sync_event_chain_summary_locked()
                 self._persist_snapshot_locked()
 
     def _load_persisted_snapshot(self) -> AgentRunSnapshot:
@@ -4252,6 +4299,12 @@ class ComputerUseAgentService:
             "context_attached",
             "context_file",
             "context_bytes",
+            "run_id",
+            "last_action_id",
+            "event_count",
+            "event_chain_state",
+            "last_event_kind",
+            "verification_passed",
         )
         payload = {
             field_name: getattr(self._snapshot, field_name) for field_name in fields
@@ -4276,9 +4329,36 @@ class ComputerUseAgentService:
         except OSError as exc:
             LOGGER.warning("Could not persist bounded Agent run metadata: %s", exc)
 
+    def _sync_event_chain_summary_locked(self) -> None:
+        """Copy bounded event-chain health into the persisted run snapshot."""
+        if self._event_chain is None:
+            self._snapshot.event_count = 0
+            self._snapshot.event_chain_state = "idle"
+            self._snapshot.last_event_kind = ""
+            return
+        summary = self._event_chain.summary()
+        self._snapshot.event_count = int(summary.get("count") or 0)
+        self._snapshot.event_chain_state = str(summary.get("state") or "ready")
+        self._snapshot.last_event_kind = str(
+            (summary.get("last_event") or {}).get("kind") or ""
+        )
+
     def snapshot(self) -> dict[str, Any]:
         with self._lock:
-            return asdict(self._snapshot)
+            payload = asdict(self._snapshot)
+            payload["event_chain"] = (
+                self._event_chain.summary()
+                if self._event_chain is not None
+                else {
+                    "version": "1.0.0",
+                    "run_id": "",
+                    "count": 0,
+                    "state": "idle",
+                    "error": "",
+                    "last_event": None,
+                }
+            )
+            return payload
 
     def _require_resolved_context_cleanup_locked(self) -> None:
         """Retry one recorded cleanup and block a new run while context remains."""
@@ -4435,6 +4515,8 @@ class ComputerUseAgentService:
                 or self._conversation_titles.get(history_key, "")
                 or clean_prompt
             )
+            from .agent.event_chain import AgentEventChain, new_run_id
+
             self._snapshot = AgentRunSnapshot(
                 running=True,
                 phase="starting",
@@ -4454,7 +4536,26 @@ class ComputerUseAgentService:
                 platform=settings.platform,
                 browser=settings.browser,
                 model=settings.model,
+                run_id=new_run_id(),
             )
+            self._event_chain = AgentEventChain(self._runtime_root, self._snapshot.run_id)
+            started_event = self._event_chain.start(
+                data={
+                    "platform": settings.platform,
+                    "browser": settings.browser,
+                    "session_mode": normalized_session_mode,
+                }
+            )
+            if started_event is None:
+                self._snapshot.running = False
+                self._snapshot.phase = "failed"
+                self._snapshot.message = "The Agent event chain could not be initialized safely."
+                self._snapshot.last_error = "The Agent event chain could not be initialized safely."
+                self._snapshot.finished_at = utc_now()
+                self._sync_event_chain_summary_locked()
+                self._persist_snapshot_locked()
+                raise RuntimeError(self._snapshot.message)
+            self._sync_event_chain_summary_locked()
             self._persist_snapshot_locked()
             self._worker = Thread(
                 target=self._run,
@@ -4480,6 +4581,14 @@ class ComputerUseAgentService:
                 self._snapshot.last_error = str(exc)
                 self._snapshot.finished_at = utc_now()
                 self._snapshot.running = False
+                if self._event_chain is not None:
+                    self._event_chain.terminal(
+                        "run.failed",
+                        status="failed",
+                        detail="Agent worker could not be started.",
+                        action_id=self._snapshot.last_action_id,
+                    )
+                    self._sync_event_chain_summary_locked()
                 self._persist_snapshot_locked()
                 raise
 
@@ -4507,8 +4616,239 @@ class ComputerUseAgentService:
             self._snapshot.message = (
                 "Resume requested. Continuing the current Web Agent turn."
             )
+            if self._event_chain is not None:
+                self._event_chain.recovery(
+                    "resume",
+                    status="requested",
+                    detail="Resume was requested for the paused Agent turn.",
+                )
+                self._sync_event_chain_summary_locked()
             self._persist_snapshot_locked()
             return True
+
+    def doctor(self) -> dict[str, Any]:
+        """Diagnose the current Agent lifecycle and expose safe recovery actions."""
+        with self._lock:
+            snapshot = asdict(self._snapshot)
+            chain = (
+                self._event_chain.summary()
+                if self._event_chain is not None
+                else {
+                    "version": "1.0.0",
+                    "run_id": "",
+                    "count": 0,
+                    "state": "idle",
+                    "error": "",
+                    "last_event": None,
+                }
+            )
+            checks: list[dict[str, Any]] = []
+
+            phase = str(snapshot.get("phase") or "idle")
+            if snapshot.get("running") and snapshot.get("paused"):
+                run_status = "warn"
+                run_detail = "The current Agent turn is paused and can be resumed without resubmitting it."
+            elif snapshot.get("running"):
+                run_status = "pass"
+                run_detail = "The Agent worker is running."
+            elif phase in {"failed", "interrupted"}:
+                run_status = "warn"
+                run_detail = str(snapshot.get("message") or "The previous Agent run needs attention.")[:500]
+            else:
+                run_status = "pass"
+                run_detail = "No Agent worker is currently running."
+            checks.append(
+                {
+                    "id": "run_lifecycle",
+                    "label": "Run lifecycle",
+                    "status": run_status,
+                    "detail": run_detail,
+                }
+            )
+
+            chain_count = int(chain.get("count") or 0)
+            chain_state = str(chain.get("state") or "idle")
+            if not snapshot.get("run_id"):
+                chain_status = "pass"
+                chain_detail = "No run is active, so there is no pending event chain."
+            elif chain_state == "invalid":
+                chain_status = "fail"
+                chain_detail = "The persisted event chain failed its integrity check."
+            elif chain_state == "degraded":
+                chain_status = "warn"
+                chain_detail = "The event chain is available in memory but could not be fully persisted."
+            elif chain_count == 0:
+                chain_status = "warn"
+                chain_detail = "A run id exists but its event root is missing."
+            else:
+                chain_status = "pass"
+                chain_detail = f"{chain_count:,} ordered event(s) are linked to this run."
+            checks.append(
+                {
+                    "id": "event_chain",
+                    "label": "Internal event chain",
+                    "status": chain_status,
+                    "detail": chain_detail,
+                    "run_id": str(snapshot.get("run_id") or ""),
+                    "count": chain_count,
+                    "last_event": chain.get("last_event"),
+                }
+            )
+
+            verification_applicable = bool(snapshot.get("run_id"))
+            verification_passed = bool(snapshot.get("verification_passed"))
+            bodycheck_passed = bool(snapshot.get("bodycheck_passed"))
+            checks.append(
+                {
+                    "id": "verification",
+                    "label": "Latest verification",
+                    "status": (
+                        "pass"
+                        if verification_passed
+                        else "warn"
+                        if verification_applicable
+                        else "info"
+                    ),
+                    "detail": (
+                        "The latest approved verification is current."
+                        if verification_passed
+                        else "Not applicable until an Agent run starts."
+                        if not verification_applicable
+                        else "No current approved verification is recorded after the latest edit."
+                    ),
+                }
+            )
+            checks.append(
+                {
+                    "id": "bodycheck",
+                    "label": "Latest bodycheck",
+                    "status": (
+                        "pass"
+                        if bodycheck_passed
+                        else "warn"
+                        if verification_applicable
+                        else "info"
+                    ),
+                    "detail": (
+                        "The latest bodycheck is current."
+                        if bodycheck_passed
+                        else "Not applicable until an Agent run starts."
+                        if not verification_applicable
+                        else "Bodycheck is pending or stale after the latest workspace change."
+                    ),
+                }
+            )
+
+            context_file = str(snapshot.get("context_file") or "").strip()
+            if snapshot.get("running") and context_file:
+                context_status = "pass"
+                context_detail = "The temporary context belongs to the active Agent run."
+            elif not context_file:
+                context_status = "pass"
+                context_detail = "No temporary context cleanup is pending."
+            else:
+                try:
+                    context_exists = Path(context_file).expanduser().is_file()
+                except OSError:
+                    context_exists = False
+                context_status = "warn"
+                context_detail = (
+                    "A temporary context file still needs cleanup."
+                    if context_exists
+                    else "The cleanup record points to an absent context file and needs reconciliation."
+                )
+            checks.append(
+                {
+                    "id": "context_cleanup",
+                    "label": "Temporary context cleanup",
+                    "status": context_status,
+                    "detail": context_detail,
+                }
+            )
+
+            action_list = [
+                {
+                    "id": "resume",
+                    "label": "Resume current turn",
+                    "description": "Continue a paused browser turn without submitting it again.",
+                    "enabled": bool(snapshot.get("running") and snapshot.get("paused")),
+                },
+                {
+                    "id": "cleanup_context",
+                    "label": "Clean up temporary context",
+                    "description": "Reconcile the app-owned context file before starting another run.",
+                    "enabled": bool(not snapshot.get("running") and context_file),
+                },
+                {
+                    "id": "open_conversation",
+                    "label": "Open provider conversation",
+                    "description": "Open the recorded conversation target for manual continuation.",
+                    "enabled": bool(snapshot.get("conversation_url")),
+                    "ui_only": True,
+                },
+                {
+                    "id": "new_task",
+                    "label": "Start a new task",
+                    "description": "Return to the composer with the existing project selection.",
+                    "enabled": not bool(snapshot.get("running")),
+                    "ui_only": True,
+                },
+            ]
+            status = (
+                "blocked"
+                if any(check["status"] == "fail" for check in checks)
+                else "attention"
+                if any(check["status"] == "warn" for check in checks)
+                else "healthy"
+            )
+            return {
+                "version": "1.0.0",
+                "status": status,
+                "summary": (
+                    "Agent diagnostics are healthy."
+                    if status == "healthy"
+                    else "Agent diagnostics found recovery work to review."
+                    if status == "attention"
+                    else "Agent diagnostics found an invalid persisted state."
+                ),
+                "run_id": str(snapshot.get("run_id") or ""),
+                "phase": phase,
+                "checks": checks,
+                "actions": action_list,
+                "events": (
+                    self._event_chain.public_events()
+                    if self._event_chain is not None
+                    else []
+                ),
+            }
+
+    def recover(self, action: str) -> dict[str, Any]:
+        """Perform one explicit, local, recoverable doctor action."""
+        normalized_action = str(action or "").strip().lower()
+        if normalized_action == "resume":
+            accepted = self.request_resume()
+            if not accepted:
+                raise RuntimeError("The Agent has no paused turn to resume.")
+            return {"action": normalized_action, "ok": True, "message": "Resume requested."}
+        if normalized_action != "cleanup_context":
+            raise ValueError("Choose a supported Agent doctor recovery action.")
+        with self._lock:
+            if self._snapshot.running:
+                raise RuntimeError("Stop the running Agent turn before cleaning its context.")
+            self._require_resolved_context_cleanup_locked()
+            if self._event_chain is not None:
+                self._event_chain.recovery(
+                    normalized_action,
+                    status="completed",
+                    detail="Temporary Agent context cleanup completed.",
+                )
+                self._sync_event_chain_summary_locked()
+            self._persist_snapshot_locked()
+            return {
+                "action": normalized_action,
+                "ok": True,
+                "message": "Temporary Agent context cleanup completed.",
+            }
 
     def _consume_resume(self) -> bool:
         """Return True once for each Resume click without leaving a sticky event."""
@@ -4660,6 +5000,32 @@ class ComputerUseAgentService:
                     if part
                 )
             self._snapshot.running = False
+            if self._event_chain is not None:
+                terminal_kind = (
+                    "run.failed"
+                    if self._snapshot.phase == "failed"
+                    else "run.completed"
+                )
+                terminal_status = (
+                    "failed"
+                    if terminal_kind == "run.failed"
+                    else self._snapshot.phase or "completed"
+                )
+                self._event_chain.terminal(
+                    terminal_kind,
+                    status=terminal_status,
+                    detail=(
+                        "Agent run failed after bounded cleanup."
+                        if terminal_kind == "run.failed"
+                        else "Agent run completed its local lifecycle."
+                    ),
+                    action_id=self._snapshot.last_action_id,
+                    data={
+                        "bodycheck_passed": self._snapshot.bodycheck_passed,
+                        "verification_passed": self._snapshot.verification_passed,
+                    },
+                )
+                self._sync_event_chain_summary_locked()
             self._persist_snapshot_locked()
 
     def _run(
@@ -4723,6 +5089,7 @@ class ComputerUseAgentService:
                     should_resume=self._consume_resume,
                     update=self._update,
                     process_changed=self._set_active_process,
+                    event_chain=self._event_chain,
                 )
             with self._lock:
                 self._completion_started = True
@@ -4861,6 +5228,7 @@ class ComputerUseAgentService:
             for key, value in changes.items():
                 if hasattr(self._snapshot, key):
                     setattr(self._snapshot, key, value)
+            self._sync_event_chain_summary_locked()
             self._persist_snapshot_locked()
 
 
@@ -4879,6 +5247,7 @@ def run_web_computer_use(
     session_title: str = "",
     read_only: bool = False,
     should_resume: Callable[[], bool] | None = None,
+    event_chain: AgentEventChain | None = None,
 ) -> tuple[str, str, int, bool]:
     """Run one selected Web AI session as a local controller action loop."""
     descriptor = browser_descriptors(config)[settings.browser]
@@ -4928,6 +5297,7 @@ def run_web_computer_use(
                 should_stop=should_stop,
                 should_resume=should_resume,
                 update=update,
+                event_chain=event_chain,
             )
 
     with sync_playwright_or_error() as playwright:
@@ -4968,6 +5338,7 @@ def run_web_computer_use(
                 should_stop=should_stop,
                 should_resume=should_resume,
                 update=update,
+                event_chain=event_chain,
             )
 
 
@@ -5760,6 +6131,11 @@ def _macos_screen_is_locked() -> bool | None:
     return None
 
 
+def _is_screen_lock_interruption(reason: str) -> bool:
+    """Return whether an interruption is caused by the macOS lock screen."""
+    return str(reason or "").strip() == SCREEN_LOCK_INTERRUPTION_REASON
+
+
 def _provider_human_verification_reason(page: Any, platform: str) -> str:
     """Return a structured human-verification reason without scanning live chat text alone."""
     if platform not in {"gemini", "grok"}:
@@ -6073,10 +6449,12 @@ def _wait_for_browser_recovery(
         phase="paused",
         message=initial_message,
     )
-    deadline = time.monotonic() + BROWSER_INTERRUPTION_TIMEOUT_SECONDS
+    deadline = None
+    if not _is_screen_lock_interruption(reason):
+        deadline = time.monotonic() + BROWSER_INTERRUPTION_TIMEOUT_SECONDS
     result = "timeout"
     try:
-        while time.monotonic() < deadline:
+        while deadline is None or time.monotonic() < deadline:
             if should_stop():
                 result = "stopped"
                 break
@@ -6173,6 +6551,7 @@ def _run_web_action_loop(
     update: Callable[..., None],
     platform: str = DEFAULT_AGENT_PLATFORM,
     should_resume: Callable[[], bool] | None = None,
+    event_chain: AgentEventChain | None = None,
 ) -> tuple[str, str, int, bool]:
     """Exchange JSON actions and compact observations in one Web AI conversation."""
     session_binding = _ProviderSessionBinding(
@@ -6181,6 +6560,27 @@ def _run_web_action_loop(
         selected_target_url,
         session_mode,
     )
+    if event_chain is not None and event_chain.summary()["count"] == 0:
+        event_chain.start()
+
+    def record_page_observation(
+        observation_name: str,
+        *,
+        status: str = "observed",
+        detail: str = "Bounded provider page observation recorded.",
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        if event_chain is None:
+            return
+        capability = _registered_page_observation(observation_name)
+        if capability is None:
+            return
+        event_chain.page_observation(
+            capability.key,
+            status=status,
+            detail=detail,
+            data=data,
+        )
 
     def provider_availability_check() -> tuple[bool, float]:
         if should_stop():
@@ -6493,6 +6893,12 @@ def _run_web_action_loop(
         )
         if interrupted:
             LOGGER.info("Browser interrupted: %s. Waiting for recovery.", interrupt_reason)
+            record_page_observation(
+                "browser_interruption",
+                status="paused",
+                detail="Provider browser interruption observed before the next action.",
+                data={"reason": interrupt_reason},
+            )
             wait_result = _wait_for_browser_recovery(
                 page=page,
                 expected_url=interruption_target_url,
@@ -6519,7 +6925,16 @@ def _run_web_action_loop(
                     f"Browser did not recover after interruption: {interrupt_reason}"
                 )
             LOGGER.info("Browser recovered from interruption without duplicating a submit.")
+            record_page_observation(
+                "browser_interruption",
+                status="recovered",
+                detail="Provider browser interruption recovered without duplicating the submit.",
+            )
 
+        record_page_observation(
+            "provider_turn",
+            data={"turn": turn_index + 1},
+        )
         try:
             action = parse_agent_action(response)
         except ValueError as exc:
@@ -6542,6 +6957,12 @@ def _run_web_action_loop(
                 invalid_action_retries,
                 len(str(response or "")),
                 response_hash,
+            )
+            record_page_observation(
+                "provider_turn",
+                status="invalid",
+                detail="Provider turn was rejected by the strict action parser.",
+                data={"turn": turn_index + 1, "retry": invalid_action_retries},
             )
             if response_hash == last_failure_hash:
                 consecutive_failure_count += 1
@@ -6616,6 +7037,23 @@ def _run_web_action_loop(
         consecutive_failure_count = 0
         turn_index += 1
         action_name = str(action.get("action") or "").strip().lower()
+        action_capability = _registered_action_capability(action_name)
+        action_capability_key = action_capability.key if action_capability is not None else ""
+        action_id = ""
+        if action_capability is None:
+            record_page_observation(
+                "provider_turn",
+                status="invalid",
+                detail="Provider requested an Agent Action outside the capability registry.",
+                data={"turn": turn_index, "action": action_name or "unknown"},
+            )
+        elif event_chain is not None:
+            action_id, _action_event = event_chain.begin_action(
+                action_capability_key,
+                turn=turn_index,
+                action_name=action_name or "unknown",
+            )
+            update(last_action_id=action_id)
         if action_name == "final":
             final_blocker = ""
             if (
@@ -6631,6 +7069,14 @@ def _run_web_action_loop(
                     "Final is blocked until bodycheck succeeds after the latest edit."
                 )
             if final_blocker:
+                if event_chain is not None and action_id:
+                    event_chain.observation(
+                        action_id,
+                        action_capability_key,
+                        {"ok": False, "action": "final", "error": final_blocker},
+                        status="blocked",
+                        detail="Final action was blocked by the current verification gates.",
+                    )
                 response = _submit_and_wait(
                     page,
                     browser_kind,
@@ -6662,6 +7108,14 @@ def _run_web_action_loop(
                 else not should_stop()
             )
             if not completion_claimed:
+                if event_chain is not None and action_id:
+                    event_chain.observation(
+                        action_id,
+                        action_capability_key,
+                        {"ok": False, "action": "final", "stopped": True},
+                        status="stopped",
+                        detail="Final action was not published because Stop won the completion gate.",
+                    )
                 _stop_web_generation(page, browser_kind)
                 return (
                     "",
@@ -6673,7 +7127,35 @@ def _run_web_action_loop(
                     turn_index - 1,
                     controller.state.bodycheck_current,
                 )
-            final_response = _render_final_action(action)
+            try:
+                final_response = _render_final_action(action)
+            except Exception as exc:
+                if event_chain is not None and action_id:
+                    event_chain.observation(
+                        action_id,
+                        action_capability_key,
+                        {
+                            "ok": False,
+                            "action": "final",
+                            "error_type": type(exc).__name__,
+                        },
+                        status="failed",
+                        detail="Final action rendering failed before publication.",
+                    )
+                raise
+            if event_chain is not None and action_id:
+                event_chain.observation(
+                    action_id,
+                    action_capability_key,
+                    {
+                        "ok": True,
+                        "action": "final",
+                        "bodycheck_current": controller.state.bodycheck_current,
+                        "verification_current": controller.state.verification_current,
+                    },
+                    status="accepted",
+                    detail="Final action passed the current verification gates.",
+                )
             conversation_url = _current_agent_conversation_url(
                 page, platform, conversation_url
             )
@@ -6706,8 +7188,42 @@ def _run_web_action_loop(
             conversation_url=conversation_url,
             turn_count=turn_index,
         )
-        observation = controller.execute(action)
+        try:
+            observation = controller.execute(action)
+        except Exception as exc:
+            if event_chain is not None and action_id:
+                event_chain.observation(
+                    action_id,
+                    action_capability_key,
+                    {
+                        "ok": False,
+                        "action": action_name,
+                        "error_type": type(exc).__name__,
+                    },
+                    status="failed",
+                    detail="Controller action raised before returning an observation.",
+                )
+            raise
         activity[-1]["status"] = "completed" if observation.get("ok") else "failed"
+        if event_chain is not None and action_id:
+            event_chain.observation(
+                action_id,
+                action_capability_key,
+                observation,
+            )
+            if action_name == "run":
+                event_chain.verification(
+                    action_id,
+                    action_capability_key,
+                    observation,
+                    detail="Approved verification command result recorded.",
+                )
+            elif action_name == "bodycheck":
+                event_chain.bodycheck(
+                    action_id,
+                    action_capability_key,
+                    observation,
+                )
         update(
             activity=activity,
             message=(
@@ -6716,6 +7232,7 @@ def _run_web_action_loop(
                 else f"Local {action_name} action returned a bounded error."
             ),
             bodycheck_passed=controller.state.bodycheck_current,
+            verification_passed=controller.state.verification_current,
         )
         if observation.get("stopped"):
             return "", conversation_url, turn_index, controller.state.bodycheck_current

@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.46.0-codex.6
+Code version: v3.47.0-codex.1
 """
 
 from __future__ import annotations
@@ -9074,7 +9074,11 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
         "context_attached",
         "context_bytes",
         "context_file",
+        "event_chain_state",
+        "event_count",
         "finished_at",
+        "last_action_id",
+        "last_event_kind",
         "message",
         "model",
         "model_verified",
@@ -9082,10 +9086,12 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
         "platform",
         "project_url",
         "running",
+        "run_id",
         "session_mode",
         "session_title",
         "started_at",
         "turn_count",
+        "verification_passed",
     }
     assert payload["context_attached"] is context_attached
     assert Path(payload["context_file"]).name == "context.md"
@@ -11578,6 +11584,51 @@ def test_grok_new_conversation_title_change_does_not_block_recovery(
         expected_tab_id="grok-tab",
         expected_title="Grok",
     ) == (False, "")
+
+
+def test_screen_lock_recovery_does_not_expire_after_five_minutes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    interruptions = iter(
+        (
+            (True, "The screen is locked."),
+            (False, ""),
+        )
+    )
+    monotonic_values = iter((0.0, 301.0))
+    updates: list[dict[str, object]] = []
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_detect_browser_interruption",
+        lambda *_args, **_kwargs: next(interruptions),
+    )
+    monkeypatch.setattr(
+        computer_use_agent.time,
+        "monotonic",
+        lambda: next(monotonic_values),
+    )
+    monkeypatch.setattr(computer_use_agent.time, "sleep", lambda _seconds: None)
+
+    result = _wait_for_browser_recovery(
+        page=object(),
+        expected_url="https://chatgpt.com/c/session",
+        browser_kind="edge",
+        platform="chatgpt",
+        session_mode="recent",
+        expected_tab_id="tab-1",
+        expected_title="Task",
+        should_stop=lambda: False,
+        should_resume=None,
+        update=lambda **changes: updates.append(changes),
+        reason="The screen is locked.",
+    )
+
+    assert result == "recovered"
+    assert any(update.get("phase") == "paused" for update in updates)
+    assert any(update.get("phase") == "running" for update in updates)
 
 
 def test_human_verification_waits_for_clear_state_and_resume(

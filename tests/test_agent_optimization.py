@@ -1,6 +1,6 @@
 """Rendered-page contracts for OpenAI Site tools and Agent Optimization.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -49,6 +49,15 @@ def test_primary_pages_publish_one_versioned_top_level_site_tools_adapter(
         assert manifest["contractVersion"] == "1.0.0"
         assert manifest["status"] == "project-convention"
         assert manifest["site"]["id"] == "cache-likes-from-twitter"
+        assert {item["id"] for item in manifest["capabilities"]} == {
+            "cache_review",
+            "local_resources",
+            "agent_workspace",
+            "configuration",
+            "agent_actions",
+            "page_observation",
+            "webmcp_tools",
+        }
 
 
 def test_manifest_has_bounded_navigation_and_no_mutating_or_recursive_tools(
@@ -82,6 +91,7 @@ def test_manifest_and_runtime_are_centralized_and_unlock_page_stays_excluded() -
     ).read_text(encoding="utf-8")
 
     assert adapter_source.count('id="agent_optimization_manifest"') == 1
+    assert "build_agent_optimization_manifest" in adapter_source
     assert "modelContext" in runtime_source
     assert "registerTool" in runtime_source
     assert "window.top" not in runtime_source

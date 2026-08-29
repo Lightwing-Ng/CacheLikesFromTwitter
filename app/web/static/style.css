@@ -1,4 +1,4 @@
-/* Code version: v2.87.0-codex.2 */
+/* Code version: v2.88.0-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -3428,6 +3428,103 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
+}
+
+.agent-doctor-panel {
+    margin-top: 12px;
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-soft);
+    background: var(--glass-surface-background-soft);
+    overflow: hidden;
+}
+
+.agent-doctor-panel > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    min-height: 40px;
+    padding: 0 12px;
+    color: var(--text);
+    font-size: var(--font-table-body);
+    cursor: pointer;
+    list-style: none;
+}
+
+.agent-doctor-panel > summary::-webkit-details-marker {
+    display: none;
+}
+
+.agent-doctor-status {
+    color: var(--theme-warning-text);
+    font-size: var(--font-ui-sm);
+}
+
+.agent-doctor-panel[data-status="blocked"] .agent-doctor-status {
+    color: var(--theme-error-strong);
+}
+
+.agent-doctor-content {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+    border-top: var(--frosted-glass-border);
+}
+
+.agent-doctor-summary {
+    margin: 0;
+    color: var(--muted);
+    font-size: var(--font-ui-sm);
+    line-height: 1.45;
+}
+
+.agent-doctor-checks {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+    padding-left: 20px;
+    color: var(--muted);
+    font-size: var(--font-ui-sm);
+}
+
+.agent-doctor-checks li {
+    display: grid;
+    gap: 2px;
+    padding-left: 2px;
+    line-height: 1.4;
+}
+
+.agent-doctor-checks li strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+.agent-doctor-checks li[data-status="pass"] strong {
+    color: var(--theme-success-strong);
+}
+
+.agent-doctor-checks li[data-status="warn"],
+.agent-doctor-checks li[data-status="info"] {
+    color: var(--muted);
+}
+
+.agent-doctor-checks li[data-status="warn"] strong,
+.agent-doctor-checks li[data-status="info"] strong {
+    color: var(--theme-warning-text);
+}
+
+.agent-doctor-checks li[data-status="fail"] strong {
+    color: var(--theme-error-strong);
+}
+
+.agent-doctor-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.agent-doctor-action {
+    min-height: 36px;
 }
 
 .agent-runtime-form a,

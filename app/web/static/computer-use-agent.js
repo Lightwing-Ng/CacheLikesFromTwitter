@@ -1,4 +1,4 @@
-/* Code version: v3.22.0-codex.2 */
+/* Code version: v3.23.0-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -14,6 +14,11 @@
         statusSpinner: document.querySelector("[data-agent-session-history-spinner]"),
         errorRecord: document.getElementById("agent_error_record"),
         errorRecordContent: document.querySelector("[data-agent-error-record-content]"),
+        doctorPanel: document.getElementById("agent_doctor_panel"),
+        doctorStatus: document.getElementById("agent_doctor_status"),
+        doctorSummary: document.getElementById("agent_doctor_summary"),
+        doctorChecks: document.getElementById("agent_doctor_checks"),
+        doctorActions: document.getElementById("agent_doctor_actions"),
         responseOutput: document.getElementById("agent_response_output"),
         responseQuestion: document.querySelector("[data-agent-response-question]"),
         responseAnswer: document.querySelector("[data-agent-response-answer]"),
@@ -91,6 +96,9 @@
     let remoteSessionHistoryLoading = false;
     let remoteSessionHistoryError = "";
     let remoteSessionHistoryRequestId = 0;
+    let doctorPayload = null;
+    let doctorLoading = false;
+    let doctorRequestId = 0;
     let agentPaginationRangeCloseTimer = 0;
     let agentPaginationRangeEventsBound = false;
     let agentPaginationRangePinnedPicker = null;
@@ -1195,6 +1203,86 @@
         elements.errorRecord.hidden = !errorText;
     }
 
+    function renderDoctor(payload = doctorPayload) {
+        if (!elements.doctorPanel) return;
+        if (!payload) {
+            elements.doctorPanel.hidden = true;
+            return;
+        }
+        const status = String(payload.status || "attention");
+        const statusLabel = status === "healthy"
+            ? "Healthy"
+            : status === "blocked"
+                ? "Blocked"
+                : "Needs attention";
+        elements.doctorPanel.hidden = status === "healthy";
+        elements.doctorPanel.dataset.status = status;
+        if (elements.doctorStatus) elements.doctorStatus.textContent = statusLabel;
+        if (elements.doctorSummary) {
+            elements.doctorSummary.textContent = String(
+                payload.summary || "Agent diagnostics are unavailable.",
+            );
+        }
+        if (elements.doctorChecks) {
+            const checks = Array.isArray(payload.checks) ? payload.checks : [];
+            elements.doctorChecks.replaceChildren(...checks.map((check) => {
+                const item = document.createElement("li");
+                item.dataset.status = String(check.status || "info");
+                const label = document.createElement("strong");
+                label.textContent = String(check.label || "Diagnostic");
+                const detail = document.createElement("span");
+                detail.textContent = String(check.detail || "");
+                item.append(label, detail);
+                return item;
+            }));
+        }
+        if (elements.doctorActions) {
+            const actions = Array.isArray(payload.actions)
+                ? payload.actions.filter((action) => action && action.enabled)
+                : [];
+            elements.doctorActions.replaceChildren(...actions.map((action) => {
+                const button = document.createElement("button");
+                button.type = "button";
+                button.className = "secondary-button agent-doctor-action";
+                button.dataset.agentDoctorAction = String(action.id || "");
+                button.textContent = String(action.label || "Recover");
+                button.title = String(action.description || "");
+                return button;
+            }));
+        }
+        if (status !== "healthy") elements.doctorPanel.open = true;
+    }
+
+    async function loadDoctor() {
+        if (doctorLoading) return;
+        doctorLoading = true;
+        const requestId = ++doctorRequestId;
+        try {
+            const payload = await requestJson("/api/agent/doctor");
+            if (requestId !== doctorRequestId) return;
+            doctorPayload = payload;
+            renderDoctor(payload);
+        } catch (error) {
+            if (requestId !== doctorRequestId) return;
+            doctorPayload = {
+                status: "attention",
+                summary: error.message || "Agent diagnostics could not be loaded.",
+                checks: [],
+                actions: [],
+            };
+            renderDoctor(doctorPayload);
+        } finally {
+            doctorLoading = false;
+        }
+    }
+
+    function agentNeedsDoctor(agent) {
+        return ["failed", "interrupted"].includes(String(agent?.phase || ""))
+            || Boolean(agent?.paused)
+            || ["invalid", "degraded"].includes(String(agent?.event_chain_state || ""))
+            || (Boolean(agent?.context_file) && !agent?.running);
+    }
+
     function normalizePaginationPage(value, fallback = 1) {
         const numericValue = Number(value);
         if (!Number.isFinite(numericValue)) return fallback;
@@ -1647,6 +1735,14 @@
         setChip(elements.phaseChip, agent.phase || "idle", agent.phase || "idle");
         const hasAgentResponse = renderAgentResponse(agent);
         renderErrorRecord(agent);
+        if (agentNeedsDoctor(persistedAgent)) {
+            if (!doctorPayload) loadDoctor();
+            else renderDoctor();
+        } else if (doctorPayload) {
+            doctorPayload = null;
+            doctorRequestId += 1;
+            renderDoctor(null);
+        }
         if (elements.statusMessage) {
             const sessionMessage = remoteSessionHistoryLoading
                 ? "Loading the selected ChatGPT session history…"
@@ -1695,7 +1791,12 @@
 
     async function mutate(url, payload = {}) {
         try {
-            render(await requestJson(url, {method: "POST", body: JSON.stringify(payload)}));
+            const response = await requestJson(url, {
+                method: "POST",
+                body: JSON.stringify(payload),
+            });
+            if (response.doctor) doctorPayload = response.doctor;
+            render(response);
         } catch (error) {
             if (elements.statusMessage) {
                 elements.statusMessage.hidden = false;
@@ -1759,6 +1860,25 @@
                 elements.statusMessage.textContent = error.message;
             }
             setChip(elements.phaseChip, "failed", "failed");
+        });
+    });
+    elements.doctorPanel?.addEventListener("click", (event) => {
+        const target = event.target instanceof Element ? event.target : null;
+        const button = target?.closest("[data-agent-doctor-action]");
+        if (!button) return;
+        const action = button.dataset.agentDoctorAction;
+        if (action === "new_task") {
+            elements.doctorPanel.open = false;
+            elements.promptInput?.focus();
+            return;
+        }
+        if (action === "open_conversation") {
+            elements.conversationLink?.click();
+            return;
+        }
+        button.disabled = true;
+        mutate("/api/agent/doctor/recover", {action}).finally(() => {
+            button.disabled = false;
         });
     });
 

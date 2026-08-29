@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.45.0-codex.4`
+Documentation version: `v3.46.0-codex.1`
 
 ## Purpose
 
@@ -154,6 +154,9 @@ older task cannot be submitted accidentally through a different Web session.
    preserves the outstanding submit, and waits for both the challenge to clear and an explicit
    Resume. Stop remains effective, provider deadlines exclude the paused interval, and the clone's
    prior off-screen or minimized bounds are restored after the pause ends.
+   A detected macOS lock screen is also a recoverable interruption. It remains paused without the
+   ordinary five-minute browser-interruption deadline, so unlocking the Mac can resume the same
+   outstanding turn without resubmitting it. Stop remains effective while the screen is locked.
 5. The service builds one owner-readable Markdown context package containing the request,
    repository instruction files, a bounded file index, dirty-worktree status, and project entry
    files. Credential locations, environment files, cookie stores, and private-key formats are
@@ -253,6 +256,28 @@ older task cannot be submitted accidentally through a different Web session.
    chooses a catalog session; the Open conversation link still targets the finished
    conversation.
 
+## Capability registry, event chain, and Doctor
+
+The Agent Action protocol, page-observation names, WebMCP metadata, and human-page destinations
+are registered in `app/core/agent/capability_registry.py`. `WorkspaceController` rejects any
+action that is not registered before dispatch, and the WebMCP manifest is generated from the same
+registry. The public Site surface still exposes only the bounded discovery, page-context, and
+allowlisted-navigation tools; it does not expose Agent execution or recovery routes.
+
+Every run receives a `run-<hex>` identifier. The service persists an owner-readable JSONL event
+chain at the runtime root under `events/<run_id>.jsonl`. A valid chain starts at `run.started`,
+then links each parsed Action to `action.requested`, its bounded controller observation, and the
+relevant `verification` or `bodycheck` event before one terminal event. Provider/browser state is
+recorded as bounded page observations, while Resume and context cleanup are recorded as recovery
+events. Prompt bodies, provider responses, source text, command text, and page content are removed
+from event payloads; the persisted `last-run.json` keeps only chain health and last-event metadata.
+
+When a run is paused, interrupted, failed, or leaves temporary context cleanup pending, the Agent
+page loads `GET /api/agent/doctor` and opens a Doctor panel with the failed checks and safe actions.
+Resume continues a paused turn without a duplicate submit. Context cleanup reconciles only the
+app-owned temporary bundle. Provider handoff and New task remain explicit UI actions. The recovery
+endpoint never resubmits a provider prompt.
+
 ## Safety boundary
 
 - Every file action and returned observation resolves below the selected project. `.git` and Agent runtime internals are
@@ -328,7 +353,8 @@ older task cannot be submitted accidentally through a different Web session.
   temporary context cleanup path and byte count while a run is active or cleanup recovery is pending. It does not persist prompt
   bodies, responses, conversation history, source text, or error stacks in that snapshot. The
   runtime directory and each task directory are owner-only, and context and snapshot files use mode
-  `0600`. If a persisted run was
+  `0600`. Its run identifier, event-chain state, event count, last action, last event kind, and
+  verification state are also bounded metadata. If a persisted run was
   still marked active when the service exited, the next process restores it as `interrupted`
   instead of claiming that it is still running or completed.
 - The generated context package is task-scoped and is normally deleted after success, stop, or

@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.8.0-codex.1`
+Documentation version: `v1.9.0-codex.1`
 
 ## Runtime flow
 
@@ -88,9 +88,9 @@ transport boundary, while durable cache and state rules stay in core modules.
 ## OpenAI Site tools and Agent Optimization boundary
 
 The top-level human pages include `_agent_optimization.html` through the shared sidebar bootstrap.
-That adapter owns one static, project-convention manifest; the byte-identical shared runtime in
-`app/web/static/agent-optimization.js` validates the manifest and conditionally registers three
-OpenAI Site tools through `document.modelContext.registerTool`.
+The project adapter renders one registry-derived, project-convention manifest; the byte-identical
+shared runtime in `app/web/static/agent-optimization.js` validates the manifest and conditionally
+registers three OpenAI Site tools through `document.modelContext.registerTool`.
 
 The v1 tools expose only bounded capability metadata, bounded current-page metadata, and navigation
 to a manifest-owned same-origin route. They do not read cached records or settings values, invoke a
@@ -101,6 +101,22 @@ absent or the page is inside an iframe, registration is a no-op and the normal U
 The cross-project naming, schema, result envelope, effects, security, evaluation, and promotion
 rules live in `/Users/lightwing/Desktop/SHARED_AGENT_OPTIMIZATION.md`. Project-specific routes and
 evidence live in [AGENT_OPTIMIZATION.md](AGENT_OPTIMIZATION.md).
+
+## Agent capability and recovery boundary
+
+`app/core/agent/capability_registry.py` is the single application registry for Agent Actions,
+bounded page observations, WebMCP tools, and human-page navigation. Core execution resolves
+controller actions and observation names through that registry, while the manifest adapter derives
+only bounded public groups from it. This keeps browser discovery, local controller dispatch, and
+page-observation naming from drifting into separate lists without granting WebMCP direct access to
+the Agent control plane.
+
+`app/core/agent/event_chain.py` owns the durable run-local event chain. The Agent service creates a
+new `run_id`, persists `run.started`, and appends ordered action, observation, verification,
+bodycheck, interruption, recovery, and terminal events. It stores bounded metadata rather than
+prompt, provider response, source, command, or page content. `ComputerUseAgentService.doctor()` and
+the `/api/agent/doctor` routes consume the same chain summary to offer explicit, local recovery
+actions; recovery never retries an external prompt implicitly.
 
 ## Responsive application-shell contract
 

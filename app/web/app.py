@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.52.1-codex.7
+# Code version: v1.53.0-codex.1
 
 from __future__ import annotations
 
@@ -23,11 +23,14 @@ from app.core.agent import (
     AGENT_ACCESS_SESSION_KEY,
     AGENT_MODEL_OPTIONS_BY_PLATFORM,
     AGENT_PLATFORM_OPTIONS,
+    CAPABILITY_REGISTRY_VERSION,
     OPERATING_SYSTEM_OPTIONS as AGENT_OPERATING_SYSTEM_OPTIONS,
     AgentSourceCache,
     ComputerUseAgentService,
     ComputerUseSettingsStore,
     browser_options_for_host,
+    build_agent_optimization_manifest,
+    capability_registry_snapshot,
     default_model_for_platform,
     is_allowed_agent_network_request,
     is_loopback_address,
@@ -554,6 +557,11 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             platform = computer_use_settings.settings.platform
         return url_for("agent_selected", browser=browser, platform=platform)
 
+    @app.template_global("build_agent_optimization_manifest")
+    def build_agent_optimization_manifest_for_template() -> dict[str, Any]:
+        """Expose the registry-derived Site manifest to the shared sidebar adapter."""
+        return build_agent_optimization_manifest()
+
     @app.template_global("browser_media_url")
     def browser_media_url(relative_path: str) -> str:
         """Return the stable public URL for one stored media path."""
@@ -985,6 +993,13 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         snapshot["history"] = rendered_history
         return snapshot
 
+    def build_agent_doctor() -> dict[str, Any]:
+        """Combine run diagnostics with host readiness without exposing private content."""
+        doctor = computer_use_agent_service.doctor()
+        doctor["runtime"] = computer_use_settings.snapshot()
+        doctor["capability_registry_version"] = CAPABILITY_REGISTRY_VERSION
+        return doctor
+
     def agent_snapshot_for_route(
         snapshot: dict[str, Any],
         browser: str,
@@ -1002,17 +1017,31 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             {
                 "activity": [],
                 "bodycheck_passed": False,
+                "verification_passed": False,
                 "conversation_url": "",
+                "event_chain": {
+                    "version": "1.0.0",
+                    "run_id": "",
+                    "count": 0,
+                    "state": "idle",
+                    "error": "",
+                    "last_event": None,
+                },
+                "event_chain_state": "idle",
+                "event_count": 0,
                 "finished_at": "",
                 "history": [],
                 "message": "",
                 "model_verified": False,
+                "last_action_id": "",
+                "last_event_kind": "",
                 "paused": False,
                 "phase": "idle",
                 "project_url": "",
                 "prompt": "",
                 "response": "",
                 "response_html": "",
+                "run_id": "",
                 "started_at": "",
                 "traditional_handoff_available": False,
                 "traditional_handoff_message": "",
@@ -1110,6 +1139,36 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         require_local_agent_request()
         return jsonify(
             {
+                "runtime": computer_use_settings.snapshot(),
+                "agent": build_agent_snapshot(),
+            }
+        )
+
+    @app.get("/api/agent/capabilities")
+    def agent_capabilities():
+        """Return the local capability registry for human diagnostics and tests."""
+        require_local_agent_request()
+        return jsonify(capability_registry_snapshot())
+
+    @app.get("/api/agent/doctor")
+    def agent_doctor():
+        """Return bounded Agent diagnostics and explicit recovery affordances."""
+        require_local_agent_request()
+        return jsonify(build_agent_doctor())
+
+    @app.post("/api/agent/doctor/recover")
+    def recover_agent_from_doctor():
+        """Run one explicit local recovery action selected by the doctor UI."""
+        require_local_agent_request()
+        payload = request.get_json(silent=True) or {}
+        try:
+            recovery = computer_use_agent_service.recover(str(payload.get("action", "")))
+        except (RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(
+            {
+                "recovery": recovery,
+                "doctor": build_agent_doctor(),
                 "runtime": computer_use_settings.snapshot(),
                 "agent": build_agent_snapshot(),
             }

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.0-codex.16
+# Code version: v1.88.0-codex.17
 
 from __future__ import annotations
 
@@ -491,7 +491,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.87.0-codex.2"
+                expected_style_version = "style-v2.88.0-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -826,7 +826,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.6.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.22.0-codex.2', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.23.0-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -1280,7 +1280,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.22.0-codex.2',
+            'computer-use-agent-v3.23.0-codex.1',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
@@ -2338,7 +2338,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.87.0-codex.2", body)
+            self.assertIn("style-v2.88.0-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)
