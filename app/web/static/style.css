@@ -1,4 +1,4 @@
-/* Code version: v2.88.0-codex.1 */
+/* Code version: v2.90.0-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -204,6 +204,9 @@
     --browser-picker-chevron-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1.41 1.59 6 6.17l4.59-4.58L12 3l-6 5-6-5z' fill='currentColor'/%3E%3C/svg%3E");
     --control-glass-background: transparent;
     --control-glass-background-hover: color-mix(in srgb, var(--theme-muted) 8%, transparent);
+    --layout-content-width: 640px;
+    --layout-control-width: 384px;
+    --layout-physical-effect-bleed: 48px;
     --page-edge-pad: 10px;
     --layout-edge-gap: var(--page-edge-pad);
     --layout-global-anchor-inset: calc(var(--layout-edge-gap) * 2);
@@ -268,6 +271,10 @@
     --settings-general-option-radius: var(--radius-soft);
     --settings-general-option-background: var(--frosted-glass-background);
     --settings-general-option-border: var(--frosted-glass-border);
+    --settings-general-option-max-width: var(--layout-content-width);
+    --settings-form-shell-max-width: var(--layout-content-width);
+    --settings-form-control-min-width: 220px;
+    --settings-form-control-max-width: var(--layout-control-width);
     --cache-phase-live-marker-size: 8px;
     --cache-phase-live-marker-color: var(--theme-accent-positive);
     --cache-phase-live-marker-duration: 1.8s;
@@ -286,7 +293,7 @@
     --workspace-modal-column-gap: 12px;
     --workspace-modal-row-gap: 4px;
     --workspace-modal-title-margin-end: 32px;
-    --style-token-demo-width: 384px;
+    --style-token-demo-width: var(--layout-control-width);
     --style-token-column-gap: 24px;
     --style-token-resizer-width: 32px;
     --style-token-divider-gap: 24px;
@@ -2093,11 +2100,37 @@ html.sidebar-memory-collapsed .app-shell .cache-overview-title-card {
 }
 
 #settings_workspace .workspace-summary-card.workspace-article-card {
+    display: flex;
+    flex-direction: column;
     flex: 1 1 auto;
     height: 100%;
     min-height: 0;
-    overflow-y: auto;
+    overflow: visible;
+}
+
+#settings_workspace .workspace-summary-card.workspace-article-card > .report-heading-row {
+    width: min(100%, var(--layout-content-width));
+    max-width: var(--layout-content-width);
+}
+
+/* Code version: v1.0.0-codex.1
+ * Keep the page shell open while one explicit scrollport owns vertical overflow.
+ * The start-side and bottom bleed preserve card shadows without moving the
+ * 640px content anchor or the 384px control anchor.
+ */
+.settings-content-scrollport {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    margin-inline-start: calc(-1 * var(--layout-physical-effect-bleed));
+    padding-inline-start: var(--layout-physical-effect-bleed);
+    padding-block-end: var(--layout-physical-effect-bleed);
     overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 
 .report-heading-row {
@@ -4334,7 +4367,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     --settings-action-package-copy-gap: 4px;
     --settings-action-package-background: var(--frosted-glass-background);
     --settings-action-package-border: var(--frosted-glass-border);
-    --settings-action-package-max-width: 680px;
+    --settings-action-package-max-width: var(--layout-content-width);
     --settings-action-package-live-marker-size: 8px;
     --settings-action-package-live-marker-color: var(--theme-accent-positive);
     --settings-action-package-live-marker-duration: 1.8s;
@@ -8768,7 +8801,8 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .settings-intro-copy {
-    max-width: 720px;
+    width: min(100%, var(--layout-content-width));
+    max-width: var(--layout-content-width);
     margin-bottom: 24px;
     color: var(--muted);
 }
@@ -8776,18 +8810,24 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 .settings-category-shell {
     display: grid;
     gap: 16px;
-    width: min(100%, 880px);
+    width: min(100%, var(--layout-content-width));
+    max-width: var(--layout-content-width);
+    overflow: visible;
 }
 
 .settings-category-form {
     display: grid;
     gap: 16px;
+    overflow: visible;
 }
 
 .settings-category-panel {
     display: grid;
     gap: 16px;
+    width: min(100%, var(--layout-content-width));
+    max-width: var(--layout-content-width);
     min-width: 0;
+    overflow: visible;
 }
 
 .settings-category-panel[hidden],
@@ -8817,7 +8857,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .settings-category-heading > p:last-child {
-    max-width: 720px;
+    max-width: var(--layout-content-width);
     color: var(--muted);
     font-size: var(--font-ui-lg);
     line-height: 1.5;
@@ -8826,17 +8866,27 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 .settings-category-fields {
     display: grid;
     gap: 14px;
-    width: min(100%, 720px);
+    width: min(100%, var(--settings-form-shell-max-width));
+    max-width: var(--settings-form-shell-max-width);
+    overflow: visible;
 }
 
 .settings-category-panel > .cache-common-config,
 .settings-download-limit-grid,
 .settings-chatgpt-grid {
-    width: min(100%, 720px);
+    width: min(100%, var(--settings-form-shell-max-width));
+    max-width: var(--settings-form-shell-max-width);
 }
 
 .settings-category-panel .field-grid {
     grid-template-columns: minmax(0, 1fr);
+    width: min(100%, var(--settings-form-control-max-width));
+    max-width: var(--settings-form-control-max-width);
+}
+
+.settings-category-panel .field {
+    width: min(100%, var(--settings-form-control-max-width));
+    max-width: var(--settings-form-control-max-width);
 }
 
 .settings-directory-status {
@@ -8853,6 +8903,13 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 .settings-category-panel > .shadow-backup-section,
 .settings-category-panel > .shadow-backup-actions {
     margin-top: 0;
+}
+
+.settings-category-panel > .shadow-backup-section,
+.settings-maintenance-panel > .danger-zone,
+.settings-action-package,
+.cache-common-config {
+    overflow: visible;
 }
 
 .settings-action-package {
@@ -9101,7 +9158,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     }
 
     .settings-category-shell {
-        width: 100%;
+        width: min(100%, var(--layout-content-width));
     }
 }
 
@@ -9162,8 +9219,8 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     height: 46px;
     min-height: 0;
     padding: 10px 12px 0;
-    width: 100%;
-    max-width: 100%;
+    width: min(100%, var(--layout-content-width));
+    max-width: var(--layout-content-width);
 }
 
 #workspace_panel .settings-workspace-header:first-child > .settings-summary-card {

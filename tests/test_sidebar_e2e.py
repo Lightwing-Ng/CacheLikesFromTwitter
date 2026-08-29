@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.24.0-codex.1
+Code version: v1.26.0-codex.1
 """
 
 from __future__ import annotations
@@ -1129,6 +1129,127 @@ def test_settings_reuse_shared_primary_and_numeric_control_contracts(
         assert page.evaluate(
             "() => document.documentElement.scrollWidth <= window.innerWidth"
         )
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("width", "height", "touch"),
+    (
+        (1_280, 900, False),
+        (390, 844, True),
+    ),
+)
+def test_settings_reuse_shared_content_control_and_effect_boundaries(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    width: int,
+    height: int,
+    touch: bool,
+) -> None:
+    """Verify the 640px/384px maxima and keep physical cards unclipped."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/settings#settings-agent",
+        width,
+        height,
+        touch=touch,
+    )
+    try:
+        expect(page.locator("#settings-agent")).to_be_visible()
+        page.wait_for_function(
+            """() => getComputedStyle(document.documentElement)
+                .getPropertyValue("--layout-content-width").trim() === '640px'"""  # noqa: E501
+        )
+        geometry = page.evaluate(
+            """() => {
+                const rectWidth = selector => document.querySelector(selector)
+                    ?.getBoundingClientRect().width ?? 0;
+                const action = document.querySelector(".settings-agent-terminal-action");
+                const scrollport = document.querySelector("[data-settings-content-scrollport]");
+                const ancestorOverflow = [];
+                for (let node = action; node && node !== scrollport; node = node.parentElement) {
+                    const style = getComputedStyle(node);
+                    ancestorOverflow.push({
+                        selector: node.id || node.className || node.tagName,
+                        x: style.overflowX,
+                        y: style.overflowY,
+                    });
+                }
+                return {
+                    contentToken: getComputedStyle(document.documentElement)
+                        .getPropertyValue("--layout-content-width").trim(),
+                    controlToken: getComputedStyle(document.documentElement)
+                        .getPropertyValue("--layout-control-width").trim(),
+                    heading: rectWidth("#settings_workspace .workspace-summary-card > .report-heading-row"),
+                    panel: rectWidth("#settings-agent"),
+                    field: rectWidth("#settings-agent .field"),
+                    action: rectWidth(".settings-agent-terminal-action"),
+                    actionOverflow: action ? getComputedStyle(action).overflow : "missing",
+                    actionShadow: action ? getComputedStyle(action).boxShadow : "none",
+                    shellOverflow: getComputedStyle(
+                        document.querySelector("#settings_workspace .workspace-summary-card")
+                    ).overflow,
+                    scrollportOverflow: scrollport
+                        ? getComputedStyle(scrollport).overflow
+                        : "missing",
+                    scrollportBleed: action && scrollport
+                        ? action.getBoundingClientRect().left
+                            - scrollport.getBoundingClientRect().left
+                        : 0,
+                    ancestorOverflow,
+                    documentOverflow: document.documentElement.scrollWidth
+                        - document.documentElement.clientWidth,
+                };
+            }"""
+        )
+
+        assert geometry["contentToken"] == "640px"
+        assert geometry["controlToken"] == "384px"
+        expected_content_width = min(640, geometry["panel"])
+        expected_control_width = min(384, geometry["panel"])
+        assert abs(geometry["heading"] - geometry["panel"]) <= 1
+        assert abs(geometry["action"] - expected_content_width) <= 1
+        assert abs(geometry["field"] - expected_control_width) <= 1
+        assert geometry["actionOverflow"] == "visible"
+        assert geometry["actionShadow"] != "none"
+        assert geometry["shellOverflow"] == "visible"
+        assert geometry["scrollportOverflow"] == "hidden auto"
+        assert geometry["scrollportBleed"] >= 47
+        assert all(
+            item["x"] == "visible" and item["y"] == "visible"
+            for item in geometry["ancestorOverflow"]
+        ), geometry["ancestorOverflow"]
+        assert geometry["documentOverflow"] <= 1
+
+        page.goto(
+            f"{sidebar_server_url}/settings/style-tokens",
+            wait_until="domcontentloaded",
+        )
+        style_geometry = page.evaluate(
+            """() => ({
+                heading: document.querySelector(".settings-shell-style-tokens > .settings-summary-card")
+                    ?.getBoundingClientRect().width ?? 0,
+                workspace: document.querySelector("#workspace_panel")
+                    ?.getBoundingClientRect().width ?? 0,
+                shellOverflow: getComputedStyle(
+                    document.querySelector(".settings-workspace-header.settings-shell-style-tokens")
+                ).overflow,
+                cardOverflow: getComputedStyle(
+                    document.querySelector(".settings-shell-style-tokens .style-token-card")
+                ).overflow,
+                documentOverflow: document.documentElement.scrollWidth
+                    - document.documentElement.clientWidth,
+            })"""
+        )
+        assert style_geometry["heading"] <= min(640, style_geometry["workspace"]) + 1
+        if width >= 901:
+            assert abs(style_geometry["heading"] - 640) <= 1
+        assert style_geometry["shellOverflow"] == "visible"
+        assert style_geometry["cardOverflow"] == "visible"
+        assert style_geometry["documentOverflow"] <= 1
     finally:
         context.close()
 

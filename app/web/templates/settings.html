@@ -1,4 +1,4 @@
-<!-- Code version: v1.27.0-codex.1 -->
+<!-- Code version: v1.29.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.88.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
@@ -62,6 +62,7 @@
                             <h2>Configuration center</h2>
                         </div>
                     </div>
+                    <div class="settings-content-scrollport" data-settings-content-scrollport>
                     <p class="status-copy settings-intro-copy">
                         Configure one category at a time. Changes apply immediately to future cache tasks on this computer.
                     </p>
@@ -486,6 +487,7 @@
                                 </form>
                             </section>
                         </section>
+                    </div>
                     </div>
                 </div>
             </div>

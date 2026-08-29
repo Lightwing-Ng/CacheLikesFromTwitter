@@ -1,6 +1,6 @@
 # Visual Style Reference
 
-Documentation version: `v1.0.2-codex.1`
+Documentation version: `v1.2.0-codex.1`
 
 ## Authority
 
@@ -52,3 +52,20 @@ rules deliberately; do not blindly paste whole product view styles.
 
 If the sibling project changes materially, compare its current CSS modules with this
 compatibility layer and update this document when the synchronization strategy changes.
+
+## Shared Settings Dimensions
+
+Settings pages consume the same foundation layout aliases as the sibling project:
+`--layout-content-width: 640px` for page headings, cards, and content groups, and
+`--layout-control-width: 384px` for individual fields, selects, and reusable control
+specimens. Feature-specific aliases must point back to these two tokens; do not add a
+page-local `640px`, `384px`, or legacy intermediate width.
+
+Use `width: min(100%, var(...))` so a narrow parent remains authoritative. Keep
+physical card effects visible through intermediate layout containers, and place any
+required clipping or scrolling on the smallest internal data region. A full Settings
+page uses one explicit `.settings-content-scrollport`; the shared
+`--layout-physical-effect-bleed: 48px` start-side and bottom safe area prevents it from
+cutting elevated card shadows without moving either width anchor. Smaller tables and
+data lists continue to own their own overflow. Pagination that belongs to a
+token-limited surface remains horizontally centered inside that surface.

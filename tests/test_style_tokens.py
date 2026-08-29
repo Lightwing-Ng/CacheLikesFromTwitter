@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.49.0-codex.14
+Code version: v1.51.0-codex.1
 """
 
 from pathlib import Path
@@ -119,6 +119,41 @@ def test_settings_fields_use_a_single_column_layout() -> None:
 
     assert ".settings-category-panel .field-grid {" in stylesheet
     assert "grid-template-columns: minmax(0, 1fr);" in stylesheet
+
+
+def test_settings_layout_dimensions_reuse_the_sibling_width_contract() -> None:
+    """Keep Settings content and controls on the shared 640px and 384px tokens."""
+    stylesheet = _stylesheet()
+
+    for token in (
+        "--layout-content-width: 640px;",
+        "--layout-control-width: 384px;",
+        "--layout-physical-effect-bleed: 48px;",
+        "--settings-general-option-max-width: var(--layout-content-width);",
+        "--settings-action-package-max-width: var(--layout-content-width);",
+        "--settings-form-shell-max-width: var(--layout-content-width);",
+        "--settings-form-control-max-width: var(--layout-control-width);",
+        "--style-token-demo-width: var(--layout-control-width);",
+    ):
+        assert token in stylesheet
+
+    for fragment in (
+        "#settings_workspace .workspace-summary-card.workspace-article-card > .report-heading-row {",
+        ".settings-category-shell {",
+        "width: min(100%, var(--layout-content-width));",
+        ".settings-category-panel .field-grid {",
+        ".settings-category-panel .field {",
+        "width: min(100%, var(--settings-form-control-max-width));",
+        ".settings-category-panel > .shadow-backup-section,",
+        ".settings-action-package,",
+        ".cache-common-config {\n    overflow: visible;",
+        ".settings-shell-style-tokens > .settings-summary-card {",
+        ".settings-content-scrollport {",
+        "margin-inline-start: calc(-1 * var(--layout-physical-effect-bleed));",
+        "padding-inline-start: var(--layout-physical-effect-bleed);",
+        "#settings_workspace .workspace-summary-card.workspace-article-card {\n    display: flex;",
+    ):
+        assert fragment in stylesheet
 
 
 def test_browser_filter_labels_use_the_medium_weight_token() -> None:
@@ -270,7 +305,7 @@ def test_settings_action_packages_reuse_the_sibling_composite_card() -> None:
         ".settings-action-package {",
         "grid-template-columns: 36px minmax(0, 1fr);",
         "--settings-action-package-row-gap: 8px;",
-        "--settings-action-package-max-width: 680px;",
+        "--settings-action-package-max-width: var(--layout-content-width);",
         "background: var(--settings-action-package-background);",
         "border: var(--settings-action-package-border);",
         ".settings-action-package-icon-shell {",
@@ -1722,7 +1757,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.88.0-codex.1 */",
+            "/* Code version: v2.90.0-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
