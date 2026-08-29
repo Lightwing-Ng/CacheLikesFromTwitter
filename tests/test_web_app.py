@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.0-codex.13
+# Code version: v1.88.0-codex.14
 
 from __future__ import annotations
 
@@ -2312,7 +2312,7 @@ class WebAppTests(unittest.TestCase):
             self.assertIn("style-v2.86.0-codex.6", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
-            self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.0-codex.1', body)
+            self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)
             self.assertIn('data-media-source-link', body)
             self.assertIn('data-media-copy-source-url', body)
             self.assertIn('data-media-reveal', body)
@@ -2661,6 +2661,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('class="status-chip browser-filter-chip">Session view</span>', first_body)
         self.assertIn("Refresh this session", first_body)
         self.assertIn('data-chatgpt-session-refresh', first_body)
+        self.assertIn('data-chatgpt-session-label="Newest session"', first_body)
         self.assertIn('class="browser-session-control-button browser-session-refresh-button"', first_body)
         self.assertIn('aria-label="Refresh this session"', first_body)
         self.assertIn('class="icon browser-session-refresh-icon"', first_body)
@@ -2981,10 +2982,19 @@ class WebAppTests(unittest.TestCase):
             'body: JSON.stringify({ conversation_url: conversationUrl })',
             'const statusUrl = startPayload.status_url || "/api/chatgpt/status";',
             'const initialResourceCount = Number(startPayload.resource_count) || 0;',
+            'let refreshSummary = {',
             'if (snapshot.running) continue;',
             '(Number(snapshot.downloaded_images) || 0) - initialResourceCount',
+            'session_discovered: refreshSummary.discoveredImages',
+            'session_cached: refreshSummary.cachedImages',
+            'session_skipped: refreshSummary.skippedImages',
+            'session_failed: refreshSummary.failedImages',
             'refreshedUrl.searchParams.set("session_updated", String(updatedCount));',
             'document.querySelector("[data-chatgpt-session-refresh-banner]")',
+            'Added ${imageCountLabel(updatedCount)}',
+            'Pulled ${imageCountLabel(updatedCount)} from ChatGPT session ${sessionLabel}',
+            'Nothing new was pulled; the local media cache is unchanged.',
+            'The ChatGPT image cache now contains',
             'window.history.replaceState({}, "", currentUrl.toString());',
             '"session",',
             'refreshedUrl.searchParams.set("refresh", "1");',

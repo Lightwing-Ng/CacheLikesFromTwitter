@@ -1,4 +1,4 @@
-<!-- Code version: v1.60.0-codex.34 -->
+<!-- Code version: v1.60.0-codex.35 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -15,7 +15,7 @@
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='notice-banner.js', v='notice-banner-v0.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.31.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.31.1-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
     <script type="module" src="{{ url_for('static', filename='browser-search.js', v='browser-search-v2.0.2-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-source-filter.js', v='browser-source-filter-v1.2.0-codex.1') }}"></script>
@@ -467,6 +467,7 @@
                                 data-chatgpt-session-refresh
                                 data-chatgpt-session-url="{{ media_page.current_session_url }}"
                                 data-chatgpt-session-key="{{ media_page.current_session_key }}"
+                                data-chatgpt-session-label="{{ media_page.current_session_label }}"
                                 aria-label="Refresh this session"
                                 aria-describedby="browser_session_refresh_tooltip"
                             >

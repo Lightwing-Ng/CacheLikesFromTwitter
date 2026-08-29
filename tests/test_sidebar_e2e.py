@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.23.1-codex.1
+Code version: v1.23.1-codex.2
 """
 
 from __future__ import annotations
@@ -1298,16 +1298,37 @@ def test_simplified_chinese_language_boundary_runs_in_real_browser(
         )
         expect(session_mode_trigger).to_have_count(1)
         expect(recent_session_trigger).to_have_count(1)
+        # Keep the production trigger shape while isolating the language fixture
+        # from the Agent poller, which legitimately re-renders its live controls.
         page.evaluate(
             """() => {
-                document.querySelector(
-                    ".agent-session-mode-combobox [data-agent-combobox-selected-label]"
-                ).textContent = "简体中文会话标题";
-                document.querySelector(
-                    '[data-agent-session-list="recent"] [data-agent-combobox-selected-label]'
-                ).textContent = "简体中文最近会话";
+                const fixture = document.createElement("div");
+                fixture.id = "language-rendering-agent-session-fixture";
+                const createTrigger = (source, label) => {
+                    const trigger = source.cloneNode(true);
+                    trigger.querySelector("[data-agent-combobox-selected-label]").textContent = label;
+                    return trigger;
+                };
+                fixture.append(
+                    createTrigger(
+                        document.querySelector(
+                            ".agent-session-mode-combobox [data-agent-combobox-trigger]"
+                        ),
+                        "简体中文会话标题",
+                    ),
+                    createTrigger(
+                        document.querySelector(
+                            '[data-agent-session-list="recent"] [data-agent-combobox-trigger]'
+                        ),
+                        "简体中文最近会话",
+                    ),
+                );
+                document.body.append(fixture);
             }""",
         )
+        fixture = page.locator("#language-rendering-agent-session-fixture")
+        session_mode_trigger = fixture.locator("[data-agent-combobox-trigger]").nth(0)
+        recent_session_trigger = fixture.locator("[data-agent-combobox-trigger]").nth(1)
         session_mode_label = session_mode_trigger.locator("[data-agent-combobox-selected-label]")
         recent_session_label = recent_session_trigger.locator("[data-agent-combobox-selected-label]")
         expect(session_mode_label).to_have_attribute("lang", "zh-CN")

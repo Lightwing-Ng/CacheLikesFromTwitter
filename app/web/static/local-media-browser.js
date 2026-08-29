@@ -1,4 +1,4 @@
-/* Code version: v1.31.0-codex.1 */
+/* Code version: v1.31.1-codex.1 */
 
 (function initializeLocalMediaBrowser() {
     "use strict";
@@ -206,6 +206,16 @@
         if (sessionRefreshTooltipCopy) sessionRefreshTooltipCopy.textContent = copy;
     };
 
+    const parseOptionalCount = (url, parameter) => {
+        const rawValue = url.searchParams.get(parameter);
+        if (rawValue === null) return null;
+        const parsedValue = Number.parseInt(rawValue, 10);
+        return Number.isFinite(parsedValue) ? Math.max(0, parsedValue) : null;
+    };
+
+    const formatCount = (count) => new Intl.NumberFormat("en-US").format(count);
+    const imageCountLabel = (count) => `${formatCount(count)} generated image${count === 1 ? "" : "s"}`;
+
     function showSessionRefreshResult() {
         if (!sessionRefreshBanner) return;
         const currentUrl = new URL(window.location.href);
@@ -213,19 +223,46 @@
         if (rawUpdatedCount === null) return;
 
         const updatedCount = Math.max(0, Number.parseInt(rawUpdatedCount, 10) || 0);
-        const formattedCount = new Intl.NumberFormat("en-US").format(updatedCount);
+        const sessionLabel = sessionRefreshButton?.dataset.chatgptSessionLabel?.trim()
+            || document.querySelector(".browser-session-name-metric strong")?.textContent?.trim()
+            || "the current ChatGPT session";
+        const discoveredCount = parseOptionalCount(currentUrl, "session_discovered");
+        const cachedCount = parseOptionalCount(currentUrl, "session_cached");
+        const skippedCount = parseOptionalCount(currentUrl, "session_skipped");
+        const failedCount = parseOptionalCount(currentUrl, "session_failed");
+        const detailParts = [];
+        if (discoveredCount !== null) {
+            detailParts.push(`The refresh found ${imageCountLabel(discoveredCount)} in the session.`);
+        }
+        if (skippedCount) {
+            detailParts.push(
+                `${imageCountLabel(skippedCount)} ${skippedCount === 1 ? "was" : "were"} already cached.`,
+            );
+        }
+        if (cachedCount !== null) {
+            detailParts.push(
+                `The ChatGPT image cache now contains ${formatCount(cachedCount)} images.`,
+            );
+        }
+        if (failedCount) {
+            detailParts.push(
+                `${imageCountLabel(failedCount)} could not be fetched.`,
+            );
+        }
         if (sessionRefreshBannerTitle) {
             sessionRefreshBannerTitle.textContent = updatedCount
-                ? `${formattedCount} new image${updatedCount === 1 ? "" : "s"} added`
-                : "No new images found";
+                ? `Added ${imageCountLabel(updatedCount)}`
+                : "No new generated images found";
         }
         if (sessionRefreshBannerCopy) {
-            sessionRefreshBannerCopy.textContent = updatedCount
-                ? `The refreshed ChatGPT session now includes ${formattedCount} new image${updatedCount === 1 ? "" : "s"}.`
-                : "This ChatGPT session is already up to date.";
+            const summary = updatedCount
+                ? `Pulled ${imageCountLabel(updatedCount)} from ChatGPT session ${sessionLabel} and added them to the local media cache.`
+                : `Checked ChatGPT session ${sessionLabel} for new generated images. Nothing new was pulled; the local media cache is unchanged.`;
+            sessionRefreshBannerCopy.textContent = [summary, ...detailParts].join(" ");
         }
         sessionRefreshBanner.hidden = false;
-        currentUrl.searchParams.delete("session_updated");
+        ["session_updated", "session_discovered", "session_cached", "session_skipped", "session_failed"]
+            .forEach((parameter) => currentUrl.searchParams.delete(parameter));
         window.history.replaceState({}, "", currentUrl.toString());
     }
 
@@ -264,6 +301,12 @@
             const statusUrl = startPayload.status_url || "/api/chatgpt/status";
             const initialResourceCount = Number(startPayload.resource_count) || 0;
             let updatedCount = 0;
+            let refreshSummary = {
+                discoveredImages: null,
+                cachedImages: null,
+                skippedImages: null,
+                failedImages: null,
+            };
             while (true) {
                 await wait(1_000);
                 const statusResponse = await fetch(statusUrl, {
@@ -280,6 +323,12 @@
                     0,
                     (Number(snapshot.downloaded_images) || 0) - initialResourceCount,
                 );
+                refreshSummary = {
+                    discoveredImages: Math.max(0, Number(snapshot.discovered_images) || 0),
+                    cachedImages: Math.max(0, Number(snapshot.downloaded_images) || 0),
+                    skippedImages: Math.max(0, Number(snapshot.skipped_tweets) || 0),
+                    failedImages: Math.max(0, Number(snapshot.failed_tweets) || 0),
+                };
                 break;
             }
 
@@ -291,6 +340,14 @@
             );
             refreshedUrl.searchParams.set("refresh", "1");
             refreshedUrl.searchParams.set("session_updated", String(updatedCount));
+            Object.entries({
+                session_discovered: refreshSummary.discoveredImages,
+                session_cached: refreshSummary.cachedImages,
+                session_skipped: refreshSummary.skippedImages,
+                session_failed: refreshSummary.failedImages,
+            }).forEach(([parameter, value]) => {
+                if (value !== null) refreshedUrl.searchParams.set(parameter, String(value));
+            });
             window.location.assign(refreshedUrl.toString());
         } catch (error) {
             waitNotice?.finish();

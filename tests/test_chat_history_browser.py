@@ -1,9 +1,10 @@
 """Focused tests for the local text-history browser."""
 
-# Code version: v1.4.1-codex.2
+# Code version: v1.4.1-codex.3
 
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from app.core.chat_history_browser import (
     attach_media_references,
@@ -331,13 +332,14 @@ def test_query_chat_history_session_home_uses_100_sessions_per_page(tmp_path: Pa
     assert len(second_page.sessions) == 1
 
 
-def test_format_chat_message_timestamp_label_uses_zero_padded_day_in_local_time() -> None:
-    expected = datetime.fromisoformat("2026-08-01T01:02:03+00:00").astimezone()
-    expected_timezone = expected.tzname() or "UTC"
+def test_format_chat_message_timestamp_label_uses_zero_padded_day_in_display_timezone() -> None:
+    expected = datetime.fromisoformat("2026-08-01T01:02:03+00:00").astimezone(
+        ZoneInfo("Asia/Hong_Kong")
+    )
     assert format_chat_message_timestamp_label("2026-08-01T01:02:03Z") == (
         f"{expected.day:02d}/{expected.month:02d}/{expected.year:04d} "
         f"{expected.hour:02d}:{expected.minute:02d}:{expected.second:02d} "
-        f"({expected_timezone})"
+        "(HKT)"
     )
 
 
