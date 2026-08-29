@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.46.0-codex.1`
+Documentation version: `v3.47.2-codex.1`
 
 ## Purpose
 
@@ -86,8 +86,9 @@ older task cannot be submitted accidentally through a different Web session.
    resets a stale previous-provider target URL to the new provider's official home before
    validation.
 4. Before attaching project data or submitting a prompt, every provider must expose a compatible
-   model control and visibly read back the configured model. ChatGPT must prove `GPT-5.6 Sol` or
-   `5.6 Sol`, Gemini must prove `Gemini 3.1 Pro`, Grok must prove `Build`, and Claude must prove
+   model control and visibly read back the configured model. ChatGPT must prove `GPT-5.6 Sol`,
+   `5.6 Sol`, or the configured thinking-effort option `Extra High`. Gemini must prove
+   `Gemini 3.1 Pro`, Grok must prove `Build`, and Claude must prove
    `Auto`. A missing,
    changed, localized, or ambiguous selector fails closed without attaching context or sending a
    prompt. Only exact model labels and explicit model or mode selector wrappers are accepted;
@@ -108,9 +109,11 @@ older task cannot be submitted accidentally through a different Web session.
    original `aria-controls` value before every click and readback. Nested popups, duplicate triggers,
    subtitles, wrappers, hidden labels or markers, and the shortened trigger alone never prove the
    configured model. Every exit either confirms that the controlled menu is closed or fails the run.
-   ChatGPT's current `Extra High` control is renamed `Thinking effort` while its menu is open;
-   both explicit labels are accepted, and a checked `GPT-5.6 Sol` model option is read back from
-   that open menu.
+   ChatGPT's closed thinking-effort control currently shows `Instant`, `Medium`, or `Extra High`.
+   While its menu is open the same control may be renamed `Thinking effort`. Those explicit labels
+   are accepted as triggers. A closed `Medium` or `Instant` label is not itself proof of
+   `5.6 Sol Extra High`; after the menu is open, a checked `GPT-5.6 Sol` model option or a checked
+   `Extra High` thinking-effort option must be read back.
    Chromium first reuses the matching official provider tab, without focusing it, before navigation.
    Some provider shells expose a composer before their model picker has hydrated. A missing
    Gemini or Claude control is therefore rechecked up to 61 times in 250 ms Stop-aware slices, for a
@@ -196,6 +199,10 @@ older task cannot be submitted accidentally through a different Web session.
    controller action executes before it succeeds. After a fresh ChatGPT conversation is bound, a
    same-tab navigation is given one bounded settle window; the controller may recover only when the
    bound conversation or its transfer receipt is observed, and still rejects an unproved session.
+   ChatGPT may first expose a client `WEB:` conversation id and then replace it with a
+   server-assigned `/c/<id>` in the same root or Project container. The controller may rebind that
+   one conversation when the current transfer receipt is observed on the server URL; a different
+   server conversation still fails closed.
    Gemini Notebook routes converge on their typed `/app/<id>` identity and use the same receipt gate even
    when the provider remains on that URL.
 7. The selected Web provider returns exactly one JSON action at a time inside a fenced `json` code block so
@@ -429,7 +436,10 @@ URL in Edge normally.
 
 The model selector is provider-specific: ChatGPT exposes the local option `5.6 Sol Extra High`, Gemini exposes `3.1 Pro`, Grok
 exposes `Build Beta`, and Claude exposes `Auto`. Each provider is fail-closed: the controller must select or observe
-and then visibly read back the exact configured model before any attachment or send. A localized
+and then visibly read back the exact configured model before any attachment or send. ChatGPT currently
+proves that local option through a checked `GPT-5.6 Sol` / `5.6 Sol` model item or a checked
+`Extra High` thinking-effort item after opening the Instant, Medium, Extra High, or Thinking effort
+control. A localized
 or changed menu that cannot prove the selection stops the run without transferring project data.
 For an `Auto` readback, a generic popup wrapper is insufficient: the trigger must also identify
 itself as a model or mode control, or expose provider-specific model metadata.

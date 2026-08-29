@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.47.0-codex.1
+Code version: v3.47.2-codex.1
 """
 
 from __future__ import annotations
@@ -148,7 +148,7 @@ CHATGPT_MODEL_OPTIONS = (
         "label": "GPT-5.6 Sol",
         "ui_label": "5.6 Sol Extra High",
         "remote_label": "GPT-5.6 Sol",
-        "remote_labels": ("GPT-5.6 Sol", "5.6 Sol"),
+        "remote_labels": ("GPT-5.6 Sol", "5.6 Sol", "Extra High"),
         "strength": 100,
     },
 )
@@ -5454,6 +5454,29 @@ def _chatgpt_fresh_navigation_allowed(expected_url: str, current_url: str) -> bo
     return False
 
 
+CHATGPT_CLIENT_CONVERSATION_ID_PREFIX = "web:"
+
+
+def _chatgpt_conversation_path_parts(url: str) -> tuple[str, str]:
+    """Return the ChatGPT conversation container and id, or empty parts."""
+    normalized = normalize_agent_conversation_url("chatgpt", url)
+    if not normalized:
+        return "", ""
+    path = urlsplit(normalized).path.rstrip("/")
+    marker = "/c/"
+    index = path.rfind(marker)
+    if index < 0:
+        return "", ""
+    return path[:index], path[index + len(marker) :]
+
+
+def _chatgpt_conversation_id_is_client_placeholder(conversation_id: str) -> bool:
+    """True when ChatGPT is still using a client-side WEB: conversation id."""
+    return str(conversation_id or "").strip().casefold().startswith(
+        CHATGPT_CLIENT_CONVERSATION_ID_PREFIX
+    )
+
+
 def _grok_fresh_navigation_allowed(expected_url: str, current_url: str) -> bool:
     """Permit only Grok's root home-to-root-conversation transition."""
     expected = urlsplit(str(expected_url or ""))
@@ -5687,6 +5710,66 @@ class _ProviderSessionBinding:
             == self.bound_conversation_url
         )
 
+    def _promote_chatgpt_client_conversation(self, current_url: str) -> str:
+        """Rebind one fresh ChatGPT WEB: conversation id to its server-assigned URL."""
+        if (
+            self.platform != "chatgpt"
+            or self.session_mode not in {"new", "project_new"}
+            or not self.bound_conversation_url
+            or self.initial_transition_confirmed
+            or not self.submission_marker
+        ):
+            return ""
+        bound_container, bound_id = _chatgpt_conversation_path_parts(
+            self.bound_conversation_url
+        )
+        current_conversation = normalize_agent_conversation_url(
+            "chatgpt",
+            current_url,
+        )
+        current_container, current_id = _chatgpt_conversation_path_parts(
+            current_conversation
+        )
+        if not (
+            _chatgpt_conversation_id_is_client_placeholder(bound_id)
+            and current_id
+            and not _chatgpt_conversation_id_is_client_placeholder(current_id)
+            and bound_container == current_container
+            and _provider_new_session_transition_allowed(
+                "chatgpt",
+                self.selected_target_url,
+                current_conversation,
+                self.session_mode,
+            )
+        ):
+            return ""
+        receipt_conversation = normalize_agent_conversation_url(
+            "chatgpt",
+            self._current_submission_receipt_url(),
+        )
+        if receipt_conversation != current_conversation:
+            return ""
+        tab_id, recheck_url, current_title = _provider_tab_identity(self.page)
+        if tab_id != self.expected_tab_id:
+            raise RuntimeError(
+                "The selected provider tab identity changed before the controller transfer completed."
+            )
+        recheck_conversation = normalize_agent_conversation_url(
+            "chatgpt",
+            recheck_url,
+        )
+        if recheck_conversation != current_conversation:
+            return ""
+        LOGGER.info(
+            "event=chatgpt_client_conversation_promoted session_mode=%s from_url=%s to_url=%s",
+            self.session_mode,
+            self.bound_conversation_url,
+            current_conversation,
+        )
+        self.bound_conversation_url = current_conversation
+        self.expected_title = current_title
+        return current_conversation
+
     def _wait_for_bound_chatgpt_session(self) -> bool:
         """Give one same-tab ChatGPT navigation a bounded time to settle."""
         wait_for_timeout = getattr(self.page, "wait_for_timeout", None)
@@ -5704,6 +5787,8 @@ class _ProviderSessionBinding:
                 self.bound_conversation_url,
                 settled_url,
             ):
+                return True
+            if self._promote_chatgpt_client_conversation(settled_url):
                 return True
             if self._initial_chatgpt_landing_recovery_allowed(settled_url):
                 self._record_initial_chatgpt_landing_bounce()
@@ -5875,11 +5960,27 @@ class _ProviderSessionBinding:
                 self.bound_conversation_url,
                 current_url,
             ):
+                promoted = self._promote_chatgpt_client_conversation(current_url)
+                if promoted:
+                    return promoted
                 if (
                     self._initial_chatgpt_landing_recovery_allowed(current_url)
                     or self._chatgpt_bound_receipt_is_visible(current_url)
-                    or self._wait_for_bound_chatgpt_session()
                 ):
+                    self._record_initial_chatgpt_landing_bounce()
+                    return self.bound_conversation_url
+                if self._wait_for_bound_chatgpt_session():
+                    _tab_id, settled_url, _title = _provider_tab_identity(self.page)
+                    if _tab_id != self.expected_tab_id:
+                        raise RuntimeError(
+                            "The selected provider tab identity changed before the controller transfer completed."
+                        )
+                    if _web_target_is_open(
+                        self.platform,
+                        self.bound_conversation_url,
+                        settled_url,
+                    ):
+                        return self.bound_conversation_url
                     self._record_initial_chatgpt_landing_bounce()
                     return self.bound_conversation_url
                 LOGGER.warning(
@@ -7693,6 +7794,21 @@ def _chatgpt_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
     )
 
 
+def _chatgpt_choice_label_groups(remote_labels: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
+    """Prefer Extra High when ChatGPT exposes both a model name and thinking effort."""
+    preferred: list[str] = []
+    remaining: list[str] = []
+    for label in remote_labels:
+        normalized = " ".join(str(label).split()).casefold()
+        if not normalized:
+            continue
+        if normalized == "extra high":
+            preferred.append(str(label))
+        else:
+            remaining.append(str(label))
+    return tuple(group for group in (tuple(preferred), tuple(remaining)) if group)
+
+
 def _web_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
     """Match an exact provider model label with only explicit selector wrappers."""
     normalized = re.sub(
@@ -7719,6 +7835,7 @@ def _web_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
 
 CHATGPT_MODEL_TRIGGER_LABELS = (
     "Instant",
+    "Medium",
     "GPT-5.6 Sol",
     "5.6 Sol",
     "Extra High",
@@ -7803,7 +7920,7 @@ def _chatgpt_visible_model_controls(page: Any) -> dict[str, Any]:
                     || element.textContent
                     || ''
                 ).replace(/\s+/g, ' ').trim();
-                const diagnosticPattern = /(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|model(?: picker)?|switch model|auto|high|medium|low|max|pro|advanced|faster|smarter)(?:$|\s)/i;
+                const diagnosticPattern = /(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|thinking effort|model(?: picker)?|switch model|auto|high|medium|low|max|pro|advanced|faster|smarter)(?:$|\s)/i;
                 const buttons = Array.from(document.querySelectorAll('button, [role="button"]'))
                     .filter(visible)
                     .map(textOf)
@@ -8151,16 +8268,19 @@ def _select_chatgpt_model_chromium(
         return True
 
     model_choice = None
-    for role in ("menuitemradio", "option"):
-        choices = page.get_by_role(role)
-        for index in range(choices.count()):
-            if stop_requested():
-                return False
-            candidate = choices.nth(index)
-            if not candidate.is_visible():
-                continue
-            if _chatgpt_model_text_matches(candidate.inner_text(), remote_labels):
-                model_choice = candidate
+    for labels in _chatgpt_choice_label_groups(remote_labels):
+        for role in ("menuitemradio", "option", "menuitem"):
+            choices = page.get_by_role(role)
+            for index in range(choices.count()):
+                if stop_requested():
+                    return False
+                candidate = choices.nth(index)
+                if not candidate.is_visible():
+                    continue
+                if _chatgpt_model_text_matches(candidate.inner_text(), labels):
+                    model_choice = candidate
+                    break
+            if model_choice is not None:
                 break
         if model_choice is not None:
             break
@@ -8367,7 +8487,8 @@ def _select_chatgpt_model(
                 });
             };
             const powerLabels = new Set([
-                'instant', 'gpt-5.6 sol', '5.6 sol', 'extra high'
+                'instant', 'medium', 'gpt-5.6 sol', '5.6 sol', 'extra high',
+                'thinking effort'
             ]);
             const labelFor = (button) => normalize(
                 `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`

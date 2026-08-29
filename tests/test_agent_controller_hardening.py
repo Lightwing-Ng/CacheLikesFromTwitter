@@ -302,6 +302,10 @@ class TestModelVerificationFreshSession:
         page = _ChromiumTriggerPage("Instant")
         assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
 
+    def test_reused_session_medium_trigger_verifies_extra_high(self) -> None:
+        page = _ChromiumTriggerPage("Medium", current="Extra High")
+        assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
+
 
 # ---------------------------------------------------------------------------
 # 2. Action parser tests

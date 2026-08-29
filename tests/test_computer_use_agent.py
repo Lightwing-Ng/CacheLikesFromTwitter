@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.47.0-codex.1
+Code version: v3.47.2-codex.1
 """
 
 from __future__ import annotations
@@ -226,6 +226,11 @@ def test_windows_inspection_commands_remove_outer_quotes_from_path_arguments(
 def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None:
     assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok", "claude"]
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol Extra High"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["remote_labels"] == (
+        "GPT-5.6 Sol",
+        "5.6 Sol",
+        "Extra High",
+    )
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["gemini"][0]["ui_label"] == "3.1 Pro"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["ui_label"] == "Build"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["remote_labels"] == ("Build",)
@@ -354,7 +359,8 @@ def test_chatgpt_extra_high_control_reads_back_gpt_5_6_sol() -> None:
         ) -> dict[str, object]:
             calls.append(argument)
             assert "'extra high'" in expression
-            assert argument["labels"] == ["GPT-5.6 Sol", "5.6 Sol"]
+            assert "'medium'" in expression
+            assert argument["labels"] == ["GPT-5.6 Sol", "5.6 Sol", "Extra High"]
             return {
                 "ok": True,
                 "selected": "gpt-5.6 sol",
@@ -364,7 +370,7 @@ def test_chatgpt_extra_high_control_reads_back_gpt_5_6_sol() -> None:
     assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is True
     assert calls == [
         {
-            "labels": ["GPT-5.6 Sol", "5.6 Sol"],
+            "labels": ["GPT-5.6 Sol", "5.6 Sol", "Extra High"],
             "phase": "inspect",
         }
     ]
@@ -526,6 +532,15 @@ def test_chromium_reused_session_verifies_instant_trigger() -> None:
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
     assert ("button", "Instant", True) in page.role_calls
     assert observation["observed"] == "GPT-5.6 Sol"
+    assert page.power.click_count == 2
+
+
+def test_chromium_reused_session_verifies_medium_trigger() -> None:
+    page = _chromium_model_page("Medium", current="Extra High")
+    observation: dict[str, object] = {}
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert ("button", "Medium", True) in page.role_calls
+    assert observation["observed"] == "Extra High"
     assert page.power.click_count == 2
 
 
@@ -701,11 +716,120 @@ def test_chromium_selector_can_choose_gpt_5_6_sol_from_thinking_effort_menu() ->
     assert observation["observed"] == "GPT-5.6 Sol"
 
 
+def test_chromium_selector_chooses_extra_high_from_a_medium_thinking_effort_menu() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.expanded = False
+            self.click_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _ChoiceLocator:
+        def __init__(self, page: "_Page", label: str) -> None:
+            self.page = page
+            self.label = label
+            self.click_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_ChoiceLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return self.page.power.expanded
+
+        def inner_text(self) -> str:
+            return self.label
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.page.current = self.label
+            self.page.power.expanded = False
+
+    class _Page:
+        def __init__(self) -> None:
+            self.current = "Medium"
+            self.power = _PowerLocator()
+            self.sol_choice = _ChoiceLocator(self, "GPT-5.6 Sol")
+            self.extra_high_choice = _ChoiceLocator(self, "Extra High")
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _ChoiceLocator | _EmptyLocator:
+            if role == "button" and name == "Medium" and exact is True:
+                return self.power
+            if role in {"menuitemradio", "option", "menuitem"}:
+                return self.extra_high_choice if role == "menuitemradio" else self.sol_choice
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "current:" in expression:
+                return {"ok": True, "current": self.current}
+            return {"buttons": ["Medium"], "menus": ["menu"]}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        observation,
+    ) is True
+    assert page.extra_high_choice.click_count == 1
+    assert page.sol_choice.click_count == 0
+    assert page.power.click_count == 3
+    assert observation["observed"] == "Extra High"
+
+
 def test_chromium_wrong_model_readback_fails_closed() -> None:
     page = _chromium_model_page("Instant", current="GPT-4o")
     observation: dict[str, object] = {}
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert observation.get("reason") == "model-mismatch"
+
+
+def test_chromium_medium_trigger_without_extra_high_or_sol_fails_closed() -> None:
+    page = _chromium_model_page("Medium", current="Medium")
+    observation: dict[str, object] = {}
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert observation.get("reason") == "model-mismatch"
+    assert observation.get("observed") == "Medium"
+    assert ("button", "Medium", True) in page.role_calls
 
 
 def test_chromium_model_selector_retries_after_power_control_recycle() -> None:
@@ -782,6 +906,7 @@ def test_chatgpt_model_click_targets_exclude_generic_text_labels() -> None:
     assert "Pro" not in CHATGPT_MODEL_TRIGGER_LABELS
     assert "High" not in CHATGPT_MODEL_TRIGGER_LABELS
     assert "Model" not in CHATGPT_MODEL_TRIGGER_LABELS
+    assert "Medium" in CHATGPT_MODEL_TRIGGER_LABELS
     assert "Thinking effort" in CHATGPT_MODEL_TRIGGER_LABELS
 
 
@@ -5876,6 +6001,160 @@ def test_fresh_chatgpt_binding_rejects_a_different_conversation() -> None:
 
     assert binding.check(allow_transition=True) == created_url
     page.url = "https://chatgpt.com/c/different-session"
+
+    with pytest.raises(RuntimeError, match="navigated away from the newly created session"):
+        binding.check(allow_transition=True)
+
+
+@pytest.mark.parametrize(
+    ("session_mode", "selected_target", "client_url", "server_url"),
+    (
+        (
+            "new",
+            "https://chatgpt.com/",
+            "https://chatgpt.com/c/WEB:06e00f92-a12e-4896-8eac-816b6a3a8920",
+            "https://chatgpt.com/c/6a92fdcc-7e54-83ee-be15-eb538b7bec35",
+        ),
+        (
+            "project_new",
+            "https://chatgpt.com/g/g-p-demo/project",
+            "https://chatgpt.com/g/g-p-demo/c/WEB:06e00f92-a12e-4896-8eac-816b6a3a8920",
+            "https://chatgpt.com/g/g-p-demo/c/6a92fdcc-7e54-83ee-be15-eb538b7bec35",
+        ),
+    ),
+)
+def test_fresh_chatgpt_binding_promotes_a_client_conversation_id(
+    caplog: pytest.LogCaptureFixture,
+    session_mode: str,
+    selected_target: str,
+    client_url: str,
+    server_url: str,
+) -> None:
+    class _Page:
+        url = selected_target
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+        def title(self) -> str:
+            return "Fresh session"
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        selected_target,
+        session_mode,
+    )
+    binding.arm_first_submission("Inspect the project")
+    page.url = client_url
+
+    assert binding.check(allow_transition=True) == client_url
+    page.url = server_url
+
+    with caplog.at_level("INFO", logger="app.core.computer_use_agent"):
+        assert binding.check(allow_transition=True) == server_url
+    assert binding.bound_conversation_url == server_url
+    assert binding.initial_landing_bounce_detected is False
+    assert "event=chatgpt_client_conversation_promoted" in caplog.text
+    assert binding.ensure_response_session() == server_url
+
+
+def test_fresh_chatgpt_binding_rejects_client_id_promotion_without_receipt() -> None:
+    client_url = "https://chatgpt.com/c/WEB:06e00f92-a12e-4896-8eac-816b6a3a8920"
+    server_url = "https://chatgpt.com/c/6a92fdcc-7e54-83ee-be15-eb538b7bec35"
+
+    class _Page:
+        url = "https://chatgpt.com/"
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": self.url == client_url, "url": self.url}
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+    page.url = client_url
+    assert binding.check(allow_transition=True) == client_url
+    page.url = server_url
+
+    with pytest.raises(RuntimeError, match="navigated away from the newly created session"):
+        binding.check(allow_transition=True)
+    assert binding.bound_conversation_url == client_url
+
+
+def test_fresh_chatgpt_binding_rejects_client_id_promotion_across_containers() -> None:
+    client_url = "https://chatgpt.com/c/WEB:06e00f92-a12e-4896-8eac-816b6a3a8920"
+    project_url = "https://chatgpt.com/g/g-p-demo/c/6a92fdcc-7e54-83ee-be15-eb538b7bec35"
+
+    class _Page:
+        url = "https://chatgpt.com/"
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+    page.url = client_url
+    assert binding.check(allow_transition=True) == client_url
+    page.url = project_url
+
+    with pytest.raises(RuntimeError, match="navigated away from the newly created session"):
+        binding.check(allow_transition=True)
+    assert binding.bound_conversation_url == client_url
+
+
+def test_fresh_chatgpt_binding_rejects_client_id_promotion_after_confirmation() -> None:
+    client_url = "https://chatgpt.com/c/WEB:06e00f92-a12e-4896-8eac-816b6a3a8920"
+    server_url = "https://chatgpt.com/c/6a92fdcc-7e54-83ee-be15-eb538b7bec35"
+
+    class _Page:
+        url = "https://chatgpt.com/"
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": True, "url": self.url}
+
+        def title(self) -> str:
+            return "Fresh session"
+
+    page = _Page()
+    binding = _ProviderSessionBinding(
+        page,
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    binding.arm_first_submission("Inspect the project")
+    page.url = client_url
+    assert binding.check(allow_transition=True) == client_url
+    assert binding.require_created_conversation() == client_url
+    page.url = server_url
 
     with pytest.raises(RuntimeError, match="navigated away from the newly created session"):
         binding.check(allow_transition=True)
