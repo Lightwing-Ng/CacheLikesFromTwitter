@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.46.0-codex.2
+Code version: v3.46.0-codex.5
 """
 
 from __future__ import annotations
@@ -225,7 +225,7 @@ def test_windows_inspection_commands_remove_outer_quotes_from_path_arguments(
 
 def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None:
     assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok", "claude"]
-    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol Extra High"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["gemini"][0]["ui_label"] == "3.1 Pro"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["ui_label"] == "Build"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["remote_labels"] == ("Build",)
@@ -529,6 +529,178 @@ def test_chromium_reused_session_verifies_instant_trigger() -> None:
     assert page.power.click_count == 2
 
 
+def test_chromium_selector_accepts_open_thinking_effort_menu() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.expanded = True
+            self.click_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _Page:
+        def __init__(self) -> None:
+            self.power = _PowerLocator()
+            self.role_calls: list[tuple[str, str | None, bool | None]] = []
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            self.role_calls.append((role, name, exact))
+            if role == "button" and name == "Thinking effort" and exact is True:
+                return self.power
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "current:" in expression:
+                return {"ok": True, "current": "GPT-5.6 Sol"}
+            return {"buttons": ["Thinking effort"], "menus": ["menu"]}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        observation,
+    ) is True
+    assert ("button", "Thinking effort", True) in page.role_calls
+    assert page.power.click_count == 1
+    assert observation["observed"] == "GPT-5.6 Sol"
+
+
+def test_chromium_selector_can_choose_gpt_5_6_sol_from_thinking_effort_menu() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.expanded = True
+            self.click_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _ModelChoiceLocator:
+        def __init__(self, page: "_Page") -> None:
+            self.page = page
+            self.click_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_ModelChoiceLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return self.page.power.expanded
+
+        def inner_text(self) -> str:
+            return "GPT-5.6 Sol"
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.page.current = "GPT-5.6 Sol"
+            self.page.power.expanded = False
+
+    class _Page:
+        def __init__(self) -> None:
+            self.current = "GPT-5.5"
+            self.power = _PowerLocator()
+            self.choice = _ModelChoiceLocator(self)
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _ModelChoiceLocator | _EmptyLocator:
+            if role == "button" and exact is True:
+                if name == "Thinking effort" and self.power.expanded:
+                    return self.power
+                if name == "Extra High" and not self.power.expanded:
+                    return self.power
+            if role == "menuitemradio":
+                return self.choice
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "current:" in expression:
+                return {"ok": True, "current": self.current}
+            return {"buttons": ["Thinking effort"], "menus": ["menu"]}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        observation,
+    ) is True
+    assert page.choice.click_count == 1
+    assert page.power.click_count == 2
+    assert observation["observed"] == "GPT-5.6 Sol"
+
+
 def test_chromium_wrong_model_readback_fails_closed() -> None:
     page = _chromium_model_page("Instant", current="GPT-4o")
     observation: dict[str, object] = {}
@@ -536,11 +708,81 @@ def test_chromium_wrong_model_readback_fails_closed() -> None:
     assert observation.get("reason") == "model-mismatch"
 
 
+def test_chromium_model_selector_retries_after_power_control_recycle() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.expanded = False
+            self.expanded_reads = 0
+            self.click_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-haspopup":
+                return "menu"
+            if name == "aria-expanded":
+                self.expanded_reads += 1
+                if self.expanded_reads in {3, 4}:
+                    raise TimeoutError("model control was re-rendered")
+                return "true" if self.expanded else "false"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _Page:
+        def __init__(self) -> None:
+            self.power = _PowerLocator()
+            self.menu_reads = 0
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            if role == "button" and name == "Instant" and exact is True:
+                return self.power
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "visibleMenuCount" in expression or "current:" in expression:
+                self.menu_reads += 1
+                if self.menu_reads <= 10:
+                    return {"ok": False, "diagnostic": {"visibleMenuCount": 0}}
+                return {"ok": True, "current": "GPT-5.6 Sol"}
+            return {"buttons": ["Instant"], "menus": []}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert page.power.click_count == 2
+    assert observation["observed"] == "GPT-5.6 Sol"
+
+
 def test_chatgpt_model_click_targets_exclude_generic_text_labels() -> None:
     assert "Switch model" not in CHATGPT_MODEL_TRIGGER_LABELS
     assert "Pro" not in CHATGPT_MODEL_TRIGGER_LABELS
     assert "High" not in CHATGPT_MODEL_TRIGGER_LABELS
     assert "Model" not in CHATGPT_MODEL_TRIGGER_LABELS
+    assert "Thinking effort" in CHATGPT_MODEL_TRIGGER_LABELS
 
 
 def test_chromium_switch_model_control_is_not_a_click_target() -> None:

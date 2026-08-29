@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.46.0-codex.2
+Code version: v3.46.0-codex.5
 """
 
 from __future__ import annotations
@@ -86,6 +86,8 @@ MAX_FILE_READ_CHARS = 120_000
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
 CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
+CHATGPT_MODEL_CONTROL_RETRY_ATTEMPTS = 2
+CHATGPT_MODEL_LOCATOR_TIMEOUT_MILLISECONDS = 1_000
 # Gemini can expose a placeholder textarea while its authenticated Angular
 # shell is still hydrating. Keep model verification bounded, but long enough
 # to wait for the real composer and mode picker on a cold Edge clone.
@@ -125,7 +127,7 @@ CHATGPT_MODEL_OPTIONS = (
     {
         "key": "gpt-5.6-sol",
         "label": "GPT-5.6 Sol",
-        "ui_label": "5.6 Sol",
+        "ui_label": "5.6 Sol Extra High",
         "remote_label": "GPT-5.6 Sol",
         "remote_labels": ("GPT-5.6 Sol", "5.6 Sol"),
         "strength": 100,
@@ -7141,13 +7143,14 @@ CHATGPT_MODEL_TRIGGER_LABELS = (
     "GPT-5.6 Sol",
     "5.6 Sol",
     "Extra High",
+    "Thinking effort",
 )
 
 CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS = 20
 CHATGPT_MODEL_DIAGNOSTIC_MAX_CHARS = 160
 _CHATGPT_MODEL_DIAGNOSTIC_PATTERN = re.compile(
     r"(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|"
-    r"model(?: picker)?|switch model|auto|high|medium|low|max|pro|"
+    r"thinking effort|model(?: picker)?|switch model|auto|high|medium|low|max|pro|"
     r"advanced|faster|smarter)(?:$|\s)",
     re.IGNORECASE,
 )
@@ -7285,11 +7288,28 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
                     && style.visibility !== 'hidden';
             };
             const menus = Array.from(document.querySelectorAll('[role="menu"]')).filter(visible);
+            const selectedChoices = (candidate) => Array.from(candidate?.querySelectorAll(
+                '[role="menuitemradio"], [role="option"]'
+            ) || []).filter((item) => visible(item) && (
+                item.getAttribute('aria-checked') === 'true'
+                || item.getAttribute('aria-selected') === 'true'
+            ));
             const menu = menus.find((candidate) =>
-                Array.from(candidate.querySelectorAll('[role="menuitem"]')).some((item) =>
+                selectedChoices(candidate).length
+                || Array.from(candidate.querySelectorAll('[role="menuitem"]')).some((item) =>
                     normalize(item.innerText || item.textContent).toLowerCase().startsWith('model')
                 )
             );
+            const selectedChoice = selectedChoices(menu)[0];
+            const selectedChoiceText = normalize(
+                selectedChoice?.innerText || selectedChoice?.textContent || ''
+            );
+            if (selectedChoiceText) {
+                return {
+                    ok: true,
+                    current: selectedChoiceText,
+                };
+            }
             const modelItem = Array.from(menu?.querySelectorAll('[role="menuitem"]') || [])
                 .find((item) => normalize(item.innerText || item.textContent).toLowerCase().startsWith('model'));
             if (!modelItem) {
@@ -7350,6 +7370,84 @@ def _record_model_observation(
     )
 
 
+def _read_chatgpt_locator_attribute(
+    control: Any,
+    name: str,
+) -> tuple[bool, str | None]:
+    """Read a dynamic ChatGPT control attribute without a 30-second locator wait."""
+    get_attribute = getattr(control, "get_attribute", None)
+    if not callable(get_attribute):
+        return False, None
+    try:
+        try:
+            value = get_attribute(
+                name,
+                timeout=CHATGPT_MODEL_LOCATOR_TIMEOUT_MILLISECONDS,
+            )
+        except TypeError:
+            # Lightweight test doubles and older wrappers may expose only the
+            # positional Playwright signature.
+            value = get_attribute(name)
+    except Exception as exc:
+        if _is_composer_wait_timeout(exc):
+            return False, None
+        raise
+    return True, str(value or "").strip().casefold()
+
+
+def _click_chatgpt_control(control: Any) -> bool:
+    """Click a dynamic ChatGPT control with a bounded timeout."""
+    click = getattr(control, "click", None)
+    if not callable(click):
+        return False
+    try:
+        try:
+            click(timeout=CHATGPT_MODEL_LOCATOR_TIMEOUT_MILLISECONDS)
+        except TypeError:
+            click()
+    except Exception as exc:
+        if _is_composer_wait_timeout(exc):
+            return False
+        raise
+    return True
+
+
+def _chatgpt_power_button_state(
+    page: Any,
+    power_button: Any,
+) -> tuple[Any | None, bool | None]:
+    """Read the power-menu state and reacquire the button after a DOM recycle."""
+    read_ok, expanded = _read_chatgpt_locator_attribute(
+        power_button,
+        "aria-expanded",
+    )
+    if read_ok:
+        return power_button, expanded == "true"
+    refreshed = _first_visible_role_control(
+        page,
+        "button",
+        CHATGPT_MODEL_TRIGGER_LABELS,
+        predicate=_chatgpt_control_has_model_menu_semantics,
+    )
+    if refreshed is None:
+        return None, None
+    read_ok, expanded = _read_chatgpt_locator_attribute(
+        refreshed,
+        "aria-expanded",
+    )
+    if not read_ok:
+        return None, None
+    return refreshed, expanded == "true"
+
+
+def _close_chatgpt_model_menu(page: Any, power_button: Any) -> bool:
+    """Close a menu whose trigger may have been re-rendered."""
+    refreshed, expanded = _chatgpt_power_button_state(page, power_button)
+    if refreshed is None:
+        return False
+    return not expanded or _click_chatgpt_control(refreshed)
+
+
 def _chatgpt_control_has_model_menu_semantics(control: Any) -> bool:
     """Accept only model-menu triggers, never composer or open-menu internals."""
     evaluate = getattr(control, "evaluate", None)
@@ -7370,11 +7468,10 @@ def _chatgpt_control_has_model_menu_semantics(control: Any) -> bool:
             )
         except Exception:
             return False
-    get_attribute = getattr(control, "get_attribute", None)
-    if not callable(get_attribute):
+    popup_ok, popup = _read_chatgpt_locator_attribute(control, "aria-haspopup")
+    expanded_ok, expanded = _read_chatgpt_locator_attribute(control, "aria-expanded")
+    if not popup_ok or not expanded_ok:
         return False
-    popup = str(get_attribute("aria-haspopup") or "").strip().casefold()
-    expanded = str(get_attribute("aria-expanded") or "").strip().casefold()
     return popup in {"menu", "listbox", "true"} or expanded in {"true", "false"}
 
 
@@ -7397,6 +7494,14 @@ def _select_chatgpt_model_chromium(
             attempted_labels=remote_labels,
         )
         return True
+
+    def control_recycled() -> bool:
+        _record_model_observation(
+            observation,
+            reason="power-control-recycled",
+            attempted_labels=remote_labels,
+        )
+        return False
 
     _wait_for_chatgpt_composer_if_available(page, should_stop=should_stop)
     if stop_requested():
@@ -7435,8 +7540,11 @@ def _select_chatgpt_model_chromium(
 
     if stop_requested():
         return False
-    if power_button.get_attribute("aria-expanded") != "true":
-        power_button.click()
+    power_button, expanded = _chatgpt_power_button_state(page, power_button)
+    if power_button is None:
+        return control_recycled()
+    if not expanded and not _click_chatgpt_control(power_button):
+        return control_recycled()
     if stop_requested():
         return False
     result: dict[str, Any] = {"ok": False, "diagnostic": {}}
@@ -7453,8 +7561,7 @@ def _select_chatgpt_model_chromium(
     if result.get("ok") and _chatgpt_model_text_matches(current, remote_labels):
         if stop_requested():
             return False
-        if power_button.get_attribute("aria-expanded") == "true":
-            power_button.click()
+        _close_chatgpt_model_menu(page, power_button)
         _record_model_observation(
             observation,
             observed=current,
@@ -7463,6 +7570,64 @@ def _select_chatgpt_model_chromium(
             menu_text=current,
         )
         return True
+
+    model_choice = None
+    for role in ("menuitemradio", "option"):
+        choices = page.get_by_role(role)
+        for index in range(choices.count()):
+            if stop_requested():
+                return False
+            candidate = choices.nth(index)
+            if not candidate.is_visible():
+                continue
+            if _chatgpt_model_text_matches(candidate.inner_text(), remote_labels):
+                model_choice = candidate
+                break
+        if model_choice is not None:
+            break
+    if model_choice is not None:
+        if stop_requested():
+            return False
+        if not _click_chatgpt_control(model_choice):
+            return control_recycled()
+        if stop_requested():
+            return False
+        page.wait_for_timeout(500)
+        if stop_requested():
+            return False
+        power_button, expanded = _chatgpt_power_button_state(page, power_button)
+        if power_button is None:
+            return control_recycled()
+        if not expanded and not _click_chatgpt_control(power_button):
+            return control_recycled()
+        if stop_requested():
+            return False
+        for _attempt in range(10):
+            if stop_requested():
+                return False
+            page.wait_for_timeout(200)
+            if stop_requested():
+                return False
+            result = _read_chatgpt_model_menu(page)
+            if result.get("ok"):
+                break
+        current = str(result.get("current") or "")
+        if stop_requested():
+            return False
+        _close_chatgpt_model_menu(page, power_button)
+        matched = bool(
+            result.get("ok")
+            and _chatgpt_model_text_matches(current, remote_labels)
+        )
+        _record_model_observation(
+            observation,
+            observed=current,
+            available=[current] if current else [],
+            attempted_labels=remote_labels,
+            menu_text=current,
+            reason="" if matched else "model-mismatch",
+        )
+        return matched
 
     model_item = None
     role_items = page.get_by_role("menuitem")
@@ -7478,7 +7643,8 @@ def _select_chatgpt_model_chromium(
     if model_item is not None:
         if stop_requested():
             return False
-        model_item.click()
+        if not _click_chatgpt_control(model_item):
+            return control_recycled()
         if stop_requested():
             return False
         page.wait_for_timeout(350)
@@ -7495,14 +7661,21 @@ def _select_chatgpt_model_chromium(
                 if _chatgpt_model_text_matches(choice.inner_text(), remote_labels):
                     if stop_requested():
                         return False
-                    choice.click()
+                    if not _click_chatgpt_control(choice):
+                        return control_recycled()
                     if stop_requested():
                         return False
                     page.wait_for_timeout(500)
                     if stop_requested():
                         return False
-                    if power_button.get_attribute("aria-expanded") != "true":
-                        power_button.click()
+                    power_button, expanded = _chatgpt_power_button_state(
+                        page,
+                        power_button,
+                    )
+                    if power_button is None:
+                        return control_recycled()
+                    if not expanded and not _click_chatgpt_control(power_button):
+                        return control_recycled()
                     if stop_requested():
                         return False
                     for _attempt in range(10):
@@ -7517,8 +7690,7 @@ def _select_chatgpt_model_chromium(
                     current = str(result.get("current") or "")
                     if stop_requested():
                         return False
-                    if power_button.get_attribute("aria-expanded") == "true":
-                        power_button.click()
+                    _close_chatgpt_model_menu(page, power_button)
                     matched = bool(
                         result.get("ok")
                         and _chatgpt_model_text_matches(current, remote_labels)
@@ -7535,8 +7707,8 @@ def _select_chatgpt_model_chromium(
 
     if stop_requested():
         return False
-    if power_button.get_attribute("aria-expanded") == "true":
-        power_button.click()
+    if not _close_chatgpt_model_menu(page, power_button):
+        return control_recycled()
     controls = _chatgpt_visible_model_controls(page)
     LOGGER.warning(
         "ChatGPT Web could not verify model %s through the Chromium power menu (current=%s; diagnostic=%s).",
@@ -7575,13 +7747,23 @@ def _select_chatgpt_model(
 
     remote_labels = tuple(option.get("remote_labels") or (option.get("label", ""),))
     if browser_kind != "safari" and hasattr(page, "get_by_role"):
-        return _select_chatgpt_model_chromium(
-            page,
-            option,
-            remote_labels,
-            observation=observation,
-            should_stop=should_stop,
-        )
+        wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
+        result = False
+        for attempt in range(CHATGPT_MODEL_CONTROL_RETRY_ATTEMPTS):
+            result = _select_chatgpt_model_chromium(
+                page,
+                option,
+                remote_labels,
+                observation=observation,
+                should_stop=should_stop,
+            )
+            if result or not observation or observation.get("reason") != "power-control-recycled":
+                return result
+            if callable(should_stop) and should_stop():
+                return False
+            if attempt + 1 < CHATGPT_MODEL_CONTROL_RETRY_ATTEMPTS:
+                wait_for_timeout(500)
+        return result
     wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
     model_control_script = r"""({labels, phase}) => {
             const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();

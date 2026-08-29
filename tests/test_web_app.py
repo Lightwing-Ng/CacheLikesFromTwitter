@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.0-codex.14
+# Code version: v1.88.0-codex.15
 
 from __future__ import annotations
 
@@ -846,7 +846,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-combobox-option="grok"', local_body)
         self.assertIn('data-agent-remote-label="Gemini 3.1 Pro"', local_body)
         self.assertIn('data-agent-remote-label="Auto"', local_body)
-        self.assertIn('ChatGPT · 5.6 Sol', local_body)
+        self.assertIn('aria-label="Model: 5.6 Sol Extra High"', local_body)
+        self.assertIn('data-agent-combobox-label="5.6 Sol Extra High"', local_body)
+        self.assertIn('ChatGPT · 5.6 Sol Extra High', local_body)
         self.assertIn('Gemini · 3.1 Pro', local_body)
         self.assertIn('Grok · Build', local_body)
         self.assertIn('data-agent-combobox-option="safari"', local_body)

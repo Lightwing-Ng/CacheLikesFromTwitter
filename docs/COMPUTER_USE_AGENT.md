@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.45.0-codex.1`
+Documentation version: `v3.45.0-codex.3`
 
 ## Purpose
 
@@ -108,6 +108,9 @@ older task cannot be submitted accidentally through a different Web session.
    original `aria-controls` value before every click and readback. Nested popups, duplicate triggers,
    subtitles, wrappers, hidden labels or markers, and the shortened trigger alone never prove the
    configured model. Every exit either confirms that the controlled menu is closed or fails the run.
+   ChatGPT's current `Extra High` control is renamed `Thinking effort` while its menu is open;
+   both explicit labels are accepted, and a checked `GPT-5.6 Sol` model option is read back from
+   that open menu.
    Chromium first reuses the matching official provider tab, without focusing it, before navigation.
    Some provider shells expose a composer before their model picker has hydrated. A missing
    Gemini or Claude control is therefore rechecked up to 61 times in 250 ms Stop-aware slices, for a
@@ -396,7 +399,7 @@ The handoff never calls `activate`, so the current foreground application remain
 Stage Manager places the Edge window in the background. Clicking the handoff pill later opens the same
 URL in Edge normally.
 
-The model selector is provider-specific: ChatGPT exposes `5.6 Sol`, Gemini exposes `3.1 Pro`, Grok
+The model selector is provider-specific: ChatGPT exposes the local option `5.6 Sol Extra High`, Gemini exposes `3.1 Pro`, Grok
 exposes `Build Beta`, and Claude exposes `Auto`. Each provider is fail-closed: the controller must select or observe
 and then visibly read back the exact configured model before any attachment or send. A localized
 or changed menu that cannot prove the selection stops the run without transferring project data.
