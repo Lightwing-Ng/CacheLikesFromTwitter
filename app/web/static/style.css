@@ -1,4 +1,4 @@
-/* Code version: v2.90.0-codex.1 */
+/* Code version: v2.90.0-codex.3 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -209,10 +209,21 @@
     --layout-physical-effect-bleed: 48px;
     --page-edge-pad: 10px;
     --layout-edge-gap: var(--page-edge-pad);
+    /* Page insets are the minimum visual edge distance after safe areas. */
+    --layout-page-inset-top: max(var(--page-edge-pad), env(safe-area-inset-top, 0px));
+    --layout-page-inset-right: max(var(--page-edge-pad), env(safe-area-inset-right, 0px));
+    --layout-page-inset-bottom: max(var(--page-edge-pad), env(safe-area-inset-bottom, 0px));
+    --layout-page-inset-left: max(var(--page-edge-pad), env(safe-area-inset-left, 0px));
+    /* Global anchors sit one edge gap inside the safe page rectangle. */
+    --layout-global-anchor-top: calc(var(--layout-page-inset-top) + var(--layout-edge-gap));
+    --layout-global-anchor-right: calc(var(--layout-page-inset-right) + var(--layout-edge-gap));
+    --layout-global-anchor-bottom: calc(var(--layout-page-inset-bottom) + var(--layout-edge-gap));
+    --layout-global-anchor-left: calc(var(--layout-page-inset-left) + var(--layout-edge-gap));
     --layout-global-anchor-inset: calc(var(--layout-edge-gap) * 2);
     --layout-global-action-gap: 10px;
     --layout-global-action-inline-size: var(--settings-round-icon-button-size);
-    --global-quick-actions-right: var(--layout-global-anchor-inset);
+    --global-quick-actions-top: var(--layout-global-anchor-top);
+    --global-quick-actions-right: var(--layout-global-anchor-right);
     /*
      * Responsive breakpoint registry. CSS repeats these values in media
      * conditions because custom properties are not valid there without a
@@ -236,10 +247,17 @@
     );
     --sidebar-toggle-top: var(--page-edge-pad);
     --sidebar-toggle-left: var(--page-edge-pad);
+    --sidebar-toggle-center-offset: calc(var(--layout-global-anchor-top) + (var(--settings-round-icon-button-size) / 2));
+    --workspace-mobile-collapsed-offset: calc(var(--sidebar-toggle-center-offset) - var(--layout-page-inset-top));
     --sidebar-bottom-pad: 96px;
     --sidebar-dock-hit-size: 56px;
     --layout-sidebar-dock-bottom-gap: var(--layout-edge-gap);
     --sidebar-dock-bottom-gap: var(--layout-sidebar-dock-bottom-gap);
+    --workspace-mobile-dock-clearance: calc(var(--sidebar-dock-bottom-gap) + var(--sidebar-dock-hit-size));
+    --workspace-mobile-surface-bottom-pad: calc(var(--layout-page-inset-bottom) + var(--workspace-mobile-dock-clearance));
+    --page-mobile-scroll-bottom-pad-base: var(--page-edge-pad);
+    --page-mobile-end-bottom-pad-base: calc(var(--page-mobile-scroll-bottom-pad-base) + var(--workspace-mobile-surface-bottom-pad));
+    --page-mobile-active-bottom-pad: var(--page-mobile-scroll-bottom-pad-base);
     --sidebar-dock-mobile-bottom-gap: 4px;
     --sidebar-dock-mobile-shadow: 0 -10px 24px var(--theme-glass-border), 0 0 0 1px color-mix(in srgb, var(--theme-glass-highlight) 44%, transparent);
     --settings-round-icon-button-size: 36px;
@@ -326,10 +344,10 @@
     --app-shell-gap: 14px;
     --viewport-block-size: 100vh;
     --sidebar-motion-duration: var(--motion-duration-spatial);
-    --sidebar-overlay-inset-top: max(var(--page-edge-pad), env(safe-area-inset-top, 0px));
-    --sidebar-overlay-inset-right: max(var(--page-edge-pad), env(safe-area-inset-right, 0px));
-    --sidebar-overlay-inset-bottom: max(var(--page-edge-pad), env(safe-area-inset-bottom, 0px));
-    --sidebar-overlay-inset-left: max(var(--page-edge-pad), env(safe-area-inset-left, 0px));
+    --sidebar-overlay-inset-top: var(--layout-page-inset-top);
+    --sidebar-overlay-inset-right: var(--layout-page-inset-right);
+    --sidebar-overlay-inset-bottom: var(--layout-page-inset-bottom);
+    --sidebar-overlay-inset-left: var(--layout-page-inset-left);
     --sidebar-overlay-toggle-inset: max(var(--sidebar-overlay-inset-top), var(--sidebar-overlay-inset-right));
     --sidebar-overlay-available-inline-size: calc(100vw - var(--sidebar-overlay-inset-left) - var(--sidebar-overlay-inset-right));
 
@@ -553,7 +571,7 @@ button {
     height: var(--viewport-block-size);
     min-height: 100svh;
     margin: 0 auto;
-    padding: var(--page-edge-pad) var(--page-edge-pad) calc(var(--page-edge-pad) + env(safe-area-inset-bottom, 0px));
+    padding: var(--layout-page-inset-top) var(--layout-page-inset-right) var(--layout-page-inset-bottom) var(--layout-page-inset-left);
     display: flex;
     align-items: stretch;
     overflow: hidden;
@@ -715,13 +733,13 @@ html.sidebar-memory-collapsed .page {
 }
 
 .page > .sidebar-toggle {
-    top: calc(var(--layout-edge-gap) + var(--sidebar-toggle-top));
-    left: calc(var(--layout-edge-gap) + var(--sidebar-toggle-left));
+    top: calc(var(--layout-page-inset-top) + var(--sidebar-toggle-top));
+    left: calc(var(--layout-page-inset-left) + var(--sidebar-toggle-left));
 }
 
 .global-quick-actions {
     position: fixed;
-    top: var(--layout-global-anchor-inset);
+    top: var(--global-quick-actions-top);
     right: var(--global-quick-actions-right);
     z-index: var(--layer-fixed-dock);
     width: var(--settings-round-icon-button-size);
@@ -2043,8 +2061,10 @@ html.sidebar-memory-collapsed .app-shell .cache-overview-title-card {
     gap: 8px;
     min-width: 0;
     min-height: 0;
+    padding-block-end: var(--layout-physical-effect-bleed);
     overflow-x: hidden;
     overflow-y: auto;
+    scroll-padding-block-end: var(--layout-physical-effect-bleed);
 }
 
 .cache-overview-content-card {
@@ -3010,8 +3030,8 @@ input[type="text"].output-directory-input {
 
 .sidebar-dock {
     position: fixed;
-    left: calc(var(--page-edge-pad) + (var(--sidebar-width) / 2));
-    bottom: calc(var(--page-edge-pad) + var(--sidebar-dock-bottom-gap) + env(safe-area-inset-bottom, 0px));
+    left: calc(var(--layout-page-inset-left) + (var(--sidebar-width) / 2));
+    bottom: var(--layout-global-anchor-bottom);
     transform: translateX(-50%);
     z-index: var(--layer-fixed-dock);
     display: flex;
@@ -4708,8 +4728,8 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     }
 
     .workspace {
-        height: calc(var(--viewport-block-size) - (var(--page-edge-pad) * 2));
-        min-height: calc(var(--viewport-block-size) - (var(--page-edge-pad) * 2));
+        height: calc(var(--viewport-block-size) - var(--layout-page-inset-top) - var(--layout-page-inset-bottom));
+        min-height: calc(var(--viewport-block-size) - var(--layout-page-inset-top) - var(--layout-page-inset-bottom));
         padding-top: 56px;
     }
 
@@ -4749,7 +4769,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 
     .page > .sidebar-toggle {
         position: fixed;
-        top: var(--layout-global-anchor-inset);
+        top: var(--global-quick-actions-top);
         left: var(--sidebar-overlay-inset-left);
         width: var(--settings-round-icon-button-size);
         min-width: var(--settings-round-icon-button-size);
@@ -4761,7 +4781,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     }
 
     .global-quick-actions {
-        top: var(--layout-global-anchor-inset);
+        top: var(--global-quick-actions-top);
     }
 
     .notice-floating-banner-global {

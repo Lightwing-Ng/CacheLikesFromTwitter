@@ -1,6 +1,6 @@
 # Visual Style Reference
 
-Documentation version: `v1.2.0-codex.1`
+Documentation version: `v1.3.0-codex.1`
 
 ## Authority
 
@@ -69,3 +69,39 @@ page uses one explicit `.settings-content-scrollport`; the shared
 cutting elevated card shadows without moving either width anchor. Smaller tables and
 data lists continue to own their own overflow. Pagination that belongs to a
 token-limited surface remains horizontally centered inside that surface.
+
+## Shared spatial layout contract
+
+The normative cross-project contract is maintained in
+[`../../SHARED_UI_LAYOUT_CONTRACT.md`](../../SHARED_UI_LAYOUT_CONTRACT.md). The
+`antigravity` implementation is the complete reference; this project keeps the same
+geometry and adapts only route-specific markup and interactions.
+
+The contract is geometry-first rather than selector-first. Production templates expose
+`data-layout-role` anchors for the sidebar toggle, sidebar title, global action rail,
+global theme anchor, dock, title rails, result containers, explicit scrollports, and
+pagination. Rendered DOM checks measure those roles with a one CSS-pixel tolerance;
+XPath remains diagnostic evidence and is not the implementation boundary.
+
+Let `P = max(10px, safe-area-inset)` per side and `G = 10px`. The sidebar outer
+rectangle uses `P` for its viewport edge distance and `10px` for its radius. Fixed
+global actions use `P + G` for the top and right anchors. The expanded sidebar toggle
+uses the same vertical anchor and sits `G` from the sidebar edge; collapsed and overlay
+states preserve the vertical coordinate and change only horizontal translation. The
+dock centerline is the sidebar centerline and its bottom clearance from the sidebar is
+`G`. Content and control widths are `min(100%, 640px)` and `min(100%, 384px)`;
+standard selects and dropdowns use the control width token.
+
+At desktop widths the sidebar is a grid column. At widths up to `900px` it becomes a
+safe-area-aware overlay, with the dock centered in the overlay and the toggle and
+global actions kept separate. At widths up to `600px`, content changes to compact flow
+without changing token meanings. Title rails, result headings, dates, and actions have
+explicit owners so they do not collide or extend into the sidebar. Pagination is
+centered by its owning surface.
+
+Overflow is an ownership decision. The page and workspace shells stay open wherever
+card shadows, blur, translated controls, or focus rings must escape. Effect hosts set
+`overflow: visible`. A named scrollport owns scrolling only for its data region and
+uses the 48px effect bleed where needed. The browser content card and cache overview
+content are explicit data scrollports; local tables, answer panes, dropdowns, and
+media viewers may retain clipping only as their documented viewport.

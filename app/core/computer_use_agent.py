@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.47.2-codex.1
+Code version: v3.47.5-codex.1
 """
 
 from __future__ import annotations
@@ -104,7 +104,7 @@ MAX_FILE_READ_CHARS = 120_000
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
 CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
-CHATGPT_MODEL_CONTROL_RETRY_ATTEMPTS = 2
+CHATGPT_MODEL_CONTROL_RETRY_ATTEMPTS = CHATGPT_MODEL_VERIFICATION_ATTEMPTS
 CHATGPT_MODEL_LOCATOR_TIMEOUT_MILLISECONDS = 1_000
 # Gemini can expose a placeholder textarea while its authenticated Angular
 # shell is still hydrating. Keep model verification bounded, but long enough
@@ -134,6 +134,7 @@ CHROMIUM_SEND_BUTTON_TIMEOUT_SECONDS = 180
 CHROMIUM_SUBMISSION_ACCEPT_TIMEOUT_SECONDS = 15
 WEB_SEND_BUTTON_POLL_MILLISECONDS = 250
 PROVIDER_SESSION_BIND_TIMEOUT_SECONDS = 5
+CHATGPT_SESSION_BIND_TIMEOUT_SECONDS = 30
 PROVIDER_SESSION_BIND_POLL_MILLISECONDS = 100
 GROK_SESSION_BASELINE_PAGE_LIMIT = 100
 WEB_PROGRESS_TEXT = {"thinking", "working", "searching", "analyzing", "generating"}
@@ -142,13 +143,21 @@ SUPPORTED_OPERATING_SYSTEMS = frozenset({"macos", "windows"})
 SUPPORTED_AGENT_SESSION_MODES = frozenset({"new", "recent", "project_new", "project_session"})
 SUPPORTED_AGENT_PLATFORMS = frozenset({"chatgpt", "gemini", "grok", "claude"})
 DEFAULT_AGENT_PLATFORM = "chatgpt"
+CHATGPT_THINKING_EFFORT_LABELS = (
+    "Extra High",
+    "Very High",
+    "Maximum",
+    "High",
+    "Medium",
+    "Instant",
+)
 CHATGPT_MODEL_OPTIONS = (
     {
         "key": "gpt-5.6-sol",
         "label": "GPT-5.6 Sol",
-        "ui_label": "5.6 Sol Extra High",
+        "ui_label": "5.6 Sol",
         "remote_label": "GPT-5.6 Sol",
-        "remote_labels": ("GPT-5.6 Sol", "5.6 Sol", "Extra High"),
+        "remote_labels": ("GPT-5.6 Sol", "5.6 Sol") + CHATGPT_THINKING_EFFORT_LABELS,
         "strength": 100,
     },
 )
@@ -5850,7 +5859,7 @@ class _ProviderSessionBinding:
                 "Grok freshness verification must finish before the first submission."
             )
         self.submission_marker = f"agent-transfer-{secrets.token_hex(16)}"
-        return f"{message}\n\nController transfer ID: {self.submission_marker}"
+        return f"Controller transfer ID: {self.submission_marker}\n\n{message}"
 
     def _current_submission_receipt_url(self) -> str:
         """Return the page URL atomically observed with this run's latest user receipt."""
@@ -7795,18 +7804,44 @@ def _chatgpt_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
 
 
 def _chatgpt_choice_label_groups(remote_labels: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
-    """Prefer Extra High when ChatGPT exposes both a model name and thinking effort."""
-    preferred: list[str] = []
+    """Prefer the strongest exposed ChatGPT thinking-effort option, then the Sol name."""
+    preferred_rank = {
+        " ".join(str(label).split()).casefold(): index
+        for index, label in enumerate(CHATGPT_THINKING_EFFORT_LABELS)
+    }
+    ranked: list[tuple[int, str]] = []
     remaining: list[str] = []
     for label in remote_labels:
         normalized = " ".join(str(label).split()).casefold()
         if not normalized:
             continue
-        if normalized == "extra high":
-            preferred.append(str(label))
+        if normalized in preferred_rank:
+            ranked.append((preferred_rank[normalized], str(label)))
         else:
             remaining.append(str(label))
-    return tuple(group for group in (tuple(preferred), tuple(remaining)) if group)
+    ranked.sort()
+    groups = tuple((label,) for _index, label in ranked)
+    if remaining:
+        groups += (tuple(remaining),)
+    return groups
+
+
+def _chatgpt_strongest_available_label(
+    current: str,
+    available: list[str] | tuple[str, ...] | None,
+    remote_labels: tuple[str, ...],
+) -> str:
+    """Return the strongest Sol or thinking-effort label currently exposed."""
+    pool = [
+        str(item).strip()
+        for item in (current, *(available or ()))
+        if str(item).strip()
+    ]
+    for group in _chatgpt_choice_label_groups(remote_labels):
+        for item in pool:
+            if _chatgpt_model_text_matches(item, group):
+                return item
+    return ""
 
 
 def _web_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
@@ -7840,14 +7875,37 @@ CHATGPT_MODEL_TRIGGER_LABELS = (
     "5.6 Sol",
     "Extra High",
     "Thinking effort",
+    "Thinking",
+    "Advanced",
+    "Reasoning",
+    "极速",
+    "中等",
+    "高级",
+    "思考",
+    "推理强度",
+)
+CHATGPT_POWER_CONTROL_SELECTORS = (
+    '[data-testid^="model-switcher-"]',
+    '[data-testid*="model-switcher"]',
+    '[data-testid*="thinking-effort"]',
+    '[data-testid*="reasoning-effort"]',
+    'button.__composer-pill[aria-haspopup="menu"]',
+    '[role="button"].__composer-pill[aria-haspopup="menu"]',
+    'button.__composer-pill[aria-haspopup="true"]',
+    '[role="button"].__composer-pill[aria-haspopup="true"]',
+)
+_CHATGPT_EXCLUDED_POWER_CONTROL_PATTERN = re.compile(
+    r"(?:^|\s)(?:send|stop|attach|plus|add photos?|microphone|voice|search|new chat)(?:$|\s)",
+    re.IGNORECASE,
 )
 
 CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS = 20
 CHATGPT_MODEL_DIAGNOSTIC_MAX_CHARS = 160
 _CHATGPT_MODEL_DIAGNOSTIC_PATTERN = re.compile(
     r"(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|"
-    r"thinking effort|model(?: picker)?|switch model|auto|high|medium|low|max|pro|"
-    r"advanced|faster|smarter)(?:$|\s)",
+    r"thinking effort|thinking|advanced|reasoning|model(?: picker)?|switch model|"
+    r"auto|high|medium|low|max|pro|faster|smarter|"
+    r"model-switcher|composer-pill)(?:$|\s)",
     re.IGNORECASE,
 )
 
@@ -7865,6 +7923,114 @@ def _first_visible_role_control(
             candidate = locator.nth(index)
             if candidate.is_visible() and (predicate is None or predicate(candidate)):
                 return candidate
+    return None
+
+
+def _chatgpt_control_is_excluded_composer_action(control: Any) -> bool:
+    """Reject Send, attach, and other composer actions that are not the model picker."""
+    _ok, test_id = _read_chatgpt_locator_attribute(control, "data-testid")
+    if test_id in {"send-button", "composer-plus-btn"} or "send-button" in str(test_id or ""):
+        return True
+    _ok, label = _read_chatgpt_locator_attribute(control, "aria-label")
+    inner = ""
+    inner_text = getattr(control, "inner_text", None)
+    if callable(inner_text):
+        try:
+            inner = str(inner_text() or "").strip()
+        except Exception:
+            inner = ""
+    combined = " ".join(part for part in (label, inner) if part)
+    return bool(combined and _CHATGPT_EXCLUDED_POWER_CONTROL_PATTERN.search(combined))
+
+
+def _chatgpt_find_power_control(page: Any) -> Any | None:
+    """Find ChatGPT's model or thinking-effort trigger, including unlabeled composer pills."""
+    labeled = _first_visible_role_control(
+        page,
+        "button",
+        CHATGPT_MODEL_TRIGGER_LABELS,
+        predicate=_chatgpt_control_has_model_menu_semantics,
+    )
+    if labeled is not None:
+        return labeled
+    locator_fn = getattr(page, "locator", None)
+    if callable(locator_fn):
+        for selector in CHATGPT_POWER_CONTROL_SELECTORS:
+            handle = locator_fn(selector)
+            count = getattr(handle, "count", None)
+            if not callable(count):
+                continue
+            for index in range(count()):
+                candidate = handle.nth(index)
+                if (
+                    candidate.is_visible()
+                    and _chatgpt_control_has_model_menu_semantics(candidate)
+                    and not _chatgpt_control_is_excluded_composer_action(candidate)
+                ):
+                    return candidate
+    evaluate = getattr(page, "evaluate", None)
+    if not callable(evaluate):
+        return None
+    try:
+        marked = evaluate(
+            r"""() => {
+                const visible = (element) => {
+                    if (!element) return false;
+                    const style = getComputedStyle(element);
+                    return element.getClientRects().length > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const excluded = /(?:^|\s)(?:send|stop|attach|plus|add photos?|microphone|voice|search|new chat)(?:$|\s)/i;
+                const isExcluded = (element) => {
+                    const testId = String(element.getAttribute('data-testid') || '').toLowerCase();
+                    const label = `${element.getAttribute('aria-label') || ''} ${element.innerText || ''}`.trim();
+                    return testId === 'send-button'
+                        || testId === 'composer-plus-btn'
+                        || testId.includes('send-button')
+                        || excluded.test(label);
+                };
+                const hasMenuSemantics = (element) => {
+                    if (element.closest('[role="menu"], [role="listbox"]')) return false;
+                    if (element.closest('#prompt-textarea, [contenteditable="true"]')) return false;
+                    const popup = String(element.getAttribute('aria-haspopup') || '').trim().toLowerCase();
+                    const expanded = String(element.getAttribute('aria-expanded') || '').trim().toLowerCase();
+                    return popup === 'menu' || popup === 'listbox' || popup === 'true'
+                        || expanded === 'true' || expanded === 'false';
+                };
+                document.querySelectorAll('[data-cachelikes-chatgpt-power]')
+                    .forEach((element) => element.removeAttribute('data-cachelikes-chatgpt-power'));
+                const preferred = Array.from(document.querySelectorAll(
+                    '[data-testid^="model-switcher-"], [data-testid*="model-switcher"], '
+                    + '[data-testid*="thinking-effort"], [data-testid*="reasoning-effort"], '
+                    + 'button.__composer-pill[aria-haspopup], [role="button"].__composer-pill[aria-haspopup]'
+                )).filter((element) => visible(element) && hasMenuSemantics(element) && !isExcluded(element));
+                const nearby = Array.from(document.querySelectorAll('button, [role="button"]'))
+                    .filter((element) => visible(element) && hasMenuSemantics(element) && !isExcluded(element));
+                const composer = document.querySelector('#prompt-textarea');
+                const ranked = (preferred.length ? preferred : nearby).sort((left, right) => {
+                    if (!composer) return 0;
+                    const leftDelta = Math.abs(left.getBoundingClientRect().bottom - composer.getBoundingClientRect().top);
+                    const rightDelta = Math.abs(right.getBoundingClientRect().bottom - composer.getBoundingClientRect().top);
+                    return leftDelta - rightDelta;
+                });
+                const chosen = ranked[0];
+                if (!chosen) return false;
+                chosen.setAttribute('data-cachelikes-chatgpt-power', '1');
+                return true;
+            }"""
+        )
+    except Exception:
+        return None
+    if marked is not True or not callable(locator_fn):
+        return None
+    handle = locator_fn('[data-cachelikes-chatgpt-power="1"]')
+    count = getattr(handle, "count", None)
+    if not callable(count) or count() < 1:
+        return None
+    candidate = handle.first if hasattr(handle, "first") else handle.nth(0)
+    if candidate.is_visible() and _chatgpt_control_has_model_menu_semantics(candidate):
+        return candidate
     return None
 
 
@@ -7920,11 +8086,18 @@ def _chatgpt_visible_model_controls(page: Any) -> dict[str, Any]:
                     || element.textContent
                     || ''
                 ).replace(/\s+/g, ' ').trim();
-                const diagnosticPattern = /(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|thinking effort|model(?: picker)?|switch model|auto|high|medium|low|max|pro|advanced|faster|smarter)(?:$|\s)/i;
+                const diagnosticPattern = /(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|thinking effort|thinking|advanced|reasoning|model(?: picker)?|switch model|auto|high|medium|low|max|pro|faster|smarter|model-switcher|composer-pill)(?:$|\s)/i;
                 const buttons = Array.from(document.querySelectorAll('button, [role="button"]'))
                     .filter(visible)
-                    .map(textOf)
-                    .map((label) => label.slice(0, 160))
+                    .map((element) => {
+                        const label = textOf(element);
+                        const testId = String(element.getAttribute('data-testid') || '').trim();
+                        const className = String(element.className || '');
+                        if (label) return label.slice(0, 160);
+                        if (testId) return testId.slice(0, 160);
+                        if (className.includes('composer-pill')) return 'composer-pill';
+                        return '';
+                    })
                     .filter((label) => diagnosticPattern.test(label));
                 const menus = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"]'))
                     .filter(visible)
@@ -8000,10 +8173,16 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             const selectedChoiceText = normalize(
                 selectedChoice?.innerText || selectedChoice?.textContent || ''
             );
+            const available = Array.from(menu?.querySelectorAll(
+                '[role="menuitemradio"], [role="option"], [role="menuitem"]'
+            ) || []).filter(visible).map((item) => normalize(
+                item.innerText || item.textContent || ''
+            )).filter(Boolean);
             if (selectedChoiceText) {
                 return {
                     ok: true,
                     current: selectedChoiceText,
+                    available,
                 };
             }
             const modelItem = Array.from(menu?.querySelectorAll('[role="menuitem"]') || [])
@@ -8032,6 +8211,7 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
                 current: lines.length > 1
                     ? lines.slice(1).join(' ')
                     : (descendants.at(-1) || lines.at(-1) || ''),
+                available,
             };
         }"""
     )
@@ -8119,12 +8299,7 @@ def _chatgpt_power_button_state(
     )
     if read_ok:
         return power_button, expanded == "true"
-    refreshed = _first_visible_role_control(
-        page,
-        "button",
-        CHATGPT_MODEL_TRIGGER_LABELS,
-        predicate=_chatgpt_control_has_model_menu_semantics,
-    )
+    refreshed = _chatgpt_find_power_control(page)
     if refreshed is None:
         return None, None
     read_ok, expanded = _read_chatgpt_locator_attribute(
@@ -8206,12 +8381,7 @@ def _select_chatgpt_model_chromium(
     for attempt in range(CHATGPT_MODEL_VERIFICATION_ATTEMPTS):
         if stop_requested():
             return False
-        power_button = _first_visible_role_control(
-            page,
-            "button",
-            CHATGPT_MODEL_TRIGGER_LABELS,
-            predicate=_chatgpt_control_has_model_menu_semantics,
-        )
+        power_button = _chatgpt_find_power_control(page)
         if power_button is not None:
             break
         if attempt + 1 < CHATGPT_MODEL_VERIFICATION_ATTEMPTS:
@@ -8254,14 +8424,23 @@ def _select_chatgpt_model_chromium(
         if result.get("ok"):
             break
     current = str(result.get("current") or "")
-    if result.get("ok") and _chatgpt_model_text_matches(current, remote_labels):
+    available = [
+        str(item).strip()
+        for item in (result.get("available") or [])
+        if str(item).strip()
+    ]
+    strongest = _chatgpt_strongest_available_label(current, available, remote_labels)
+    already_selected = bool(
+        strongest and _chatgpt_model_text_matches(current, (strongest,))
+    ) if available else _chatgpt_model_text_matches(current, remote_labels)
+    if result.get("ok") and already_selected:
         if stop_requested():
             return False
         _close_chatgpt_model_menu(page, power_button)
         _record_model_observation(
             observation,
             observed=current,
-            available=[current],
+            available=available or [current],
             attempted_labels=remote_labels,
             menu_text=current,
         )
@@ -8421,7 +8600,7 @@ def _select_chatgpt_model_chromium(
         available=[current] if current else [],
         attempted_labels=remote_labels + CHATGPT_MODEL_TRIGGER_LABELS,
         menu_text=current or str(result.get("diagnostic") or ""),
-        reason="model-mismatch",
+        reason="model-mismatch" if result.get("ok") else "model-menu-unreadable",
         visible_buttons=controls.get("buttons") or [],
         menu_roles=controls.get("menus") or [],
     )
@@ -8447,16 +8626,20 @@ def _select_chatgpt_model(
     remote_labels = tuple(option.get("remote_labels") or (option.get("label", ""),))
     if browser_kind != "safari" and hasattr(page, "get_by_role"):
         wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
+        attempt_observation = observation if observation is not None else {}
         result = False
         for attempt in range(CHATGPT_MODEL_CONTROL_RETRY_ATTEMPTS):
             result = _select_chatgpt_model_chromium(
                 page,
                 option,
                 remote_labels,
-                observation=observation,
+                observation=attempt_observation,
                 should_stop=should_stop,
             )
-            if result or not observation or observation.get("reason") != "power-control-recycled":
+            if result or attempt_observation.get("reason") not in {
+                "model-menu-unreadable",
+                "power-control-recycled",
+            }:
                 return result
             if callable(should_stop) and should_stop():
                 return False
@@ -8488,7 +8671,7 @@ def _select_chatgpt_model(
             };
             const powerLabels = new Set([
                 'instant', 'medium', 'gpt-5.6 sol', '5.6 sol', 'extra high',
-                'thinking effort'
+                'thinking effort', 'thinking', 'advanced', 'reasoning'
             ]);
             const labelFor = (button) => normalize(
                 `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`
@@ -8499,7 +8682,17 @@ def _select_chatgpt_model(
                 return popup === 'menu' || popup === 'listbox' || popup === 'true'
                     || expanded === 'true' || expanded === 'false';
             };
-            const powerButton = Array.from(document.querySelectorAll('button, [role="button"]')).find((button) =>
+            const preferredPower = Array.from(document.querySelectorAll(
+                '[data-testid^="model-switcher-"], [data-testid*="model-switcher"], '
+                + '[data-testid*="thinking-effort"], [data-testid*="reasoning-effort"], '
+                + 'button.__composer-pill[aria-haspopup], [role="button"].__composer-pill[aria-haspopup]'
+            )).find((button) =>
+                isVisible(button)
+                && !button.closest('[role="menu"], [role="listbox"]')
+                && !button.closest('#prompt-textarea, [contenteditable="true"]')
+                && hasMenuSemantics(button)
+            );
+            const powerButton = preferredPower || Array.from(document.querySelectorAll('button, [role="button"]')).find((button) =>
                 isVisible(button)
                 && !button.closest('[role="menu"], [role="listbox"]')
                 && !button.closest('#prompt-textarea, [contenteditable="true"]')
@@ -10110,7 +10303,12 @@ def _submit_and_wait(
         on_submitted()
 
     submitted_at = time.monotonic()
-    session_bind_deadline = submitted_at + PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
+    session_bind_timeout_seconds = (
+        CHATGPT_SESSION_BIND_TIMEOUT_SECONDS
+        if platform == "chatgpt"
+        else PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
+    )
+    session_bind_deadline = submitted_at + session_bind_timeout_seconds
     stable_since = submitted_at
     previous = ""
     response = ""
@@ -10182,8 +10380,10 @@ def _submit_and_wait(
             and not checked_response_session
         ):
             if time.monotonic() >= session_bind_deadline:
+                page_url = str(getattr(page, "url", "") or "").strip() or "none"
                 raise RuntimeError(
-                    "The provider did not prove a fresh conversation URL after submission."
+                    "The provider did not prove a fresh conversation URL after submission. "
+                    f"URL={page_url}, session_mode={session_mode}."
                 )
             _web_wait(page, browser_kind, 500)
             continue
@@ -10280,7 +10480,10 @@ def _submit_and_wait(
 def _web_user_selector(platform: str) -> str:
     """Return provider-specific user message selectors for submission acceptance."""
     return {
-        "chatgpt": '[data-message-author-role="user"]',
+        "chatgpt": (
+            '[data-message-author-role="user"], [data-role="user"], '
+            '[data-testid*="user-message" i]'
+        ),
         "gemini": 'user-query, [data-test-id="user-query-content"]',
         "grok": (
             '[data-testid="user-message"], [data-testid*="user-message" i], '
@@ -11239,7 +11442,7 @@ def _submit_chromium_prompt(
         raise RuntimeError("ChatGPT submission requires a verified target URL.")
     if session_check is not None:
         session_check(False)
-    user_selector = '[data-message-author-role="user"]'
+    user_selector = _web_user_selector("chatgpt")
     baseline_user_count = _web_count(page, "chromium", user_selector)
     if should_stop():
         return
@@ -11490,7 +11693,7 @@ def _provider_turn_snapshot(
                     || candidate.contains(element)
                 ))) return false;
                 return !element.closest(
-                    'form, [role="menu"], [role="listbox"], [role="dialog"], nav, header'
+                    '[role="menu"], [role="listbox"], [role="dialog"], nav, header'
                 );
             };
             const outerRoots = (candidates) => {
@@ -11567,9 +11770,15 @@ def _provider_turn_snapshot(
             const users = selectRoots(userGroups).sort(documentOrder);
             const latest = elements.at(-1);
             const latestUser = users.at(-1);
+            const textOf = (element) => String(
+                `${element.innerText || ''} ${element.textContent || ''}`
+            );
             const latestUserText = latestUser
                 ? (latestUser.innerText || latestUser.textContent || '').trim()
                 : '';
+            const markerEchoed = Boolean(receiptMarker && users.some((element) =>
+                textOf(element).includes(receiptMarker)
+            ));
             const latestRelation = latest && latestUser
                 ? latestUser.compareDocumentPosition(latest)
                 : Node.DOCUMENT_POSITION_DISCONNECTED;
@@ -11609,7 +11818,7 @@ def _provider_turn_snapshot(
                 count: elements.length,
                 userCount: users.length,
                 latestUserText,
-                markerEchoed: Boolean(receiptMarker && latestUserText.includes(receiptMarker)),
+                markerEchoed,
                 text,
                 generating,
                 composerPresent: Boolean(composer),

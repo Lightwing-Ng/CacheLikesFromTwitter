@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.47.2-codex.1
+Code version: v3.47.5-codex.1
 """
 
 from __future__ import annotations
@@ -27,7 +27,9 @@ from app.core.computer_use_agent import (
     AGENT_PLATFORM_OPTIONS,
     AgentRunSnapshot,
     CHATGPT_MODEL_TRIGGER_LABELS,
+    CHATGPT_SESSION_BIND_TIMEOUT_SECONDS,
     DEFAULT_CHATGPT_MODEL,
+    PROVIDER_SESSION_BIND_TIMEOUT_SECONDS,
     SEARCH_MAX_FILE_BYTES,
     ComputerUseAgentService,
     ComputerUseSettings,
@@ -60,6 +62,7 @@ from app.core.computer_use_agent import (
     _wait_for_chromium_composer,
     _wait_for_browser_recovery,
     _web_composer_selector,
+    _web_user_selector,
     _visible_web_composer_selector,
     _web_last_text,
     _web_is_generating,
@@ -225,11 +228,16 @@ def test_windows_inspection_commands_remove_outer_quotes_from_path_arguments(
 
 def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None:
     assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok", "claude"]
-    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol Extra High"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["remote_labels"] == (
         "GPT-5.6 Sol",
         "5.6 Sol",
         "Extra High",
+        "Very High",
+        "Maximum",
+        "High",
+        "Medium",
+        "Instant",
     )
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["gemini"][0]["ui_label"] == "3.1 Pro"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["ui_label"] == "Build"
@@ -360,7 +368,9 @@ def test_chatgpt_extra_high_control_reads_back_gpt_5_6_sol() -> None:
             calls.append(argument)
             assert "'extra high'" in expression
             assert "'medium'" in expression
-            assert argument["labels"] == ["GPT-5.6 Sol", "5.6 Sol", "Extra High"]
+            assert argument["labels"][:2] == ["GPT-5.6 Sol", "5.6 Sol"]
+            assert "Extra High" in argument["labels"]
+            assert "Medium" in argument["labels"]
             return {
                 "ok": True,
                 "selected": "gpt-5.6 sol",
@@ -368,12 +378,8 @@ def test_chatgpt_extra_high_control_reads_back_gpt_5_6_sol() -> None:
             }
 
     assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is True
-    assert calls == [
-        {
-            "labels": ["GPT-5.6 Sol", "5.6 Sol", "Extra High"],
-            "phase": "inspect",
-        }
-    ]
+    assert calls[0]["phase"] == "inspect"
+    assert calls[0]["labels"][:2] == ["GPT-5.6 Sol", "5.6 Sol"]
 
 
 def test_chromium_model_selector_uses_trusted_locator_clicks_and_read_only_evaluate() -> None:
@@ -795,7 +801,11 @@ def test_chromium_selector_chooses_extra_high_from_a_medium_thinking_effort_menu
 
         def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
             if "current:" in expression:
-                return {"ok": True, "current": self.current}
+                return {
+                    "ok": True,
+                    "current": self.current,
+                    "available": ["Medium", "GPT-5.6 Sol", "Extra High"],
+                }
             return {"buttons": ["Medium"], "menus": ["menu"]}
 
         def wait_for_timeout(self, _milliseconds: int) -> None:
@@ -823,11 +833,10 @@ def test_chromium_wrong_model_readback_fails_closed() -> None:
     assert observation.get("reason") == "model-mismatch"
 
 
-def test_chromium_medium_trigger_without_extra_high_or_sol_fails_closed() -> None:
+def test_chromium_medium_trigger_without_stronger_effort_accepts_medium() -> None:
     page = _chromium_model_page("Medium", current="Medium")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
-    assert observation.get("reason") == "model-mismatch"
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
     assert observation.get("observed") == "Medium"
     assert ("button", "Medium", True) in page.role_calls
 
@@ -901,6 +910,92 @@ def test_chromium_model_selector_retries_after_power_control_recycle() -> None:
     assert observation["observed"] == "GPT-5.6 Sol"
 
 
+def test_chromium_model_selector_retries_when_visible_trigger_does_not_open_menu() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.expanded = False
+            self.click_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-haspopup":
+                return "menu"
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            if self.click_count == 1:
+                return
+            self.expanded = not self.expanded
+
+    class _Page:
+        def __init__(self) -> None:
+            self.power = _PowerLocator()
+            self.menu_reads = 0
+            self.waits: list[int] = []
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            if role == "button" and name == "Medium" and exact is True:
+                return self.power
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "visibleMenuCount" in expression or "current:" in expression:
+                self.menu_reads += 1
+                if not self.power.expanded:
+                    return {
+                        "ok": False,
+                        "diagnostic": {
+                            "visibleMenuCount": 0,
+                            "menuItemCount": 0,
+                        },
+                    }
+                return {
+                    "ok": True,
+                    "current": "GPT-5.6 Sol",
+                    "available": ["GPT-5.6 Sol", "GPT-5.5"],
+                }
+            return {
+                "buttons": ["Medium"],
+                "menus": ["menu"] if self.power.expanded else [],
+            }
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waits.append(milliseconds)
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert page.power.click_count == 3
+    assert page.menu_reads == 11
+    assert 500 in page.waits
+    assert observation["observed"] == "GPT-5.6 Sol"
+
+
 def test_chatgpt_model_click_targets_exclude_generic_text_labels() -> None:
     assert "Switch model" not in CHATGPT_MODEL_TRIGGER_LABELS
     assert "Pro" not in CHATGPT_MODEL_TRIGGER_LABELS
@@ -908,6 +1003,87 @@ def test_chatgpt_model_click_targets_exclude_generic_text_labels() -> None:
     assert "Model" not in CHATGPT_MODEL_TRIGGER_LABELS
     assert "Medium" in CHATGPT_MODEL_TRIGGER_LABELS
     assert "Thinking effort" in CHATGPT_MODEL_TRIGGER_LABELS
+    assert "Advanced" in CHATGPT_MODEL_TRIGGER_LABELS
+
+
+def test_chromium_unlabeled_composer_pill_accepts_sol() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.click_count = 0
+            self.expanded = False
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        @property
+        def first(self) -> "_PowerLocator":
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            if name == "data-testid":
+                return "model-switcher-gpt-5-6-sol"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _Page:
+        def __init__(self) -> None:
+            self.power = _PowerLocator()
+            self.role_calls: list[tuple[str, str | None, bool | None]] = []
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            self.role_calls.append((role, name, exact))
+            return _EmptyLocator()
+
+        def locator(self, selector: str) -> _PowerLocator | _EmptyLocator:
+            if "model-switcher" in selector or "composer-pill" in selector:
+                return self.power
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> object:
+            if "data-cachelikes-chatgpt-power" in expression:
+                return False
+            if "current:" in expression:
+                return {"ok": True, "current": "GPT-5.6 Sol"}
+            return {"buttons": ["model-switcher-gpt-5-6-sol"], "menus": []}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert page.power.click_count == 2
+    assert observation["observed"] == "GPT-5.6 Sol"
+
+
+def test_chromium_high_is_accepted_when_extra_high_is_not_exposed() -> None:
+    page = _chromium_model_page("Medium", current="High")
+    observation: dict[str, object] = {}
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert observation["observed"] == "High"
 
 
 def test_chromium_switch_model_control_is_not_a_click_target() -> None:
@@ -1089,7 +1265,7 @@ def test_chromium_model_selector_returns_false_without_a_visible_power_control()
     page = _Page()
 
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is False
-    assert all(call == "#prompt-textarea" for call in page.locator_calls)
+    assert "#prompt-textarea" in page.locator_calls
 
 
 def test_non_chatgpt_model_selection_uses_the_provider_menu_when_exposed() -> None:
@@ -6201,6 +6377,61 @@ def test_fresh_chatgpt_binding_waits_for_transient_navigation_to_settle() -> Non
     assert page.wait_calls == 1
 
 
+def test_fresh_session_transfer_id_precedes_the_user_task() -> None:
+    class _Page:
+        url = "https://chatgpt.com/"
+
+    binding = _ProviderSessionBinding(
+        _Page(),
+        "chatgpt",
+        "https://chatgpt.com/",
+        "new",
+    )
+    armed = binding.arm_first_submission("Inspect the project")
+
+    assert armed.startswith("Controller transfer ID: agent-transfer-")
+    assert armed.endswith("Inspect the project")
+    assert CHATGPT_SESSION_BIND_TIMEOUT_SECONDS > PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
+    assert _web_user_selector("chatgpt") != '[data-message-author-role="user"]'
+
+
+def test_provider_turn_snapshot_receipt_reads_collapsed_user_text() -> None:
+    captured: dict[str, str] = {}
+
+    class _Page:
+        def evaluate(
+            self,
+            expression: str,
+            _argument: dict[str, object],
+        ) -> dict[str, object]:
+            captured["expression"] = expression
+            return {
+                "url": "https://chatgpt.com/c/fresh-session",
+                "count": 0,
+                "userCount": 1,
+                "latestUserText": "truncated",
+                "markerEchoed": True,
+                "text": "",
+                "generating": False,
+                "composerPresent": True,
+                "composerEmpty": True,
+                "assistantAfterLatestUser": False,
+            }
+
+    snapshot = _provider_turn_snapshot(
+        _Page(),
+        "chatgpt",
+        receipt_marker="agent-transfer-abc",
+    )
+
+    script = captured["expression"]
+    assert snapshot["markerEchoed"] is True
+    assert "users.some" in script
+    assert "textContent" in script
+    assert "'form, [role=\"menu\"]" not in script
+    assert "candidate.contains(element)" in script
+
+
 def test_fresh_session_receipt_excludes_the_composer_and_requires_latest_user_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -10503,6 +10734,66 @@ def test_chatgpt_stop_during_response_recovery_stops_generation(
     assert stopped == [(page, "chromium")]
 
 
+def test_chatgpt_fresh_session_bind_wait_outlasts_the_shared_five_second_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    clock = {"now": 0.0}
+
+    class _Page:
+        url = "https://chatgpt.com/"
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            clock["now"] += milliseconds / 1_000
+
+    monkeypatch.setattr(computer_use_agent.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_submit_chromium_prompt",
+        lambda *_args, **_kwargs: None,
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_chatgpt_response_snapshot",
+        lambda *_args, **_kwargs: {
+            "url": "https://chatgpt.com/",
+            "count": 0,
+            "userCount": 0,
+            "latestUserText": "",
+            "text": "",
+            "generating": False,
+            "assistantAfterLatestUser": False,
+        },
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_stop_web_generation",
+        lambda *_args, **_kwargs: None,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="did not prove a fresh conversation URL after submission",
+    ) as exc_info:
+        _submit_and_wait(
+            _Page(),
+            "chromium",
+            "Inspect the project",
+            lambda: False,
+            platform="chatgpt",
+            session_check=lambda _allow_transition: "",
+            session_recover=lambda _should_stop: "",
+            submission_target_url="https://chatgpt.com/",
+            session_mode="new",
+        )
+
+    assert clock["now"] >= CHATGPT_SESSION_BIND_TIMEOUT_SECONDS
+    assert clock["now"] > PROVIDER_SESSION_BIND_TIMEOUT_SECONDS
+    assert "URL=https://chatgpt.com/" in str(exc_info.value)
+    assert "session_mode=new" in str(exc_info.value)
+
+
 def test_chatgpt_submit_and_wait_restores_landing_before_reading_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -10867,7 +11158,10 @@ def test_chatgpt_response_snapshot_keeps_url_text_count_and_generation_atomic() 
             assert argument == {
                 "platform": "chatgpt",
                 "assistantSelector": selector,
-                "userSelector": '[data-message-author-role="user"]',
+                "userSelector": (
+                    '[data-message-author-role="user"], [data-role="user"], '
+                    '[data-testid*="user-message" i]'
+                ),
                 "composerSelector": "#prompt-textarea",
             }
             assert "url: location.href" in expression

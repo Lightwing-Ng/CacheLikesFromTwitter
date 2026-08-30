@@ -1,4 +1,4 @@
-<!-- Code version: v1.61.2-codex.1 -->
+<!-- Code version: v1.61.4-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -9,7 +9,7 @@
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.0-codex.3') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.3.5-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -63,6 +63,7 @@
         type="button"
         class="sidebar-toggle"
         id="sidebar_toggle"
+        data-layout-role="sidebar-toggle"
         aria-label="Toggle sidebar"
         aria-expanded="false"
     >
@@ -83,7 +84,7 @@
         ></button>
 
         <aside class="panel sidebar browser-sidebar" id="browser_sidebar">
-            <section class="hero">
+            <section class="hero" data-layout-role="sidebar-title">
                 <h1>Local resources</h1>
             </section>
             <section class="sidebar-section">
@@ -239,8 +240,8 @@
 
         <section class="panel chart-panel workspace browser-workspace" id="browser_workspace">
             <div class="workspace-header browser-workspace-header workspace-mobile-summary-shell" data-mobile-summary-fixed>
-                <div class="report-card workspace-summary-card workspace-article-card browser-summary-card">
-                    <div class="report-heading-row browser-heading-row">
+                <div class="report-card workspace-summary-card workspace-article-card browser-summary-card" data-layout-role="title-rail">
+                    <div class="report-heading-row browser-heading-row" data-layout-role="title-heading">
                         <div class="browser-heading-copy">
                             {% if filters.view == "text" and text_page.session_detail %}
                             <h2 lang="zh-CN">{{ text_page.current_session.conversation_title }}</h2>
@@ -301,7 +302,7 @@
                         </div>
                     </div>
                 </div>
-                <div class="report-card workspace-content-card browser-content-card{% if filters.view == 'text' %} browser-text-summary-card{% endif %}">
+                <div class="report-card workspace-content-card browser-content-card{% if filters.view == 'text' %} browser-text-summary-card{% endif %}" data-layout-role="content-scrollport">
                     <div class="browser-content-toolbar">
                         <div class="browser-session-detail-actions browser-local-resources-header-actions{% if filters.view == 'text' and text_page.session_detail %} browser-session-detail-actions--session{% endif %}" data-browser-local-resources-header-actions>
                             {% if filters.view == "text" and text_page.session_detail %}

@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.0-codex.1
+Code version: v1.51.0-codex.2
 """
 
 from pathlib import Path
@@ -1681,8 +1681,8 @@ def test_global_quick_actions_reuse_the_sibling_shell_positioning_contract() -> 
     action_start = stylesheet.index(".global-quick-actions {")
     action_rule = stylesheet[action_start:stylesheet.index("\n}", action_start)]
 
-    assert token_line == "--global-quick-actions-right: var(--layout-global-anchor-inset);"
-    assert "top: var(--layout-global-anchor-inset);" in action_rule
+    assert token_line == "--global-quick-actions-right: var(--layout-global-anchor-right);"
+    assert "top: var(--global-quick-actions-top);" in action_rule
     assert "right: var(--global-quick-actions-right);" in action_rule
 
     touch_contract_start = stylesheet.index("/* Keep the touch target stationary")
@@ -1757,7 +1757,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.90.0-codex.1 */",
+            "/* Code version: v2.90.0-codex.3 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',

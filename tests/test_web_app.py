@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.0-codex.19
+# Code version: v1.88.0-codex.20
 
 from __future__ import annotations
 
@@ -491,7 +491,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.90.0-codex.1"
+                expected_style_version = "style-v2.90.0-codex.3"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -544,7 +544,7 @@ class WebAppTests(unittest.TestCase):
             (agent_body, "Agent"),
         ):
             with self.subTest(sidebar_title=sidebar_title):
-                hero_markup = f'<section class="hero">\n                <h1>{sidebar_title}</h1>\n            </section>'
+                hero_markup = f'<section class="hero" data-layout-role="sidebar-title">\n                <h1>{sidebar_title}</h1>\n            </section>'
                 self.assertIn(hero_markup, body)
         for body in (index_body, grok_body, chatgpt_body, gemini_body):
             with self.subTest(session_page=body[:40]):
@@ -842,9 +842,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-combobox-option="grok"', local_body)
         self.assertIn('data-agent-remote-label="Gemini 3.1 Pro"', local_body)
         self.assertIn('data-agent-remote-label="Auto"', local_body)
-        self.assertIn('aria-label="Model: 5.6 Sol Extra High"', local_body)
-        self.assertIn('data-agent-combobox-label="5.6 Sol Extra High"', local_body)
-        self.assertIn('ChatGPT · 5.6 Sol Extra High', local_body)
+        self.assertIn('aria-label="Model: 5.6 Sol"', local_body)
+        self.assertIn('data-agent-combobox-label="5.6 Sol"', local_body)
+        self.assertIn('ChatGPT · 5.6 Sol', local_body)
         self.assertIn('Gemini · 3.1 Pro', local_body)
         self.assertIn('Grok · Build', local_body)
         self.assertIn('data-agent-combobox-option="safari"', local_body)
@@ -2338,7 +2338,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.90.0-codex.1", body)
+            self.assertIn("style-v2.90.0-codex.3", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

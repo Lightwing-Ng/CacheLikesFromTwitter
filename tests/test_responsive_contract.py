@@ -1,6 +1,6 @@
 """Responsive sidebar contract tests.
 
-Code version: v1.1.0-codex.1
+Code version: v1.1.0-codex.2
 """
 
 from __future__ import annotations
@@ -89,7 +89,7 @@ def test_sidebar_overlay_and_compact_content_are_independent() -> None:
     assert "--sidebar-overlay-toggle-inset" in overlay_block
     assert "--layout-global-action-inline-size: var(--settings-round-icon-button-size);" in overlay_block
     assert "--layout-sidebar-overlay-inline-size: min(" in overlay_block
-    assert "top: var(--layout-global-anchor-inset);" in overlay_block
+    assert "top: var(--global-quick-actions-top);" in overlay_block
 
     for mobile_content_fragment in (
         ".workspace-grid {",

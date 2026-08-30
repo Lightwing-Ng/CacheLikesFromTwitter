@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.47.2-codex.1`
+Documentation version: `v3.47.5-codex.1`
 
 ## Purpose
 
@@ -87,7 +87,8 @@ older task cannot be submitted accidentally through a different Web session.
    validation.
 4. Before attaching project data or submitting a prompt, every provider must expose a compatible
    model control and visibly read back the configured model. ChatGPT must prove `GPT-5.6 Sol`,
-   `5.6 Sol`, or the configured thinking-effort option `Extra High`. Gemini must prove
+   `5.6 Sol`, or the strongest exposed Sol thinking-effort option (`Extra High`, `High`,
+   `Medium`, or `Instant`). Gemini must prove
    `Gemini 3.1 Pro`, Grok must prove `Build`, and Claude must prove
    `Auto`. A missing,
    changed, localized, or ambiguous selector fails closed without attaching context or sending a
@@ -109,11 +110,16 @@ older task cannot be submitted accidentally through a different Web session.
    original `aria-controls` value before every click and readback. Nested popups, duplicate triggers,
    subtitles, wrappers, hidden labels or markers, and the shortened trigger alone never prove the
    configured model. Every exit either confirms that the controlled menu is closed or fails the run.
-   ChatGPT's closed thinking-effort control currently shows `Instant`, `Medium`, or `Extra High`.
-   While its menu is open the same control may be renamed `Thinking effort`. Those explicit labels
-   are accepted as triggers. A closed `Medium` or `Instant` label is not itself proof of
-   `5.6 Sol Extra High`; after the menu is open, a checked `GPT-5.6 Sol` model option or a checked
-   `Extra High` thinking-effort option must be read back.
+   ChatGPT's closed thinking-effort control currently shows `Instant`, `Medium`, or `Extra High`,
+   and may also be an unlabeled composer pill or `model-switcher` control. While its menu is open
+   the same control may be renamed `Thinking effort`. Those explicit labels and the unlabeled
+   composer-adjacent menu trigger are accepted. After the menu is open, the controller selects the
+   strongest exposed Sol option: `Extra High` when present, otherwise `High`, `Medium`, `Instant`,
+   or a checked `GPT-5.6 Sol` / `5.6 Sol` name. Extra High is preferred, not required.
+   If that trusted visible trigger is clicked but ChatGPT's Radix menu does not render, the
+   controller closes any partial state and retries the control up to three times. A readable menu
+   that proves a different model still fails immediately; the retry applies only to an unreadable
+   menu or a trigger replaced during the open transition.
    Chromium first reuses the matching official provider tab, without focusing it, before navigation.
    Some provider shells expose a composer before their model picker has hydrated. A missing
    Gemini or Claude control is therefore rechecked up to 61 times in 250 ms Stop-aware slices, for a
@@ -186,10 +192,12 @@ older task cannot be submitted accidentally through a different Web session.
    readback ambiguous and block Send. Grok accepts its known `chat-submit` control or a semantic
    chat composer and bounded Send pair; if that control is briefly absent after a follow-up observation, the controller
    falls back to pressing Enter and still verifies the per-turn receipt.
-   For every fresh root or Project run, the first prompt also contains a high-entropy transfer ID. The
-   controller binds the new conversation only when the latest visible user message outside the
-   composer echoes that ID and the URL atomically observed with the receipt still matches a second
-   canonical URL read. This proves where the transfer landed; before a fresh Grok submit, the
+   For every fresh root or Project run, the first prompt starts with a high-entropy transfer ID so a
+   truncated ChatGPT bubble still exposes it. The controller binds the new conversation only when a
+   user turn outside the composer echoes that ID, including collapsed `textContent`, and the URL
+   atomically observed with the receipt still matches a second canonical URL read. This proves where
+   the transfer landed. ChatGPT's fresh-URL proof wait is 30 seconds because Extra High can delay
+   the `/c/<id>` assignment after Send. Before a fresh Grok submit, the
    controller additionally enumerates the complete root or selected-Project
    conversation catalog. Pagination loops, malformed rows, repeated cursors, and incomplete schemas
    fail closed, and a conversation present in that pre-submit baseline cannot be bound even if it
@@ -434,7 +442,7 @@ The handoff never calls `activate`, so the current foreground application remain
 Stage Manager places the Edge window in the background. Clicking the handoff pill later opens the same
 URL in Edge normally.
 
-The model selector is provider-specific: ChatGPT exposes the local option `5.6 Sol Extra High`, Gemini exposes `3.1 Pro`, Grok
+The model selector is provider-specific: ChatGPT exposes the local option `5.6 Sol`, Gemini exposes `3.1 Pro`, Grok
 exposes `Build Beta`, and Claude exposes `Auto`. Each provider is fail-closed: the controller must select or observe
 and then visibly read back the exact configured model before any attachment or send. ChatGPT currently
 proves that local option through a checked `GPT-5.6 Sol` / `5.6 Sol` model item or a checked

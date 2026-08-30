@@ -1,4 +1,4 @@
-<!-- Code version: v3.24.2-codex.1 -->
+<!-- Code version: v3.24.3-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.0-codex.3') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -18,7 +18,7 @@
 {% set selected_model_options = model_options_by_platform.get(settings.platform, ()) %}
 {% set selected_model = selected_model_options | selectattr('key', 'equalto', settings.model) | list | first %}
 <main class="page agent-page" data-agent-route-prefix="/agent">
-    <button type="button" class="sidebar-toggle" id="sidebar_toggle" aria-label="Toggle sidebar" aria-expanded="false">
+    <button type="button" class="sidebar-toggle" id="sidebar_toggle" data-layout-role="sidebar-toggle" aria-label="Toggle sidebar" aria-expanded="false">
         <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
     </button>
     <div class="app-shell is-sidebar-open" id="app_shell">
@@ -26,7 +26,7 @@
         <button type="button" class="sidebar-backdrop" id="sidebar_backdrop" aria-label="Close sidebar" aria-hidden="true" tabindex="-1" hidden></button>
 
         <aside class="panel sidebar agent-sidebar" id="agent_sidebar">
-            <section class="hero">
+            <section class="hero" data-layout-role="sidebar-title">
                 <h1>Agent</h1>
             </section>
 
@@ -251,8 +251,8 @@
 
         <section class="panel chart-panel workspace agent-workspace" id="agent_workspace">
             <div class="workspace-header">
-                <article class="report-card workspace-summary-card workspace-article-card agent-summary-card">
-                    <div class="report-heading-row">
+                <article class="report-card workspace-summary-card workspace-article-card agent-summary-card" data-layout-role="title-rail">
+                    <div class="report-heading-row" data-layout-role="title-heading">
                         <div>
                             <h2 data-agent-heading>{{ selected_platform.label }} Web Agent</h2>
                         </div>
@@ -332,7 +332,7 @@
                                     hidden
                                 ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
                             </div>
-                            <nav class="browser-pagination local-store-pagination local-store-pagination--floating agent-response-pagination" id="agent_response_pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
+                            <nav class="browser-pagination local-store-pagination local-store-pagination--floating agent-response-pagination" id="agent_response_pagination" data-layout-role="pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
                         </div>
                         <p class="agent-empty-response" id="agent_empty_response"{% if initial_history_item or agent_snapshot.response %} hidden{% endif %}>
                             <span class="suggestion-loading-spinner agent-empty-response-spinner" data-agent-session-history-spinner aria-hidden="true" hidden></span>

@@ -1,9 +1,10 @@
-{# Code version: v1.3.0-codex.1 #}
+{# Code version: v1.3.0-codex.2 #}
 {% macro render_browser_pagination(page, aria_label, view, filters, range_unit="pages") %}
 {% set pagination_items = page.pagination_items %}
 {% if pagination_items %}
 <nav
     class="browser-pagination local-store-pagination local-store-pagination--floating is-animated"
+    data-layout-role="pagination"
     aria-label="{{ aria_label }}"
     style="--local-store-pagination-slots: {{ pagination_items|length }};"
 >

@@ -1,4 +1,4 @@
-<!-- Code version: v1.5.1-codex.1 -->
+<!-- Code version: v1.5.3-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.0-codex.3') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.4-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='resizer.js', v='resizer-v1.0.0-codex.1') }}"></script>
@@ -22,6 +22,7 @@
         type="button"
         class="sidebar-toggle"
         id="sidebar_toggle"
+        data-layout-role="sidebar-toggle"
         aria-label="Toggle sidebar"
         aria-expanded="false"
     >
@@ -41,7 +42,7 @@
         ></button>
 
         <aside class="panel sidebar" id="app_sidebar">
-            <section class="hero">
+            <section class="hero" data-layout-role="sidebar-title">
                 <h1>Settings</h1>
             </section>
             {% include "_style_tokens_settings_nav.html" %}
@@ -49,8 +50,8 @@
 
         <section class="panel chart-panel workspace" id="workspace_panel">
             <section class="workspace-header settings-workspace-header settings-shell-style-tokens" id="settings_workspace_shell">
-                <article class="report-card workspace-article-card workspace-summary-card settings-summary-card">
-                    <div class="report-heading-row">
+                <article class="report-card workspace-article-card workspace-summary-card settings-summary-card" data-layout-role="title-rail">
+                    <div class="report-heading-row" data-layout-role="title-heading">
                         <p class="report-heading">Style tokens</p>
                     </div>
                 </article>
@@ -58,7 +59,7 @@
                 <section class="style-token-shell" data-style-token-shell>
                     <p class="sr-only" role="status" aria-live="polite" aria-atomic="true" data-style-token-copy-status></p>
                     <button type="button" class="surface-resizer surface-resizer--inline style-token-resizer" data-style-token-resizer role="separator" aria-orientation="vertical" aria-label="Resize style token demos"></button>
-                    <div class="style-token-list">
+                    <div class="style-token-list" data-layout-role="content-scrollport">
                     {% for row in style_token_rows %}
                     <section id="{{ row.id }}" class="style-token-card" data-style-token-card="{{ row.id }}">
                         <div class="style-token-demo">
@@ -230,7 +231,7 @@
                             {% elif row.sample_kind == "local-store-pagination" %}
                             <section class="style-token-component-demo style-token-pagination-demo" data-style-token-demo="local-store-pagination" aria-label="Local store pagination demo">
                                 <p class="style-token-component-kicker">{{ row.sample_title }}</p>
-                                <nav class="browser-pagination local-store-pagination local-store-pagination--floating style-token-pagination-demo-nav" aria-label="Sessions" data-style-token-pagination data-pagination-page-count="16" data-pagination-current-page="1" data-source-xpath="/html/body/main/div[3]/section/div/div[2]/nav">
+                                <nav class="browser-pagination local-store-pagination local-store-pagination--floating style-token-pagination-demo-nav" data-layout-role="pagination" aria-label="Sessions" data-style-token-pagination data-pagination-page-count="16" data-pagination-current-page="1" data-source-xpath="/html/body/main/div[3]/section/div/div[2]/nav">
                                     <span class="local-store-pagination-indicator" aria-hidden="true"></span>
                                     <button type="button" class="local-store-page-button is-active" data-pagination-target="1" data-pagination-current="1" aria-label="Session page 1" aria-current="page">1</button>
                                     <button type="button" class="local-store-page-button" data-pagination-target="2" data-pagination-current="0" aria-label="Session page 2">2</button>
@@ -381,7 +382,7 @@
                                             </tbody>
                                         </table>
                                     </div>
-                                    <nav class="browser-pagination local-store-pagination local-store-pagination--floating style-token-table-demo-pagination" aria-label="Scrollable data table pages" aria-controls="style_token_table_body" data-style-token-table-pagination hidden></nav>
+                                    <nav class="browser-pagination local-store-pagination local-store-pagination--floating style-token-table-demo-pagination" data-layout-role="pagination" aria-label="Scrollable data table pages" aria-controls="style_token_table_body" data-style-token-table-pagination hidden></nav>
                                 </div>
                             </section>
                             {% endif %}
