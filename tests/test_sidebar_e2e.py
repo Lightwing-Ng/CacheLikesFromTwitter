@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.0-codex.1
+Code version: v1.26.2-codex.1
 """
 
 from __future__ import annotations
@@ -817,11 +817,11 @@ def test_cache_sidebars_reuse_the_chatgpt_base_contract(
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_agent_response_pagination_keeps_spatial_effects_visible(
+def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
-    """Verify the Agent pagination shell is not clipped by its response ancestors."""
+    """Verify the Agent pagination is surface-free without clipping its interactions."""
     page, context = _open_page(
         disposable_browser,
         f"{sidebar_server_url}/agent",
@@ -888,12 +888,22 @@ def test_agent_response_pagination_keeps_spatial_effects_visible(
                     answer: read(answer),
                     paginationWidth: pagination.getBoundingClientRect().width,
                     indicatorVisible: window.getComputedStyle(indicator).opacity === "1",
+                    paginationSurface: {
+                        background: window.getComputedStyle(pagination).background,
+                        borderWidth: window.getComputedStyle(pagination).borderWidth,
+                        boxShadow: window.getComputedStyle(pagination).boxShadow,
+                        padding: window.getComputedStyle(pagination).padding,
+                    },
                 };
             }""",
         )
         assert contract is not None
         assert contract["paginationWidth"] > 0
         assert contract["indicatorVisible"]
+        assert contract["paginationSurface"]["background"].startswith("rgba(0, 0, 0, 0)")
+        assert contract["paginationSurface"]["borderWidth"] == "0px"
+        assert contract["paginationSurface"]["boxShadow"] == "none"
+        assert contract["paginationSurface"]["padding"] == "0px"
         assert all(item["overflow"] == "visible" for item in contract["ancestors"])
         assert contract["ancestors"][-1]["position"] == "relative"
         assert contract["ancestors"][-1]["zIndex"] == "2"
@@ -908,6 +918,67 @@ def test_agent_response_pagination_keeps_spatial_effects_visible(
         )
         assert hover_state["background"] != "rgba(0, 0, 0, 0)"
         assert hover_state["boxShadow"] != "none"
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_prompt_composer_stays_compact_until_expanded(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep a long Agent task readable without opening the Composer by default."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/agent",
+        1_280,
+        900,
+        touch=False,
+        init_script="""
+            (() => {
+                const originalFetch = window.fetch.bind(window);
+                window.fetch = (input, init) => {
+                    const requestUrl = typeof input === "string" ? input : input?.url;
+                    if (requestUrl && new URL(requestUrl, window.location.href).pathname === "/api/agent/status") {
+                        return Promise.reject(new Error("Agent status polling is disabled for this layout test."));
+                    }
+                    return originalFetch(input, init);
+                };
+            })();
+        """,
+    )
+    try:
+        prompt = page.locator("#agent_prompt_input")
+        toggle = page.locator("[data-agent-composer-overflow-toggle]")
+        expect(prompt).to_have_attribute("rows", "2")
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        expect(toggle).to_have_attribute("aria-label", "Expand question or task")
+        compact = prompt.evaluate(
+            "element => ({height: element.clientHeight, weight: getComputedStyle(element).fontWeight, resize: getComputedStyle(element).resize})"
+        )
+        assert compact["height"] > 0
+        assert compact["weight"] == "300"
+        assert compact["resize"] == "none"
+
+        prompt.fill("\n".join(f"Task line {line}" for line in range(1, 9)))
+        collapsed = prompt.evaluate(
+            "element => ({height: element.clientHeight, scrollHeight: element.scrollHeight})"
+        )
+        assert collapsed["height"] == compact["height"]
+        assert collapsed["scrollHeight"] > collapsed["height"]
+
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        expect(toggle).to_have_attribute("aria-label", "Collapse question or task")
+        expanded = prompt.evaluate("element => ({height: element.clientHeight, scrollHeight: element.scrollHeight})")
+        assert expanded["height"] > collapsed["height"]
+        assert expanded["height"] >= min(expanded["scrollHeight"], 360)
+
+        toggle.click()
+        expect(toggle).to_have_attribute("aria-expanded", "false")
+        final_height = prompt.evaluate("element => element.clientHeight")
+        assert final_height == compact["height"]
     finally:
         context.close()
 
@@ -1414,13 +1485,9 @@ def test_simplified_chinese_language_boundary_runs_in_real_browser(
         session_mode_trigger = page.locator(
             "xpath=/html/body/main/div/aside/form/div[2]/label/div/button"
         )
-        recent_session_trigger = page.locator(
-            "xpath=/html/body/main/div/aside/form/div[2]/div[1]/div/button"
-        )
         expect(session_mode_trigger).to_have_count(1)
-        expect(recent_session_trigger).to_have_count(1)
-        # Keep the production trigger shape while isolating the language fixture
-        # from the Agent poller, which legitimately re-renders its live controls.
+        # Keep the production session-list shape while isolating the language
+        # fixture from the Agent poller, which legitimately re-renders its live controls.
         page.evaluate(
             """() => {
                 const fixture = document.createElement("div");
@@ -1430,6 +1497,12 @@ def test_simplified_chinese_language_boundary_runs_in_real_browser(
                     trigger.querySelector("[data-agent-combobox-selected-label]").textContent = label;
                     return trigger;
                 };
+                const recentList = document.createElement("div");
+                recentList.dataset.agentSessionList = "recent";
+                const recentOption = document.createElement("button");
+                recentOption.type = "button";
+                recentOption.textContent = "简体中文最近会话";
+                recentList.append(recentOption);
                 fixture.append(
                     createTrigger(
                         document.querySelector(
@@ -1437,25 +1510,19 @@ def test_simplified_chinese_language_boundary_runs_in_real_browser(
                         ),
                         "简体中文会话标题",
                     ),
-                    createTrigger(
-                        document.querySelector(
-                            '[data-agent-session-list="recent"] [data-agent-combobox-trigger]'
-                        ),
-                        "简体中文最近会话",
-                    ),
+                    recentList,
                 );
                 document.body.append(fixture);
             }""",
         )
         fixture = page.locator("#language-rendering-agent-session-fixture")
         session_mode_trigger = fixture.locator("[data-agent-combobox-trigger]").nth(0)
-        recent_session_trigger = fixture.locator("[data-agent-combobox-trigger]").nth(1)
         session_mode_label = session_mode_trigger.locator("[data-agent-combobox-selected-label]")
-        recent_session_label = recent_session_trigger.locator("[data-agent-combobox-selected-label]")
+        recent_session_option = fixture.locator('[data-agent-session-list="recent"] button')
         expect(session_mode_label).to_have_attribute("lang", "zh-CN")
         expect(session_mode_trigger).to_contain_text("简体中文会话标题")
-        expect(recent_session_label).to_have_attribute("lang", "zh-CN")
-        expect(recent_session_trigger).to_contain_text("简体中文最近会话")
+        expect(recent_session_option).to_have_attribute("lang", "zh-CN")
+        expect(recent_session_option).to_contain_text("简体中文最近会话")
 
         page.evaluate(
             """() => {
@@ -1895,14 +1962,21 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
             f'[data-agent-session-list="recent"] [data-agent-combobox-option="{session_url}"]'
         )
         expect(recent_option).to_have_count(1)
-        page.locator('[data-agent-session-list="recent"] [data-agent-combobox-trigger]').click()
         recent_menu = page.locator(
             '[data-agent-session-list="recent"] [data-agent-combobox-menu]'
         )
         menu_box = recent_menu.bounding_box()
+        dock_box = page.locator(".sidebar-dock").bounding_box()
         assert menu_box is not None
+        assert dock_box is not None
         assert menu_box["y"] >= 0
         assert menu_box["y"] + menu_box["height"] <= 720
+        assert menu_box["y"] + menu_box["height"] <= dock_box["y"]
+        scroll_metrics = recent_menu.evaluate(
+            "element => ({clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, overflowY: getComputedStyle(element).overflowY})"
+        )
+        assert scroll_metrics["scrollHeight"] > scroll_metrics["clientHeight"]
+        assert scroll_metrics["overflowY"] == "auto"
         expect(recent_option).to_be_visible()
         recent_option.click()
 
@@ -4563,6 +4637,89 @@ def test_agent_browser_status_retries_a_fresh_negative_cache_and_force_refreshes
 
 @pytest.mark.integration
 @pytest.mark.slow
+def test_agent_bootstrap_replaces_ready_cache_without_catalog(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Avoid a second source collection when an older ready status lacks bootstrap data."""
+    browser_status_requests: list[str] = []
+    source_requests: list[str] = []
+    session_url = "https://chatgpt.com/c/bootstrap-cache-session"
+    catalog_payload = {
+        "platform": "chatgpt",
+        "browser_label": "Edge",
+        "recent_sessions": [
+            {
+                "id": "bootstrap-cache-session",
+                "title": "Bootstrap cache session",
+                "url": session_url,
+                "updated_at": "2026-08-30T00:00:00Z",
+            }
+        ],
+        "projects": [],
+        "limit": 20,
+    }
+    fresh_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": catalog_payload,
+    }
+
+    def fulfill_browser_status(route) -> None:
+        browser_status_requests.append(route.request.url)
+        route.fulfill(json=fresh_status)
+
+    def fulfill_sources(route) -> None:
+        source_requests.append(route.request.url)
+        route.fulfill(json=catalog_payload)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    cache_key = "cachelikes:browser-session:v5:agent:chatgpt:edge"
+    cached_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Cached ChatGPT status",
+    }
+    page.add_init_script(
+        f"sessionStorage.setItem({json.dumps(cache_key)}, "
+        f"JSON.stringify({{cached_at: Date.now(), payload: {json.dumps(cached_status)}}}));"
+    )
+    page.route(
+        "**/api/agent/status",
+        lambda route: route.fulfill(json=_finished_chatgpt_agent_payload()),
+    )
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/sources**", fulfill_sources)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        expect(
+            page.locator(
+                f'[data-agent-session-list="recent"] [data-agent-combobox-option="{session_url}"]'
+            )
+        ).to_have_count(1)
+        assert len(browser_status_requests) == 1
+        assert source_requests == []
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
 def test_fresh_grok_bootstrap_supersedes_a_stale_cached_catalog_error(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -4957,7 +5114,6 @@ def test_explicit_agentic_troubleshooting_session_is_the_only_reused_target(
         expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("new")
         page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
         page.locator('.agent-session-mode-combobox [data-agent-combobox-option="recent"]').click()
-        page.locator('[data-agent-session-list="recent"] [data-agent-combobox-trigger]').click()
         page.locator(
             f'[data-agent-session-list="recent"] [data-agent-combobox-option="{AGENTIC_TROUBLESHOOTING_URL}"]'
         ).click()

@@ -1,4 +1,4 @@
-<!-- Code version: v3.24.3-codex.1 -->
+<!-- Code version: v3.24.4-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.0-codex.3') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -202,16 +202,13 @@
 
                     <div class="field agent-session-detail-field" data-agent-recent-session-field hidden>
                         <span class="field-label">Recent sessions</span>
-                        <div class="trade-strategy-combobox agent-combobox agent-session-list-combobox" data-agent-combobox data-agent-session-list="recent">
+                        <div class="agent-session-list-combobox agent-session-list-combobox-direct" data-agent-combobox data-agent-direct-list="true" data-agent-session-list="recent">
                             <input type="hidden" value="" data-agent-combobox-input data-agent-recent-session-url>
-                            <button type="button" class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger" data-agent-combobox-trigger aria-haspopup="listbox" aria-expanded="false" aria-label="Recent sessions: Loading" aria-busy="true" disabled>
-                                <span class="browser-session-trigger-leading">
-                                    <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>Recent sessions</span>
-                                    <span class="suggestion-loading-spinner agent-combobox-loading-spinner" data-agent-combobox-spinner aria-hidden="true"></span>
-                                </span>
-                                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
-                            </button>
-                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu" data-agent-combobox-menu role="listbox" aria-label="Choose a recent {{ selected_platform.label }} session" hidden></div>
+                            <div class="agent-session-list-state" data-agent-session-list-state aria-live="polite">
+                                <span class="suggestion-loading-spinner agent-combobox-loading-spinner" data-agent-combobox-spinner aria-hidden="true"></span>
+                                <span data-agent-session-list-state-copy>Loading recent sessions…</span>
+                            </div>
+                            <div class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu agent-session-list-menu-direct" data-agent-combobox-menu role="listbox" aria-label="Choose a recent {{ selected_platform.label }} session"></div>
                         </div>
                     </div>
 
@@ -332,7 +329,7 @@
                                     hidden
                                 ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
                             </div>
-                            <nav class="browser-pagination local-store-pagination local-store-pagination--floating agent-response-pagination" id="agent_response_pagination" data-layout-role="pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
+                            <nav class="browser-pagination local-store-pagination agent-response-pagination" id="agent_response_pagination" data-layout-role="pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
                         </div>
                         <p class="agent-empty-response" id="agent_empty_response"{% if initial_history_item or agent_snapshot.response %} hidden{% endif %}>
                             <span class="suggestion-loading-spinner agent-empty-response-spinner" data-agent-session-history-spinner aria-hidden="true" hidden></span>
@@ -371,7 +368,7 @@
                         <input type="hidden" name="session_title" value="" data-agent-prompt-session-title>
                         <label class="field agent-composer-field">
                             <span class="agent-composer-shell">
-                                <textarea class="text-input-control agent-prompt-input" name="prompt" rows="4" placeholder="Do anything" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
+                                <textarea class="text-input-control agent-prompt-input" id="agent_prompt_input" name="prompt" rows="2" placeholder="Do anything" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
                                 <span class="agent-composer-footer">
                                     <span class="trade-strategy-combobox agent-combobox agent-model-combobox" data-agent-combobox>
                                         <input type="hidden" name="model" value="{{ settings.model }}" data-agent-combobox-input data-agent-model-input>
@@ -409,6 +406,9 @@
                                         </span>
                                     </span>
                                     <span class="agent-composer-actions">
+                                        <button type="button" class="browser-session-message-toggle agent-composer-overflow-toggle" data-agent-composer-overflow-toggle aria-controls="agent_prompt_input" aria-expanded="false" aria-label="Expand question or task" title="Expand question or task">
+                                            <span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span>
+                                        </button>
                                         <button type="button" class="agent-composer-submit is-resume" id="agent_resume_button" data-agent-resume hidden aria-label="Resume Agent task" title="Resume Agent task">
                                             <span class="icon agent-composer-submit-icon" aria-hidden="true"></span>
                                         </button>
@@ -431,9 +431,9 @@
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.20.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.3.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.6.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.7.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.23.0-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.24.1-codex.1') }}"></script>
 </body>
 </html>

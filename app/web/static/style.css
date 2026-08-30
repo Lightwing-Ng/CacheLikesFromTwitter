@@ -1,4 +1,4 @@
-/* Code version: v2.90.0-codex.3 */
+/* Code version: v2.90.1-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -431,6 +431,7 @@
     --font-size-6: 24px;
     --font-size-7: 32px;
     --font-size-8: 36px;
+    --font-weight-light: 300;
     --font-weight-regular: 400;
     --font-weight-medium: 500;
     --font-weight-semibold: 600;
@@ -3631,10 +3632,41 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     min-height: 46px;
 }
 
+.agent-session-list-combobox-direct {
+    display: grid;
+    gap: 8px;
+}
+
+.agent-session-list-state {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 24px;
+    color: var(--muted);
+    font-size: var(--font-table-body);
+}
+
+.agent-session-list-state[hidden] {
+    display: none;
+}
+
 .agent-session-list-menu {
     max-height: min(340px, 42vh);
     overflow-y: auto;
     scrollbar-gutter: stable;
+}
+
+.agent-session-list-menu-direct {
+    position: static;
+    display: grid !important;
+    gap: 4px;
+    width: 100%;
+    max-height: min(280px, max(28px, calc(100vh - 706px)));
+    padding: 4px;
+    border-radius: var(--radius-soft);
+    box-sizing: border-box;
+    overflow-y: auto;
+    overscroll-behavior: contain;
 }
 
 .agent-session-list-combobox .agent-session-list-menu {
@@ -3835,14 +3867,16 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-prompt-input {
-    min-height: 120px;
+    min-height: 0;
+    max-height: min(360px, 45svh);
     padding: 12px;
-    resize: vertical;
+    resize: none;
     border: 0;
     border-radius: 0;
     background: transparent;
     box-shadow: none;
     font-size: var(--font-agent-prompt);
+    font-weight: var(--font-weight-light);
     line-height: 1.5;
     overflow-x: hidden;
     overflow-y: auto;
@@ -3954,6 +3988,12 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-composer-actions {
     gap: 8px;
+}
+
+.agent-composer-overflow-toggle {
+    align-self: auto;
+    flex: 0 0 auto;
+    margin: 0;
 }
 
 .agent-composer-submit {
@@ -4138,11 +4178,17 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     z-index: var(--layer-control-affordance);
 }
 
-.agent-response-pagination {
+.browser-pagination.agent-response-pagination {
     position: relative;
     z-index: var(--layer-control-affordance);
     flex: 0 0 auto;
-    margin-top: 12px;
+    margin: 12px auto 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     overflow: visible;
 }
 

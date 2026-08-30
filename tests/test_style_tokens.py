@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.0-codex.2
+Code version: v1.51.1-codex.1
 """
 
 from pathlib import Path
@@ -1757,7 +1757,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.90.0-codex.3 */",
+            "/* Code version: v2.90.1-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1885,6 +1885,36 @@ def test_agent_prompt_uses_the_dedicated_sixteen_pixel_type_token() -> None:
     assert "font-size: var(--font-agent-prompt);" in prompt_rule
 
 
+def test_agent_composer_uses_a_two_line_lightweight_prompt_with_a_standard_toggle() -> None:
+    """Keep the Agent question field compact until its shared control expands it."""
+    stylesheet = _stylesheet()
+    prompt_start = stylesheet.index(".agent-prompt-input {")
+    prompt_rule = stylesheet[prompt_start:stylesheet.index("\n}", prompt_start)]
+    toggle_start = stylesheet.index(".agent-composer-overflow-toggle {")
+    toggle_rule = stylesheet[toggle_start:stylesheet.index("\n}", toggle_start)]
+    pagination_start = stylesheet.index(".browser-pagination.agent-response-pagination {")
+    pagination_rule = stylesheet[pagination_start:stylesheet.index("\n}", pagination_start)]
+
+    assert "--font-weight-light: 300;" in stylesheet
+    for token in (
+        "min-height: 0;",
+        "max-height: min(360px, 45svh);",
+        "resize: none;",
+        "font-weight: var(--font-weight-light);",
+    ):
+        assert token in prompt_rule
+    for token in ("align-self: auto;", "margin: 0;"):
+        assert token in toggle_rule
+    for token in (
+        "padding: 0;",
+        "border: 0;",
+        "background: transparent;",
+        "box-shadow: none;",
+        "backdrop-filter: none;",
+    ):
+        assert token in pagination_rule
+
+
 def test_agent_composer_uses_one_frosted_surface_and_an_invisible_vertical_scrollbar() -> None:
     """Keep the Composer shell frosted while the prompt area stays immersive and scrollable."""
     stylesheet = _stylesheet()
@@ -1939,6 +1969,19 @@ def test_agent_session_lists_open_above_the_sidebar_trigger() -> None:
 
     assert "top: auto;" in selector_rule
     assert "bottom: calc(100% + 4px);" in selector_rule
+
+
+def test_agent_recent_session_list_is_inline_and_scrollable() -> None:
+    """Render Recent sessions directly while keeping a bounded sidebar scrollport."""
+    stylesheet = _stylesheet()
+    selector = ".agent-session-list-menu-direct {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "position: static;" in selector_rule
+    assert "display: grid !important;" in selector_rule
+    assert "max-height: min(280px, max(28px, calc(100vh - 706px)));" in selector_rule
+    assert "overflow-y: auto;" in selector_rule
 
 
 def test_browser_session_status_labels_share_nonbold_left_typography() -> None:

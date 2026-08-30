@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.47.5-codex.1`
+Documentation version: `v3.48.0-codex.1`
 
 ## Purpose
 
@@ -35,6 +35,10 @@ with `cache.status: "stale"` so the selector remains usable and the condition st
 
 On `/agent`, ChatGPT, Grok, and Claude use an agent-scoped bootstrap request: the selected browser
 context verifies the actual Web composer and collects Recent sessions and Projects in one launch.
+When `Recent sessions` is selected, the catalog is rendered directly as a bounded, vertically
+scrollable list in the sidebar rather than a second dropdown. A ready Agent status cached without
+its bootstrap catalog is treated as incomplete and refreshed once, so the status probe and source
+catalog do not launch separate browser processes.
 Grok readiness is verified on `https://grok.com/`; it does not depend on the separate `/files`
 download surface or account-label scraping. A visible composer is necessary but not sufficient:
 the same browser context must also complete one authenticated Grok conversations request, and any

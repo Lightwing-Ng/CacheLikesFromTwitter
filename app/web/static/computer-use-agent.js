@@ -1,4 +1,4 @@
-/* Code version: v3.23.0-codex.1 */
+/* Code version: v3.24.1-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -43,6 +43,7 @@
         promptProjectUrl: promptForm.querySelector("[data-agent-prompt-project-url]"),
         promptSessionTitle: promptForm.querySelector("[data-agent-prompt-session-title]"),
         promptInput: promptForm.querySelector("[data-agent-prompt-input]"),
+        promptOverflowToggle: promptForm.querySelector("[data-agent-composer-overflow-toggle]"),
         activityPanel: document.getElementById("agent_activity_panel"),
         activityCount: document.getElementById("agent_activity_count"),
         activityList: document.getElementById("agent_activity_list"),
@@ -395,6 +396,13 @@
         if (!combobox) return;
         const input = combobox.querySelector("[data-agent-combobox-input]");
         if (input instanceof HTMLInputElement) input.value = value || "";
+        const menu = combobox.querySelector("[data-agent-combobox-menu]");
+        Array.from(menu?.querySelectorAll("[data-agent-combobox-option]") || []).forEach((option) => {
+            const isSelected = Boolean(value) && option.dataset.agentComboboxOption === value;
+            option.classList.toggle("is-selected", isSelected);
+            option.classList.toggle("is-active", isSelected);
+            option.setAttribute("aria-selected", String(isSelected));
+        });
         syncComboboxTrigger(combobox, label, icon);
     }
 
@@ -512,7 +520,14 @@
         if (!combobox) return;
         const spinner = combobox.querySelector("[data-agent-combobox-spinner]");
         const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
+        const state = combobox.querySelector("[data-agent-session-list-state]");
+        const stateCopy = combobox.querySelector("[data-agent-session-list-state-copy]");
         if (spinner) spinner.hidden = !loading;
+        if (state) {
+            state.hidden = !loading;
+            state.setAttribute("aria-busy", String(loading));
+        }
+        if (stateCopy && loading) stateCopy.textContent = "Loading recent sessions…";
         if (!trigger) return;
         if (loading) {
             const fieldLabel = combobox.closest(".field")?.querySelector(".field-label")?.textContent?.trim() || "Option";
@@ -528,7 +543,10 @@
         const input = combobox.querySelector("[data-agent-combobox-input]");
         const menu = combobox.querySelector("[data-agent-combobox-menu]");
         const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
-        if (!menu || !trigger) return;
+        const state = combobox.querySelector("[data-agent-session-list-state]");
+        const stateCopy = combobox.querySelector("[data-agent-session-list-state-copy]");
+        const isDirectList = combobox.dataset.agentDirectList === "true";
+        if (!menu || (!trigger && !isDirectList)) return;
         const selectedValue = input instanceof HTMLInputElement ? input.value : "";
         let selectedOption = null;
         menu.replaceChildren();
@@ -541,6 +559,7 @@
                 icon,
                 Boolean(selectedValue && itemValue === selectedValue),
             );
+            if (isDirectList) option.tabIndex = 0;
             option.dataset.agentSourceId = item.id || "";
             option.dataset.agentSourceUpdatedAt = item.updated_at || "";
             if (selectedValue && itemValue === selectedValue) selectedOption = option;
@@ -549,8 +568,9 @@
         const readyLabel = combobox.dataset.agentSessionList === "projects"
             ? "Choose a recent project"
             : "Choose a recent session";
-        if (menu.querySelector("[data-agent-combobox-option]")) {
-            trigger.disabled = false;
+        const hasOptions = Boolean(menu.querySelector("[data-agent-combobox-option]"));
+        if (hasOptions) {
+            if (trigger) trigger.disabled = false;
             if (selectedOption) {
                 if (input instanceof HTMLInputElement) input.value = selectedValue;
                 syncComboboxTriggerFromOption(combobox, selectedOption);
@@ -564,9 +584,15 @@
                 setComboboxValue(combobox, "", readyLabel, icon);
             }
         } else {
-            trigger.disabled = true;
+            if (trigger) trigger.disabled = true;
             setComboboxValue(combobox, "", emptyLabel, icon);
         }
+        if (state) {
+            state.hidden = true;
+            state.setAttribute("aria-busy", "false");
+            if (stateCopy) stateCopy.textContent = hasOptions ? "" : emptyLabel;
+        }
+        if (isDirectList) menu.hidden = false;
         setComboboxLoading(combobox, false);
         updateSessionChoiceInputs();
     }
@@ -706,7 +732,7 @@
             const menu = combobox.querySelector("[data-agent-combobox-menu]");
             combobox.classList.remove("is-agent-combobox-open");
             trigger?.setAttribute("aria-expanded", "false");
-            if (menu) menu.hidden = true;
+            if (menu && combobox.dataset.agentDirectList !== "true") menu.hidden = true;
         };
         const toggleCombobox = (combobox) => {
             comboboxes.forEach((other) => {
@@ -724,8 +750,12 @@
             const input = combobox.querySelector("[data-agent-combobox-input]");
             const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
             const menu = combobox.querySelector("[data-agent-combobox-menu]");
-            if (!(input instanceof HTMLInputElement) || !(trigger instanceof HTMLButtonElement) || !menu) return;
-            trigger.addEventListener("click", () => {
+            const isDirectList = combobox.dataset.agentDirectList === "true";
+            if (!(input instanceof HTMLInputElement) || (!trigger && !isDirectList) || !menu) return;
+            const closeComboboxForSelection = () => {
+                if (!isDirectList) closeCombobox(combobox);
+            };
+            trigger?.addEventListener("click", () => {
                 if (
                     catalogState === "error"
                     && (combobox === elements.recentSessionCombobox || combobox === elements.projectCombobox)
@@ -738,7 +768,7 @@
                 const previousValue = input.value;
                 input.value = option.dataset.agentComboboxOption || "";
                 syncComboboxTriggerFromOption(combobox, option);
-                closeCombobox(combobox);
+                closeComboboxForSelection();
                 normalizeAgentSelection();
                 syncExecutionChoices();
                 const isRouteSelection = combobox.classList.contains("agent-platform-combobox")
@@ -963,6 +993,14 @@
         );
         sourcesLoaded = true;
         clearCatalogLoadingState();
+        if (elements.recentSessionCombobox?.dataset.agentDirectList === "true") {
+            const state = elements.recentSessionCombobox.querySelector("[data-agent-session-list-state]");
+            const stateCopy = elements.recentSessionCombobox.querySelector("[data-agent-session-list-state-copy]");
+            const spinner = elements.recentSessionCombobox.querySelector("[data-agent-combobox-spinner]");
+            if (state) state.hidden = false;
+            if (stateCopy) stateCopy.textContent = catalogError;
+            if (spinner) spinner.hidden = true;
+        }
     }
 
     function setCatalogControlsLoading(loading) {
@@ -1812,10 +1850,49 @@
         }
     }
 
+    function promptCollapsedHeight() {
+        if (!(elements.promptInput instanceof HTMLTextAreaElement)) return 0;
+        const styles = window.getComputedStyle(elements.promptInput);
+        const lineHeight = Number.parseFloat(styles.lineHeight) || 24;
+        const paddingBlock = (Number.parseFloat(styles.paddingTop) || 0)
+            + (Number.parseFloat(styles.paddingBottom) || 0);
+        const borderBlock = (Number.parseFloat(styles.borderTopWidth) || 0)
+            + (Number.parseFloat(styles.borderBottomWidth) || 0);
+        return Math.ceil((lineHeight * 2) + paddingBlock + borderBlock);
+    }
+
+    function isPromptExpanded() {
+        return elements.promptOverflowToggle?.getAttribute("aria-expanded") === "true";
+    }
+
     function resizePrompt() {
         if (!(elements.promptInput instanceof HTMLTextAreaElement)) return;
+        const collapsedHeight = promptCollapsedHeight();
         elements.promptInput.style.height = "auto";
-        elements.promptInput.style.height = `${Math.min(240, Math.max(120, elements.promptInput.scrollHeight))}px`;
+        if (!isPromptExpanded()) {
+            elements.promptInput.style.height = `${collapsedHeight}px`;
+            return;
+        }
+        const expandedHeightLimit = Math.min(
+            360,
+            Math.max(collapsedHeight, Math.round(window.innerHeight * 0.45)),
+        );
+        const expandedHeight = Math.min(
+            expandedHeightLimit,
+            Math.max(collapsedHeight, elements.promptInput.scrollHeight),
+        );
+        elements.promptInput.style.height = `${expandedHeight}px`;
+    }
+
+    function setPromptExpanded(expanded) {
+        if (!(elements.promptInput instanceof HTMLTextAreaElement)) return;
+        elements.promptInput.classList.toggle("is-expanded", expanded);
+        elements.promptOverflowToggle?.setAttribute("aria-expanded", String(expanded));
+        const label = expanded ? "Collapse question or task" : "Expand question or task";
+        elements.promptOverflowToggle?.setAttribute("aria-label", label);
+        elements.promptOverflowToggle?.setAttribute("title", label);
+        if (!expanded) elements.promptInput.scrollTop = 0;
+        resizePrompt();
     }
 
     promptForm.addEventListener("submit", (event) => {
@@ -1836,9 +1913,16 @@
         if (!elements.ask.disabled) promptForm.requestSubmit();
     });
     elements.promptInput?.addEventListener("input", resizePrompt);
+    elements.promptOverflowToggle?.addEventListener("click", () => {
+        setPromptExpanded(!isPromptExpanded());
+        elements.promptInput?.focus();
+    });
     window.addEventListener(
         "resize",
-        () => positionAgentPaginationIndicator({immediate: true}),
+        () => {
+            resizePrompt();
+            positionAgentPaginationIndicator({immediate: true});
+        },
         {passive: true},
     );
     elements.promptInput?.addEventListener("keydown", (event) => {

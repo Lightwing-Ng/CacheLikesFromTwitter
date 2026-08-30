@@ -1,9 +1,10 @@
-/* Code version: v1.6.0-codex.1 */
+/* Code version: v1.7.0-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v5:";
     const SESSION_CACHE_TTL_MS = 300_000;
     const SESSION_STALE_MAX_AGE_MS = 1_800_000;
+    const BOOTSTRAPPED_AGENT_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
     const statusRequests = new Map();
 
     function readSessionValue(key) {
@@ -178,7 +179,13 @@
             const cacheKey = `${SESSION_CACHE_PREFIX}${scope || "default"}:${requestPlatform}:${activeBrowser}`;
             const cachedStatus = readCachedStatus(cacheKey);
             const forceRefresh = options.force === true;
-            if (!forceRefresh && cachedStatus && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
+            const cachedPayload = cachedStatus?.payload;
+            const requiresAgentBootstrap = scope === "agent"
+                && BOOTSTRAPPED_AGENT_PLATFORMS.has(requestPlatform)
+                && Boolean(cachedPayload?.can_download)
+                && !Object.prototype.hasOwnProperty.call(cachedPayload || {}, "agent_sources")
+                && !Object.prototype.hasOwnProperty.call(cachedPayload || {}, "agent_sources_error");
+            if (!forceRefresh && cachedStatus && !requiresAgentBootstrap && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
                 setStatus(cachedStatus.payload, activeBrowser);
                 if (cachedStatus.payload.can_download && cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;
                 setRefreshingState(activeBrowser);

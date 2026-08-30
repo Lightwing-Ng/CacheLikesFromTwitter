@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.0-codex.20
+# Code version: v1.88.1-codex.1
 
 from __future__ import annotations
 
@@ -391,7 +391,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.6.0-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.7.0-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -491,7 +491,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.90.0-codex.3"
+                expected_style_version = "style-v2.90.1-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -824,9 +824,9 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.6.0-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.7.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.23.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.24.1-codex.1', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -868,7 +868,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('class="agent-response-answer browser-media-prompt-markdown', local_body)
         self.assertIn('data-agent-response-answer-content', local_body)
         self.assertIn('data-agent-response-pagination', local_body)
-        self.assertIn('class="browser-pagination local-store-pagination local-store-pagination--floating agent-response-pagination"', local_body)
+        self.assertIn('class="browser-pagination local-store-pagination agent-response-pagination"', local_body)
         self.assertIn('browser-session-messages.js?v=browser-session-messages-v1.0.1-codex.1', local_body)
         self.assertNotIn('data-agent-web-only', local_body)
         self.assertNotIn("Starts a new root-level ChatGPT session for this task.", local_body)
@@ -1263,7 +1263,7 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(start.call_args.kwargs["model"], "gpt-5.6-sol")
         self.assertTrue(start.call_args.kwargs["read_only"])
 
-    def test_agent_page_exposes_nested_session_source_controls(self) -> None:
+    def test_agent_page_exposes_session_source_controls(self) -> None:
         app = create_app()
         script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
 
@@ -1280,7 +1280,9 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.23.0-codex.1',
+            'computer-use-agent-v3.24.1-codex.1',
+            'data-agent-direct-list="true"',
+            'data-agent-session-list-state',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
@@ -1293,8 +1295,34 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn(fragment, body)
         self.assertIn('function syncSessionModeTrigger()', script)
         self.assertIn('syncComboboxTriggerFromOption(combobox, option)', script)
+        self.assertIn('const isDirectList = combobox.dataset.agentDirectList === "true"', script)
         self.assertIn("selectedOption?.dataset.agentComboboxLabel", script)
         self.assertNotIn('data-agent-session-platforms="chatgpt"', body)
+
+    def test_agent_page_exposes_a_collapsed_two_line_composer_control(self) -> None:
+        app = create_app()
+        script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        with app.test_client() as client:
+            body = client.get("/agent", follow_redirects=True).get_data(as_text=True)
+
+        for fragment in (
+            'id="agent_prompt_input"',
+            'rows="2"',
+            'data-agent-composer-overflow-toggle',
+            'aria-controls="agent_prompt_input"',
+            'aria-expanded="false"',
+            'aria-label="Expand question or task"',
+            'browser-session-message-toggle-icon',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, body)
+        self.assertNotIn(
+            'local-store-pagination--floating agent-response-pagination',
+            body,
+        )
+        self.assertIn("function setPromptExpanded(expanded)", script)
+        self.assertIn("function promptCollapsedHeight()", script)
 
     def test_agent_page_exposes_the_four_web_provider_model_pairs(self) -> None:
         app = create_app()
@@ -2338,7 +2366,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.90.0-codex.3", body)
+            self.assertIn("style-v2.90.1-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)
