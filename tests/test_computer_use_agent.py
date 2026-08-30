@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.51.0-codex.1
+Code version: v3.51.1-codex.1
 """
 
 from __future__ import annotations
@@ -45,6 +45,7 @@ from app.core.computer_use_agent import (
     _CONTROLLER_ACTION_SCHEMA_MARKERS,
     _chatgpt_response_snapshot,
     _chatgpt_effort_slider_state,
+    _chatgpt_select_subscription_effort,
     _chatgpt_visible_model_controls,
     _detect_browser_interruption,
     default_model_for_platform,
@@ -813,6 +814,84 @@ def test_chromium_selector_uses_all_subscription_efforts_and_leaves_sol_at_maxim
         "Cruise review",
         "Landing proof",
     ]
+
+
+def test_chatgpt_effort_discovery_rejects_subscription_range_drift() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _Slider:
+        def __init__(self, page: "_Page") -> None:
+            self.page = page
+            self.value = 12
+            self.minimum = 11
+            self.maximum = 13
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_Slider":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            return {
+                "aria-valuenow": str(self.value),
+                "aria-valuemin": str(self.minimum),
+                "aria-valuemax": str(self.maximum),
+            }.get(name)
+
+        def press(self, key: str, **_kwargs: object) -> None:
+            if key == "Home":
+                self.value = self.minimum
+                self.page.range_drifted = True
+                self.maximum = 14
+
+    class _Page:
+        def __init__(self) -> None:
+            self.range_drifted = False
+            self.slider = _Slider(self)
+
+        def locator(self, selector: str) -> _Slider | _EmptyLocator:
+            if '[role="slider"]' in selector:
+                return self.slider
+            return _EmptyLocator()
+
+        def evaluate(self, _expression: str, *_args: object) -> dict[str, object]:
+            return {
+                "ok": True,
+                "current": "GPT-5.6 Sol",
+                "thinking_effort": {
+                    "label": "Cruise review",
+                    "value": str(self.slider.value),
+                    "min": str(self.slider.minimum),
+                    "max": str(self.slider.maximum),
+                },
+            }
+
+    page = _Page()
+    updated, labels, complete = _chatgpt_select_subscription_effort(
+        page,
+        {
+            "ok": True,
+            "thinking_effort": {
+                "label": "Cruise review",
+                "value": "12",
+                "min": "11",
+                "max": "13",
+            },
+        },
+        lambda _milliseconds: None,
+    )
+
+    assert page.range_drifted is True
+    assert complete is False
+    assert labels == []
+    assert updated["effort_selection_error"] == "effort-range-changed"
 
 
 def test_chromium_selector_can_choose_gpt_5_6_sol_from_thinking_effort_menu() -> None:
@@ -6941,6 +7020,51 @@ def test_workspace_controller_delete_anchors_the_parent_directory(
     assert raced is True
     assert outside_target.read_text(encoding="utf-8") == "outside target\n"
     assert not (swapped_parent / "target.txt").exists()
+
+
+def test_workspace_controller_delete_rejects_leaf_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    nested = workspace / "nested"
+    nested.mkdir(parents=True)
+    target = nested / "target.txt"
+    target.write_text("original target\n", encoding="utf-8")
+    replacement = "replacement target\n"
+    original_target = nested / "target-original.txt"
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    receipt = controller.execute({"action": "read", "path": "nested/target.txt"})
+    assert receipt["ok"]
+
+    original_hash = controller._hash_anchored_file
+
+    def replace_leaf_after_hash(
+        directory_fd: int,
+        leaf_name: str,
+    ) -> tuple[str, int, tuple[int, int, int, int, int], int]:
+        hashed = original_hash(directory_fd, leaf_name)
+        target.rename(original_target)
+        target.write_text(replacement, encoding="utf-8")
+        return hashed
+
+    monkeypatch.setattr(controller, "_hash_anchored_file", replace_leaf_after_hash)
+    deleted = controller.execute(
+        {
+            "action": "delete",
+            "path": "nested/target.txt",
+            "expected_sha256": receipt["sha256"],
+        }
+    )
+
+    assert not deleted["ok"]
+    assert "identity changed before deletion" in deleted["error"]
+    assert original_target.read_text(encoding="utf-8") == "original target\n"
+    assert target.read_text(encoding="utf-8") == replacement
 
 
 def test_workspace_search_uses_python_fallback_when_rg_is_unavailable(

@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.10.0-codex.1`
+Documentation version: `v1.10.1-codex.1`
 
 ## Runtime flow
 
@@ -279,8 +279,9 @@ page, and seeds the same source cache through its explicit `store` path. This ke
 first-run effort selector, and Recent sessions selection on one browser opening; Project-session
 loading remains isolated by its canonical Project URL key.
 The Agent-scoped browser-session status route uses that same cache. Passive polling reuses the
-current positive bootstrap; an explicit `refresh=1`, `true`, or `yes` forces one synchronous
-collector pass, stores the returned catalog, and supersedes any older in-flight browser response.
+cached bootstrap, including a bounded negative result; an explicit `refresh=1`, `true`, or `yes`
+requests a synchronous fresh result and coalesces with an in-flight collector for the same key.
+The fresh result is stored and supersedes any older in-flight browser response.
 Agent Chromium tasks clone the selected Edge or Chrome profile into a task-owned offscreen,
 minimized context. Both suppress browser prompts and clean the task-owned profile on exit. Stale
 cleanup is restricted to abandoned application-prefixed temporary directories older than 24 hours;

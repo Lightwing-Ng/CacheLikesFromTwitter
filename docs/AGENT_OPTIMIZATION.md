@@ -1,6 +1,6 @@
 # OpenAI Site tools and Agent Optimization
 
-Documentation version: `v1.2.0-codex.1`
+Documentation version: `v1.2.2-codex.1`
 
 This project implements the shared Agent Optimization contract at
 `/Users/lightwing/Desktop/SHARED_AGENT_OPTIMIZATION.md`. That file owns the cross-project naming,
@@ -74,9 +74,10 @@ each parsed Agent Action to an `action.requested` event, a bounded controller `o
 when applicable, a `verification` or `bodycheck` event before one terminal run event. The real loop
 also records registered `agent_status`, `browser_session`, `provider_turn`, `browser_interruption`,
 and `agent_response` page observations. Browser and provider interruptions are page-observation
-events; Resume and cleanup are recovery events. Event payloads are bounded and strip prompt,
-response, source, command, output, and page-content fields. The persisted snapshot stores only the
-chain health summary and the last action/event identifiers.
+events; Resume, Continue, and cleanup are recovery events. Event payloads are bounded and strip prompt,
+response, source, command, output, and page-content fields. The persisted snapshot stores bounded
+run metadata documented in `COMPUTER_USE_AGENT.md` alongside the chain health summary and the last
+action/event identifiers; it does not store prompt or provider-content text.
 
 `GET /api/agent/doctor` exposes the same lifecycle, chain, verification, bodycheck, and temporary
 context-cleanup checks used by the Agent page. The Doctor panel appears when attention is needed or

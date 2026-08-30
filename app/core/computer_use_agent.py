@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.51.0-codex.1
+Code version: v3.51.1-codex.1
 """
 
 from __future__ import annotations
@@ -31,6 +31,11 @@ import time
 import traceback
 from typing import TYPE_CHECKING, Any, Callable
 from urllib.parse import urlencode, urlsplit
+
+if os.name == "posix":
+    import fcntl
+else:  # pragma: no cover - Windows uses a fail-closed delete path.
+    fcntl = None
 
 from .agent_session_sources import (
     CLAUDE_HOME_URL,
@@ -105,6 +110,7 @@ MAX_FILE_READ_CHARS = 120_000
 MAX_CONTROLLER_DELETE_BYTES = 20 * 1_024 * 1_024
 _ANCHORED_DELETE_SUPPORTED = bool(
     os.name == "posix"
+    and fcntl is not None
     and hasattr(os, "O_DIRECTORY")
     and hasattr(os, "O_NOFOLLOW")
     and os.open in getattr(os, "supports_dir_fd", set())
@@ -2780,20 +2786,36 @@ class WorkspaceController:
 
     def _current_file_sha256(self, path: Path) -> tuple[str, int, tuple[int, int, int, int, int]]:
         """Hash one bounded regular file and reject changes while it is being read."""
+        _content, digest, file_bytes, identity = self._current_file_snapshot(path)
+        return digest, file_bytes, identity
+
+    def _current_file_snapshot(
+        self,
+        path: Path,
+    ) -> tuple[bytes, str, int, tuple[int, int, int, int, int]]:
+        """Read one bounded file once so returned text and SHA-256 share one snapshot."""
         before = self._stable_file_identity(path)
+        content = bytearray()
         digest = hashlib.sha256()
         with path.open("rb") as handle:
             while True:
                 chunk = handle.read(64 * 1_024)
                 if not chunk:
                     break
+                content.extend(chunk)
+                if len(content) > MAX_CONTROLLER_DELETE_BYTES:
+                    raise ValueError(
+                        "The controller action refuses files larger than "
+                        f"{MAX_CONTROLLER_DELETE_BYTES:,} bytes."
+                    )
                 digest.update(chunk)
-        after = self._stable_file_identity(path)
-        if after != before:
+            after_handle = self._stable_file_identity_from_stat(os.fstat(handle.fileno()))
+        after_path = self._stable_file_identity(path)
+        if after_handle != before or after_path != before:
             raise RuntimeError(
                 "The file changed while the controller was checking it; read it again before retrying."
             )
-        return digest.hexdigest(), before[2], before
+        return bytes(content), digest.hexdigest(), before[2], before
 
     def _list(self, payload: dict[str, Any]) -> dict[str, Any]:
         root = self._resolve_path(payload.get("path", "."))
@@ -2848,8 +2870,8 @@ class WorkspaceController:
             raise ValueError("The read action requires a regular file.")
         if path.stat().st_size > MAX_CONTROLLER_DELETE_BYTES:
             raise ValueError("The requested file is too large for a text read.")
-        sha256, _file_bytes, identity = self._current_file_sha256(path)
-        text = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        content_bytes, sha256, _file_bytes, identity = self._current_file_snapshot(path)
+        text = content_bytes.decode("utf-8", errors="replace").splitlines()
         start = max(1, int(payload.get("start_line", 1)))
         end = min(len(text), max(start, int(payload.get("end_line", start + 239))))
         lines = [f"{index}: {text[index - 1]}" for index in range(start, end + 1)]
@@ -3257,7 +3279,16 @@ class WorkspaceController:
             )
         directory_fd, leaf_name = self._open_anchored_delete_parent(relative)
         file_fd = -1
+        directory_lock_held = False
         try:
+            try:
+                fcntl.flock(directory_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                directory_lock_held = True
+            except OSError as exc:
+                raise RuntimeError(
+                    "The controller could not acquire the workspace directory lock; "
+                    "the file was not deleted."
+                ) from exc
             current_sha256, deleted_bytes, identity, file_fd = self._hash_anchored_file(
                 directory_fd,
                 leaf_name,
@@ -3267,10 +3298,23 @@ class WorkspaceController:
                     "The file no longer matches the current read receipt; read it again "
                     "before deleting."
                 )
+            current_entry = self._stable_file_identity_from_stat(
+                os.stat(leaf_name, dir_fd=directory_fd, follow_symlinks=False)
+            )
+            if current_entry != identity:
+                raise RuntimeError(
+                    "The file identity changed before deletion; read it again before retrying."
+                )
             os.unlink(leaf_name, dir_fd=directory_fd)
+            if int(os.fstat(file_fd).st_nlink) != 0:
+                raise RuntimeError(
+                    "The file identity changed during deletion; the controller did not record success."
+                )
         finally:
             if file_fd >= 0:
                 os.close(file_fd)
+            if directory_lock_held:
+                fcntl.flock(directory_fd, fcntl.LOCK_UN)
             os.close(directory_fd)
         self._mark_edit()
         return {
@@ -9033,6 +9077,15 @@ def _chatgpt_select_subscription_effort(
     state = _chatgpt_effort_slider_state(slider)
     if state is None:
         return finish(complete=False, error="effort-slider-unreadable")
+    expected_range = (state["min"], state["max"])
+
+    def range_is_stable(candidate: dict[str, int] | None) -> bool:
+        """Require the subscription slider range to stay fixed during discovery."""
+        return bool(
+            candidate is not None
+            and (candidate["min"], candidate["max"]) == expected_range
+        )
+
     position_count = state["max"] - state["min"] + 1
     if position_count > CHATGPT_MAX_SUBSCRIPTION_EFFORT_POSITIONS:
         return finish(complete=False, error="effort-range-exceeds-safe-bound")
@@ -9050,7 +9103,9 @@ def _chatgpt_select_subscription_effort(
         current_state = (
             _chatgpt_effort_slider_state(slider) if slider is not None else None
         )
-        if current_state is None or current_state["now"] != position:
+        if not range_is_stable(current_state):
+            return finish(complete=False, error="effort-range-changed")
+        if current_state["now"] != position:
             return finish(complete=False, error="effort-position-readback-mismatch")
         reread = _read_chatgpt_model_menu(page)
         if not reread.get("ok"):
@@ -9079,13 +9134,17 @@ def _chatgpt_select_subscription_effort(
     final_state = _chatgpt_effort_slider_state(slider) if slider is not None else None
     if final_state is None:
         return finish(complete=False, error="effort-slider-unreadable")
+    if not range_is_stable(final_state):
+        return finish(complete=False, error="effort-range-changed")
     if final_state["now"] != target_position:
         if not _chatgpt_press_effort_key(page, slider, "Home"):
             return finish(complete=False, error="effort-selection-key-failed")
         wait_for_timeout(80)
         slider = _chatgpt_find_effort_slider(page)
         final_state = _chatgpt_effort_slider_state(slider) if slider is not None else None
-        if final_state is None or final_state["now"] != state["min"]:
+        if not range_is_stable(final_state):
+            return finish(complete=False, error="effort-range-changed")
+        if final_state["now"] != state["min"]:
             return finish(complete=False, error="effort-selection-readback-mismatch")
         for position in range(state["min"] + 1, target_position + 1):
             if not _chatgpt_press_effort_key(page, slider, "ArrowRight"):
@@ -9095,13 +9154,25 @@ def _chatgpt_select_subscription_effort(
             final_state = (
                 _chatgpt_effort_slider_state(slider) if slider is not None else None
             )
-            if final_state is None or final_state["now"] != position:
+            if not range_is_stable(final_state):
+                return finish(complete=False, error="effort-range-changed")
+            if final_state["now"] != position:
                 return finish(complete=False, error="effort-selection-readback-mismatch")
 
     reread = _read_chatgpt_model_menu(page)
     if not reread.get("ok"):
         return finish(complete=False, error="effort-menu-unreadable")
     result = reread
+    post_menu_slider = _chatgpt_find_effort_slider(page)
+    post_menu_state = (
+        _chatgpt_effort_slider_state(post_menu_slider)
+        if post_menu_slider is not None
+        else None
+    )
+    if not range_is_stable(post_menu_state):
+        return finish(complete=False, error="effort-range-changed")
+    if post_menu_state["now"] != target_position:
+        return finish(complete=False, error="effort-selection-readback-mismatch")
     final_label = _chatgpt_effort_label(result)
     expected_label = labels_by_position[target_position]
     if final_label.casefold() != expected_label.casefold():

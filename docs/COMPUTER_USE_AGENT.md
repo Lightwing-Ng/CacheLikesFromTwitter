@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.51.0-codex.1`
+Documentation version: `v3.51.2-codex.1`
 
 ## Purpose
 
@@ -305,9 +305,10 @@ then links each parsed Action to `action.requested`, its bounded controller obse
 relevant `verification` or `bodycheck` event before one terminal event. The real loop also emits
 registered `agent_status`, `browser_session`, `provider_turn`, `browser_interruption`, and
 `agent_response` page observations. Provider/browser state is recorded as bounded page observations,
-while Resume and context cleanup are recorded as recovery events. Prompt bodies, provider
+while Resume, Continue, and context cleanup are recorded as recovery events. Prompt bodies, provider
 responses, source text, command text, and page content are removed from event payloads; the
-persisted `last-run.json` keeps only chain health and last-event metadata.
+persisted `last-run.json` keeps bounded run metadata documented above alongside chain health and
+last-event metadata, while still omitting prompt, response, source, command, and page-content text.
 
 When a run is paused, interrupted, failed, or leaves temporary context cleanup pending, the Agent
 page loads `GET /api/agent/doctor` and opens a Doctor panel with the failed checks, bounded event
@@ -326,13 +327,15 @@ actions.
 - Every file action and returned observation resolves below the selected project. `.git` and Agent runtime internals are
   inaccessible. Environment files, credential stores, cookies, and private keys are excluded from
   context indexes and from `list`, `read`, and `search` observations.
-- Existing files change only through an exact, single-match replacement. New files use an
+- Existing file contents change only through an exact, single-match replacement. New files use an
   explicit write action. `delete` accepts one regular, single-link file only after the same
   controller has returned its current SHA-256 through `read`; any intervening edit invalidates the
   receipt. On supported POSIX hosts, deletion opens every parent below the recorded workspace with
-  `O_NOFOLLOW` and unlinks the leaf through the anchored directory descriptor. Hosts without those
-  primitives fail closed. Directories, symlinks, hard links, recursive targets, and files larger
-  than 20 MiB are rejected.
+  `O_NOFOLLOW`, takes an advisory directory lock, rechecks the leaf identity, and unlinks the leaf
+  through the anchored directory descriptor. The POSIX unlink primitive is name-based rather than
+  inode-addressed; uncooperative external renames remain a non-atomic limitation and are detected
+  where possible, while hosts without the anchored primitives fail closed. Directories, symlinks,
+  hard links, recursive targets, and files larger than 20 MiB are rejected.
 - Shell commands are restricted to bounded inspection, build, lint, and test work. Approved PATH
   tools are resolved once to an absolute executable outside the workspace before launch; Python
   verification is pinned to the service's own Python runtime. Approved Python modules are imported
@@ -487,10 +490,11 @@ stops the run without transferring project data.
 For an `Auto` readback, a generic popup wrapper is insufficient: the trigger must also identify
 itself as a model or mode control, or expose provider-specific model metadata.
 
-Browser readiness uses a short session cache only for a positive authenticated result. A fresh
-negative result is rendered immediately but also re-probed, so completing login or a provider
-security check does not leave Ask blocked for five minutes. An explicit controller refresh always
-bypasses the cache. A signed-in Gemini page that states the service is unavailable in the browser's
+Non-Agent browser readiness uses a short session/storage cache only for a positive authenticated
+result. A fresh negative result is rendered immediately but also re-probed, so completing login or
+a provider security check does not leave Ask blocked for five minutes. Agent-scoped bootstrap uses
+the shared AgentSourceCache described above, including its bounded negative-cache and coalesced
+refresh behavior. An explicit controller refresh always requests a fresh result. A signed-in Gemini page that states the service is unavailable in the browser's
 current region is not an authenticated-ready result: the probe reports the provider condition,
 keeps Ask disabled, and transfers no project data. Gemini Notebook discovery rejects provider-owned creation aliases such as
 `/notebook/create` and `/notebooks/new`. Every source-catalog API response revalidates cached Project
