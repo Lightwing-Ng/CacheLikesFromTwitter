@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.1-codex.13
+# Code version: v1.88.1-codex.14
 
 from __future__ import annotations
 
@@ -831,7 +831,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.26.0-codex.4', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.26.1-codex.1', local_body)
         self.assertIn('data-agent-effort-field', local_body)
         self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -1231,9 +1231,10 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('chatgpt_effort: selectedChatgptEffort()', script)
         self.assertIn('syncModelOptionsForPlatform()', script)
         self.assertIn('syncChatgptEffortOptions(agent)', script)
-        self.assertIn('agent?.available_efforts', script)
         self.assertIn('lastBrowserStatus?.effort_catalog_complete', script)
-        self.assertIn('lastBrowserStatus.available_efforts', script)
+        self.assertIn('Array.isArray(lastBrowserStatus?.available_efforts)', script)
+        self.assertNotIn('Array.isArray(agent?.available_efforts)', script)
+        self.assertNotIn('agent?.thinking_effort', script)
         self.assertIn('data-agent-effort-generated', script)
         self.assertIn('browserStatusController?.setPlatform?.(platform)', script)
         self.assertIn('platform: selectedPlatform()', script)
@@ -1301,7 +1302,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.26.0-codex.4',
+            'computer-use-agent-v3.26.1-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'data-agent-direct-list="true"',

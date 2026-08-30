@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.51.3-codex.1`
+Documentation version: `v3.51.4-codex.1`
 
 ## Purpose
 
@@ -130,6 +130,9 @@ older task cannot be submitted accidentally through a different Web session.
    subscription label and can request any exact label. Both the final integer `aria-valuenow` and
    rendered label must match. Missing controls, fractional or out-of-range values, incomplete
    catalogs, and unavailable requested labels fail closed before context attachment or submission.
+   Until a current probe marks `effort_catalog_complete`, the browser selector keeps only the
+   `Highest available` policy option; historical snapshot labels and saved provider selections
+   remain diagnostic state and never become selectable options.
    A checked `GPT-5.6 Sol` / `5.6 Sol` model item remains the required model proof, even when a
    thinking-effort radio such as `Medium` is also selected in the same menu. `Highest available`
    without a readable integer ARIA slider is not a missing-model failure. The bounded

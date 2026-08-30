@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.2-codex.14
+Code version: v1.26.2-codex.15
 """
 
 from __future__ import annotations
@@ -4803,6 +4803,70 @@ def test_finished_snapshot_does_not_auto_select_recent_chatgpt_session(
         expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("recent")
         expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value("")
         expect(page.locator("[data-agent-recent-session-url]")).to_have_value("")
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_incomplete_chatgpt_effort_catalog_hides_stale_snapshot_options(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Only a complete live probe may add provider effort options to the UI."""
+    agent_payload = _finished_chatgpt_agent_payload()
+    agent_payload["agent"].update(
+        {
+            "available_efforts": ["Expired subscription tier"],
+            "thinking_effort": "Expired subscription tier",
+        }
+    )
+    incomplete_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web; live effort catalog unavailable.",
+        "agent_sources_error": "Live source catalog unavailable.",
+        "available_efforts": ["Stale live tier"],
+        "thinking_effort": "Stale live tier",
+        "effort_catalog_complete": False,
+    }
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route(
+        "**/api/agent/status",
+        lambda route: route.fulfill(json=agent_payload),
+    )
+    page.route(
+        "**/api/browser-session**",
+        lambda route: route.fulfill(json=incomplete_status),
+    )
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        expect(page.locator(".browser-session-status-account")).to_have_text("ChatGPT account")
+        effort_options = page.locator(
+            ".agent-effort-dropdown [data-agent-combobox-option]"
+        )
+        expect(effort_options).to_have_count(1)
+        expect(effort_options).to_have_attribute(
+            "data-agent-combobox-option",
+            "highest_available",
+        )
+        expect(page.locator("[data-agent-effort-input]")).to_have_value(
+            "highest_available"
+        )
+        assert [text.strip() for text in effort_options.all_text_contents()] == [
+            "Highest available"
+        ]
     finally:
         context.close()
 

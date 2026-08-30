@@ -1,4 +1,4 @@
-/* Code version: v3.26.0-codex.4 */
+/* Code version: v3.26.1-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -347,11 +347,11 @@
             && lastBrowserStatus?.browser === selectedBrowser();
         const statusCatalogComplete = statusMatchesSelection
             && Boolean(lastBrowserStatus?.effort_catalog_complete);
-        const liveLabels = statusCatalogComplete
+        // Only a complete, current browser probe may populate provider effort options.
+        // Persisted snapshots and saved selections are diagnostic state, not a live catalog.
+        const liveLabels = statusCatalogComplete && Array.isArray(lastBrowserStatus?.available_efforts)
             ? lastBrowserStatus.available_efforts
-            : Array.isArray(agent?.available_efforts)
-                ? agent.available_efforts
-                : [];
+            : [];
         const labels = [];
         const remember = (value) => {
             const normalized = String(value || "").replace(/\s+/g, " ").trim();
@@ -359,9 +359,7 @@
             labels.push(normalized);
         };
         liveLabels.forEach(remember);
-        remember(statusCatalogComplete ? lastBrowserStatus?.thinking_effort : agent?.thinking_effort);
         const current = selectedChatgptEffort();
-        if (!statusCatalogComplete && current !== HIGHEST_CHATGPT_EFFORT) remember(current);
         labels.forEach((label) => {
             menu.append(createChatgptEffortOption(label, label));
         });
