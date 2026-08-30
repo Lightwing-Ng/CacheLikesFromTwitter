@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.1-codex.1
+Code version: v1.51.1-codex.7
 """
 
 from pathlib import Path
@@ -889,8 +889,8 @@ def test_browser_cached_media_previews_preserve_full_image_ratio() -> None:
     assert "object-fit: cover;" not in media_rule
 
 
-def test_browser_compact_actions_reuse_one_local_resources_pattern() -> None:
-    """Keep compact utility links separate from the standard refresh button."""
+def test_browser_filter_actions_reuse_the_standard_secondary_button() -> None:
+    """Keep both filter actions on the shared secondary-button surface."""
     stylesheet = _stylesheet()
     for token in (
         "--control-compact-height: 28px;",
@@ -928,7 +928,7 @@ def test_browser_compact_actions_reuse_one_local_resources_pattern() -> None:
     browser_template = (
         STYLE_PATH.parents[1] / "templates/browser.html"
     ).read_text(encoding="utf-8")
-    assert ".browser-filter-actions .ghost-link--compact {" in stylesheet
+    assert ".browser-filter-actions .ghost-link--compact {" not in stylesheet
     assert ".browser-filter-actions .secondary-button {" in stylesheet
     refresh_container_start = stylesheet.index(".browser-filter-actions .secondary-button {")
     refresh_container_rule = stylesheet[
@@ -948,8 +948,8 @@ def test_browser_compact_actions_reuse_one_local_resources_pattern() -> None:
     assert "width: 100%;" not in media_rule
     for markup in (
         'class="ghost-link ghost-link--compact browser-chatgpt-media-link"',
-        'class="ghost-link ghost-link--compact browser-clear-link"',
         'class="ghost-link ghost-link--compact browser-session-back-link"',
+        'class="secondary-button browser-clear-link"',
     ):
         assert markup in browser_template
     assert 'class="secondary-button browser-refresh-button"' in browser_template
@@ -1665,6 +1665,7 @@ def test_browser_workspace_reuses_the_shared_title_rail_and_content_card() -> No
     assert "padding: 0 var(--workspace-article-pad-inline) var(--sidebar-dock-bottom-gap);" in content_rule
     assert "overflow: visible;" in text_card_rule
     assert ".workspace > .workspace-header:first-child > .browser-summary-card {" in stylesheet
+    assert ".workspace > .workspace-header:first-child > .workspace-article-card:not(.cache-overview-title-card):not(.browser-summary-card) {" in stylesheet
     assert "html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-child > .workspace-summary-card:first-child:not(.cache-overview-title-card) {" in stylesheet
     assert "padding-inline-start: var(--workspace-title-rail-collapsed-pad-inline-start);" in stylesheet
     assert ".browser-workspace-header {" in stylesheet
@@ -1757,7 +1758,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-            "/* Code version: v2.90.1-codex.1 */",
+                "/* Code version: v2.90.1-codex.10 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1806,6 +1807,15 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-workspace-grid {",
         "grid-template-columns: minmax(0, 1fr);",
         "grid-template-rows: minmax(0, 1fr);",
+        ".agent-summary-card {",
+        "box-sizing: border-box;",
+        "padding: var(--workspace-title-rail-pad-block-start)",
+        ".agent-summary-card > .report-heading-row {",
+        ".agent-summary-card > .report-heading-row > div {",
+        "align-items: center;",
+        "margin: 6px 0 0;",
+        ".workspace > .workspace-header:first-child > .workspace-article-card:not(.cache-overview-title-card).agent-summary-card {",
+        "padding-top: var(--workspace-title-rail-pad-block-start);",
         ".agent-task-card {",
         "display: flex;",
         ".agent-task-card > .agent-response-card,",
@@ -1817,6 +1827,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         'mask-image: url("/static/images/stop.fill.svg");',
         "border-radius: var(--radius-soft);",
         ".agent-readiness[data-ready=\"true\"] .agent-readiness-dot,",
+        ".agent-readiness[data-phase=\"failed\"] .agent-readiness-dot {",
         ".agent-activity-panel {",
         ".agent-activity-list {",
         "overflow-y: auto;",

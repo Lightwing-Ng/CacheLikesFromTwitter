@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.47.5-codex.1
+Code version: v3.50.0-codex.1
 """
 
 from __future__ import annotations
@@ -88,6 +88,7 @@ from app.core.computer_use_agent import (
     resolve_agent_session_target,
     validate_inspection_command,
 )
+from app.core.agent.event_chain import AgentEventChain, new_run_id
 from app.core.config import CrawlConfig
 
 
@@ -232,12 +233,6 @@ def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["remote_labels"] == (
         "GPT-5.6 Sol",
         "5.6 Sol",
-        "Extra High",
-        "Very High",
-        "Maximum",
-        "High",
-        "Medium",
-        "Instant",
     )
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["gemini"][0]["ui_label"] == "3.1 Pro"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["grok"][0]["ui_label"] == "Build"
@@ -366,11 +361,10 @@ def test_chatgpt_extra_high_control_reads_back_gpt_5_6_sol() -> None:
             self, expression: str, argument: dict[str, object]
         ) -> dict[str, object]:
             calls.append(argument)
-            assert "'extra high'" in expression
-            assert "'medium'" in expression
+            assert "'extra high'" not in expression
+            assert "'medium'" not in expression
             assert argument["labels"][:2] == ["GPT-5.6 Sol", "5.6 Sol"]
-            assert "Extra High" in argument["labels"]
-            assert "Medium" in argument["labels"]
+            assert argument["labels"] == ["GPT-5.6 Sol", "5.6 Sol"]
             return {
                 "ok": True,
                 "selected": "gpt-5.6 sol",
@@ -428,7 +422,7 @@ def test_chromium_model_selector_uses_trusted_locator_clicks_and_read_only_evalu
             exact: bool | None = None,
         ) -> _PowerLocator | _EmptyLocator:
             self.role_calls.append((role, name, exact))
-            if role == "button" and name == "Extra High" and exact is True:
+            if role == "button" and name == "Subscription power" and exact is True:
                 return self.power
             return _EmptyLocator()
 
@@ -438,7 +432,11 @@ def test_chromium_model_selector_uses_trusted_locator_clicks_and_read_only_evalu
 
         def evaluate(self, expression: str) -> dict[str, object]:
             self.evaluate_scripts.append(expression)
-            return {"ok": True, "current": "GPT-5.6 Sol"}
+            return {
+                "ok": True,
+                "current": "GPT-5.6 Sol",
+                "candidate_buttons": ["Subscription power"],
+            }
 
         def wait_for_timeout(self, milliseconds: int) -> None:
             self.waits.append(milliseconds)
@@ -448,12 +446,13 @@ def test_chromium_model_selector_uses_trusted_locator_clicks_and_read_only_evalu
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
     assert page.power.click_count == 2
     assert not page.power.expanded
-    assert ("button", "Extra High", True) in page.role_calls
-    assert page.locator_calls in ([], ["#prompt-textarea"])
+    assert ("button", "Subscription power", True) in page.role_calls
+    assert "#prompt-textarea" in page.locator_calls
+    assert any("model-switcher" in selector for selector in page.locator_calls)
     assert page.waits == [200]
-    assert len(page.evaluate_scripts) == 1
+    assert len(page.evaluate_scripts) == 2
     assert all(".click(" not in expression for expression in page.evaluate_scripts)
-    assert "current:" in page.evaluate_scripts[0]
+    assert any("current:" in expression for expression in page.evaluate_scripts)
 
 
 def _chromium_model_page(trigger_name: str, current: str = "GPT-5.6 Sol"):
@@ -514,8 +513,21 @@ def _chromium_model_page(trigger_name: str, current: str = "GPT-5.6 Sol"):
         def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
             self.evaluate_scripts.append(expression)
             if "visibleMenuCount" in expression or "current:" in expression:
-                return {"ok": True, "current": current}
-            return {"buttons": [trigger_name], "menus": []}
+                selected_model = current if current.casefold().startswith("gpt-") else "GPT-5.6 Sol"
+                return {
+                    "ok": True,
+                    "current": current,
+                    "selected_model": selected_model,
+                }
+            return {
+                "buttons": [trigger_name],
+                "candidate_buttons": (
+                    [trigger_name]
+                    if trigger_name not in {"Pro", "Switch model"}
+                    else []
+                ),
+                "menus": [],
+            }
 
         def wait_for_timeout(self, _milliseconds: int) -> None:
             return None
@@ -546,7 +558,7 @@ def test_chromium_reused_session_verifies_medium_trigger() -> None:
     observation: dict[str, object] = {}
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
     assert ("button", "Medium", True) in page.role_calls
-    assert observation["observed"] == "Extra High"
+    assert observation["observed"] == "GPT-5.6 Sol"
     assert page.power.click_count == 2
 
 
@@ -620,6 +632,151 @@ def test_chromium_selector_accepts_open_thinking_effort_menu() -> None:
     assert ("button", "Thinking effort", True) in page.role_calls
     assert page.power.click_count == 1
     assert observation["observed"] == "GPT-5.6 Sol"
+
+
+def test_chromium_selector_uses_all_subscription_efforts_and_leaves_sol_at_maximum() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.expanded = False
+            self.click_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _SliderLocator:
+        labels = ("Launch brief", "Cruise review", "Landing proof")
+
+        def __init__(self, page: "_Page") -> None:
+            self.page = page
+            self.value = 12
+            self.press_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_SliderLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return self.page.power.expanded
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            return {
+                "aria-valuenow": str(self.value),
+                "aria-valuemin": "11",
+                "aria-valuemax": "13",
+            }.get(name)
+
+        def press(self, key: str, **_kwargs: object) -> None:
+            self.press_count += 1
+            if key == "Home":
+                self.value = 11
+            elif key == "End":
+                self.value = 13
+            elif key == "ArrowRight":
+                self.value = min(self.value + 1, 13)
+
+    class _Page:
+        def __init__(self) -> None:
+            self.power = _PowerLocator()
+            self.slider = _SliderLocator(self)
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            if role == "button" and name == "Subscription power" and exact is True:
+                return self.power
+            return _EmptyLocator()
+
+        def locator(self, selector: str) -> _SliderLocator | _EmptyLocator:
+            if "role=\"slider\"" in selector:
+                return self.slider
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "current:" in expression:
+                effort = self.slider.labels[self.slider.value - 11]
+                return {
+                    "ok": True,
+                    "current": "GPT-5.6 Sol",
+                    "selected_model": "GPT-5.6 Sol",
+                    "available": ["GPT-5.6 Sol", "GPT-5.5"],
+                    "thinking_effort": {
+                        "label": effort,
+                        "value": str(self.slider.value),
+                        "min": "11",
+                        "max": "13",
+                    },
+                }
+            return {
+                "buttons": [],
+                "candidate_buttons": ["Subscription power"],
+                "menus": ["menu"],
+            }
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        observation,
+    ) is True
+    assert page.slider.value == 13
+    assert observation["observed"] == "GPT-5.6 Sol"
+    assert observation["thinking_effort"] == "Landing proof"
+    assert observation["available_efforts"] == [
+        "Launch brief",
+        "Cruise review",
+        "Landing proof",
+    ]
+    assert observation["effort_catalog_complete"] is True
+
+    exact_observation: dict[str, object] = {}
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        exact_observation,
+        thinking_effort="Cruise review",
+    ) is True
+    assert page.slider.value == 12
+    assert exact_observation["thinking_effort"] == "Cruise review"
+    assert exact_observation["available_efforts"] == [
+        "Launch brief",
+        "Cruise review",
+        "Landing proof",
+    ]
 
 
 def test_chromium_selector_can_choose_gpt_5_6_sol_from_thinking_effort_menu() -> None:
@@ -806,7 +963,11 @@ def test_chromium_selector_chooses_extra_high_from_a_medium_thinking_effort_menu
                     "current": self.current,
                     "available": ["Medium", "GPT-5.6 Sol", "Extra High"],
                 }
-            return {"buttons": ["Medium"], "menus": ["menu"]}
+            return {
+                "buttons": ["Medium"],
+                "candidate_buttons": ["Medium"],
+                "menus": ["menu"],
+            }
 
         def wait_for_timeout(self, _milliseconds: int) -> None:
             return None
@@ -820,10 +981,10 @@ def test_chromium_selector_chooses_extra_high_from_a_medium_thinking_effort_menu
         DEFAULT_CHATGPT_MODEL,
         observation,
     ) is True
-    assert page.extra_high_choice.click_count == 1
-    assert page.sol_choice.click_count == 0
+    assert page.extra_high_choice.click_count == 0
+    assert page.sol_choice.click_count == 1
     assert page.power.click_count == 3
-    assert observation["observed"] == "Extra High"
+    assert observation["observed"] == "GPT-5.6 Sol"
 
 
 def test_chromium_wrong_model_readback_fails_closed() -> None:
@@ -837,7 +998,7 @@ def test_chromium_medium_trigger_without_stronger_effort_accepts_medium() -> Non
     page = _chromium_model_page("Medium", current="Medium")
     observation: dict[str, object] = {}
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
-    assert observation.get("observed") == "Medium"
+    assert observation.get("observed") == "GPT-5.6 Sol"
     assert ("button", "Medium", True) in page.role_calls
 
 
@@ -887,7 +1048,7 @@ def test_chromium_model_selector_retries_after_power_control_recycle() -> None:
             name: str | None = None,
             exact: bool | None = None,
         ) -> _PowerLocator | _EmptyLocator:
-            if role == "button" and name == "Instant" and exact is True:
+            if role == "button" and name == "GPT-5.6 Sol" and exact is True:
                 return self.power
             return _EmptyLocator()
 
@@ -897,7 +1058,11 @@ def test_chromium_model_selector_retries_after_power_control_recycle() -> None:
                 if self.menu_reads <= 10:
                     return {"ok": False, "diagnostic": {"visibleMenuCount": 0}}
                 return {"ok": True, "current": "GPT-5.6 Sol"}
-            return {"buttons": ["Instant"], "menus": []}
+            return {
+                "buttons": ["GPT-5.6 Sol"],
+                "candidate_buttons": ["GPT-5.6 Sol"],
+                "menus": [],
+            }
 
         def wait_for_timeout(self, _milliseconds: int) -> None:
             return None
@@ -980,6 +1145,7 @@ def test_chromium_model_selector_retries_when_visible_trigger_does_not_open_menu
                 }
             return {
                 "buttons": ["Medium"],
+                "candidate_buttons": ["Medium"],
                 "menus": ["menu"] if self.power.expanded else [],
             }
 
@@ -1001,9 +1167,8 @@ def test_chatgpt_model_click_targets_exclude_generic_text_labels() -> None:
     assert "Pro" not in CHATGPT_MODEL_TRIGGER_LABELS
     assert "High" not in CHATGPT_MODEL_TRIGGER_LABELS
     assert "Model" not in CHATGPT_MODEL_TRIGGER_LABELS
-    assert "Medium" in CHATGPT_MODEL_TRIGGER_LABELS
-    assert "Thinking effort" in CHATGPT_MODEL_TRIGGER_LABELS
-    assert "Advanced" in CHATGPT_MODEL_TRIGGER_LABELS
+    assert "Thinking effort" not in CHATGPT_MODEL_TRIGGER_LABELS
+    assert "Advanced" not in CHATGPT_MODEL_TRIGGER_LABELS
 
 
 def test_chromium_unlabeled_composer_pill_accepts_sol() -> None:
@@ -1083,7 +1248,7 @@ def test_chromium_high_is_accepted_when_extra_high_is_not_exposed() -> None:
     page = _chromium_model_page("Medium", current="High")
     observation: dict[str, object] = {}
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
-    assert observation["observed"] == "High"
+    assert observation["observed"] == "GPT-5.6 Sol"
 
 
 def test_chromium_switch_model_control_is_not_a_click_target() -> None:
@@ -1217,7 +1382,7 @@ def test_chatgpt_model_diagnostics_are_filtered_bounded_and_deduplicated() -> No
 
     result = _chatgpt_visible_model_controls(_Page())
 
-    assert result["buttons"][:2] == ["Pro", "Instant"]
+    assert result["buttons"][:2] == ["Model " + ("x" * 154), "Model 0"]
     assert all(label not in result["buttons"] for label in ("Project", "Profile", "Prompt"))
     assert len(result["buttons"]) == 20
     assert all(len(label) <= 160 for label in result["buttons"])
@@ -2249,15 +2414,16 @@ def test_non_regular_settings_file_returns_without_blocking(tmp_path: Path) -> N
 
 
 def test_default_prompts_share_the_complete_controller_action_schema() -> None:
-    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 2_589
+    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 2_688
     assert hashlib.sha256(DEFAULT_MACOS_SYSTEM_PROMPT.encode()).hexdigest() == (
-        "5ba03b475f16499e104e9f18df56f07ac44b5b28e4dab9e9cb170d19bff32fb1"
+        "f1638945976ee9fdb58d32e6446f86814e05062ce5bb9c72b162542c374bc075"
     )
     for prompt in (DEFAULT_MACOS_SYSTEM_PROMPT, DEFAULT_WINDOWS_SYSTEM_PROMPT):
         for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS:
             assert marker in prompt
         assert '"old_base64":"base64-of-old"' in prompt
         assert '"content_base64":"base64-of-content"' in prompt
+        assert '"expected_sha256":"sha256-from-a-current-read"' in prompt
         assert '"verification":["check and result"]' in prompt
         assert '"limitations":["remaining limitation"]' in prompt
 
@@ -4423,6 +4589,7 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
     )
     submitted: list[str] = []
     updates: list[dict[str, object]] = []
+    event_chain = AgentEventChain(tmp_path / "runtime", new_run_id())
 
     def submit(_page: object, _browser: str, message: str, _should_stop: object, **_kwargs: object) -> str:
         submitted.append(message)
@@ -4445,6 +4612,7 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
         selected_target_url="https://chatgpt.com/c/example",
         should_stop=lambda: False,
         update=lambda **changes: updates.append(changes),
+        event_chain=event_chain,
     )
 
     assert result == ("Done.", "https://chatgpt.com/c/example", 2, True)
@@ -4453,6 +4621,33 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
     assert "fenced code block labelled json" in submitted[1]
     assert "JSON-escape embedded double quotes" in submitted[1]
     assert {"conversation_url": "https://chatgpt.com/c/example"} in updates
+    events = event_chain.public_events()
+    kinds = [event["kind"] for event in events]
+    assert kinds[0] == "run.started"
+    assert "page.observation" in kinds
+    assert kinds.count("action.requested") == 2
+    assert kinds.count("observation") == 2
+    assert "bodycheck" in kinds
+    assert {
+        event["capability"]
+        for event in events
+        if event["kind"] == "page.observation"
+    } >= {
+        "page.observe.browser_session",
+        "page.observe.provider_turn",
+        "page.observe.agent_response",
+    }
+    action_ids = {
+        event["action_id"]
+        for event in events
+        if event["kind"] == "action.requested"
+    }
+    assert action_ids == {
+        event["action_id"]
+        for event in events
+        if event["kind"] in {"observation", "bodycheck"}
+    }
+    assert event_chain.summary()["state"] == "ready"
 
 
 @pytest.mark.parametrize(
@@ -6426,7 +6621,8 @@ def test_provider_turn_snapshot_receipt_reads_collapsed_user_text() -> None:
 
     script = captured["expression"]
     assert snapshot["markerEchoed"] is True
-    assert "users.some" in script
+    assert "latestUser" in script
+    assert "users.some" not in script
     assert "textContent" in script
     assert "'form, [role=\"menu\"]" not in script
     assert "candidate.contains(element)" in script
@@ -6583,6 +6779,60 @@ def test_workspace_controller_stays_inside_project_and_requires_current_bodychec
         assert not escaped_result["ok"]
         assert controller.state.bodycheck_current
         assert bodycheck_result["bodycheck_current"]
+
+
+def test_workspace_controller_delete_requires_a_current_read_sha256() -> None:
+    with TemporaryDirectory() as raw_root:
+        workspace = Path(raw_root) / "project"
+        workspace.mkdir()
+        obsolete = workspace / "obsolete.txt"
+        obsolete.write_text("retired fixture\n", encoding="utf-8")
+        controller = WorkspaceController(
+            workspace,
+            ComputerUseSettings(workspace_path=str(workspace)),
+            lambda: False,
+        )
+
+        first_read = controller.execute({"action": "read", "path": "obsolete.txt"})
+        assert first_read["ok"]
+        assert re.fullmatch(r"[0-9a-f]{64}", str(first_read["sha256"]))
+
+        wrong_digest = controller.execute(
+            {
+                "action": "delete",
+                "path": "obsolete.txt",
+                "expected_sha256": "0" * 64,
+            }
+        )
+        assert not wrong_digest["ok"]
+        assert obsolete.exists()
+
+        obsolete.write_text("changed after read\n", encoding="utf-8")
+        stale_digest = controller.execute(
+            {
+                "action": "delete",
+                "path": "obsolete.txt",
+                "expected_sha256": first_read["sha256"],
+            }
+        )
+        assert not stale_digest["ok"]
+        assert obsolete.exists()
+
+        current_read = controller.execute({"action": "read", "path": "obsolete.txt"})
+        deleted = controller.execute(
+            {
+                "action": "delete",
+                "path": "obsolete.txt",
+                "expected_sha256": current_read["sha256"],
+            }
+        )
+        assert deleted == {
+            "ok": True,
+            "action": "delete",
+            "path": "obsolete.txt",
+            "deleted_bytes": len("changed after read\n".encode("utf-8")),
+        }
+        assert not obsolete.exists()
 
 
 def test_workspace_search_uses_python_fallback_when_rg_is_unavailable(
@@ -9584,6 +9834,8 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
         "context_attached",
         "context_bytes",
         "context_file",
+        "chatgpt_effort",
+        "effort_catalog_complete",
         "event_chain_state",
         "event_count",
         "finished_at",
@@ -9592,18 +9844,27 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
         "message",
         "model",
         "model_verified",
+        "operating_system",
         "phase",
         "platform",
         "project_url",
         "running",
         "run_id",
+        "read_only",
         "session_mode",
         "session_title",
         "started_at",
         "turn_count",
+        "thinking_effort",
+        "available_efforts",
         "verification_passed",
+        "workspace_path",
     }
     assert payload["context_attached"] is context_attached
+    assert payload["workspace_path"] == str(workspace)
+    assert payload["operating_system"] == detect_host_operating_system()
+    assert payload["read_only"] is False
+    assert payload["chatgpt_effort"] == "highest_available"
     assert Path(payload["context_file"]).name == "context.md"
     assert payload["context_bytes"] > 0
     assert snapshot_path.stat().st_mode & 0o777 == 0o600

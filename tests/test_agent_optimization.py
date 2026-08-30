@@ -44,9 +44,9 @@ def test_primary_pages_publish_one_versioned_top_level_site_tools_adapter(
 
         assert response.status_code == 200
         assert len(MANIFEST_PATTERN.findall(body)) == 1
-        assert body.count("/static/agent-optimization.js?v=agent-optimization-v1.0.0") == 1
+        assert body.count("/static/agent-optimization.js?v=agent-optimization-v1.1.0") == 1
         manifest = _manifest_from_body(body)
-        assert manifest["contractVersion"] == "1.0.0"
+        assert manifest["contractVersion"] == "1.1.0"
         assert manifest["status"] == "project-convention"
         assert manifest["site"]["id"] == "cache-likes-from-twitter"
         assert {item["id"] for item in manifest["capabilities"]} == {
@@ -58,6 +58,15 @@ def test_primary_pages_publish_one_versioned_top_level_site_tools_adapter(
             "page_observation",
             "webmcp_tools",
         }
+        assert [tool["name"] for tool in manifest["webmcpTools"]] == [
+            "get_site_capabilities",
+            "get_page_context",
+            "navigate_to_site_target",
+        ]
+        assert all(
+            tool["inputSchema"]["additionalProperties"] is False
+            for tool in manifest["webmcpTools"]
+        )
 
 
 def test_manifest_has_bounded_navigation_and_no_mutating_or_recursive_tools(

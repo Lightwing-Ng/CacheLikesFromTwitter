@@ -1,4 +1,4 @@
-"""Regression coverage for the shared floating-banner contract. Code version: v0.1.0-codex.2."""
+"""Regression coverage for the shared floating-banner contract. Code version: v0.1.0-codex.3."""
 
 from pathlib import Path
 
@@ -25,7 +25,7 @@ def test_cache_status_banner_uses_the_shared_sibling_structure() -> None:
     assert 'class="icon workspace-modal-icon notice-floating-banner-icon icon-modal-dialog-banner-default"' in body
     assert '<p class="notice-floating-banner-heading">Task status</p>' in body
     assert '<span id="banner_message">' in body
-    assert '<span class="status-chip status-idle" id="banner_phase">idle</span>' in body
+    assert 'id="banner_phase"' not in body
 
 
 def test_browser_refresh_banner_reuses_the_shared_macro_and_controller() -> None:

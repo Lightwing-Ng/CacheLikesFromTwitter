@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.27.0-codex.1
+Code version: v3.48.0-codex.2
 """
 
 from __future__ import annotations
@@ -166,8 +166,21 @@ class _ChromiumTriggerPage:
 
     def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
         if "current:" in expression:
-            return {"ok": True, "current": self.current}
-        return {"buttons": [self.trigger_name], "menus": []}
+            selected_model = (
+                self.current
+                if self.current.casefold().startswith("gpt-")
+                else "GPT-5.6 Sol"
+            )
+            return {
+                "ok": True,
+                "current": self.current,
+                "selected_model": selected_model,
+            }
+        return {
+            "buttons": [self.trigger_name],
+            "candidate_buttons": [self.trigger_name],
+            "menus": [],
+        }
 
     def wait_for_timeout(self, _ms: int) -> None:
         pass

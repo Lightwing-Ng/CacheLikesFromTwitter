@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.53.0-codex.1
+# Code version: v1.54.0-codex.1
 
 from __future__ import annotations
 
@@ -511,7 +511,10 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     app.extensions["gemini_service"] = gemini_service
     saved_config = load_saved_config()
     computer_use_settings = ComputerUseSettingsStore()
-    computer_use_agent_service = ComputerUseAgentService(computer_use_settings)
+    computer_use_agent_service = ComputerUseAgentService(
+        computer_use_settings,
+        config_provider=lambda: saved_config,
+    )
     app.extensions["computer_use_settings"] = computer_use_settings
     app.extensions["computer_use_agent_service"] = computer_use_agent_service
     atexit.register(computer_use_agent_service.stop_at_exit)
@@ -975,6 +978,44 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             return normalize_agent_source_catalog_payload(platform, payload)
         return payload
 
+    def load_agent_browser_session_bootstrap(
+        *,
+        platform: str,
+        browser: str,
+        collector: Callable[[], tuple[dict[str, Any], dict[str, Any] | None]],
+    ) -> dict[str, Any]:
+        """Reuse one provider readiness-and-sources browser flight across Agent polls."""
+        platform_label = {
+            "chatgpt": "ChatGPT",
+            "grok": "Grok",
+            "claude": "Claude",
+        }[platform]
+
+        def collect_bootstrap() -> dict[str, Any]:
+            status_payload, source_payload = collector()
+            payload = dict(status_payload)
+            if source_payload is not None:
+                sources = normalize_agent_source_catalog_payload(platform, source_payload)
+                agent_source_cache.store(
+                    platform=platform,
+                    browser=browser,
+                    source_kind="sources",
+                    payload=sources,
+                )
+                payload["agent_sources"] = sources
+            elif payload.get("can_download"):
+                payload["agent_sources_error"] = (
+                    f"{platform_label} is signed in, but Recent sessions could not be loaded from this browser."
+                )
+            return payload
+
+        return load_agent_source_catalog(
+            platform=platform,
+            browser=browser,
+            source_kind="browser-session",
+            collector=collect_bootstrap,
+        )
+
     def build_agent_snapshot() -> dict[str, Any]:
         """Add safe rendered Markdown to the Agent status payload."""
         snapshot = computer_use_agent_service.snapshot()
@@ -1185,6 +1226,12 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 browser=str(payload.get("browser", "")),
                 platform=str(payload.get("platform", computer_use_settings.settings.platform)),
                 model=str(payload.get("model", computer_use_settings.settings.model)),
+                chatgpt_effort=str(
+                    payload.get(
+                        "chatgpt_effort",
+                        computer_use_settings.settings.chatgpt_effort,
+                    )
+                ),
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
@@ -1243,6 +1290,11 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 platform=str(payload.get("platform", "")),
                 browser=str(payload.get("browser", "")),
                 model=str(payload.get("model", "")),
+                chatgpt_effort=(
+                    str(payload["chatgpt_effort"])
+                    if "chatgpt_effort" in payload
+                    else None
+                ),
                 session_mode=str(payload.get("session_mode", "new")),
                 conversation_url=str(payload.get("conversation_url", "")),
                 project_url=str(payload.get("project_url", "")),
@@ -2066,34 +2118,18 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         }
         if scope == "agent" and platform_name in agent_bootstrap_collectors:
             try:
-                payload, source_payload = agent_bootstrap_collectors[platform_name](
-                    browser_name,
-                    saved_config,
-                    silent=True,
+                payload = load_agent_browser_session_bootstrap(
+                    platform=platform_name,
+                    browser=browser_name,
+                    collector=lambda: agent_bootstrap_collectors[platform_name](
+                        browser_name,
+                        saved_config,
+                        silent=True,
+                    ),
                 )
             except ValueError as exc:
                 return browser_session_response({"error": str(exc)}, 400)
-            if source_payload is not None:
-                source_payload = normalize_agent_source_catalog_payload(
-                    platform_name,
-                    source_payload,
-                )
-                agent_source_cache.store(
-                    platform=platform_name,
-                    browser=browser_name,
-                    source_kind="sources",
-                    payload=source_payload,
-                )
-                payload["agent_sources"] = source_payload
-            elif payload.get("can_download"):
-                platform_label = {
-                    "chatgpt": "ChatGPT",
-                    "grok": "Grok",
-                    "claude": "Claude",
-                }[platform_name]
-                payload["agent_sources_error"] = (
-                    f"{platform_label} is signed in, but Recent sessions could not be loaded from this browser."
-                )
+            payload.pop("cache", None)
             return browser_session_response(payload)
         try:
             payload = probe_browser_session(

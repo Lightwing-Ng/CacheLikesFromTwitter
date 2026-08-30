@@ -1,4 +1,4 @@
-<!-- Code version: v1.29.2-codex.1 -->
+<!-- Code version: v1.29.2-codex.2 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.9') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
@@ -59,7 +59,6 @@
                 <div class="report-card workspace-summary-card workspace-article-card" data-layout-role="title-rail">
                     <div class="report-heading-row" data-layout-role="title-heading">
                         <div>
-                            <p class="workspace-kicker">Settings</p>
                             <h2>Configuration center</h2>
                         </div>
                     </div>
@@ -83,7 +82,6 @@
                                 aria-labelledby="settings_browser_heading"
                             >
                                 <div class="settings-category-heading">
-                                    <p class="workspace-kicker">Browser &amp; account</p>
                                     <h3 id="settings_browser_heading">Chrome identity</h3>
                                     <p>Choose the local Chrome profile used for authenticated X access and cache naming.</p>
                                 </div>
@@ -143,7 +141,6 @@
                                 aria-labelledby="settings_downloads_heading"
                             >
                                 <div class="settings-category-heading">
-                                    <p class="workspace-kicker">Downloads</p>
                                     <h3 id="settings_downloads_heading">Cache limits &amp; pacing</h3>
                                     <p>Control concurrency, file limits, and the crawl stopping conditions shared by cache tasks.</p>
                                 </div>
@@ -163,7 +160,6 @@
                                 aria-labelledby="settings_chatgpt_heading"
                             >
                                 <div class="settings-category-heading">
-                                    <p class="workspace-kicker">ChatGPT</p>
                                     <h3 id="settings_chatgpt_heading">Project scan timing</h3>
                                     <p>Fine-tune how long ChatGPT cache tasks wait for startup and newly rendered project images.</p>
                                 </div>
@@ -180,7 +176,6 @@
                                 aria-labelledby="settings_agent_heading"
                             >
                                 <div class="settings-category-heading">
-                                    <p class="workspace-kicker">Agent</p>
                                     <h3 id="settings_agent_heading">Web Computer Use Agent</h3>
                                     <p>Use an already signed-in ChatGPT, Gemini, or Grok Web account for reasoning while a bounded local controller reads, changes, runs, and verifies the selected project.</p>
                                 </div>
@@ -264,7 +259,6 @@
                                 aria-labelledby="settings_cloud_heading"
                             >
                                 <div class="settings-category-heading">
-                                    <p class="workspace-kicker">Cloud backup</p>
                                     <h3 id="settings_cloud_heading">One-way cache mirror</h3>
                                     <p>Keep the local cache authoritative while copying new and changed files to a cloud folder.</p>
                                 </div>
@@ -277,7 +271,6 @@
                                 >
                                     <div class="shadow-backup-heading">
                                         <div>
-                                            <p class="workspace-kicker">Mirror configuration</p>
                                             <h3 id="shadow_backup_heading">Destination &amp; policy</h3>
                                         </div>
                                     </div>
@@ -425,13 +418,11 @@
                             aria-labelledby="settings_maintenance_heading"
                         >
                             <div class="settings-category-heading">
-                                <p class="workspace-kicker">Maintenance</p>
                                 <h3 id="settings_maintenance_heading">Reset cached state</h3>
                                 <p>Remove source-specific cache state when you need a completely fresh download.</p>
                             </div>
                             <section class="danger-zone" aria-labelledby="danger_zone_heading">
                                 <div>
-                                    <p class="workspace-kicker">Danger zone</p>
                                     <h3 id="danger_zone_heading">Reset Grok state</h3>
                                 </div>
                                 <p id="reset_grok_description">
@@ -460,7 +451,6 @@
                             </section>
                             <section class="danger-zone" aria-labelledby="chatgpt_danger_zone_heading">
                                 <div>
-                                    <p class="workspace-kicker">Danger zone</p>
                                     <h3 id="chatgpt_danger_zone_heading">Reset ChatGPT state</h3>
                                 </div>
                                 <p id="reset_chatgpt_description">

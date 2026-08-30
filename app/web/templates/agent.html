@@ -1,4 +1,4 @@
-<!-- Code version: v3.24.4-codex.2 -->
+<!-- Code version: v3.25.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.9') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -353,6 +353,7 @@
                             <div class="agent-doctor-content">
                                 <p class="agent-doctor-summary" id="agent_doctor_summary"></p>
                                 <ol class="agent-doctor-checks" id="agent_doctor_checks"></ol>
+                                <ol class="agent-doctor-events" id="agent_doctor_events"></ol>
                                 <div class="agent-doctor-actions" id="agent_doctor_actions"></div>
                             </div>
                         </details>
@@ -406,6 +407,34 @@
                                             {% endfor %}
                                         </span>
                                     </span>
+                                    <span class="trade-strategy-combobox agent-combobox agent-effort-combobox" data-agent-combobox data-agent-effort-field{% if settings.platform != 'chatgpt' %} hidden{% endif %}>
+                                        <input type="hidden" name="chatgpt_effort" value="{{ settings.chatgpt_effort }}" data-agent-combobox-input data-agent-effort-input>
+                                        <button
+                                            type="button"
+                                            class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger agent-effort-trigger"
+                                            data-agent-combobox-trigger
+                                            aria-haspopup="listbox"
+                                            aria-expanded="false"
+                                            aria-label="Thinking effort: Highest available"
+                                        >
+                                            <span class="trade-strategy-trigger-label agent-effort-trigger-label" data-agent-combobox-selected-label>Highest available</span>
+                                            <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+                                        </button>
+                                        <span class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-effort-dropdown" data-agent-combobox-menu role="listbox" aria-label="Choose ChatGPT thinking effort" hidden>
+                                            <button
+                                                type="button"
+                                                class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active"
+                                                data-agent-combobox-option="highest_available"
+                                                data-agent-combobox-label="Highest available"
+                                                role="option"
+                                                aria-selected="true"
+                                                tabindex="-1"
+                                            >
+                                                <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                                                <span class="trade-strategy-dropdown-text">Highest available</span>
+                                            </button>
+                                        </span>
+                                    </span>
                                     <span class="agent-composer-actions">
                                         <button type="button" class="browser-session-message-toggle agent-composer-overflow-toggle" data-agent-composer-overflow-toggle aria-controls="agent_prompt_input" aria-expanded="false" aria-label="Expand question or task" title="Expand question or task">
                                             <span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span>
@@ -432,9 +461,9 @@
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.20.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.3.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.7.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.24.1-codex.2') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.25.0-codex.1') }}"></script>
 </body>
 </html>

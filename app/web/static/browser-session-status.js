@@ -1,4 +1,4 @@
-/* Code version: v1.7.0-codex.1 */
+/* Code version: v1.8.0-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v5:";
@@ -41,12 +41,14 @@
         }
     }
 
-    function requestBrowserStatus(platform, browserId, scope) {
+    function requestBrowserStatus(platform, browserId, scope, options = {}) {
+        const refresh = options.refresh === true;
         const requestScope = scope || "default";
-        const requestKey = `${requestScope}:${platform}:${browserId}`;
+        const requestKey = `${requestScope}:${platform}:${browserId}:${refresh ? "refresh" : "default"}`;
         if (statusRequests.has(requestKey)) return statusRequests.get(requestKey);
         const query = new URLSearchParams({platform, browser: browserId});
         if (scope) query.set("scope", scope);
+        if (refresh) query.set("refresh", "1");
         const request = fetch(
             `/api/browser-session?${query.toString()}`,
             {cache: "no-store"},
@@ -81,6 +83,7 @@
         const scope = String(options.scope || root.dataset.browserSessionScope || "").trim().toLowerCase();
         let activeBrowser = "";
         let lastPayload = null;
+        let statusRequestRevision = 0;
 
         if (!platform || !statusCard || !statusAccount || !statusCheckmark) return null;
 
@@ -176,6 +179,7 @@
             }
 
             const requestPlatform = platform;
+            const requestRevision = ++statusRequestRevision;
             const cacheKey = `${SESSION_CACHE_PREFIX}${scope || "default"}:${requestPlatform}:${activeBrowser}`;
             const cachedStatus = readCachedStatus(cacheKey);
             const forceRefresh = options.force === true;
@@ -194,12 +198,20 @@
             }
 
             try {
-                const payload = await requestBrowserStatus(requestPlatform, activeBrowser, scope);
+                const payload = await requestBrowserStatus(requestPlatform, activeBrowser, scope, {refresh: forceRefresh});
+                if (
+                    activeBrowser !== browserId
+                    || platform !== requestPlatform
+                    || requestRevision !== statusRequestRevision
+                ) return;
                 writeSessionValue(cacheKey, JSON.stringify({cached_at: Date.now(), payload}));
-                if (activeBrowser !== browserId || platform !== requestPlatform) return;
                 setStatus(payload, browserId);
             } catch (error) {
-                if (activeBrowser !== browserId || platform !== requestPlatform) return;
+                if (
+                    activeBrowser !== browserId
+                    || platform !== requestPlatform
+                    || requestRevision !== statusRequestRevision
+                ) return;
                 setStatus({
                     browser_label: statusAccount.textContent,
                     account_name: "",

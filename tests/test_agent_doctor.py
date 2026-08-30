@@ -1,16 +1,19 @@
 """Route and service tests for Agent doctor recovery UX.
 
-Code version: v1.0.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import time
 
 from app.core.computer_use_agent import (
+    CONTINUE_INTERRUPTED_AGENT_PROMPT,
     ComputerUseAgentService,
     ComputerUseSettingsStore,
+    detect_host_operating_system,
 )
 from app.core.config import CrawlConfig
 
@@ -89,11 +92,22 @@ def test_completed_run_persists_event_chain_and_doctor_can_report_healthy(
     assert snapshot["running"] is False
     assert snapshot["run_id"].startswith("run-")
     assert snapshot["event_chain_state"] == "ready"
-    assert snapshot["event_count"] == 2
+    assert snapshot["event_count"] == 6
     assert snapshot["last_event_kind"] == "run.completed"
     event_path = runtime_root / "events" / f"{snapshot['run_id']}.jsonl"
     records = [json.loads(line) for line in event_path.read_text(encoding="utf-8").splitlines()]
-    assert [record["kind"] for record in records] == ["run.started", "run.completed"]
+    assert [record["kind"] for record in records] == [
+        "run.started",
+        "page.observation",
+        "page.observation",
+        "page.observation",
+        "page.observation",
+        "run.completed",
+    ]
+    assert all(
+        record["capability"] == "page.observe.agent_status"
+        for record in records[1:5]
+    )
 
     doctor = service.doctor()
     assert doctor["status"] == "healthy"
@@ -125,9 +139,9 @@ def test_capability_and_doctor_routes_are_local_and_bounded(client) -> None:
     assert remote_response.status_code == 403
     capabilities = capabilities_response.get_json()
     doctor = doctor_response.get_json()
-    assert capabilities["version"] == "1.0.0"
-    assert len(capabilities["capabilities"]) == 24
-    assert doctor["capability_registry_version"] == "1.0.0"
+    assert capabilities["version"] == "1.1.0"
+    assert len(capabilities["capabilities"]) == 25
+    assert doctor["capability_registry_version"] == "1.1.0"
     assert "prompt" not in doctor
     assert "response" not in doctor
 
@@ -139,6 +153,104 @@ def test_agent_page_exposes_doctor_panel_and_recovery_script(client) -> None:
     assert 'id="agent_doctor_panel"' in body
     assert 'id="agent_doctor_checks"' in body
     assert 'id="agent_doctor_actions"' in body
+    assert 'id="agent_doctor_events"' in body
     assert 'requestJson("/api/agent/doctor")' in script
     assert 'mutate("/api/agent/doctor/recover", {action})' in script
     assert "agentNeedsDoctor" in script
+
+
+def test_doctor_continues_an_interrupted_edge_chatgpt_task_without_context_upload(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    snapshot_path = runtime_root / "last-run.json"
+    snapshot_path.write_text(
+        json.dumps(
+            {
+                "running": True,
+                "phase": "running",
+                "message": "Agent was running.",
+                "workspace_path": str(workspace),
+                "conversation_url": "https://chatgpt.com/c/interrupted-flight",
+                "session_title": "demo_flight task",
+                "session_mode": "recent",
+                "operating_system": detect_host_operating_system(),
+                "platform": "chatgpt",
+                "browser": "edge",
+                "model": "gpt-5.6-sol",
+                "chatgpt_effort": "Cruise review",
+                "read_only": True,
+                "run_id": "run-0123456789abcdef",
+            }
+        ),
+        encoding="utf-8",
+    )
+    observed: dict[str, object] = {}
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+        lambda _process: None,
+    )
+
+    def runner(**kwargs):
+        observed.update(kwargs)
+        kwargs["update"](phase="running", message="Resuming controller actions.")
+        return "Verified continuation", "https://chatgpt.com/c/interrupted-flight", 1, True
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runner=runner,
+        runtime_root=runtime_root,
+        config_provider=CrawlConfig,
+    )
+    doctor = service.doctor()
+    actions = {action["id"]: action for action in doctor["actions"]}
+    assert service.snapshot()["phase"] == "interrupted"
+    assert actions["continue"]["enabled"] is True
+
+    recovery = service.recover("continue")
+    snapshot = _wait_for_completion(service)
+
+    assert recovery["ok"] is True
+    assert observed["prompt"] == CONTINUE_INTERRUPTED_AGENT_PROMPT
+    assert observed["context_path"] is None
+    assert observed["target_url"] == "https://chatgpt.com/c/interrupted-flight"
+    assert observed["session_mode"] == "recent"
+    assert observed["read_only"] is True
+    assert observed["settings"].chatgpt_effort == "Cruise review"
+    assert snapshot["phase"] == "finished"
+    assert snapshot["conversation_url"] == "https://chatgpt.com/c/interrupted-flight"
+    assert not (runtime_root / "last-run.json").read_text(encoding="utf-8").find(
+        "Agent was running."
+    ) >= 0
+
+    invalid_runtime_root = tmp_path / "invalid-runtime"
+    invalid_runtime_root.mkdir()
+    invalid_snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+    invalid_snapshot.update(
+        {
+            "running": True,
+            "phase": "running",
+            "browser": "chrome",
+            "workspace_path": str(Path(workspace)),
+        }
+    )
+    (invalid_runtime_root / "last-run.json").write_text(
+        json.dumps(invalid_snapshot),
+        encoding="utf-8",
+    )
+    invalid_service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "invalid-settings.json"),
+        runtime_root=invalid_runtime_root,
+    )
+    invalid_actions = {
+        action["id"]: action for action in invalid_service.doctor()["actions"]
+    }
+    assert invalid_actions["continue"]["enabled"] is False

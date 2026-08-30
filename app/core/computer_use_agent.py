@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.47.5-codex.1
+Code version: v3.50.0-codex.1
 """
 
 from __future__ import annotations
@@ -38,6 +38,7 @@ from .agent_session_sources import (
     normalize_agent_conversation_url,
     normalize_agent_project_url,
 )
+from .agent.capability_registry import controller_action_prompt_schema
 from .browser_sessions import (
     browser_descriptors,
     goto_with_retry,
@@ -101,11 +102,20 @@ MAX_COMMAND_TIMEOUT_SECONDS = 1_800
 MAX_ACTION_OUTPUT_CHARS = 48_000
 RUN_OUTPUT_QUEUE_SIZE = 4
 MAX_FILE_READ_CHARS = 120_000
+MAX_CONTROLLER_DELETE_BYTES = 20 * 1_024 * 1_024
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
 CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
 CHATGPT_MODEL_CONTROL_RETRY_ATTEMPTS = CHATGPT_MODEL_VERIFICATION_ATTEMPTS
 CHATGPT_MODEL_LOCATOR_TIMEOUT_MILLISECONDS = 1_000
+# Guard against a malformed page advertising an unbounded slider while still
+# covering any realistic subscription tier without a plan-specific list.
+CHATGPT_MAX_SUBSCRIPTION_EFFORT_POSITIONS = 64
+# This is an Agent policy token, never a provider-labelled effort option. It
+# deliberately keeps a first run subscription-neutral while live UI discovery
+# supplies every user-selectable label for later runs.
+CHATGPT_EFFORT_POLICY_HIGHEST = "highest_available"
+MAX_CHATGPT_EFFORT_LABEL_LENGTH = 160
 # Gemini can expose a placeholder textarea while its authenticated Angular
 # shell is still hydrating. Keep model verification bounded, but long enough
 # to wait for the real composer and mode picker on a cold Edge clone.
@@ -117,6 +127,11 @@ BROWSER_INTERRUPTION_TIMEOUT_SECONDS = 300
 BROWSER_INTERRUPTION_POLL_SECONDS = 1.0
 HUMAN_VERIFICATION_REASON_PREFIX = "Human verification required: "
 SCREEN_LOCK_INTERRUPTION_REASON = "The screen is locked."
+CONTINUE_INTERRUPTED_AGENT_PROMPT = (
+    "Continue the unfinished Agent task in this existing conversation. Do not repeat "
+    "completed work. Return only the next safe JSON controller action using the "
+    "established protocol."
+)
 AGENT_EXIT_WORKER_JOIN_SECONDS = 8.0
 MAX_AGENT_SESSION_HISTORY = 100
 PERSISTED_AGENT_SNAPSHOT_FILENAME = "last-run.json"
@@ -143,21 +158,18 @@ SUPPORTED_OPERATING_SYSTEMS = frozenset({"macos", "windows"})
 SUPPORTED_AGENT_SESSION_MODES = frozenset({"new", "recent", "project_new", "project_session"})
 SUPPORTED_AGENT_PLATFORMS = frozenset({"chatgpt", "gemini", "grok", "claude"})
 DEFAULT_AGENT_PLATFORM = "chatgpt"
-CHATGPT_THINKING_EFFORT_LABELS = (
-    "Extra High",
-    "Very High",
-    "Maximum",
-    "High",
-    "Medium",
-    "Instant",
-)
+# Current subscriptions expose thinking-effort choices through the live ARIA
+# slider. Keep the compatibility symbol empty so the model catalog never
+# guesses a plan-specific label.
+CHATGPT_THINKING_EFFORT_LABELS: tuple[str, ...] = ()
 CHATGPT_MODEL_OPTIONS = (
     {
         "key": "gpt-5.6-sol",
         "label": "GPT-5.6 Sol",
         "ui_label": "5.6 Sol",
         "remote_label": "GPT-5.6 Sol",
-        "remote_labels": ("GPT-5.6 Sol", "5.6 Sol") + CHATGPT_THINKING_EFFORT_LABELS,
+        "remote_model_labels": ("GPT-5.6 Sol", "5.6 Sol"),
+        "remote_labels": ("GPT-5.6 Sol", "5.6 Sol"),
         "strength": 100,
     },
 )
@@ -320,30 +332,13 @@ def _invalid_action_correction_instruction(
         parts.append(_BASE64_CORRECTION_INSTRUCTION)
     return " ".join(parts)
 
-_CURRENT_SEARCH_ACTION_EXAMPLE = (
-    '{"action":"search","query":"literal text","path":".",'
-    '"glob":"*.py","max_results":80}'
-)
 _LEGACY_REGEX_SEARCH_QUERY_PATTERN = re.compile(
     r'("query"\s*:\s*)"text or regex"'
 )
 _LITERAL_SEARCH_PROMPT_INSTRUCTION = (
     "Search action queries are literal text, never regular expressions."
 )
-_CONTROLLER_ACTION_SCHEMA = (
-    "\n\nUse one of these actions:\n"
-    '{"action":"list","path":".","depth":2}\n'
-    '{"action":"read","path":"relative/file","start_line":1,"end_line":240}\n'
-    + _CURRENT_SEARCH_ACTION_EXAMPLE
-    + "\n"
-    '{"action":"replace","path":"relative/file","old":"exact text appearing once","new":"replacement text"}\n'
-    '{"action":"replace_base64","path":"relative/file","old_base64":"base64-of-old","new_base64":"base64-of-new"}\n'
-    '{"action":"write","path":"relative/new-file","content":"complete content"}\n'
-    '{"action":"write_base64","path":"relative/new-file","content_base64":"base64-of-content"}\n'
-    '{"action":"run","command":"focused inspection, build, lint, or test command"}\n'
-    '{"action":"bodycheck"}\n'
-    '{"action":"final","summary":"concise Markdown outcome","verification":["check and result"],"limitations":["remaining limitation"]}\n'
-)
+_CONTROLLER_ACTION_SCHEMA = controller_action_prompt_schema()
 _CONTROLLER_ACTION_SCHEMA_MARKERS = tuple(
     line
     for line in _CONTROLLER_ACTION_SCHEMA.splitlines()
@@ -558,6 +553,7 @@ class ComputerUseSettings:
     platform: str = DEFAULT_AGENT_PLATFORM
     browser: str = "edge"
     model: str = DEFAULT_CHATGPT_MODEL
+    chatgpt_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST
     target_url: str = CHATGPT_HOME_URL
     context_limit_mib: int = DEFAULT_CONTEXT_LIMIT_MIB
     max_turns: int = DEFAULT_MAX_TURNS
@@ -661,11 +657,17 @@ class AgentRunSnapshot:
     turn_count: int = 0
     bodycheck_passed: bool = False
     session_mode: str = "new"
+    operating_system: str = DEFAULT_OPERATING_SYSTEM
     platform: str = DEFAULT_AGENT_PLATFORM
     browser: str = "edge"
     model: str = DEFAULT_CHATGPT_MODEL
+    chatgpt_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST
+    read_only: bool = False
     model_verified: bool = False
     actual_model: str = ""
+    thinking_effort: str = ""
+    available_efforts: list[str] = field(default_factory=list)
+    effort_catalog_complete: bool = False
     session_type: str = ""
     catalog_state: str = "idle"
     catalog_error: str = ""
@@ -1088,6 +1090,23 @@ def open_chatgpt_in_default_browser(target_url: str = "") -> dict[str, Any]:
     return result
 
 
+def normalize_chatgpt_effort(value: Any) -> str:
+    """Normalize one locally stored effort policy or a live provider label.
+
+    Provider labels are intentionally not enumerated here. A label first
+    observed from the signed-in session remains exact, while the neutral
+    ``highest_available`` policy safely selects the live final slider position.
+    """
+    normalized = " ".join(str(value or "").replace("\x00", "").split())
+    if not normalized:
+        return CHATGPT_EFFORT_POLICY_HIGHEST
+    if len(normalized) > MAX_CHATGPT_EFFORT_LABEL_LENGTH:
+        raise ValueError("The ChatGPT thinking effort label is too long.")
+    if normalized.casefold() == CHATGPT_EFFORT_POLICY_HIGHEST:
+        return CHATGPT_EFFORT_POLICY_HIGHEST
+    return normalized
+
+
 def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettings:
     """Normalize and validate settings received from the local control page."""
     workspace = Path(str(payload.get("workspace_path", PROJECT_ROOT))).expanduser().resolve()
@@ -1117,6 +1136,10 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
     if model not in supported_models:
         platform_label = AGENT_PLATFORM_BY_KEY[platform]["label"]
         raise ValueError(f"Choose a supported {platform_label} model.")
+
+    chatgpt_effort = normalize_chatgpt_effort(
+        payload.get("chatgpt_effort", CHATGPT_EFFORT_POLICY_HIGHEST)
+    )
 
     target_url = str(payload.get("target_url", _platform_home_url(platform))).strip()
     target_parts = urlsplit(target_url)
@@ -1160,6 +1183,7 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
         platform=platform,
         browser=browser,
         model=model,
+        chatgpt_effort=chatgpt_effort,
         target_url=target_url,
         context_limit_mib=context_limit_mib,
         max_turns=max_turns,
@@ -1301,6 +1325,7 @@ class ComputerUseSettingsStore:
         browser: str,
         platform: str = DEFAULT_AGENT_PLATFORM,
         model: str | None = None,
+        chatgpt_effort: str | None = None,
     ) -> ComputerUseSettings:
         candidate = asdict(self.settings)
         candidate.update(
@@ -1310,6 +1335,11 @@ class ComputerUseSettingsStore:
                 "platform": platform,
                 "browser": browser,
                 "model": model or self.settings.model,
+                "chatgpt_effort": (
+                    self.settings.chatgpt_effort
+                    if chatgpt_effort is None
+                    else chatgpt_effort
+                ),
             }
         )
         if platform != self.settings.platform:
@@ -2567,25 +2597,14 @@ class WorkspaceController:
                 "action": action,
                 "error": f"Unsupported controller action: {action or '[missing]'}",
             }
-        if self.read_only and action not in {"list", "read", "search", "bodycheck"}:
+        if self.read_only and not registered_capability.read_only_task_allowed:
             return {
                 "ok": False,
                 "action": action,
                 "error": "This Agent task is read-only; only list, read, search, and bodycheck are allowed.",
             }
-        handlers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
-            "list": self._list,
-            "read": self._read,
-            "search": self._search,
-            "replace": self._replace,
-            "replace_base64": self._replace_base64,
-            "write": self._write,
-            "write_base64": self._write_base64,
-            "run": self._run,
-            "bodycheck": self._bodycheck,
-        }
-        handler = handlers.get(action)
-        if handler is None:
+        handler = getattr(self, registered_capability.handler_name, None)
+        if not callable(handler):
             return {
                 "ok": False,
                 "action": action,
@@ -2633,6 +2652,46 @@ class WorkspaceController:
                 "Controller access to credentials and private-key files is not allowed."
             )
         return resolved
+
+    @staticmethod
+    def _stable_file_identity(path: Path) -> tuple[int, int, int, int, int]:
+        """Return one regular-file identity used to guard a destructive action."""
+        metadata = path.lstat()
+        if (
+            not stat_module.S_ISREG(metadata.st_mode)
+            or stat_module.S_ISLNK(metadata.st_mode)
+            or metadata.st_nlink != 1
+        ):
+            raise ValueError("The controller action requires one unlinked regular file.")
+        if metadata.st_size > MAX_CONTROLLER_DELETE_BYTES:
+            raise ValueError(
+                "The controller action refuses files larger than "
+                f"{MAX_CONTROLLER_DELETE_BYTES:,} bytes."
+            )
+        return (
+            int(metadata.st_dev),
+            int(metadata.st_ino),
+            int(metadata.st_size),
+            int(metadata.st_mtime_ns),
+            int(metadata.st_mode),
+        )
+
+    def _current_file_sha256(self, path: Path) -> tuple[str, int, tuple[int, int, int, int, int]]:
+        """Hash one bounded regular file and reject changes while it is being read."""
+        before = self._stable_file_identity(path)
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while True:
+                chunk = handle.read(64 * 1_024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+        after = self._stable_file_identity(path)
+        if after != before:
+            raise RuntimeError(
+                "The file changed while the controller was checking it; read it again before retrying."
+            )
+        return digest.hexdigest(), before[2], before
 
     def _list(self, payload: dict[str, Any]) -> dict[str, Any]:
         root = self._resolve_path(payload.get("path", "."))
@@ -2685,8 +2744,9 @@ class WorkspaceController:
         path = self._resolve_path(payload.get("path"))
         if not path.is_file():
             raise ValueError("The read action requires a regular file.")
-        if path.stat().st_size > 20 * 1_024 * 1_024:
+        if path.stat().st_size > MAX_CONTROLLER_DELETE_BYTES:
             raise ValueError("The requested file is too large for a text read.")
+        sha256, _file_bytes, _identity = self._current_file_sha256(path)
         text = path.read_text(encoding="utf-8", errors="replace").splitlines()
         start = max(1, int(payload.get("start_line", 1)))
         end = min(len(text), max(start, int(payload.get("end_line", start + 239))))
@@ -2700,6 +2760,7 @@ class WorkspaceController:
             "end_line": end,
             "total_lines": len(text),
             "content": content,
+            "sha256": sha256,
         }
 
     def _search(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -3063,6 +3124,34 @@ class WorkspaceController:
             "action": "write_base64",
             "path": path.relative_to(self.workspace).as_posix(),
             "bytes": path.stat().st_size,
+        }
+
+    def _delete(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Delete one read-verified regular file without accepting recursive targets."""
+        path = self._resolve_path(payload.get("path"))
+        if not path.is_file():
+            raise ValueError("The delete action requires an existing regular file.")
+        expected_sha256 = str(payload.get("expected_sha256") or "").strip().casefold()
+        if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
+            raise ValueError(
+                "The delete action requires the lowercase SHA-256 from a current read action."
+            )
+        current_sha256, deleted_bytes, identity = self._current_file_sha256(path)
+        if current_sha256 != expected_sha256:
+            raise ValueError(
+                "The file no longer matches the SHA-256 from the read action; read it again before deleting."
+            )
+        if self._stable_file_identity(path) != identity:
+            raise RuntimeError(
+                "The file changed before deletion; read it again before retrying."
+            )
+        path.unlink()
+        self.state.edit_generation += 1
+        return {
+            "ok": True,
+            "action": "delete",
+            "path": path.relative_to(self.workspace).as_posix(),
+            "deleted_bytes": deleted_bytes,
         }
 
     def _run(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -4201,11 +4290,13 @@ class ComputerUseAgentService:
         runner: Callable[..., tuple[str, str, int, bool]] | None = None,
         runtime_root: Path = DEFAULT_AGENT_RUNTIME_ROOT,
         browser_opener: Callable[..., dict[str, Any]] | None = None,
+        config_provider: Callable[[], CrawlConfig] | None = None,
     ) -> None:
         self._settings_store = settings_store
         self._runner = runner or run_chatgpt_web_computer_use
         self._runtime_root = runtime_root
         self._browser_opener = browser_opener or open_agent_in_browser
+        self._config_provider = config_provider or CrawlConfig
         self._lock = RLock()
         self._snapshot = self._load_persisted_snapshot()
         from .agent.event_chain import event_chain_for_snapshot
@@ -4292,6 +4383,7 @@ class ComputerUseAgentService:
             "running",
             "phase",
             "message",
+            "workspace_path",
             "conversation_url",
             "project_url",
             "session_title",
@@ -4300,11 +4392,17 @@ class ComputerUseAgentService:
             "turn_count",
             "bodycheck_passed",
             "session_mode",
+            "operating_system",
             "platform",
             "browser",
             "model",
+            "chatgpt_effort",
+            "read_only",
             "model_verified",
             "actual_model",
+            "thinking_effort",
+            "available_efforts",
+            "effort_catalog_complete",
             "context_attached",
             "context_file",
             "context_bytes",
@@ -4350,6 +4448,29 @@ class ComputerUseAgentService:
         self._snapshot.event_chain_state = str(summary.get("state") or "ready")
         self._snapshot.last_event_kind = str(
             (summary.get("last_event") or {}).get("kind") or ""
+        )
+
+    def _record_agent_status_observation_locked(self, *, detail: str) -> None:
+        """Record bounded Agent lifecycle state without persisting prompt content."""
+        if self._event_chain is None:
+            return
+        capability = _registered_page_observation("agent_status")
+        if capability is None:
+            return
+        phase = str(self._snapshot.phase or "observed")
+        self._event_chain.page_observation(
+            capability.key,
+            status=phase,
+            detail=detail,
+            data={
+                "phase": phase,
+                "running": bool(self._snapshot.running),
+                "paused": bool(self._snapshot.paused),
+                "turn_count": int(self._snapshot.turn_count or 0),
+                "last_action_id": str(self._snapshot.last_action_id or ""),
+                "verification_passed": bool(self._snapshot.verification_passed),
+                "bodycheck_passed": bool(self._snapshot.bodycheck_passed),
+            },
         )
 
     def snapshot(self) -> dict[str, Any]:
@@ -4463,11 +4584,13 @@ class ComputerUseAgentService:
         platform: str | None = None,
         browser: str | None = None,
         model: str | None = None,
+        chatgpt_effort: str | None = None,
         session_mode: str = "new",
         conversation_url: str = "",
         project_url: str = "",
         session_title: str = "",
         read_only: bool = False,
+        continuation: bool = False,
     ) -> None:
         clean_prompt = str(prompt or "").replace("\x00", "").strip()
         if not clean_prompt:
@@ -4481,6 +4604,11 @@ class ComputerUseAgentService:
                 "platform": platform or base.platform,
                 "browser": browser or base.browser,
                 "model": model or base.model,
+                "chatgpt_effort": (
+                    base.chatgpt_effort
+                    if chatgpt_effort is None
+                    else chatgpt_effort
+                ),
             }
         )
         if candidate["platform"] != base.platform:
@@ -4542,9 +4670,12 @@ class ComputerUseAgentService:
                 history=existing_history,
                 started_at=utc_now(),
                 session_mode=normalized_session_mode,
+                operating_system=settings.operating_system,
                 platform=settings.platform,
                 browser=settings.browser,
                 model=settings.model,
+                chatgpt_effort=settings.chatgpt_effort,
+                read_only=bool(read_only),
                 run_id=new_run_id(),
             )
             self._event_chain = AgentEventChain(self._runtime_root, self._snapshot.run_id)
@@ -4577,6 +4708,7 @@ class ComputerUseAgentService:
                     normalized_session_mode,
                     resolved_session_title,
                     bool(read_only),
+                    bool(continuation),
                 ),
                 daemon=True,
             )
@@ -4610,6 +4742,10 @@ class ComputerUseAgentService:
                 return False
             self._snapshot.phase = "stopping"
             self._snapshot.message = "Stop requested. Ending the browser turn and active local command."
+            self._record_agent_status_observation_locked(
+                detail="Stop was accepted before the next Agent action.",
+            )
+            self._sync_event_chain_summary_locked()
             self._persist_snapshot_locked()
             process = self._active_process
         if process is not None and process.poll() is None:
@@ -4634,6 +4770,50 @@ class ComputerUseAgentService:
                 self._sync_event_chain_summary_locked()
             self._persist_snapshot_locked()
             return True
+
+    def _interrupted_continuation_details_locked(
+        self,
+    ) -> tuple[dict[str, Any] | None, str]:
+        """Validate the bounded metadata required for a no-context restart.
+
+        Continuation intentionally has a narrow contract: an interrupted
+        ChatGPT session in Edge, a valid local workspace, and explicit prior
+        read-only state. It never falls back to mutable current preferences.
+        """
+        snapshot = self._snapshot
+        if snapshot.running or snapshot.phase != "interrupted":
+            return None, "Only an interrupted Agent task can be continued."
+        if snapshot.platform != "chatgpt" or snapshot.browser != "edge":
+            return None, "Only interrupted ChatGPT sessions recorded for Edge can be continued."
+        if snapshot.operating_system not in SUPPORTED_OPERATING_SYSTEMS:
+            return None, "The interrupted task has no supported recorded operating system."
+        if not isinstance(snapshot.read_only, bool):
+            return None, "The interrupted task has no safe recorded read-only permission."
+        try:
+            workspace = resolve_workspace_path(snapshot.workspace_path)
+        except (OSError, ValueError):
+            return None, "The interrupted task workspace is no longer available."
+        conversation_url = normalize_agent_conversation_url(
+            "chatgpt",
+            snapshot.conversation_url,
+        )
+        if not conversation_url:
+            return None, "The interrupted task has no valid recorded ChatGPT conversation."
+        try:
+            chatgpt_effort = normalize_chatgpt_effort(snapshot.chatgpt_effort)
+        except ValueError:
+            return None, "The interrupted task has an invalid recorded ChatGPT effort policy."
+        return {
+            "workspace_path": str(workspace),
+            "operating_system": snapshot.operating_system,
+            "platform": "chatgpt",
+            "browser": "edge",
+            "model": snapshot.model,
+            "chatgpt_effort": chatgpt_effort,
+            "conversation_url": conversation_url,
+            "session_title": snapshot.session_title,
+            "read_only": snapshot.read_only,
+        }, ""
 
     def doctor(self) -> dict[str, Any]:
         """Diagnose the current Agent lifecycle and expose safe recovery actions."""
@@ -4674,6 +4854,23 @@ class ComputerUseAgentService:
                     "detail": run_detail,
                 }
             )
+
+            continuation_details, continuation_reason = (
+                self._interrupted_continuation_details_locked()
+            )
+            if phase == "interrupted":
+                checks.append(
+                    {
+                        "id": "interrupted_continuation",
+                        "label": "Interrupted task continuation",
+                        "status": "pass" if continuation_details else "warn",
+                        "detail": (
+                            "The same ChatGPT conversation can continue without re-uploading project context."
+                            if continuation_details
+                            else continuation_reason
+                        ),
+                    }
+                )
 
             chain_count = int(chain.get("count") or 0)
             chain_state = str(chain.get("state") or "idle")
@@ -4783,6 +4980,15 @@ class ComputerUseAgentService:
                     "enabled": bool(snapshot.get("running") and snapshot.get("paused")),
                 },
                 {
+                    "id": "continue",
+                    "label": "Continue interrupted task",
+                    "description": (
+                        "Start a fresh local controller worker in the recorded ChatGPT "
+                        "conversation without re-uploading project context."
+                    ),
+                    "enabled": bool(continuation_details),
+                },
+                {
                     "id": "cleanup_context",
                     "label": "Clean up temporary context",
                     "description": "Reconcile the app-owned context file before starting another run.",
@@ -4839,6 +5045,44 @@ class ComputerUseAgentService:
             if not accepted:
                 raise RuntimeError("The Agent has no paused turn to resume.")
             return {"action": normalized_action, "ok": True, "message": "Resume requested."}
+        if normalized_action == "continue":
+            with self._lock:
+                details, reason = self._interrupted_continuation_details_locked()
+                if details is None:
+                    raise RuntimeError(reason)
+                if self._event_chain is not None:
+                    self._event_chain.recovery(
+                        normalized_action,
+                        status="requested",
+                        detail=(
+                            "An explicit user request will continue the interrupted ChatGPT "
+                            "conversation without a new context upload."
+                        ),
+                    )
+                    self._sync_event_chain_summary_locked()
+                self._persist_snapshot_locked()
+            self.start(
+                CONTINUE_INTERRUPTED_AGENT_PROMPT,
+                str(details["workspace_path"]),
+                self._config_provider(),
+                operating_system=str(details["operating_system"]),
+                platform="chatgpt",
+                browser="edge",
+                model=str(details["model"]),
+                chatgpt_effort=str(details["chatgpt_effort"]),
+                session_mode="recent",
+                conversation_url=str(details["conversation_url"]),
+                session_title=str(details["session_title"]),
+                read_only=bool(details["read_only"]),
+                continuation=True,
+            )
+            return {
+                "action": normalized_action,
+                "ok": True,
+                "message": (
+                    "Continuing the recorded ChatGPT conversation without re-uploading project context."
+                ),
+            }
         if normalized_action != "cleanup_context":
             raise ValueError("Choose a supported Agent doctor recovery action.")
         with self._lock:
@@ -5010,6 +5254,9 @@ class ComputerUseAgentService:
                 )
             self._snapshot.running = False
             if self._event_chain is not None:
+                self._record_agent_status_observation_locked(
+                    detail="Agent lifecycle reached its completion boundary.",
+                )
                 terminal_kind = (
                     "run.failed"
                     if self._snapshot.phase == "failed"
@@ -5047,6 +5294,7 @@ class ComputerUseAgentService:
         session_mode: str,
         session_title: str,
         read_only: bool,
+        continuation: bool,
     ) -> None:
         sleep_assertion: subprocess.Popen[Any] | None = None
         sleep_assertion_registration_completed = False
@@ -5056,26 +5304,38 @@ class ComputerUseAgentService:
             sleep_assertion = _start_macos_idle_sleep_assertion()
             self._set_sleep_assertion(sleep_assertion)
             sleep_assertion_registration_completed = True
-            run_directory = self._runtime_root / time.strftime("%Y%m%d-%H%M%S")
-            context_path = run_directory / "context.md"
-            self._update(
-                phase="preparing",
-                message="Preparing the task-scoped Markdown context bundle.",
-                context_file=str(context_path),
-                context_bytes=0,
-            )
-            context_path, context_bytes = build_context_markdown(
-                workspace,
-                prompt,
-                settings,
-                context_path,
-            )
-            self._update(
-                phase="preparing",
-                message=f"Prepared a {context_bytes:,}-byte Markdown context bundle.",
-                context_file=str(context_path),
-                context_bytes=context_bytes,
-            )
+            if continuation:
+                self._update(
+                    phase="preparing",
+                    message=(
+                        "Continuing the recorded ChatGPT session without re-uploading "
+                        "project context."
+                    ),
+                    context_file="",
+                    context_bytes=0,
+                    context_attached=False,
+                )
+            else:
+                run_directory = self._runtime_root / time.strftime("%Y%m%d-%H%M%S")
+                context_path = run_directory / "context.md"
+                self._update(
+                    phase="preparing",
+                    message="Preparing the task-scoped Markdown context bundle.",
+                    context_file=str(context_path),
+                    context_bytes=0,
+                )
+                context_path, context_bytes = build_context_markdown(
+                    workspace,
+                    prompt,
+                    settings,
+                    context_path,
+                )
+                self._update(
+                    phase="preparing",
+                    message=f"Prepared a {context_bytes:,}-byte Markdown context bundle.",
+                    context_file=str(context_path),
+                    context_bytes=context_bytes,
+                )
             if self._stop_requested.is_set():
                 response, conversation_url, turn_count, bodycheck_passed = (
                     "",
@@ -5237,6 +5497,9 @@ class ComputerUseAgentService:
             for key, value in changes.items():
                 if hasattr(self._snapshot, key):
                     setattr(self._snapshot, key, value)
+            self._record_agent_status_observation_locked(
+                detail="Bounded Agent lifecycle status recorded.",
+            )
             self._sync_event_chain_summary_locked()
             self._persist_snapshot_locked()
 
@@ -5245,7 +5508,7 @@ def run_web_computer_use(
     *,
     prompt: str,
     workspace: Path,
-    context_path: Path,
+    context_path: Path | None,
     config: CrawlConfig,
     settings: ComputerUseSettings,
     should_stop: Callable[[], bool],
@@ -5272,14 +5535,18 @@ def run_web_computer_use(
         if settings.platform != DEFAULT_AGENT_PLATFORM
         else settings.target_url
     )
-    initial_message = _initial_web_agent_message(
-        prompt,
-        workspace,
-        settings,
-        context_path,
-        session_mode,
-        platform=settings.platform,
-        session_title=session_title,
+    initial_message = (
+        CONTINUE_INTERRUPTED_AGENT_PROMPT
+        if context_path is None
+        else _initial_web_agent_message(
+            prompt,
+            workspace,
+            settings,
+            context_path,
+            session_mode,
+            platform=settings.platform,
+            session_title=session_title,
+        )
     )
     stopped_result = ("", selected_target_url, 0, False)
     if should_stop():
@@ -5355,7 +5622,7 @@ def _initial_web_agent_message(
     prompt: str,
     workspace: Path,
     settings: ComputerUseSettings,
-    context_path: Path,
+    context_path: Path | None,
     session_mode: str,
     platform: str = DEFAULT_AGENT_PLATFORM,
     session_title: str = "",
@@ -6653,7 +6920,7 @@ def _run_web_action_loop(
     browser_kind: str,
     initial_message: str,
     controller: WorkspaceController,
-    context_path: Path,
+    context_path: Path | None,
     settings: ComputerUseSettings,
     session_mode: str,
     selected_target_url: str,
@@ -6814,6 +7081,7 @@ def _run_web_action_loop(
             model_observation,
             should_stop=should_stop,
             availability_check=provider_availability_check,
+            chatgpt_effort=settings.chatgpt_effort,
         )
     )
     run_with_provider_availability(session_binding.check)
@@ -6840,11 +7108,25 @@ def _run_web_action_loop(
         actual_model = str(
             model_observation.get("observed") or expected_label
         )
+        thinking_effort = str(
+            model_observation.get("thinking_effort") or ""
+        ).strip()
+        verified_model_message = f"Verified {actual_model}"
+        if thinking_effort:
+            verified_model_message += f" ({thinking_effort} thinking effort)"
         update(
             phase="preparing",
-            message=f"Verified {actual_model} in {AGENT_PLATFORM_BY_KEY[platform]['label']} Web.",
+            message=(
+                f"{verified_model_message} in "
+                f"{AGENT_PLATFORM_BY_KEY[platform]['label']} Web."
+            ),
             model_verified=True,
             actual_model=actual_model,
+            thinking_effort=thinking_effort,
+            available_efforts=list(model_observation.get("available_efforts") or []),
+            effort_catalog_complete=bool(
+                model_observation.get("effort_catalog_complete", False)
+            ),
             session_type=session_type,
         )
     else:
@@ -6892,7 +7174,7 @@ def _run_web_action_loop(
         )
     run_with_provider_availability(session_binding.check)
     attached = False
-    if session_binding.session_mode not in {"new", "project_new"}:
+    if context_path is not None and session_binding.session_mode not in {"new", "project_new"}:
         attached = _attach_context_file(
             page,
             browser_kind,
@@ -6976,6 +7258,17 @@ def _run_web_action_loop(
     expected_title = session_binding.expected_title
     if conversation_url:
         update(conversation_url=conversation_url)
+    record_page_observation(
+        "browser_session",
+        status="bound",
+        detail="Bounded provider browser session metadata recorded after conversation binding.",
+        data={
+            "platform": platform,
+            "browser": browser_kind,
+            "session_mode": session_binding.session_mode,
+            "session_type": session_type,
+        },
+    )
     activity: list[dict[str, str]] = []
 
     turn_index = 0
@@ -7266,6 +7559,17 @@ def _run_web_action_loop(
                     status="accepted",
                     detail="Final action passed the current verification gates.",
                 )
+            record_page_observation(
+                "agent_response",
+                status="ready",
+                detail="Bounded Agent response summary recorded without provider transcript content.",
+                data={
+                    "turn": turn_index,
+                    "response_chars": len(final_response),
+                    "verification_current": controller.state.verification_current,
+                    "bodycheck_current": controller.state.bodycheck_current,
+                },
+            )
             conversation_url = _current_agent_conversation_url(
                 page, platform, conversation_url
             )
@@ -7803,27 +8107,28 @@ def _chatgpt_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
     )
 
 
+def _chatgpt_remote_model_labels(
+    option: dict[str, Any],
+    remote_labels: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Return model names separately from the account's thinking-effort labels."""
+    configured = tuple(
+        str(label).strip()
+        for label in (option.get("remote_model_labels") or ())
+        if str(label).strip()
+    )
+    if configured:
+        return configured
+    fallback = str(option.get("remote_label") or option.get("label") or "").strip()
+    if fallback:
+        return (fallback,)
+    return tuple(str(label).strip() for label in remote_labels if str(label).strip())
+
+
 def _chatgpt_choice_label_groups(remote_labels: tuple[str, ...]) -> tuple[tuple[str, ...], ...]:
-    """Prefer the strongest exposed ChatGPT thinking-effort option, then the Sol name."""
-    preferred_rank = {
-        " ".join(str(label).split()).casefold(): index
-        for index, label in enumerate(CHATGPT_THINKING_EFFORT_LABELS)
-    }
-    ranked: list[tuple[int, str]] = []
-    remaining: list[str] = []
-    for label in remote_labels:
-        normalized = " ".join(str(label).split()).casefold()
-        if not normalized:
-            continue
-        if normalized in preferred_rank:
-            ranked.append((preferred_rank[normalized], str(label)))
-        else:
-            remaining.append(str(label))
-    ranked.sort()
-    groups = tuple((label,) for _index, label in ranked)
-    if remaining:
-        groups += (tuple(remaining),)
-    return groups
+    """Return provider model labels without guessing subscription effort names."""
+    labels = tuple(str(label).strip() for label in remote_labels if str(label).strip())
+    return (labels,) if labels else ()
 
 
 def _chatgpt_strongest_available_label(
@@ -7869,20 +8174,8 @@ def _web_model_text_matches(value: str, labels: tuple[str, ...]) -> bool:
 
 
 CHATGPT_MODEL_TRIGGER_LABELS = (
-    "Instant",
-    "Medium",
     "GPT-5.6 Sol",
     "5.6 Sol",
-    "Extra High",
-    "Thinking effort",
-    "Thinking",
-    "Advanced",
-    "Reasoning",
-    "极速",
-    "中等",
-    "高级",
-    "思考",
-    "推理强度",
 )
 CHATGPT_POWER_CONTROL_SELECTORS = (
     '[data-testid^="model-switcher-"]',
@@ -7895,16 +8188,15 @@ CHATGPT_POWER_CONTROL_SELECTORS = (
     '[role="button"].__composer-pill[aria-haspopup="true"]',
 )
 _CHATGPT_EXCLUDED_POWER_CONTROL_PATTERN = re.compile(
-    r"(?:^|\s)(?:send|stop|attach|plus|add photos?|microphone|voice|search|new chat)(?:$|\s)",
+    r"(?:^|\s)(?:send|stop|attach|plus|add photos?|microphone|voice|search|new chat|switch model)(?:$|\s)",
     re.IGNORECASE,
 )
 
 CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS = 20
 CHATGPT_MODEL_DIAGNOSTIC_MAX_CHARS = 160
 _CHATGPT_MODEL_DIAGNOSTIC_PATTERN = re.compile(
-    r"(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|"
-    r"thinking effort|thinking|advanced|reasoning|model(?: picker)?|switch model|"
-    r"auto|high|medium|low|max|pro|faster|smarter|"
+    r"(?:^|\s)(?:gpt-?\d|\d(?:\.\d+)?\s+sol|sol|thinking(?: effort)?|"
+    r"advanced|reasoning|model(?: picker)?|switch model|power|faster|smarter|"
     r"model-switcher|composer-pill)(?:$|\s)",
     re.IGNORECASE,
 )
@@ -7968,6 +8260,38 @@ def _chatgpt_find_power_control(page: Any) -> Any | None:
                     and not _chatgpt_control_is_excluded_composer_action(candidate)
                 ):
                     return candidate
+    if callable(locator_fn):
+        # Some ChatGPT shells expose only the current effort name (for example
+        # a newly introduced subscription tier) and no stable test id or
+        # composer pill class. Ask the live page for semantic candidates and
+        # reacquire the matching role locator; the rendered label is data,
+        # never a catalog entry. Wrappers without a locator use the direct
+        # DOM-marker fallback below and should not perform a second attribute
+        # read on a possibly recycled test double.
+        controls = _chatgpt_visible_model_controls(page)
+        runtime_candidates = controls.get("candidate_buttons")
+        if runtime_candidates is None:
+            # Older wrappers do not return the structural field; retain their
+            # diagnostic labels as a compatibility fallback only.
+            runtime_candidates = controls.get("buttons") or ()
+        runtime_labels = tuple(
+            str(label).strip()
+            for label in runtime_candidates
+            if str(label).strip()
+            and not _CHATGPT_EXCLUDED_POWER_CONTROL_PATTERN.search(str(label).strip())
+        )
+        if runtime_labels:
+            labeled = _first_visible_role_control(
+                page,
+                "button",
+                runtime_labels,
+                predicate=lambda control: (
+                    _chatgpt_control_has_model_menu_semantics(control)
+                    and not _chatgpt_control_is_excluded_composer_action(control)
+                ),
+            )
+            if labeled is not None:
+                return labeled
     evaluate = getattr(page, "evaluate", None)
     if not callable(evaluate):
         return None
@@ -7981,7 +8305,7 @@ def _chatgpt_find_power_control(page: Any) -> Any | None:
                         && style.display !== 'none'
                         && style.visibility !== 'hidden';
                 };
-                const excluded = /(?:^|\s)(?:send|stop|attach|plus|add photos?|microphone|voice|search|new chat)(?:$|\s)/i;
+                const excluded = /(?:^|\s)(?:send|stop|attach|plus|add photos?|microphone|voice|search|new chat|switch model)(?:$|\s)/i;
                 const isExcluded = (element) => {
                     const testId = String(element.getAttribute('data-testid') || '').toLowerCase();
                     const label = `${element.getAttribute('aria-label') || ''} ${element.innerText || ''}`.trim();
@@ -7998,6 +8322,18 @@ def _chatgpt_find_power_control(page: Any) -> Any | None:
                     return popup === 'menu' || popup === 'listbox' || popup === 'true'
                         || expanded === 'true' || expanded === 'false';
                 };
+                const isNearComposer = (element, composer) => {
+                    if (!composer) return false;
+                    const elementRect = element.getBoundingClientRect();
+                    const composerRect = composer.getBoundingClientRect();
+                    const verticalGap = Math.min(
+                        Math.abs(elementRect.bottom - composerRect.top),
+                        Math.abs(elementRect.top - composerRect.bottom),
+                    );
+                    const horizontalOverlap = elementRect.right >= composerRect.left - 96
+                        && elementRect.left <= composerRect.right + 96;
+                    return verticalGap <= 180 && horizontalOverlap;
+                };
                 document.querySelectorAll('[data-cachelikes-chatgpt-power]')
                     .forEach((element) => element.removeAttribute('data-cachelikes-chatgpt-power'));
                 const preferred = Array.from(document.querySelectorAll(
@@ -8007,8 +8343,15 @@ def _chatgpt_find_power_control(page: Any) -> Any | None:
                 )).filter((element) => visible(element) && hasMenuSemantics(element) && !isExcluded(element));
                 const nearby = Array.from(document.querySelectorAll('button, [role="button"]'))
                     .filter((element) => visible(element) && hasMenuSemantics(element) && !isExcluded(element));
-                const composer = document.querySelector('#prompt-textarea');
-                const ranked = (preferred.length ? preferred : nearby).sort((left, right) => {
+                const composer = document.querySelector('#prompt-textarea, [contenteditable="true"]');
+                const composerNearby = nearby.filter((element) => isNearComposer(element, composer));
+                const ranked = (
+                    preferred.length
+                        ? preferred
+                        : composer
+                            ? composerNearby
+                            : nearby
+                ).sort((left, right) => {
                     if (!composer) return 0;
                     const leftDelta = Math.abs(left.getBoundingClientRect().bottom - composer.getBoundingClientRect().top);
                     const rightDelta = Math.abs(right.getBoundingClientRect().bottom - composer.getBoundingClientRect().top);
@@ -8066,10 +8409,17 @@ def _wait_for_chatgpt_composer_if_available(
 
 
 def _chatgpt_visible_model_controls(page: Any) -> dict[str, Any]:
-    """Read visible model-related button names and menu roles without clicking."""
+    """Read visible model controls and menu roles without clicking.
+
+    ``candidate_buttons`` is structural rather than vocabulary based. ChatGPT
+    can rename the current thinking-effort position for a subscription, so a
+    live menu-semantic control near the composer is the source of truth for
+    trigger discovery. The bounded ``buttons`` list remains a low-noise
+    diagnostic view for failure messages.
+    """
     evaluate = getattr(page, "evaluate", None)
     if not callable(evaluate):
-        return {"buttons": [], "menus": []}
+        return {"buttons": [], "candidate_buttons": [], "menus": []}
     try:
         result = evaluate(
             r"""() => {
@@ -8086,32 +8436,75 @@ def _chatgpt_visible_model_controls(page: Any) -> dict[str, Any]:
                     || element.textContent
                     || ''
                 ).replace(/\s+/g, ' ').trim();
-                const diagnosticPattern = /(?:^|\s)(?:instant|gpt-?5\.6 sol|5\.6 sol|extra high|thinking effort|thinking|advanced|reasoning|model(?: picker)?|switch model|auto|high|medium|low|max|pro|faster|smarter|model-switcher|composer-pill)(?:$|\s)/i;
-                const buttons = Array.from(document.querySelectorAll('button, [role="button"]'))
+                const hasMenuSemantics = (element) => {
+                    if (!element || element.closest('[role="menu"], [role="listbox"]')) return false;
+                    if (element.closest('#prompt-textarea, [contenteditable="true"]')) return false;
+                    const popup = String(element.getAttribute('aria-haspopup') || '').trim().toLowerCase();
+                    const expanded = String(element.getAttribute('aria-expanded') || '').trim().toLowerCase();
+                    return popup === 'menu' || popup === 'listbox' || popup === 'true'
+                        || expanded === 'true' || expanded === 'false';
+                };
+                const excluded = (element) => {
+                    const testId = String(element.getAttribute('data-testid') || '').toLowerCase();
+                    const label = `${element.getAttribute('aria-label') || ''} ${element.innerText || ''}`.trim();
+                    return testId === 'send-button'
+                        || testId === 'composer-plus-btn'
+                        || testId.includes('send-button')
+                        || /(?:^|\s)(?:send|stop|attach|plus|add photos?|microphone|voice|search|new chat|switch model)(?:$|\s)/i.test(label);
+                };
+                const composer = document.querySelector('#prompt-textarea, [contenteditable="true"]');
+                const nearComposer = (element) => {
+                    if (!composer) return false;
+                    const elementRect = element.getBoundingClientRect();
+                    const composerRect = composer.getBoundingClientRect();
+                    const verticalGap = Math.min(
+                        Math.abs(elementRect.bottom - composerRect.top),
+                        Math.abs(elementRect.top - composerRect.bottom),
+                    );
+                    const horizontalOverlap = elementRect.right >= composerRect.left - 96
+                        && elementRect.left <= composerRect.right + 96;
+                    return verticalGap <= 180 && horizontalOverlap;
+                };
+                const controls = Array.from(document.querySelectorAll('button, [role="button"]'))
                     .filter(visible)
-                    .map((element) => {
-                        const label = textOf(element);
-                        const testId = String(element.getAttribute('data-testid') || '').trim();
-                        const className = String(element.className || '');
-                        if (label) return label.slice(0, 160);
-                        if (testId) return testId.slice(0, 160);
-                        if (className.includes('composer-pill')) return 'composer-pill';
-                        return '';
+                    .filter((element) => hasMenuSemantics(element) && !excluded(element));
+                const diagnosticPattern = /(?:^|\s)(?:gpt-?\d|\d(?:\.\d+)?\s+sol|sol|thinking(?: effort)?|advanced|reasoning|model(?: picker)?|switch model|power|faster|smarter|model-switcher|composer-pill)(?:$|\s)/i;
+                const labelFor = (element) => {
+                    const label = textOf(element);
+                    const testId = String(element.getAttribute('data-testid') || '').trim();
+                    const className = String(element.className || '');
+                    if (label) return label.slice(0, 160);
+                    if (testId) return testId.slice(0, 160);
+                    if (className.includes('composer-pill')) return 'composer-pill';
+                    return '';
+                };
+                const buttons = controls.map(labelFor).filter((label) => diagnosticPattern.test(label));
+                const candidateButtons = controls
+                    .filter((element) => {
+                        const testId = String(element.getAttribute('data-testid') || '').toLowerCase();
+                        const className = String(element.className || '').toLowerCase();
+                        return nearComposer(element)
+                            || testId.includes('model-switcher')
+                            || testId.includes('thinking-effort')
+                            || testId.includes('reasoning-effort')
+                            || className.includes('composer-pill');
                     })
-                    .filter((label) => diagnosticPattern.test(label));
+                    .map(labelFor)
+                    .filter(Boolean);
                 const menus = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"]'))
                     .filter(visible)
                     .map((element) => element.getAttribute('role') || '');
                 return {
                     buttons: [...new Set(buttons)].slice(0, 20),
+                    candidate_buttons: [...new Set(candidateButtons)].slice(0, 20),
                     menus: [...new Set(menus.filter(Boolean))].slice(0, 20),
                 };
             }"""
         )
     except Exception:
-        return {"buttons": [], "menus": []}
+        return {"buttons": [], "candidate_buttons": [], "menus": []}
     if not isinstance(result, dict):
-        return {"buttons": [], "menus": []}
+        return {"buttons": [], "candidate_buttons": [], "menus": []}
     raw_buttons = result.get("buttons", [])
     if not isinstance(raw_buttons, (list, tuple)):
         raw_buttons = []
@@ -8131,6 +8524,31 @@ def _chatgpt_visible_model_controls(page: Any) -> dict[str, Any]:
         if len(buttons) >= CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS:
             break
 
+    raw_candidates = result.get("candidate_buttons", [])
+    if not isinstance(raw_candidates, (list, tuple)):
+        raw_candidates = []
+    if "candidate_buttons" not in result:
+        # Older browser wrappers expose only bounded diagnostic labels. Treat
+        # those as a compatibility fallback only when they describe a model
+        # control structurally; arbitrary labels never become click targets.
+        raw_candidates = [
+            item
+            for item in raw_buttons
+            if _CHATGPT_MODEL_DIAGNOSTIC_PATTERN.search(str(item).strip())
+            and not _CHATGPT_EXCLUDED_POWER_CONTROL_PATTERN.search(str(item).strip())
+        ]
+    candidate_buttons: list[str] = []
+    seen_candidates: set[str] = set()
+    for item in raw_candidates:
+        label = " ".join(str(item).split())[:CHATGPT_MODEL_DIAGNOSTIC_MAX_CHARS]
+        identity = label.casefold()
+        if not label or identity in seen_candidates:
+            continue
+        seen_candidates.add(identity)
+        candidate_buttons.append(label)
+        if len(candidate_buttons) >= CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS:
+            break
+
     raw_menus = result.get("menus", [])
     if not isinstance(raw_menus, (list, tuple)):
         raw_menus = []
@@ -8141,7 +8559,11 @@ def _chatgpt_visible_model_controls(page: Any) -> dict[str, Any]:
             menus.append(role)
         if len(menus) >= CHATGPT_MODEL_DIAGNOSTIC_MAX_ITEMS:
             break
-    return {"buttons": buttons, "menus": menus}
+    return {
+        "buttons": buttons,
+        "candidate_buttons": candidate_buttons,
+        "menus": menus,
+    }
 
 
 def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
@@ -8173,6 +8595,53 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             const selectedChoiceText = normalize(
                 selectedChoice?.innerText || selectedChoice?.textContent || ''
             );
+            const modelChoices = Array.from(menu?.querySelectorAll(
+                '[role="menuitemradio"], [role="option"]'
+            ) || []).filter(visible);
+            const modelOptionTexts = modelChoices.map((item) => normalize(
+                item.innerText || item.textContent || ''
+            )).filter(Boolean);
+            const sliders = Array.from(menu?.querySelectorAll('[role="slider"]') || [])
+                .filter(visible);
+            const slider = sliders.find((item) => item.closest('[data-model-reasoning-effort-slider]'))
+                || sliders[0];
+            const sliderContainer = slider?.closest('[data-model-reasoning-effort-slider]');
+            const sliderOwner = sliderContainer?.closest('[role="menuitem"], [role="group"]')
+                || slider?.closest('[role="menuitem"], [role="group"]');
+            const effortToggle = Array.from(menu?.querySelectorAll(
+                '[role="menuitem"]'
+            ) || []).find((item) => (
+                String(item.getAttribute('aria-label') || '').trim().toLowerCase() === 'select model'
+            ));
+            const sliderOwnerLines = String(
+                sliderOwner?.innerText || sliderOwner?.textContent || ''
+            ).split(/\n+/).map((value) => normalize(value)).filter(Boolean);
+            const effortToggleLines = String(
+                effortToggle?.innerText || effortToggle?.textContent || ''
+            ).split(/\n+/).map((value) => normalize(value)).filter(Boolean);
+            const modelPattern = /^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
+            const normalizeEffort = (value) => normalize(value)
+                .replace(/,\s*\d+\s+of\s+\d+\.?$/i, '')
+                .trim();
+            const effortCandidates = [
+                normalizeEffort(slider?.getAttribute('aria-label') || ''),
+                ...effortToggleLines,
+                ...sliderOwnerLines,
+            ].map(normalizeEffort).filter((value) => (
+                value
+                && !/^thinking(?:\s+effort)?$/i.test(value)
+                && !/^\d+\s+of\s+\d+\.?$/i.test(value)
+                && !/^use\s+(?:left|right)\s+arrow/i.test(value)
+                && !modelPattern.test(value)
+            ));
+            const thinkingEffort = effortCandidates[0] || '';
+            const thinkingEffortData = slider ? {
+                label: thinkingEffort,
+                value: slider.getAttribute('aria-valuenow') || '',
+                min: slider.getAttribute('aria-valuemin') || '',
+                max: slider.getAttribute('aria-valuemax') || '',
+                available: thinkingEffort ? [thinkingEffort] : [],
+            } : null;
             const available = Array.from(menu?.querySelectorAll(
                 '[role="menuitemradio"], [role="option"], [role="menuitem"]'
             ) || []).filter(visible).map((item) => normalize(
@@ -8182,6 +8651,9 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
                 return {
                     ok: true,
                     current: selectedChoiceText,
+                    selected_model: selectedChoiceText,
+                    model_options: modelOptionTexts,
+                    thinking_effort: thinkingEffortData,
                     available,
                 };
             }
@@ -8211,6 +8683,9 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
                 current: lines.length > 1
                     ? lines.slice(1).join(' ')
                     : (descendants.at(-1) || lines.at(-1) || ''),
+                selected_model: '',
+                model_options: modelOptionTexts,
+                thinking_effort: thinkingEffortData,
                 available,
             };
         }"""
@@ -8223,6 +8698,9 @@ def _record_model_observation(
     *,
     observed: str = "",
     available: list[str] | tuple[str, ...] | None = None,
+    thinking_effort: str = "",
+    available_efforts: list[str] | tuple[str, ...] | None = None,
+    effort_catalog_complete: bool = False,
     reason: str = "",
     attempted_labels: tuple[str, ...] = (),
     menu_text: str = "",
@@ -8236,6 +8714,13 @@ def _record_model_observation(
         {
             "observed": str(observed or "").strip(),
             "available": [str(item) for item in (available or []) if str(item).strip()],
+            "thinking_effort": str(thinking_effort or "").strip(),
+            "available_efforts": [
+                str(item).strip()
+                for item in (available_efforts or [])
+                if str(item).strip()
+            ],
+            "effort_catalog_complete": bool(effort_catalog_complete),
             "reason": str(reason or "").strip(),
             "attempted_labels": list(attempted_labels),
             "menu_text": str(menu_text or observed or "").strip(),
@@ -8288,27 +8773,228 @@ def _click_chatgpt_control(control: Any) -> bool:
     return True
 
 
+def _chatgpt_find_effort_slider(page: Any) -> Any | None:
+    """Find the subscription-backed thinking-effort slider in the open menu."""
+    locator_fn = getattr(page, "locator", None)
+    if not callable(locator_fn):
+        return None
+    selectors = (
+        '[role="menu"] [data-model-reasoning-effort-slider] [role="slider"]',
+        '[role="menu"] [role="slider"][aria-valuemax]',
+        '[data-model-reasoning-effort-slider] [role="slider"]',
+        '[role="slider"][aria-valuemax]',
+    )
+    for selector in selectors:
+        try:
+            handle = locator_fn(selector)
+            count = getattr(handle, "count", None)
+            if not callable(count):
+                continue
+            for index in range(count()):
+                candidate = handle.nth(index)
+                is_visible = getattr(candidate, "is_visible", None)
+                if callable(is_visible) and not is_visible():
+                    continue
+                return candidate
+        except Exception as exc:
+            if _is_composer_wait_timeout(exc):
+                continue
+            raise
+    return None
+
+
+def _chatgpt_effort_slider_state(slider: Any) -> dict[str, int] | None:
+    """Read the dynamic slider bounds without assuming a plan-specific label."""
+    values: dict[str, int] = {}
+    for name, key in (
+        ("aria-valuenow", "now"),
+        ("aria-valuemin", "min"),
+        ("aria-valuemax", "max"),
+    ):
+        ok, raw_value = _read_chatgpt_locator_attribute(slider, name)
+        if not ok or raw_value is None:
+            return None
+        try:
+            values[key] = int(float(raw_value))
+        except (TypeError, ValueError):
+            return None
+    if values["max"] < values["min"]:
+        return None
+    values["now"] = min(max(values["now"], values["min"]), values["max"])
+    return values
+
+
+def _chatgpt_press_effort_key(page: Any, slider: Any | None, key: str) -> bool:
+    """Press one slider key, reacquiring the element once when ChatGPT redraws it."""
+    candidate = slider
+    for _attempt in range(2):
+        if candidate is None:
+            candidate = _chatgpt_find_effort_slider(page)
+        press = getattr(candidate, "press", None)
+        if callable(press):
+            try:
+                try:
+                    press(key, timeout=CHATGPT_MODEL_LOCATOR_TIMEOUT_MILLISECONDS)
+                except TypeError:
+                    press(key)
+                return True
+            except Exception as exc:
+                if not _is_composer_wait_timeout(exc):
+                    raise
+        candidate = _chatgpt_find_effort_slider(page)
+    keyboard = getattr(page, "keyboard", None)
+    press = getattr(keyboard, "press", None)
+    if callable(press):
+        try:
+            press(key)
+            return True
+        except Exception as exc:
+            if not _is_composer_wait_timeout(exc):
+                raise
+    return False
+
+
+def _chatgpt_effort_label(result: dict[str, Any] | None) -> str:
+    """Return the label ChatGPT rendered for the current dynamic slider position."""
+    if not isinstance(result, dict):
+        return ""
+    payload = result.get("thinking_effort")
+    if isinstance(payload, dict):
+        return str(payload.get("label") or "").strip()
+    return ""
+
+
+def _chatgpt_select_subscription_effort(
+    page: Any,
+    result: dict[str, Any],
+    wait_for_timeout: Callable[[int], Any],
+    requested_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST,
+) -> tuple[dict[str, Any], list[str], bool]:
+    """Discover every live effort position and prove the selected final state.
+
+    The provider owns both labels and range. We never infer a plan from names:
+    the bounded ARIA slider is traversed position-by-position, then the desired
+    position is selected and read back before project context can be attached.
+    """
+    requested = normalize_chatgpt_effort(requested_effort)
+    labels: list[str] = []
+
+    def finish(*, complete: bool, error: str = "") -> tuple[dict[str, Any], list[str], bool]:
+        result["requested_thinking_effort"] = requested
+        result["effort_catalog_complete"] = complete
+        if error:
+            result["effort_selection_error"] = error
+        else:
+            result.pop("effort_selection_error", None)
+        return result, labels, complete
+
+    if "thinking_effort" not in result:
+        if requested != CHATGPT_EFFORT_POLICY_HIGHEST:
+            return finish(complete=False, error="requested-effort-control-not-found")
+        return finish(complete=False)
+    slider = _chatgpt_find_effort_slider(page)
+    if slider is None:
+        return finish(complete=False, error="effort-slider-not-found")
+    state = _chatgpt_effort_slider_state(slider)
+    if state is None:
+        return finish(complete=False, error="effort-slider-unreadable")
+    position_count = state["max"] - state["min"] + 1
+    if position_count > CHATGPT_MAX_SUBSCRIPTION_EFFORT_POSITIONS:
+        return finish(complete=False, error="effort-range-exceeds-safe-bound")
+    if not _chatgpt_press_effort_key(page, slider, "Home"):
+        return finish(complete=False, error="effort-catalog-key-failed")
+    wait_for_timeout(80)
+
+    labels_by_position: dict[int, str] = {}
+    for position in range(state["min"], state["max"] + 1):
+        if position > state["min"]:
+            if not _chatgpt_press_effort_key(page, slider, "ArrowRight"):
+                return finish(complete=False, error="effort-catalog-key-failed")
+            wait_for_timeout(80)
+        slider = _chatgpt_find_effort_slider(page)
+        current_state = (
+            _chatgpt_effort_slider_state(slider) if slider is not None else None
+        )
+        if current_state is None or current_state["now"] != position:
+            return finish(complete=False, error="effort-position-readback-mismatch")
+        reread = _read_chatgpt_model_menu(page)
+        if not reread.get("ok"):
+            return finish(complete=False, error="effort-menu-unreadable")
+        result = reread
+        label = _chatgpt_effort_label(reread)
+        if not label:
+            return finish(complete=False, error="effort-label-unreadable")
+        labels_by_position[position] = label
+        if label not in labels:
+            labels.append(label)
+
+    if requested == CHATGPT_EFFORT_POLICY_HIGHEST:
+        target_position = state["max"]
+    else:
+        matching_positions = [
+            position
+            for position, label in labels_by_position.items()
+            if label.casefold() == requested.casefold()
+        ]
+        if not matching_positions:
+            return finish(complete=False, error="requested-effort-unavailable")
+        target_position = matching_positions[-1]
+
+    slider = _chatgpt_find_effort_slider(page)
+    final_state = _chatgpt_effort_slider_state(slider) if slider is not None else None
+    if final_state is None:
+        return finish(complete=False, error="effort-slider-unreadable")
+    if final_state["now"] != target_position:
+        if not _chatgpt_press_effort_key(page, slider, "Home"):
+            return finish(complete=False, error="effort-selection-key-failed")
+        wait_for_timeout(80)
+        slider = _chatgpt_find_effort_slider(page)
+        final_state = _chatgpt_effort_slider_state(slider) if slider is not None else None
+        if final_state is None or final_state["now"] != state["min"]:
+            return finish(complete=False, error="effort-selection-readback-mismatch")
+        for position in range(state["min"] + 1, target_position + 1):
+            if not _chatgpt_press_effort_key(page, slider, "ArrowRight"):
+                return finish(complete=False, error="effort-selection-key-failed")
+            wait_for_timeout(80)
+            slider = _chatgpt_find_effort_slider(page)
+            final_state = (
+                _chatgpt_effort_slider_state(slider) if slider is not None else None
+            )
+            if final_state is None or final_state["now"] != position:
+                return finish(complete=False, error="effort-selection-readback-mismatch")
+
+    reread = _read_chatgpt_model_menu(page)
+    if not reread.get("ok"):
+        return finish(complete=False, error="effort-menu-unreadable")
+    result = reread
+    final_label = _chatgpt_effort_label(result)
+    expected_label = labels_by_position[target_position]
+    if final_label.casefold() != expected_label.casefold():
+        return finish(complete=False, error="effort-selection-label-mismatch")
+    return finish(complete=True)
+
+
 def _chatgpt_power_button_state(
     page: Any,
     power_button: Any,
 ) -> tuple[Any | None, bool | None]:
-    """Read the power-menu state and reacquire the button after a DOM recycle."""
-    read_ok, expanded = _read_chatgpt_locator_attribute(
-        power_button,
-        "aria-expanded",
-    )
-    if read_ok:
-        return power_button, expanded == "true"
-    refreshed = _chatgpt_find_power_control(page)
-    if refreshed is None:
-        return None, None
-    read_ok, expanded = _read_chatgpt_locator_attribute(
-        refreshed,
-        "aria-expanded",
-    )
-    if not read_ok:
-        return None, None
-    return refreshed, expanded == "true"
+    """Read the power-menu state from a fresh locator after every DOM redraw."""
+    candidates: list[Any] = [power_button] if power_button is not None else []
+    for _attempt in range(2):
+        if _attempt:
+            refreshed = _chatgpt_find_power_control(page)
+            if refreshed is not None:
+                candidates.append(refreshed)
+        if not candidates:
+            continue
+        candidate = candidates.pop(0)
+        read_ok, expanded = _read_chatgpt_locator_attribute(
+            candidate,
+            "aria-expanded",
+        )
+        if read_ok:
+            return candidate, expanded == "true"
+    return None, None
 
 
 def _close_chatgpt_model_menu(page: Any, power_button: Any) -> bool:
@@ -8352,9 +9038,48 @@ def _select_chatgpt_model_chromium(
     remote_labels: tuple[str, ...],
     observation: dict[str, Any] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    thinking_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST,
 ) -> bool:
     """Use trusted Playwright clicks, then read back the remote Chromium model."""
     wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
+    model_labels = _chatgpt_remote_model_labels(option, remote_labels)
+
+    def result_matches_target(result_payload: dict[str, Any], current_value: str) -> bool:
+        selected_model = str(result_payload.get("selected_model") or "").strip()
+        if selected_model:
+            return _chatgpt_model_text_matches(selected_model, model_labels)
+        return _chatgpt_model_text_matches(current_value, model_labels)
+
+    def result_matches_after_selection(
+        result_payload: dict[str, Any],
+        current_value: str,
+    ) -> bool:
+        selected_model = str(result_payload.get("selected_model") or "").strip()
+        if selected_model:
+            return _chatgpt_model_text_matches(selected_model, model_labels)
+        return _chatgpt_model_text_matches(current_value, remote_labels)
+
+    def observation_values(
+        result_payload: dict[str, Any],
+        current_value: str,
+        efforts: list[str] | tuple[str, ...] = (),
+    ) -> tuple[str, list[str], list[str]]:
+        selected_model = str(result_payload.get("selected_model") or "").strip()
+        observed_value = selected_model or current_value
+        available_values = [
+            str(item).strip()
+            for item in (result_payload.get("available") or [])
+            if str(item).strip()
+        ]
+        effort_values = [
+            str(item).strip()
+            for item in efforts
+            if str(item).strip()
+        ]
+        current_effort = _chatgpt_effort_label(result_payload)
+        if current_effort and current_effort not in effort_values:
+            effort_values.append(current_effort)
+        return observed_value, available_values, effort_values
 
     def stop_requested() -> bool:
         if not callable(should_stop) or not should_stop():
@@ -8429,6 +9154,58 @@ def _select_chatgpt_model_chromium(
         for item in (result.get("available") or [])
         if str(item).strip()
     ]
+    effort_labels: list[str] = []
+    if result.get("ok") and result_matches_target(result, current):
+        result, effort_labels, effort_selection_complete = _chatgpt_select_subscription_effort(
+            page,
+            result,
+            wait_for_timeout,
+            thinking_effort,
+        )
+        current = str(result.get("current") or current)
+        available = [
+            str(item).strip()
+            for item in (result.get("available") or available)
+            if str(item).strip()
+        ]
+        if stop_requested():
+            return False
+        _close_chatgpt_model_menu(page, power_button)
+        effort_catalog_complete = bool(effort_selection_complete)
+        if result.get("thinking_effort") is not None and not effort_catalog_complete:
+            _record_model_observation(
+                observation,
+                observed=str(result.get("selected_model") or current),
+                available=available or [current],
+                thinking_effort=_chatgpt_effort_label(result),
+                available_efforts=effort_labels,
+                effort_catalog_complete=False,
+                attempted_labels=remote_labels,
+                menu_text=current,
+                reason=str(result.get("effort_selection_error") or "effort-selection-unverified"),
+            )
+            return False
+        observed_value, available_values, effort_values = observation_values(
+            result,
+            current,
+            effort_labels,
+        )
+        _record_model_observation(
+            observation,
+            observed=observed_value,
+            available=available_values or [current],
+            thinking_effort=_chatgpt_effort_label(result),
+            available_efforts=effort_values,
+            effort_catalog_complete=effort_catalog_complete,
+            attempted_labels=remote_labels,
+            menu_text=current,
+        )
+        return True
+
+    # Legacy ChatGPT menus expose the effort as the selected menu item and do
+    # not report a selected model or a slider. Keep the old strongest-label
+    # fallback only for that older surface; modern subscriptions are handled
+    # by the live slider above.
     strongest = _chatgpt_strongest_available_label(current, available, remote_labels)
     already_selected = bool(
         strongest and _chatgpt_model_text_matches(current, (strongest,))
@@ -8437,17 +9214,28 @@ def _select_chatgpt_model_chromium(
         if stop_requested():
             return False
         _close_chatgpt_model_menu(page, power_button)
+        observed_value, available_values, effort_values = observation_values(
+            result,
+            current,
+        )
         _record_model_observation(
             observation,
-            observed=current,
-            available=available or [current],
+            observed=observed_value or current,
+            available=available_values or [current],
+            thinking_effort=_chatgpt_effort_label(result),
+            available_efforts=effort_values,
             attempted_labels=remote_labels,
             menu_text=current,
         )
         return True
 
     model_choice = None
-    for labels in _chatgpt_choice_label_groups(remote_labels):
+    choice_labels = (
+        model_labels
+        if result.get("selected_model") is not None
+        else remote_labels
+    )
+    for labels in _chatgpt_choice_label_groups(choice_labels):
         for role in ("menuitemradio", "option", "menuitem"):
             choices = page.get_by_role(role)
             for index in range(choices.count()):
@@ -8490,20 +9278,41 @@ def _select_chatgpt_model_chromium(
             if result.get("ok"):
                 break
         current = str(result.get("current") or "")
+        effort_labels = []
+        if result.get("ok") and result_matches_target(result, current):
+            result, effort_labels, effort_selection_complete = _chatgpt_select_subscription_effort(
+                page,
+                result,
+                wait_for_timeout,
+                thinking_effort,
+            )
+            current = str(result.get("current") or current)
         if stop_requested():
             return False
         _close_chatgpt_model_menu(page, power_button)
-        matched = bool(
-            result.get("ok")
-            and _chatgpt_model_text_matches(current, remote_labels)
+        matched = bool(result.get("ok") and result_matches_after_selection(result, current))
+        effort_catalog_complete = bool(effort_selection_complete)
+        if result.get("thinking_effort") is not None and not effort_catalog_complete:
+            matched = False
+        observed_value, available_values, effort_values = observation_values(
+            result,
+            current,
+            effort_labels,
         )
         _record_model_observation(
             observation,
-            observed=current,
-            available=[current] if current else [],
+            observed=observed_value,
+            available=available_values or ([current] if current else []),
+            thinking_effort=_chatgpt_effort_label(result),
+            available_efforts=effort_values,
+            effort_catalog_complete=effort_catalog_complete,
             attempted_labels=remote_labels,
             menu_text=current,
-            reason="" if matched else "model-mismatch",
+            reason=(
+                ""
+                if matched
+                else str(result.get("effort_selection_error") or "model-mismatch")
+            ),
         )
         return matched
 
@@ -8566,20 +9375,41 @@ def _select_chatgpt_model_chromium(
                         if result.get("ok"):
                             break
                     current = str(result.get("current") or "")
+                    effort_labels = []
+                    if result.get("ok") and result_matches_target(result, current):
+                        result, effort_labels, effort_selection_complete = _chatgpt_select_subscription_effort(
+                            page,
+                            result,
+                            wait_for_timeout,
+                            thinking_effort,
+                        )
+                        current = str(result.get("current") or current)
                     if stop_requested():
                         return False
                     _close_chatgpt_model_menu(page, power_button)
-                    matched = bool(
-                        result.get("ok")
-                        and _chatgpt_model_text_matches(current, remote_labels)
+                    matched = bool(result.get("ok") and result_matches_after_selection(result, current))
+                    effort_catalog_complete = bool(effort_selection_complete)
+                    if result.get("thinking_effort") is not None and not effort_catalog_complete:
+                        matched = False
+                    observed_value, available_values, effort_values = observation_values(
+                        result,
+                        current,
+                        effort_labels,
                     )
                     _record_model_observation(
                         observation,
-                        observed=current,
-                        available=[current] if current else [],
+                        observed=observed_value,
+                        available=available_values or ([current] if current else []),
+                        thinking_effort=_chatgpt_effort_label(result),
+                        available_efforts=effort_values,
+                        effort_catalog_complete=effort_catalog_complete,
                         attempted_labels=remote_labels,
                         menu_text=current,
-                        reason="" if matched else "model-mismatch",
+                        reason=(
+                            ""
+                            if matched
+                            else str(result.get("effort_selection_error") or "model-mismatch")
+                        ),
                     )
                     return matched
 
@@ -8613,6 +9443,7 @@ def _select_chatgpt_model(
     model: str,
     observation: dict[str, Any] | None = None,
     should_stop: Callable[[], bool] | None = None,
+    thinking_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST,
 ) -> bool:
     """Select and read back the requested ChatGPT model before any project upload."""
     selected_model = str(model or DEFAULT_CHATGPT_MODEL).strip().lower()
@@ -8635,6 +9466,7 @@ def _select_chatgpt_model(
                 remote_labels,
                 observation=attempt_observation,
                 should_stop=should_stop,
+                thinking_effort=thinking_effort,
             )
             if result or attempt_observation.get("reason") not in {
                 "model-menu-unreadable",
@@ -8669,18 +9501,24 @@ def _select_chatgpt_model(
                     return current === target || current.endsWith(` ${target}`);
                 });
             };
-            const powerLabels = new Set([
-                'instant', 'medium', 'gpt-5.6 sol', '5.6 sol', 'extra high',
-                'thinking effort', 'thinking', 'advanced', 'reasoning'
-            ]);
-            const labelFor = (button) => normalize(
-                `${button.getAttribute('aria-label') || ''} ${button.innerText || button.textContent || ''}`
-            );
             const hasMenuSemantics = (button) => {
                 const popup = normalize(button.getAttribute('aria-haspopup') || '');
                 const expanded = normalize(button.getAttribute('aria-expanded') || '');
                 return popup === 'menu' || popup === 'listbox' || popup === 'true'
                     || expanded === 'true' || expanded === 'false';
+            };
+            const composer = document.querySelector('#prompt-textarea, [contenteditable="true"]');
+            const nearComposer = (button) => {
+                if (!composer) return false;
+                const buttonRect = button.getBoundingClientRect();
+                const composerRect = composer.getBoundingClientRect();
+                const verticalGap = Math.min(
+                    Math.abs(buttonRect.bottom - composerRect.top),
+                    Math.abs(buttonRect.top - composerRect.bottom),
+                );
+                const horizontalOverlap = buttonRect.right >= composerRect.left - 96
+                    && buttonRect.left <= composerRect.right + 96;
+                return verticalGap <= 180 && horizontalOverlap;
             };
             const preferredPower = Array.from(document.querySelectorAll(
                 '[data-testid^="model-switcher-"], [data-testid*="model-switcher"], '
@@ -8692,15 +9530,19 @@ def _select_chatgpt_model(
                 && !button.closest('#prompt-textarea, [contenteditable="true"]')
                 && hasMenuSemantics(button)
             );
-            const powerButton = preferredPower || Array.from(document.querySelectorAll('button, [role="button"]')).find((button) =>
-                isVisible(button)
-                && !button.closest('[role="menu"], [role="listbox"]')
-                && !button.closest('#prompt-textarea, [contenteditable="true"]')
-                && hasMenuSemantics(button)
-                && (powerLabels.has(normalize(button.innerText || button.textContent))
-                    || powerLabels.has(normalize(button.getAttribute('aria-label') || ''))
-                    || [...powerLabels].some((label) => labelFor(button) === label || labelFor(button).endsWith(` ${label}`)))
-            );
+            const powerButton = preferredPower || Array.from(document.querySelectorAll('button, [role="button"]')).find((button) => {
+                if (!isVisible(button)
+                    || button.closest('[role="menu"], [role="listbox"]')
+                    || button.closest('#prompt-textarea, [contenteditable="true"]')
+                    || !hasMenuSemantics(button)) return false;
+                const testId = normalize(button.getAttribute('data-testid') || '');
+                const className = normalize(button.className || '');
+                return nearComposer(button)
+                    || testId.includes('model-switcher')
+                    || testId.includes('thinking-effort')
+                    || testId.includes('reasoning-effort')
+                    || className.includes('composer-pill');
+            });
             if (!powerButton) return {ok: false, reason: 'power-control-not-found', available: []};
             if (phase === 'choose') {
                 const submenu = visibleMenus().at(-1);
@@ -9388,6 +10230,7 @@ def _select_web_model(
     observation: dict[str, Any] | None = None,
     should_stop: Callable[[], bool] | None = None,
     availability_check: Callable[[], bool | tuple[bool, float]] | None = None,
+    chatgpt_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST,
 ) -> bool:
     """Select a provider model when its page exposes a compatible model menu."""
     if platform == "chatgpt":
@@ -9397,6 +10240,7 @@ def _select_web_model(
             model,
             observation,
             should_stop=should_stop,
+            thinking_effort=chatgpt_effort,
         )
     options = _platform_model_options(platform)
     option = next((candidate for candidate in options if candidate["key"] == model), None)
@@ -11776,9 +12620,11 @@ def _provider_turn_snapshot(
             const latestUserText = latestUser
                 ? (latestUser.innerText || latestUser.textContent || '').trim()
                 : '';
-            const markerEchoed = Boolean(receiptMarker && users.some((element) =>
-                textOf(element).includes(receiptMarker)
-            ));
+            const markerEchoed = Boolean(
+                receiptMarker
+                && latestUser
+                && textOf(latestUser).includes(receiptMarker)
+            );
             const latestRelation = latest && latestUser
                 ? latestUser.compareDocumentPosition(latest)
                 : Node.DOCUMENT_POSITION_DISCONNECTED;

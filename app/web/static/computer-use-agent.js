@@ -1,4 +1,4 @@
-/* Code version: v3.24.1-codex.2 */
+/* Code version: v3.25.0-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -17,6 +17,7 @@
         doctorStatus: document.getElementById("agent_doctor_status"),
         doctorSummary: document.getElementById("agent_doctor_summary"),
         doctorChecks: document.getElementById("agent_doctor_checks"),
+        doctorEvents: document.getElementById("agent_doctor_events"),
         doctorActions: document.getElementById("agent_doctor_actions"),
         responseOutput: document.getElementById("agent_response_output"),
         responseQuestion: document.querySelector("[data-agent-response-question]"),
@@ -37,6 +38,9 @@
         promptPlatform: promptForm.querySelector("[data-agent-prompt-platform]"),
         promptBrowser: promptForm.querySelector("[data-agent-prompt-browser]"),
         modelInput: promptForm.querySelector("[data-agent-model-input]"),
+        effortField: promptForm.querySelector("[data-agent-effort-field]"),
+        effortCombobox: promptForm.querySelector(".agent-effort-combobox"),
+        effortInput: promptForm.querySelector("[data-agent-effort-input]"),
         promptSessionMode: promptForm.querySelector("[data-agent-prompt-session-mode]"),
         promptConversationUrl: promptForm.querySelector("[data-agent-prompt-conversation-url]"),
         promptProjectUrl: promptForm.querySelector("[data-agent-prompt-project-url]"),
@@ -81,6 +85,7 @@
     let catalogAbort = null;
     let appliedBootstrapSignature = "";
     const CATALOG_TIMEOUT_MS = 15000;
+    const HIGHEST_CHATGPT_EFFORT = "highest_available";
     let projectSessionRequestId = 0;
     let agentSources = {recent_sessions: [], projects: []};
     let projectSessions = [];
@@ -167,6 +172,12 @@
 
     function selectedModel() {
         return selectedValue(".agent-model-combobox", "");
+    }
+
+    function selectedChatgptEffort() {
+        return elements.effortInput instanceof HTMLInputElement
+            ? (elements.effortInput.value || HIGHEST_CHATGPT_EFFORT)
+            : HIGHEST_CHATGPT_EFFORT;
     }
 
     function selectedPlatformLabel() {
@@ -320,7 +331,71 @@
         });
     }
 
-    function syncPlatformState() {
+    function createChatgptEffortOption(value, label) {
+        const option = document.createElement("button");
+        option.type = "button";
+        option.className = "trade-strategy-dropdown-option agent-combobox-option";
+        option.dataset.agentComboboxOption = value;
+        option.dataset.agentComboboxLabel = label;
+        option.dataset.agentEffortGenerated = "true";
+        option.setAttribute("role", "option");
+        option.setAttribute("aria-selected", "false");
+        option.tabIndex = -1;
+        const check = document.createElement("span");
+        check.className = "trade-strategy-dropdown-check";
+        check.setAttribute("aria-hidden", "true");
+        const text = document.createElement("span");
+        text.className = "trade-strategy-dropdown-text";
+        text.textContent = label;
+        option.append(check, text);
+        return option;
+    }
+
+    function syncChatgptEffortOptions(agent = {}) {
+        const field = elements.effortField;
+        const combobox = elements.effortCombobox;
+        const input = elements.effortInput;
+        const menu = combobox?.querySelector("[data-agent-combobox-menu]");
+        if (!field || !combobox || !(input instanceof HTMLInputElement) || !menu) return;
+        const isChatgpt = selectedPlatform() === "chatgpt";
+        field.hidden = !isChatgpt;
+        if (!isChatgpt) return;
+
+        Array.from(menu.querySelectorAll("[data-agent-effort-generated]"))
+            .forEach((option) => option.remove());
+        const liveLabels = Array.isArray(agent?.available_efforts)
+            ? agent.available_efforts
+            : [];
+        const labels = [];
+        const remember = (value) => {
+            const normalized = String(value || "").replace(/\s+/g, " ").trim();
+            if (!normalized || labels.some((label) => label.toLocaleLowerCase() === normalized.toLocaleLowerCase())) return;
+            labels.push(normalized);
+        };
+        liveLabels.forEach(remember);
+        remember(agent?.thinking_effort);
+        const current = selectedChatgptEffort();
+        if (current !== HIGHEST_CHATGPT_EFFORT) remember(current);
+        labels.forEach((label) => {
+            menu.append(createChatgptEffortOption(label, label));
+        });
+
+        const options = Array.from(menu.querySelectorAll("[data-agent-combobox-option]"));
+        const selected = options.find((option) => option.dataset.agentComboboxOption === current)
+            || options.find((option) => option.dataset.agentComboboxOption === HIGHEST_CHATGPT_EFFORT)
+            || null;
+        if (!selected) return;
+        input.value = selected.dataset.agentComboboxOption || HIGHEST_CHATGPT_EFFORT;
+        syncComboboxTriggerFromOption(combobox, selected);
+        options.forEach((option) => {
+            const isSelected = option === selected;
+            option.classList.toggle("is-selected", isSelected);
+            option.classList.toggle("is-active", isSelected);
+            option.setAttribute("aria-selected", String(isSelected));
+        });
+    }
+
+    function syncPlatformState(agent = {}) {
         const platform = selectedPlatform();
         if (elements.promptPlatform instanceof HTMLInputElement) elements.promptPlatform.value = platform;
         if (elements.browserSession) {
@@ -328,6 +403,7 @@
             elements.browserSession.dataset.browserSessionAccountLabel = selectedPlatformLabel();
         }
         syncModelOptionsForPlatform();
+        syncChatgptEffortOptions(agent);
         const sessionLabel = elements.sessionSource?.querySelector("[data-agent-session-platform-label]");
         if (sessionLabel) sessionLabel.textContent = "Session source";
         const sessionModeMenu = elements.sessionModeCombobox?.querySelector("[data-agent-combobox-menu]");
@@ -707,6 +783,7 @@
         if (elements.promptPlatform instanceof HTMLInputElement) elements.promptPlatform.value = selectedPlatform();
         if (elements.promptBrowser instanceof HTMLInputElement) elements.promptBrowser.value = selectedBrowser();
         if (elements.modelInput instanceof HTMLInputElement) elements.modelInput.value = selectedModel();
+        if (elements.effortInput instanceof HTMLInputElement) elements.effortInput.value = selectedChatgptEffort();
     }
 
     function preferencePayload() {
@@ -716,6 +793,7 @@
             platform: selectedPlatform(),
             browser: selectedBrowser(),
             model: selectedModel(),
+            chatgpt_effort: selectedChatgptEffort(),
         };
     }
 
@@ -1266,7 +1344,8 @@
             : status === "blocked"
                 ? "Blocked"
                 : "Needs attention";
-        elements.doctorPanel.hidden = status === "healthy";
+        const events = Array.isArray(payload.events) ? payload.events : [];
+        elements.doctorPanel.hidden = status === "healthy" && events.length === 0;
         elements.doctorPanel.dataset.status = status;
         if (elements.doctorStatus) elements.doctorStatus.textContent = statusLabel;
         if (elements.doctorSummary) {
@@ -1283,6 +1362,23 @@
                 label.textContent = String(check.label || "Diagnostic");
                 const detail = document.createElement("span");
                 detail.textContent = String(check.detail || "");
+                item.append(label, detail);
+                return item;
+            }));
+        }
+        if (elements.doctorEvents) {
+            elements.doctorEvents.replaceChildren(...events.map((event) => {
+                const item = document.createElement("li");
+                item.dataset.status = String(event.status || "info");
+                const label = document.createElement("strong");
+                const sequence = Number.isFinite(Number(event.sequence))
+                    ? `#${Number(event.sequence)}`
+                    : "Event";
+                const actionId = String(event.action_id || "").trim();
+                label.textContent = `${sequence} ${String(event.kind || "event")}`
+                    + (actionId ? ` · ${actionId}` : "");
+                const detail = document.createElement("span");
+                detail.textContent = String(event.detail || event.status || "");
                 item.append(label, detail);
                 return item;
             }));
@@ -1772,7 +1868,7 @@
         const platformLabel = selectedPlatformLabel();
         const completedTransition = lastRenderedAgentRunning === true && !running;
         syncExecutionChoices();
-        syncPlatformState();
+        syncPlatformState(agent);
         bindCompletedAgentSession(persistedAgent, completedTransition);
         lastRenderedAgentRunning = running;
         syncConversationLink(agent);

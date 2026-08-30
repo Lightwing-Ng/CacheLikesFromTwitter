@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.2-codex.1
+Code version: v1.26.2-codex.7
 """
 
 from __future__ import annotations
@@ -350,6 +350,155 @@ def test_cache_title_rail_stays_aligned_and_clear_when_the_sidebar_collapses(
         assert not narrow["titleOverlapsToggle"], narrow_debug
         assert narrow["toggleGap"] >= 12, narrow_debug
         assert not narrow["horizontalOverflow"], narrow_debug
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep the Agent heading on the shared title rail without a stale status chip."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/agent/edge/chatgpt",
+        1_280,
+        720,
+        touch=False,
+        init_script="""
+            (() => {
+                const originalFetch = window.fetch.bind(window);
+                window.fetch = (input, init) => {
+                    const requestUrl = typeof input === "string" ? input : input?.url;
+                    if (requestUrl && new URL(requestUrl, window.location.href).pathname === "/api/agent/status") {
+                        return Promise.reject(new Error("Agent status polling is disabled for this layout test."));
+                    }
+                    return originalFetch(input, init);
+                };
+            })();
+        """,
+    )
+
+    def read_geometry() -> dict[str, object]:
+        return page.evaluate(
+            """() => {
+                const centerY = selector => {
+                    const element = document.querySelector(selector);
+                    if (!(element instanceof HTMLElement)) return null;
+                    const rect = element.getBoundingClientRect();
+                    return rect.top + (rect.height / 2);
+                };
+                const summary = document.querySelector(".agent-summary-card");
+                if (!(summary instanceof HTMLElement)) return null;
+                const summaryRect = summary.getBoundingClientRect();
+                const summaryStyle = getComputedStyle(summary);
+                return {
+                    headingCenterY: centerY("[data-agent-heading]"),
+                    toggleCenterY: centerY("#sidebar_toggle"),
+                    themeCenterY: centerY("#global_theme_toggle"),
+                    summaryHeight: summaryRect.height,
+                    summaryOverflow: summaryStyle.overflow,
+                    chipCount: document.querySelectorAll("#agent_phase_chip").length,
+                    readiness: document.querySelector("#agent_readiness_message")?.textContent || "",
+                    horizontalOverflow: Math.max(
+                        document.documentElement.scrollWidth,
+                        document.body.scrollWidth,
+                    ) > document.documentElement.clientWidth,
+                };
+            }"""
+        )
+
+    try:
+        desktop = read_geometry()
+        assert desktop is not None
+        assert abs(desktop["headingCenterY"] - desktop["toggleCenterY"]) <= 1
+        assert abs(desktop["headingCenterY"] - desktop["themeCenterY"]) <= 1
+        assert desktop["summaryHeight"] < 120
+        assert desktop["summaryOverflow"] == "visible"
+        assert desktop["chipCount"] == 0
+        assert " · " in desktop["readiness"]
+        assert not desktop["horizontalOverflow"]
+
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_function(
+            "() => window.matchMedia('(max-width: 560px)').matches"
+        )
+        narrow = read_geometry()
+        assert narrow is not None
+        assert abs(narrow["headingCenterY"] - narrow["toggleCenterY"]) <= 1
+        assert abs(narrow["headingCenterY"] - narrow["themeCenterY"]) <= 1
+        assert narrow["summaryHeight"] < 120
+        assert narrow["summaryOverflow"] == "visible"
+        assert narrow["chipCount"] == 0
+        assert " · " in narrow["readiness"]
+        assert not narrow["horizontalOverflow"]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_browser_title_rail_stays_aligned_with_global_anchors_across_viewports(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep the Cached text browser heading on the shared top anchor rail."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/browser?view=text&source=all&kind=all&q=&sort=newest&session_view=1",
+        974,
+        863,
+        touch=False,
+    )
+
+    def read_geometry() -> dict[str, object]:
+        return page.evaluate(
+            """() => {
+                const centerY = selector => {
+                    const element = document.querySelector(selector);
+                    if (!(element instanceof HTMLElement)) return null;
+                    const rect = element.getBoundingClientRect();
+                    return rect.top + (rect.height / 2);
+                };
+                const summary = document.querySelector(".browser-summary-card");
+                if (!(summary instanceof HTMLElement)) return null;
+                const summaryStyle = getComputedStyle(summary);
+                return {
+                    titleCenterY: centerY(".browser-heading-copy"),
+                    sidebarCenterY: centerY("#browser_sidebar .hero h1"),
+                    toggleCenterY: centerY("#sidebar_toggle"),
+                    themeCenterY: centerY("#global_theme_toggle"),
+                    summaryPaddingTop: summaryStyle.paddingTop,
+                    summaryOverflow: summaryStyle.overflow,
+                    horizontalOverflow: Math.max(
+                        document.documentElement.scrollWidth,
+                        document.body.scrollWidth,
+                    ) > document.documentElement.clientWidth,
+                };
+            }"""
+        )
+
+    try:
+        desktop = read_geometry()
+        assert desktop is not None
+        assert abs(desktop["titleCenterY"] - desktop["sidebarCenterY"]) <= 1
+        assert abs(desktop["titleCenterY"] - desktop["toggleCenterY"]) <= 1
+        assert abs(desktop["titleCenterY"] - desktop["themeCenterY"]) <= 1
+        assert desktop["summaryPaddingTop"] == "10px"
+        assert desktop["summaryOverflow"] == "visible"
+        assert not desktop["horizontalOverflow"]
+
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_function("() => window.matchMedia('(max-width: 560px)').matches")
+        narrow = read_geometry()
+        assert narrow is not None
+        assert abs(narrow["titleCenterY"] - narrow["toggleCenterY"]) <= 1
+        assert abs(narrow["titleCenterY"] - narrow["themeCenterY"]) <= 1
+        assert narrow["summaryPaddingTop"] == "12px"
+        assert narrow["summaryOverflow"] == "visible"
+        assert not narrow["horizontalOverflow"]
     finally:
         context.close()
 
@@ -1156,6 +1305,11 @@ def test_settings_reuse_shared_primary_and_numeric_control_contracts(
     )
     try:
         expect(page.locator("#settings")).to_have_count(0)
+        expect(page.locator("#settings_workspace .workspace-kicker")).to_have_count(0)
+        expect(page.locator("#settings_workspace .workspace-summary-card h2")).to_have_text(
+            "Configuration center"
+        )
+        expect(page.locator("#settings_sidebar .hero h1")).to_have_text("Settings")
         expect(page.locator("#chatgpt_startup_timeout_seconds")).to_have_count(1)
         assert page.locator("#chatgpt_startup_timeout_seconds").evaluate(
             "element => getComputedStyle(element).fontWeight"
@@ -1172,6 +1326,7 @@ def test_settings_reuse_shared_primary_and_numeric_control_contracts(
             wait_until="domcontentloaded",
         )
         expect(page.locator("#settings-cloud")).to_be_visible()
+        expect(page.locator("#settings_workspace .workspace-kicker")).to_have_count(0)
         expect(page.locator("#shadow_backup_phase")).to_have_count(0)
         expect(page.locator("[data-shadow-backup-status-copy]")).to_have_count(1)
         sync_button = page.locator("#shadow_backup_sync_now")
@@ -1185,6 +1340,7 @@ def test_settings_reuse_shared_primary_and_numeric_control_contracts(
             wait_until="domcontentloaded",
         )
         expect(page.locator("#settings-maintenance")).to_be_visible()
+        expect(page.locator("#settings_workspace .workspace-kicker")).to_have_count(0)
         for selector in ("#reset_button", "#reset_chatgpt_button"):
             alignment = page.locator(selector).evaluate(
                 """button => {
@@ -4615,7 +4771,9 @@ def test_agent_browser_status_retries_a_fresh_negative_cache_and_force_refreshes
     try:
         page.goto(f"{sidebar_server_url}/agent/edge/gemini", wait_until="domcontentloaded")
         expect(page.locator(".agent-readiness")).to_have_attribute("data-ready", "true")
-        expect(page.locator("#agent_readiness_message")).to_have_text(ready_status["message"])
+        expect(page.locator("#agent_readiness_message")).to_have_text(
+            f'Idle · {ready_status["message"]}'
+        )
         expect(page.locator("#agent_ask_button")).to_be_enabled()
         assert len(browser_status_requests) == 1
 
@@ -4871,9 +5029,11 @@ def test_stale_chatgpt_probe_failure_cannot_overwrite_grok_ready_state(
 
         expect(page.get_by_role("button", name="Web service: Grok", exact=True)).to_be_visible()
         expect(page.locator(".agent-readiness")).to_have_attribute("data-ready", "true")
-        expect(page.locator("#agent_readiness_message")).to_have_text(grok_ready_message)
+        expect(page.locator("#agent_readiness_message")).to_have_text(
+            f"Idle · {grok_ready_message}"
+        )
         expect(page.locator("#agent_ask_button")).to_be_enabled()
-        expect(page.locator("#agent_phase_chip")).to_have_text("idle")
+        expect(page.locator("#agent_phase_chip")).to_have_count(0)
         expect(page.locator("#agent_response_output")).to_be_hidden()
         expect(page.locator("[data-agent-response-question]")).to_be_empty()
         expect(page.locator("[data-agent-response-answer-content]")).to_be_empty()
@@ -4893,7 +5053,9 @@ def test_stale_chatgpt_probe_failure_cannot_overwrite_grok_ready_state(
 
         expect(page.get_by_role("button", name="Web service: Grok", exact=True)).to_be_visible()
         expect(page.locator(".agent-readiness")).to_have_attribute("data-ready", "true")
-        expect(page.locator("#agent_readiness_message")).to_have_text(grok_ready_message)
+        expect(page.locator("#agent_readiness_message")).to_have_text(
+            f"Idle · {grok_ready_message}"
+        )
         expect(page.locator("#agent_readiness_message")).not_to_have_text(stale_chatgpt_error)
         expect(page.locator("#agent_ask_button")).to_be_enabled()
     finally:

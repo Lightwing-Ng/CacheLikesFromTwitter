@@ -1,6 +1,6 @@
 """Durable, bounded event chains for one Web Agent run.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -160,7 +160,7 @@ def summarize_observation(observation: dict[str, Any] | None) -> dict[str, Any]:
         summary["successful_check_count"] = len(observation["successful_checks"])
     if isinstance(observation.get("output"), str):
         summary["output_chars"] = len(observation["output"])
-    for key in ("path", "changed_characters", "bytes"):
+    for key in ("path", "changed_characters", "bytes", "deleted_bytes"):
         if key in observation:
             summary[key] = _bounded_value(observation[key])
     return bounded_event_data(summary)

@@ -1,6 +1,8 @@
 """Computer-use Agent boundary for access, source discovery, and execution."""
 
-# Code version: v1.4.0-codex.1
+# Code version: v1.6.0-codex.1
+
+from typing import TYPE_CHECKING
 
 from ..agent_access_security import (
     AGENT_ACCESS_SESSION_KEY,
@@ -26,20 +28,51 @@ from .capability_registry import (
     capability_for_action,
     capability_for_observation,
     capability_registry_snapshot,
+    controller_action_prompt_schema,
+    webmcp_manifest_definitions,
 )
-from ..computer_use_agent import (
-    AGENT_MODEL_OPTIONS_BY_PLATFORM,
-    AGENT_PLATFORM_OPTIONS,
-    OPERATING_SYSTEM_OPTIONS,
-    ComputerUseAgentService,
-    ComputerUseSettingsStore,
-    browser_options_for_host,
-    default_model_for_platform,
-    is_loopback_address,
-    launch_terminal_authorization,
-    open_agent_in_browser,
-    validate_computer_use_settings,
+
+_COMPUTER_USE_EXPORTS = frozenset(
+    {
+        "AGENT_MODEL_OPTIONS_BY_PLATFORM",
+        "AGENT_PLATFORM_OPTIONS",
+        "OPERATING_SYSTEM_OPTIONS",
+        "ComputerUseAgentService",
+        "ComputerUseSettingsStore",
+        "browser_options_for_host",
+        "default_model_for_platform",
+        "is_loopback_address",
+        "launch_terminal_authorization",
+        "open_agent_in_browser",
+        "validate_computer_use_settings",
+    }
 )
+
+if TYPE_CHECKING:
+    from ..computer_use_agent import (
+        AGENT_MODEL_OPTIONS_BY_PLATFORM,
+        AGENT_PLATFORM_OPTIONS,
+        OPERATING_SYSTEM_OPTIONS,
+        ComputerUseAgentService,
+        ComputerUseSettingsStore,
+        browser_options_for_host,
+        default_model_for_platform,
+        is_loopback_address,
+        launch_terminal_authorization,
+        open_agent_in_browser,
+        validate_computer_use_settings,
+    )
+
+
+def __getattr__(name: str):
+    """Load the execution service lazily so core modules can use the registry safely."""
+    if name not in _COMPUTER_USE_EXPORTS:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    from .. import computer_use_agent
+
+    value = getattr(computer_use_agent, name)
+    globals()[name] = value
+    return value
 
 __all__ = [
     "AGENT_ACCESS_SESSION_KEY",
@@ -59,6 +92,7 @@ __all__ = [
     "capability_for_action",
     "capability_for_observation",
     "capability_registry_snapshot",
+    "controller_action_prompt_schema",
     "default_model_for_platform",
     "is_allowed_agent_network_request",
     "is_loopback_address",
@@ -72,4 +106,5 @@ __all__ = [
     "probe_and_collect_grok_sources",
     "validate_agent_access_password",
     "validate_computer_use_settings",
+    "webmcp_manifest_definitions",
 ]

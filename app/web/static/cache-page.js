@@ -1,4 +1,4 @@
-/* Code version: v1.8.0-codex.2 */
+/* Code version: v1.8.0-codex.3 */
 
 (() => {
     "use strict";
@@ -38,7 +38,6 @@
     });
 
     const phaseChip = document.getElementById("phase_chip");
-    const bannerPhase = document.getElementById("banner_phase");
     const bannerMessage = document.getElementById("banner_message");
     const phaseValue = document.getElementById("phase_value");
     const startButton = document.getElementById("start_button");
@@ -221,11 +220,6 @@
                 phaseChip.setAttribute("aria-label", phaseDescription);
             }
             if (phaseChip.title !== phaseDescription) phaseChip.title = phaseDescription;
-        }
-        if (bannerPhase) {
-            setTextIfChanged(bannerPhase, normalizedPhase);
-            const nextClassName = `status-chip status-${normalizedPhase}`;
-            if (bannerPhase.className !== nextClassName) bannerPhase.className = nextClassName;
         }
         setTextIfChanged(phaseValue, normalizedPhase);
     }

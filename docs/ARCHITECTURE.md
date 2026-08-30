@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.9.0-codex.1`
+Documentation version: `v1.9.0-codex.2`
 
 ## Runtime flow
 
@@ -105,18 +105,19 @@ evidence live in [AGENT_OPTIMIZATION.md](AGENT_OPTIMIZATION.md).
 ## Agent capability and recovery boundary
 
 `app/core/agent/capability_registry.py` is the single application registry for Agent Actions,
-bounded page observations, WebMCP tools, and human-page navigation. Core execution resolves
-controller actions and observation names through that registry, while the manifest adapter derives
-only bounded public groups from it. This keeps browser discovery, local controller dispatch, and
-page-observation naming from drifting into separate lists without granting WebMCP direct access to
-the Agent control plane.
+including their schemas and controller handler identifiers, bounded page observations, WebMCP
+tools, and human-page navigation. Core execution resolves controller actions and observation names
+through that registry, while the manifest adapter derives both public groups and WebMCP definitions
+from it. This keeps browser discovery, local controller dispatch, and page-observation naming from
+drifting into separate lists without granting WebMCP direct access to the Agent control plane.
 
 `app/core/agent/event_chain.py` owns the durable run-local event chain. The Agent service creates a
 new `run_id`, persists `run.started`, and appends ordered action, observation, verification,
-bodycheck, interruption, recovery, and terminal events. It stores bounded metadata rather than
-prompt, provider response, source, command, or page content. `ComputerUseAgentService.doctor()` and
-the `/api/agent/doctor` routes consume the same chain summary to offer explicit, local recovery
-actions; recovery never retries an external prompt implicitly.
+bodycheck, lifecycle/page observations, interruption, recovery, and terminal events. It stores
+bounded metadata rather than prompt, provider response, source, command, or page content.
+`ComputerUseAgentService.doctor()` and the `/api/agent/doctor` routes consume the same chain summary
+to offer an event timeline and explicit, local recovery actions; recovery never retries an external
+prompt implicitly.
 
 ## Responsive application-shell contract
 

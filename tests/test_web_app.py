@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.1-codex.1
+# Code version: v1.88.1-codex.7
 
 from __future__ import annotations
 
@@ -365,7 +365,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="status_progress_value"', chatgpt_body)
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
-        self.assertIn('cache-page.js?v=cache-page-v1.8.0-codex.2', chatgpt_body)
+        self.assertIn('cache-page.js?v=cache-page-v1.8.0-codex.3', chatgpt_body)
         self.assertIn('segmented-control.js?v=segmented-control-v1.0.2-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
@@ -391,7 +391,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.7.0-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.0-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -491,7 +491,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.90.1-codex.1"
+                expected_style_version = "style-v2.90.1-codex.9"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -625,6 +625,8 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('id="reset_button"', grok_body)
         self.assertIn('id="reset_button"', settings_body)
         self.assertIn('id="reset_chatgpt_button"', settings_body)
+        self.assertIn("<h2>Configuration center</h2>", settings_body)
+        self.assertEqual(settings_body.count('class="workspace-kicker"'), 0)
         self.assertIn('name="chatgpt_startup_timeout_seconds"', settings_body)
         self.assertIn('name="chatgpt_scan_wait_seconds"', settings_body)
         self.assertIn('name="max_media_file_size_mib"', settings_body)
@@ -655,7 +657,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('class="settings-inline-button settings-inline-button-primary shadow-backup-sync-button"', settings_body)
         self.assertIn('shadow-backup-settings.js?v=shadow-backup-settings-v1.3.0-codex.2', settings_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', settings_body)
-        self.assertIn("Danger zone", settings_body)
+        self.assertIn("Reset Grok state", settings_body)
+        self.assertIn("Reset ChatGPT state", settings_body)
 
     def test_cache_source_switcher_uses_one_complete_registry_on_every_cache_page(self) -> None:
         app = create_app()
@@ -780,6 +783,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("The password is incorrect.", wrong_unlock.get_data(as_text=True))
         local_body = local_page.get_data(as_text=True)
         self.assertIn("ChatGPT Web Agent", local_body)
+        self.assertNotIn('id="agent_phase_chip"', local_body)
+        self.assertIn("Idle ·", local_body)
         self.assertNotIn("public tunnel, API key, or copied password", local_body)
         self.assertNotIn('data-agent-engine-kicker', local_body)
         self.assertNotIn('data-agent-engine-copy', local_body)
@@ -824,9 +829,11 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.7.0-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.24.1-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.25.0-codex.1', local_body)
+        self.assertIn('data-agent-effort-field', local_body)
+        self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
         self.assertIn('data-browser-session-scope="agent"', local_body)
@@ -1071,10 +1078,8 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn("STALE_MESSAGE_SENTINEL", body)
                 self.assertNotIn("STALE_PROMPT_SENTINEL", body)
                 self.assertNotIn("STALE_RESPONSE_SENTINEL", body)
-                self.assertIn(
-                    '<span class="status-chip status-idle" id="agent_phase_chip">idle</span>',
-                    body,
-                )
+                self.assertNotIn('id="agent_phase_chip"', body)
+                self.assertIn("Idle ·", body)
                 self.assertIn(
                     'data-agent-prompt-input required></textarea>',
                     body,
@@ -1213,7 +1218,12 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('elements.promptPlatform.value = selectedPlatform()', script)
         self.assertIn('elements.promptBrowser.value = selectedBrowser()', script)
         self.assertIn('elements.modelInput.value = selectedModel()', script)
+        self.assertIn('elements.effortInput.value = selectedChatgptEffort()', script)
+        self.assertIn('chatgpt_effort: selectedChatgptEffort()', script)
         self.assertIn('syncModelOptionsForPlatform()', script)
+        self.assertIn('syncChatgptEffortOptions(agent)', script)
+        self.assertIn('agent?.available_efforts', script)
+        self.assertIn('data-agent-effort-generated', script)
         self.assertIn('browserStatusController?.setPlatform?.(platform)', script)
         self.assertIn('platform: selectedPlatform()', script)
         self.assertIn('selectedValue(".agent-model-combobox", "")', script)
@@ -1280,7 +1290,9 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.24.1-codex.1',
+            'computer-use-agent-v3.25.0-codex.1',
+            'data-agent-effort-field',
+            'data-agent-effort-input',
             'data-agent-direct-list="true"',
             'data-agent-session-list-state',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
@@ -1536,8 +1548,91 @@ class WebAppTests(unittest.TestCase):
         sources.assert_called_once()
         self.assertEqual(sources.call_args.args[:2], ("gemini", "edge"))
 
-    def test_agent_chatgpt_status_bootstraps_sources_into_the_shared_cache(self) -> None:
-        status_payload = {
+    def test_agent_browser_session_bootstrap_reuses_each_provider_cache_until_refresh(self) -> None:
+        providers = (
+            ("chatgpt", "ChatGPT", "probe_and_collect_chatgpt_sources"),
+            ("grok", "Grok", "probe_and_collect_grok_sources"),
+            ("claude", "Claude", "probe_and_collect_claude_sources"),
+        )
+
+        for platform, platform_label, collector_name in providers:
+            with self.subTest(platform=platform):
+                first_status_payload = {
+                    "platform": platform,
+                    "browser": "edge",
+                    "browser_label": "Edge",
+                    "logged_in": True,
+                    "can_download": True,
+                    "account_name": f"{platform_label} account",
+                    "message": "Ready",
+                }
+                second_status_payload = {
+                    **first_status_payload,
+                    "message": "Refreshed",
+                }
+                first_source_payload = {
+                    "platform": platform,
+                    "browser_label": "Edge",
+                    "recent_sessions": [{"id": f"{platform}-first"}],
+                    "projects": [],
+                    "limit": 20,
+                }
+                second_source_payload = {
+                    **first_source_payload,
+                    "recent_sessions": [{"id": f"{platform}-refreshed"}],
+                }
+                with TemporaryDirectory() as raw_root:
+                    app = create_app(Path(raw_root) / "local_store")
+                    with patch(
+                        f"app.web.app.{collector_name}",
+                        side_effect=[
+                            (first_status_payload, first_source_payload),
+                            (second_status_payload, second_source_payload),
+                        ],
+                    ) as bootstrap, patch("app.web.app.list_agent_sources") as sources:
+                        with app.test_client() as client:
+                            first_response = client.get(
+                                f"/api/browser-session?platform={platform}&browser=edge&scope=agent"
+                            )
+                            cached_response = client.get(
+                                f"/api/browser-session?platform={platform}&browser=edge&scope=agent"
+                            )
+                            refreshed_response = client.get(
+                                f"/api/browser-session?platform={platform}&browser=edge&scope=agent&refresh=1"
+                            )
+                            catalog_response = client.get(
+                                f"/api/agent/sources?platform={platform}&browser=edge"
+                            )
+
+                self.assertEqual(first_response.status_code, 200)
+                self.assertEqual(
+                    first_response.get_json()["agent_sources"]["recent_sessions"],
+                    [{"id": f"{platform}-first"}],
+                )
+                self.assertNotIn("cache", first_response.get_json())
+                self.assertEqual(cached_response.status_code, 200)
+                self.assertEqual(cached_response.get_json()["message"], "Ready")
+                self.assertEqual(
+                    cached_response.get_json()["agent_sources"]["recent_sessions"],
+                    [{"id": f"{platform}-first"}],
+                )
+                self.assertEqual(refreshed_response.status_code, 200)
+                self.assertEqual(refreshed_response.get_json()["message"], "Refreshed")
+                self.assertEqual(
+                    refreshed_response.get_json()["agent_sources"]["recent_sessions"],
+                    [{"id": f"{platform}-refreshed"}],
+                )
+                self.assertEqual(catalog_response.status_code, 200)
+                self.assertEqual(
+                    catalog_response.get_json()["recent_sessions"],
+                    [{"id": f"{platform}-refreshed"}],
+                )
+                self.assertEqual(catalog_response.get_json()["cache"]["status"], "hit")
+                self.assertEqual(bootstrap.call_count, 2)
+                sources.assert_not_called()
+
+    def test_agent_browser_session_refresh_does_not_retain_sources_after_readiness_fails(self) -> None:
+        ready_status_payload = {
             "platform": "chatgpt",
             "browser": "edge",
             "browser_label": "Edge",
@@ -1545,6 +1640,12 @@ class WebAppTests(unittest.TestCase):
             "can_download": True,
             "account_name": "ChatGPT account",
             "message": "Ready",
+        }
+        unavailable_status_payload = {
+            **ready_status_payload,
+            "logged_in": False,
+            "can_download": False,
+            "message": "Sign in to ChatGPT in Edge.",
         }
         source_payload = {
             "platform": "chatgpt",
@@ -1557,23 +1658,26 @@ class WebAppTests(unittest.TestCase):
             app = create_app(Path(raw_root) / "local_store")
             with patch(
                 "app.web.app.probe_and_collect_chatgpt_sources",
-                return_value=(status_payload, source_payload),
-            ) as bootstrap, patch("app.web.app.list_agent_sources") as sources:
+                side_effect=[
+                    (ready_status_payload, source_payload),
+                    (unavailable_status_payload, None),
+                ],
+            ) as bootstrap:
                 with app.test_client() as client:
-                    status_response = client.get(
+                    ready_response = client.get(
                         "/api/browser-session?platform=chatgpt&browser=edge&scope=agent"
                     )
-                    catalog_response = client.get(
-                        "/api/agent/sources?platform=chatgpt&browser=edge"
+                    refreshed_response = client.get(
+                        "/api/browser-session?platform=chatgpt&browser=edge&scope=agent&refresh=1"
                     )
 
-        self.assertEqual(status_response.status_code, 200)
-        self.assertEqual(status_response.get_json()["agent_sources"], source_payload)
-        self.assertEqual(catalog_response.status_code, 200)
-        self.assertEqual(catalog_response.get_json()["recent_sessions"], [{"id": "recent-1"}])
-        self.assertEqual(catalog_response.get_json()["cache"]["status"], "hit")
-        bootstrap.assert_called_once()
-        sources.assert_not_called()
+        self.assertEqual(ready_response.status_code, 200)
+        self.assertIn("agent_sources", ready_response.get_json())
+        self.assertEqual(refreshed_response.status_code, 200)
+        self.assertFalse(refreshed_response.get_json()["can_download"])
+        self.assertNotIn("agent_sources", refreshed_response.get_json())
+        self.assertNotIn("agent_sources_error", refreshed_response.get_json())
+        self.assertEqual(bootstrap.call_count, 2)
 
     def test_agent_provider_source_route_reuses_parquet_until_explicit_refresh(self) -> None:
         first_payload = {
@@ -1720,6 +1824,11 @@ class WebAppTests(unittest.TestCase):
             "elements.errorRecord.hidden = !errorText",
             "renderAgentResponse(agent)",
             "renderTerminalExecution(lastPayload.runtime)",
+            "function formatAgentPhase(phase)",
+            "function agentReadinessCopy(phase, message)",
+            "function setAgentReadiness(phase, message)",
+            "setAgentReadiness(phase, readiness.message)",
+            "elements.readiness.dataset.phase",
             'elements.responseAnswer.innerHTML = entry?.response_html || ""',
             "buildAgentPaginationItems(totalPages, responseHistoryPage)",
             "function buildAgentPaginationRanges(firstPage, lastPage, chunkSize = 5)",
@@ -1755,6 +1864,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn(fragment, script)
 
         self.assertNotIn("MCP runtime", script)
+        self.assertNotIn("agent_phase_chip", script)
 
     def test_agent_settings_client_owns_host_detection_and_terminal_authorization(self) -> None:
         script = AGENT_SETTINGS_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -1845,6 +1955,8 @@ class WebAppTests(unittest.TestCase):
         body = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
         self.assertIn('aria-label="Settings categories"', body)
+        self.assertIn("<h2>Configuration center</h2>", body)
+        self.assertEqual(body.count('class="workspace-kicker"'), 0)
         self.assertIn(
             'settings-navigation.js?v=settings-navigation-v1.1.1-codex.1',
             body,
@@ -2074,8 +2186,15 @@ class WebAppTests(unittest.TestCase):
             'const SESSION_CACHE_TTL_MS = 300_000;',
             'const SESSION_STALE_MAX_AGE_MS = 1_800_000;',
             'const statusRequests = new Map();',
+            'function requestBrowserStatus(platform, browserId, scope, options = {})',
+            'const refresh = options.refresh === true;',
+            'const requestKey = `${requestScope}:${platform}:${browserId}:${refresh ? "refresh" : "default"}`;',
+            'if (refresh) query.set("refresh", "1");',
             'async function load(browserId, options = {})',
             'const forceRefresh = options.force === true;',
+            'requestBrowserStatus(requestPlatform, activeBrowser, scope, {refresh: forceRefresh})',
+            'let statusRequestRevision = 0;',
+            'requestRevision !== statusRequestRevision',
             'setStatus(cachedStatus.payload, activeBrowser);',
             'if (cachedStatus.payload.can_download && cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;',
             'setRefreshingState(activeBrowser);',
@@ -2085,7 +2204,7 @@ class WebAppTests(unittest.TestCase):
             'showStatusCheckmark(isReady ? "ready" : "error");',
             'function hideStatusCheckmark()',
             'if (statusSpinner) statusSpinner.hidden = false;',
-            'if (activeBrowser !== browserId || platform !== requestPlatform) return;',
+            'activeBrowser !== browserId\n                    || platform !== requestPlatform\n                    || requestRevision !== statusRequestRevision',
             'const hideReadyMessage = statusCard?.dataset.browserSessionHideReadyMessage === "true";',
             'statusMessage.hidden = (hideReadyMessage && isReady) || !payload.message;',
         ):
@@ -2366,7 +2485,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.90.1-codex.1", body)
+            self.assertIn("style-v2.90.1-codex.9", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

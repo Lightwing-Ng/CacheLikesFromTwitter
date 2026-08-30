@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.48.0-codex.1`
+Documentation version: `v3.48.0-codex.5`
 
 ## Purpose
 
@@ -90,9 +90,9 @@ older task cannot be submitted accidentally through a different Web session.
    resets a stale previous-provider target URL to the new provider's official home before
    validation.
 4. Before attaching project data or submitting a prompt, every provider must expose a compatible
-   model control and visibly read back the configured model. ChatGPT must prove `GPT-5.6 Sol`,
-   `5.6 Sol`, or the strongest exposed Sol thinking-effort option (`Extra High`, `High`,
-   `Medium`, or `Instant`). Gemini must prove
+   model control and visibly read back the configured model. ChatGPT must prove `GPT-5.6 Sol`
+   or `5.6 Sol`; when the subscription exposes a thinking-effort slider, the controller reads
+   its live ARIA range and rendered labels instead of assuming a fixed effort vocabulary. Gemini must prove
    `Gemini 3.1 Pro`, Grok must prove `Build`, and Claude must prove
    `Auto`. A missing,
    changed, localized, or ambiguous selector fails closed without attaching context or sending a
@@ -114,12 +114,15 @@ older task cannot be submitted accidentally through a different Web session.
    original `aria-controls` value before every click and readback. Nested popups, duplicate triggers,
    subtitles, wrappers, hidden labels or markers, and the shortened trigger alone never prove the
    configured model. Every exit either confirms that the controlled menu is closed or fails the run.
-   ChatGPT's closed thinking-effort control currently shows `Instant`, `Medium`, or `Extra High`,
-   and may also be an unlabeled composer pill or `model-switcher` control. While its menu is open
-   the same control may be renamed `Thinking effort`. Those explicit labels and the unlabeled
-   composer-adjacent menu trigger are accepted. After the menu is open, the controller selects the
-   strongest exposed Sol option: `Extra High` when present, otherwise `High`, `Medium`, `Instant`,
-   or a checked `GPT-5.6 Sol` / `5.6 Sol` name. Extra High is preferred, not required.
+   ChatGPT may expose the thinking-effort trigger under any subscription-provided label, an
+   unlabeled composer pill, or a `model-switcher` control. The controller therefore resolves the
+   live menu-semantic trigger by its rendered DOM structure and composer relationship; it does not
+   use a plan-specific effort vocabulary. Once the menu is open, the controller reads the slider's
+   `aria-valuemin`, `aria-valuemax`, and current rendered label, visits every exposed position, and
+   leaves the selected `GPT-5.6 Sol` model at the subscription's live maximum. A checked
+   `GPT-5.6 Sol` / `5.6 Sol` model item remains the required model proof. The observed effort labels
+   are recorded for status and diagnostics only, so a later subscription rename or additional tier
+   does not require a code change.
    If that trusted visible trigger is clicked but ChatGPT's Radix menu does not render, the
    controller closes any partial state and retries the control up to three times. A readable menu
    that proves a different model still fails immediately; the retry applies only to an unreadable
@@ -200,8 +203,9 @@ older task cannot be submitted accidentally through a different Web session.
    truncated ChatGPT bubble still exposes it. The controller binds the new conversation only when a
    user turn outside the composer echoes that ID, including collapsed `textContent`, and the URL
    atomically observed with the receipt still matches a second canonical URL read. This proves where
-   the transfer landed. ChatGPT's fresh-URL proof wait is 30 seconds because Extra High can delay
-   the `/c/<id>` assignment after Send. Before a fresh Grok submit, the
+   the transfer landed. ChatGPT's fresh-URL proof wait is 30 seconds because the subscription's
+   highest thinking-effort position can delay the `/c/<id>` assignment after Send. Before a fresh
+   Grok submit, the
    controller additionally enumerates the complete root or selected-Project
    conversation catalog. Pagination loops, malformed rows, repeated cursors, and incomplete schemas
    fail closed, and a conversation present in that pre-submit baseline cannot be bound even if it
@@ -277,25 +281,29 @@ older task cannot be submitted accidentally through a different Web session.
 
 ## Capability registry, event chain, and Doctor
 
-The Agent Action protocol, page-observation names, WebMCP metadata, and human-page destinations
-are registered in `app/core/agent/capability_registry.py`. `WorkspaceController` rejects any
-action that is not registered before dispatch, and the WebMCP manifest is generated from the same
-registry. The public Site surface still exposes only the bounded discovery, page-context, and
-allowlisted-navigation tools; it does not expose Agent execution or recovery routes.
+The Agent Action protocol, including closed input schemas, controller handler identifiers, prompt
+examples, and read-only task rules; page-observation names; WebMCP metadata; and human-page
+destinations are registered in `app/core/agent/capability_registry.py`. `WorkspaceController`
+rejects any action that is not registered before dispatch, and the WebMCP manifest is generated from
+the same registry. The public Site surface still exposes only the bounded discovery, page-context,
+and allowlisted-navigation tools; it does not expose Agent execution or recovery routes.
 
 Every run receives a `run-<hex>` identifier. The service persists an owner-readable JSONL event
 chain at the runtime root under `events/<run_id>.jsonl`. A valid chain starts at `run.started`,
 then links each parsed Action to `action.requested`, its bounded controller observation, and the
-relevant `verification` or `bodycheck` event before one terminal event. Provider/browser state is
-recorded as bounded page observations, while Resume and context cleanup are recorded as recovery
-events. Prompt bodies, provider responses, source text, command text, and page content are removed
-from event payloads; the persisted `last-run.json` keeps only chain health and last-event metadata.
+relevant `verification` or `bodycheck` event before one terminal event. The real loop also emits
+registered `agent_status`, `browser_session`, `provider_turn`, `browser_interruption`, and
+`agent_response` page observations. Provider/browser state is recorded as bounded page observations,
+while Resume and context cleanup are recorded as recovery events. Prompt bodies, provider
+responses, source text, command text, and page content are removed from event payloads; the
+persisted `last-run.json` keeps only chain health and last-event metadata.
 
 When a run is paused, interrupted, failed, or leaves temporary context cleanup pending, the Agent
-page loads `GET /api/agent/doctor` and opens a Doctor panel with the failed checks and safe actions.
-Resume continues a paused turn without a duplicate submit. Context cleanup reconciles only the
-app-owned temporary bundle. Provider handoff and New task remain explicit UI actions. The recovery
-endpoint never resubmits a provider prompt.
+page loads `GET /api/agent/doctor` and opens a Doctor panel with the failed checks, bounded event
+timeline, and safe actions. Completed runs with public event metadata retain that timeline for
+inspection. Resume continues a paused turn without a duplicate submit. Context cleanup reconciles
+only the app-owned temporary bundle. Provider handoff and New task remain explicit UI actions. The
+recovery endpoint never resubmits a provider prompt.
 
 ## Safety boundary
 
@@ -448,11 +456,11 @@ URL in Edge normally.
 
 The model selector is provider-specific: ChatGPT exposes the local option `5.6 Sol`, Gemini exposes `3.1 Pro`, Grok
 exposes `Build Beta`, and Claude exposes `Auto`. Each provider is fail-closed: the controller must select or observe
-and then visibly read back the exact configured model before any attachment or send. ChatGPT currently
-proves that local option through a checked `GPT-5.6 Sol` / `5.6 Sol` model item or a checked
-`Extra High` thinking-effort item after opening the Instant, Medium, Extra High, or Thinking effort
-control. A localized
-or changed menu that cannot prove the selection stops the run without transferring project data.
+and then visibly read back the exact configured model before any attachment or send. ChatGPT proves that local option
+through a checked `GPT-5.6 Sol` / `5.6 Sol` model item after opening the live menu-semantic trigger. For subscriptions that
+expose a thinking-effort slider, the controller reads the complete ARIA range at runtime, records every rendered
+position, and selects the current maximum without assuming fixed labels. A localized or changed menu that cannot prove
+the model stops the run without transferring project data.
 For an `Auto` readback, a generic popup wrapper is insufficient: the trigger must also identify
 itself as a model or mode control, or expose provider-specific model metadata.
 
@@ -465,6 +473,11 @@ keeps Ask disabled, and transfers no project data. Gemini Notebook discovery rej
 `/notebook/create` and `/notebooks/new`. Every source-catalog API response revalidates cached Project
 URLs through the current provider contract, so those aliases cannot appear as selectable Projects
 even when an older in-memory or Parquet catalog contains them.
+
+The Agent page keeps its heading on the shared title rail: the title uses the standard top anchor,
+while the readiness sentence below carries the current phase as a readable prefix such as
+`Idle ·` or `Running ·`. There is no separate phase badge, so the title, global theme action, and
+sidebar heading retain one vertical anchor without reserving an extra status-card row.
 
 While an Agent task is running on macOS, the service holds an idle-sleep assertion bound to the
 service PID until it has attempted task-scoped context removal during success, stop, or failure

@@ -1,16 +1,17 @@
 """One registry for Agent actions, page observations, and WebMCP tools.
 
-Code version: v1.0.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-CAPABILITY_REGISTRY_VERSION = "1.0.0"
-AGENT_OPTIMIZATION_CONTRACT_VERSION = "1.0.0"
+CAPABILITY_REGISTRY_VERSION = "1.1.0"
+AGENT_OPTIMIZATION_CONTRACT_VERSION = "1.1.0"
 AGENT_OPTIMIZATION_PROFILE = "openai-site-tools-2026-08-28"
 
 
@@ -28,6 +29,9 @@ class CapabilityDefinition:
     action_name: str = ""
     webmcp_name: str = ""
     input_schema: dict[str, Any] = field(default_factory=dict)
+    handler_name: str = ""
+    prompt_example: str = ""
+    read_only_task_allowed: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         """Return a JSON-safe internal registry record."""
@@ -39,6 +43,15 @@ class CapabilityDefinition:
             "id": self.manifest_id or self.key.replace(".", "_")[:64],
             "label": self.label,
             "description": self.description,
+        }
+
+    def as_webmcp_record(self) -> dict[str, Any]:
+        """Return the registry-owned metadata consumed by the shared runtime."""
+        return {
+            "name": self.webmcp_name,
+            "description": self.description,
+            "inputSchema": deepcopy(self.input_schema),
+            "readOnlyHint": self.read_only,
         }
 
 
@@ -63,6 +76,9 @@ def _action(
     *,
     read_only: bool,
     input_schema: dict[str, Any] | None = None,
+    handler_name: str = "",
+    prompt_example: str = "",
+    read_only_task_allowed: bool = False,
 ) -> CapabilityDefinition:
     return CapabilityDefinition(
         key=f"agent.action.{name}",
@@ -72,6 +88,9 @@ def _action(
         read_only=read_only,
         action_name=name,
         input_schema=input_schema or {},
+        handler_name=handler_name,
+        prompt_example=prompt_example,
+        read_only_task_allowed=read_only_task_allowed,
     )
 
 
@@ -103,6 +122,57 @@ def _webmcp(
         webmcp_name=name,
         input_schema=input_schema or {},
     )
+
+
+def _action_schema(
+    action_name: str,
+    properties: dict[str, Any],
+    *,
+    required: tuple[str, ...] = (),
+) -> dict[str, Any]:
+    """Build one closed Agent Action schema from the authoritative action name."""
+    return {
+        "type": "object",
+        "properties": {
+            "action": {"type": "string", "const": action_name},
+            **properties,
+        },
+        "required": ["action", *required],
+        "additionalProperties": False,
+    }
+
+
+def _string_property(
+    description: str,
+    *,
+    maximum: int | None = None,
+    minimum: int | None = None,
+) -> dict[str, Any]:
+    """Return one bounded string property for a registry schema."""
+    property_schema: dict[str, Any] = {
+        "type": "string",
+        "description": description,
+    }
+    if maximum is not None:
+        property_schema["maxLength"] = maximum
+    if minimum is not None:
+        property_schema["minLength"] = minimum
+    return property_schema
+
+
+def _integer_property(
+    description: str,
+    *,
+    minimum: int,
+    maximum: int,
+) -> dict[str, Any]:
+    """Return one bounded integer property for a registry schema."""
+    return {
+        "type": "integer",
+        "description": description,
+        "minimum": minimum,
+        "maximum": maximum,
+    }
 
 
 CAPABILITY_REGISTRY: tuple[CapabilityDefinition, ...] = (
@@ -161,60 +231,271 @@ CAPABILITY_REGISTRY: tuple[CapabilityDefinition, ...] = (
         "List files",
         "List bounded, non-sensitive paths inside the selected Agent workspace.",
         read_only=True,
+        handler_name="_list",
+        read_only_task_allowed=True,
+        prompt_example='{"action":"list","path":".","depth":2}',
+        input_schema=_action_schema(
+            "list",
+            {
+                "path": _string_property(
+                    "Workspace-relative directory path.",
+                    maximum=1_000,
+                ),
+                "depth": _integer_property(
+                    "Maximum directory depth to inspect.",
+                    minimum=1,
+                    maximum=6,
+                ),
+            },
+        ),
     ),
     _action(
         "read",
         "Read a file",
         "Read a bounded text range from one non-sensitive workspace file.",
         read_only=True,
+        handler_name="_read",
+        read_only_task_allowed=True,
+        prompt_example='{"action":"read","path":"relative/file","start_line":1,"end_line":240}',
+        input_schema=_action_schema(
+            "read",
+            {
+                "path": _string_property(
+                    "Workspace-relative file path.",
+                    maximum=1_000,
+                    minimum=1,
+                ),
+                "start_line": _integer_property(
+                    "First one-based line to read.",
+                    minimum=1,
+                    maximum=1_000_000,
+                ),
+                "end_line": _integer_property(
+                    "Last one-based line to read.",
+                    minimum=1,
+                    maximum=1_000_000,
+                ),
+            },
+            required=("path",),
+        ),
     ),
     _action(
         "search",
         "Search files",
         "Search literal text inside the selected workspace with bounded results.",
         read_only=True,
+        handler_name="_search",
+        read_only_task_allowed=True,
+        prompt_example='{"action":"search","query":"literal text","path":".","glob":"*.py","max_results":80}',
+        input_schema=_action_schema(
+            "search",
+            {
+                "query": _string_property(
+                    "Literal search text, never a regular expression.",
+                    maximum=8_000,
+                    minimum=1,
+                ),
+                "path": _string_property(
+                    "Workspace-relative search root.",
+                    maximum=1_000,
+                ),
+                "glob": _string_property(
+                    "Inclusive file glob.",
+                    maximum=1_000,
+                ),
+                "max_results": _integer_property(
+                    "Maximum returned matches.",
+                    minimum=1,
+                    maximum=300,
+                ),
+            },
+            required=("query",),
+        ),
     ),
     _action(
         "replace",
         "Replace text",
         "Replace one exact occurrence in an existing workspace file.",
         read_only=False,
+        handler_name="_replace",
+        prompt_example='{"action":"replace","path":"relative/file","old":"exact text appearing once","new":"replacement text"}',
+        input_schema=_action_schema(
+            "replace",
+            {
+                "path": _string_property(
+                    "Workspace-relative existing file path.",
+                    maximum=1_000,
+                    minimum=1,
+                ),
+                "old": _string_property(
+                    "Exact existing text to replace.",
+                    maximum=120_000,
+                    minimum=1,
+                ),
+                "new": _string_property(
+                    "Replacement text; an empty string is allowed by the controller.",
+                    maximum=120_000,
+                ),
+            },
+            required=("path", "old", "new"),
+        ),
     ),
     _action(
         "replace_base64",
         "Replace encoded text",
         "Replace one exact occurrence using base64 transport for quote-safe content.",
         read_only=False,
+        handler_name="_replace_base64",
+        prompt_example='{"action":"replace_base64","path":"relative/file","old_base64":"base64-of-old","new_base64":"base64-of-new"}',
+        input_schema=_action_schema(
+            "replace_base64",
+            {
+                "path": _string_property(
+                    "Workspace-relative existing file path.",
+                    maximum=1_000,
+                    minimum=1,
+                ),
+                "old_base64": _string_property(
+                    "Base64-encoded exact existing text.",
+                    maximum=160_000,
+                    minimum=1,
+                ),
+                "new_base64": _string_property(
+                    "Base64-encoded replacement text.",
+                    maximum=160_000,
+                ),
+            },
+            required=("path", "old_base64", "new_base64"),
+        ),
     ),
     _action(
         "write",
         "Write a file",
         "Create one new workspace file with bounded text content.",
         read_only=False,
+        handler_name="_write",
+        prompt_example='{"action":"write","path":"relative/new-file","content":"complete content"}',
+        input_schema=_action_schema(
+            "write",
+            {
+                "path": _string_property(
+                    "Workspace-relative new file path.",
+                    maximum=1_000,
+                    minimum=1,
+                ),
+                "content": _string_property(
+                    "Complete UTF-8 file content.",
+                    maximum=120_000,
+                    minimum=1,
+                ),
+            },
+            required=("path", "content"),
+        ),
     ),
     _action(
         "write_base64",
         "Write encoded file",
         "Create one new workspace file using base64 transport for quote-safe content.",
         read_only=False,
+        handler_name="_write_base64",
+        prompt_example='{"action":"write_base64","path":"relative/new-file","content_base64":"base64-of-content"}',
+        input_schema=_action_schema(
+            "write_base64",
+            {
+                "path": _string_property(
+                    "Workspace-relative new file path.",
+                    maximum=1_000,
+                    minimum=1,
+                ),
+                "content_base64": _string_property(
+                    "Base64-encoded UTF-8 file content.",
+                    maximum=160_000,
+                    minimum=1,
+                ),
+            },
+            required=("path", "content_base64"),
+        ),
+    ),
+    _action(
+        "delete",
+        "Delete a file",
+        "Delete one previously read workspace file only when its current SHA-256 matches the supplied value.",
+        read_only=False,
+        handler_name="_delete",
+        prompt_example='{"action":"delete","path":"relative/obsolete-file","expected_sha256":"sha256-from-a-current-read"}',
+        input_schema=_action_schema(
+            "delete",
+            {
+                "path": _string_property(
+                    "Workspace-relative existing regular file path.",
+                    maximum=1_000,
+                    minimum=1,
+                ),
+                "expected_sha256": _string_property(
+                    "Lowercase SHA-256 reported by a current read action.",
+                    maximum=64,
+                    minimum=64,
+                ),
+            },
+            required=("path", "expected_sha256"),
+        ),
     ),
     _action(
         "run",
         "Run verification",
         "Run one approved, bounded inspection or verification command and fingerprint the workspace before and after it.",
         read_only=True,
+        handler_name="_run",
+        prompt_example='{"action":"run","command":"focused inspection, build, lint, or test command"}',
+        input_schema=_action_schema(
+            "run",
+            {
+                "command": _string_property(
+                    "One approved inspection, build, lint, or test command.",
+                    maximum=4_000,
+                    minimum=1,
+                ),
+            },
+            required=("command",),
+        ),
     ),
     _action(
         "bodycheck",
         "Run bodycheck",
         "Check the current bounded diff and repository instruction files before final publication.",
         read_only=True,
+        handler_name="_bodycheck",
+        read_only_task_allowed=True,
+        prompt_example='{"action":"bodycheck"}',
+        input_schema=_action_schema("bodycheck", {}),
     ),
     _action(
         "final",
         "Publish final",
         "Publish a final summary only after current verification and bodycheck evidence exists.",
         read_only=False,
+        prompt_example='{"action":"final","summary":"concise Markdown outcome","verification":["check and result"],"limitations":["remaining limitation"]}',
+        input_schema=_action_schema(
+            "final",
+            {
+                "summary": _string_property(
+                    "Concise Markdown outcome.",
+                    maximum=8_000,
+                    minimum=1,
+                ),
+                "verification": {
+                    "type": "array",
+                    "items": _string_property("One verification result.", maximum=1_000, minimum=1),
+                    "maxItems": 20,
+                },
+                "limitations": {
+                    "type": "array",
+                    "items": _string_property("One remaining limitation.", maximum=1_000, minimum=1),
+                    "maxItems": 20,
+                },
+            },
+            required=("summary",),
+        ),
     ),
     _observation(
         "provider_turn",
@@ -249,6 +530,7 @@ CAPABILITY_REGISTRY: tuple[CapabilityDefinition, ...] = (
         input_schema={
             "type": "object",
             "properties": {},
+            "required": [],
             "additionalProperties": False,
         },
     ),
@@ -260,6 +542,7 @@ CAPABILITY_REGISTRY: tuple[CapabilityDefinition, ...] = (
         input_schema={
             "type": "object",
             "properties": {},
+            "required": [],
             "additionalProperties": False,
         },
     ),
@@ -395,6 +678,25 @@ def public_manifest_capabilities() -> list[dict[str, str]]:
     return records
 
 
+def controller_action_prompt_schema() -> str:
+    """Return the provider-facing action examples from the same registry."""
+    examples = [
+        capability.prompt_example
+        for capability in CAPABILITY_REGISTRY
+        if capability.kind == "agent_action" and capability.prompt_example
+    ]
+    return "\n\nUse one of these actions:\n" + "\n".join(examples) + "\n"
+
+
+def webmcp_manifest_definitions() -> list[dict[str, Any]]:
+    """Return the bounded WebMCP definitions consumed by both browser adapters."""
+    return [
+        capability.as_webmcp_record()
+        for capability in CAPABILITY_REGISTRY
+        if capability.kind == "webmcp_tool"
+    ]
+
+
 def build_agent_optimization_manifest() -> dict[str, Any]:
     """Build the project-owned manifest from the single capability registry."""
     return {
@@ -415,6 +717,7 @@ def build_agent_optimization_manifest() -> dict[str, Any]:
         },
         "capabilities": public_manifest_capabilities(),
         "navigation": [target.as_dict() for target in NAVIGATION_TARGETS],
+        "webmcpTools": webmcp_manifest_definitions(),
     }
 
 
