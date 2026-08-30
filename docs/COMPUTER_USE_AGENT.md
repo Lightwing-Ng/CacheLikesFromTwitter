@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.51.2-codex.1`
+Documentation version: `v3.51.3-codex.1`
 
 ## Purpose
 
@@ -130,7 +130,9 @@ older task cannot be submitted accidentally through a different Web session.
    subscription label and can request any exact label. Both the final integer `aria-valuenow` and
    rendered label must match. Missing controls, fractional or out-of-range values, incomplete
    catalogs, and unavailable requested labels fail closed before context attachment or submission.
-   A checked `GPT-5.6 Sol` / `5.6 Sol` model item remains the required model proof. The bounded
+   A checked `GPT-5.6 Sol` / `5.6 Sol` model item remains the required model proof, even when a
+   thinking-effort radio such as `Medium` is also selected in the same menu. `Highest available`
+   without a readable integer ARIA slider is not a missing-model failure. The bounded
    `available_efforts`, selected `thinking_effort`, and `effort_catalog_complete` evidence are
    persisted with the run, so a subscription rename or additional tier needs no hard-coded update.
    If that trusted visible trigger is clicked but ChatGPT's Radix menu does not render, the

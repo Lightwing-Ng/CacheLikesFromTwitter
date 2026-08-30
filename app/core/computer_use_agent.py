@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.51.1-codex.1
+Code version: v3.51.3-codex.1
 """
 
 from __future__ import annotations
@@ -8773,6 +8773,13 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             const selectedChoiceText = normalize(
                 selectedChoice?.innerText || selectedChoice?.textContent || ''
             );
+            const modelPattern = /^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
+            const selectedModelChoice = selectedChoices(menu).find((item) =>
+                modelPattern.test(normalize(item.innerText || item.textContent || ''))
+            );
+            const selectedModelText = normalize(
+                selectedModelChoice?.innerText || selectedModelChoice?.textContent || ''
+            );
             const modelChoices = Array.from(menu?.querySelectorAll(
                 '[role="menuitemradio"], [role="option"]'
             ) || []).filter(visible);
@@ -8797,7 +8804,6 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             const effortToggleLines = String(
                 effortToggle?.innerText || effortToggle?.textContent || ''
             ).split(/\n+/).map((value) => normalize(value)).filter(Boolean);
-            const modelPattern = /^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
             const normalizeEffort = (value) => normalize(value)
                 .replace(/,\s*\d+\s+of\s+\d+\.?$/i, '')
                 .trim();
@@ -8813,11 +8819,17 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
                 && !modelPattern.test(value)
             ));
             const thinkingEffort = effortCandidates[0] || '';
-            const thinkingEffortData = slider ? {
+            const sliderMin = String(slider?.getAttribute('aria-valuemin') || '').trim();
+            const sliderMax = String(slider?.getAttribute('aria-valuemax') || '').trim();
+            const thinkingEffortData = (
+                slider
+                && /^-?\d+$/.test(sliderMin)
+                && /^-?\d+$/.test(sliderMax)
+            ) ? {
                 label: thinkingEffort,
                 value: slider.getAttribute('aria-valuenow') || '',
-                min: slider.getAttribute('aria-valuemin') || '',
-                max: slider.getAttribute('aria-valuemax') || '',
+                min: sliderMin,
+                max: sliderMax,
                 available: thinkingEffort ? [thinkingEffort] : [],
             } : null;
             const available = Array.from(menu?.querySelectorAll(
@@ -8825,11 +8837,11 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             ) || []).filter(visible).map((item) => normalize(
                 item.innerText || item.textContent || ''
             )).filter(Boolean);
-            if (selectedChoiceText) {
+            if (selectedModelText || selectedChoiceText) {
                 return {
                     ok: true,
-                    current: selectedChoiceText,
-                    selected_model: selectedChoiceText,
+                    current: selectedModelText || selectedChoiceText,
+                    selected_model: selectedModelText,
                     model_options: modelOptionTexts,
                     thinking_effort: thinkingEffortData,
                     available,
@@ -9067,13 +9079,16 @@ def _chatgpt_select_subscription_effort(
             result.pop("effort_selection_error", None)
         return result, labels, complete
 
-    if "thinking_effort" not in result:
+    thinking_payload = result.get("thinking_effort")
+    if not isinstance(thinking_payload, dict):
         if requested != CHATGPT_EFFORT_POLICY_HIGHEST:
             return finish(complete=False, error="requested-effort-control-not-found")
         return finish(complete=False)
     slider = _chatgpt_find_effort_slider(page)
     if slider is None:
-        return finish(complete=False, error="effort-slider-not-found")
+        if requested != CHATGPT_EFFORT_POLICY_HIGHEST:
+            return finish(complete=False, error="effort-slider-not-found")
+        return finish(complete=False)
     state = _chatgpt_effort_slider_state(slider)
     if state is None:
         return finish(complete=False, error="effort-slider-unreadable")

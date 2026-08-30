@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.51.1-codex.1
+Code version: v3.51.3-codex.1
 """
 
 from __future__ import annotations
@@ -1115,6 +1115,210 @@ def test_chromium_medium_trigger_without_stronger_effort_accepts_medium() -> Non
     assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
     assert observation.get("observed") == "GPT-5.6 Sol"
     assert ("button", "Medium", True) in page.role_calls
+
+
+def test_chatgpt_highest_available_without_slider_does_not_fail_closed() -> None:
+    class _Page:
+        def locator(self, _selector: str) -> object:
+            class _Empty:
+                def count(self) -> int:
+                    return 0
+
+            return _Empty()
+
+    updated, labels, complete = _chatgpt_select_subscription_effort(
+        _Page(),
+        {
+            "ok": True,
+            "current": "GPT-5.6 Sol",
+            "selected_model": "GPT-5.6 Sol",
+            "available": ["Medium", "GPT-5.6 Sol", "GPT-5.5"],
+            "thinking_effort": None,
+        },
+        lambda _milliseconds: None,
+    )
+
+    assert complete is False
+    assert labels == []
+    assert "effort_selection_error" not in updated
+
+
+def test_chatgpt_medium_radio_does_not_hide_checked_sol_without_slider() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.click_count = 0
+            self.expanded = False
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _Page:
+        def __init__(self) -> None:
+            self.power = _PowerLocator()
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            if role == "button" and name == "GPT-5.6 Sol" and exact is True:
+                return self.power
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "current:" in expression or "selected_model:" in expression:
+                return {
+                    "ok": True,
+                    "current": "GPT-5.6 Sol",
+                    "selected_model": "GPT-5.6 Sol",
+                    "available": ["Medium", "GPT-5.6 Sol", "GPT-5.5"],
+                    "thinking_effort": None,
+                }
+            return {"buttons": [], "candidate_buttons": ["GPT-5.6 Sol"], "menus": ["menu"]}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        observation,
+    ) is True
+    assert observation["observed"] == "GPT-5.6 Sol"
+    assert observation.get("reason") == ""
+    assert observation.get("available") == ["Medium", "GPT-5.6 Sol", "GPT-5.5"]
+
+
+def test_chatgpt_clicks_sol_when_medium_is_the_first_selected_radio() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.click_count = 0
+            self.expanded = True
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _SolChoice:
+        def __init__(self, page: "_Page") -> None:
+            self.page = page
+            self.click_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_SolChoice":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def inner_text(self) -> str:
+            return "GPT-5.6 Sol"
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.page.selected = "GPT-5.6 Sol"
+
+    class _Page:
+        def __init__(self) -> None:
+            self.selected = "Medium"
+            self.power = _PowerLocator()
+            self.choice = _SolChoice(self)
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _SolChoice | _EmptyLocator:
+            if role == "button" and name == "GPT-5.6 Sol" and exact is True:
+                return self.power
+            if role in {"menuitemradio", "option", "menuitem"}:
+                return self.choice
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "current:" in expression or "selected_model:" in expression:
+                return {
+                    "ok": True,
+                    "current": self.selected,
+                    "selected_model": self.selected,
+                    "available": ["Medium", "GPT-5.6 Sol", "GPT-5.5"],
+                    "thinking_effort": None,
+                }
+            return {"buttons": [], "candidate_buttons": ["GPT-5.6 Sol"], "menus": ["menu"]}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        observation,
+    ) is True
+    assert page.choice.click_count == 1
+    assert observation["observed"] == "GPT-5.6 Sol"
+    assert observation.get("reason") == ""
 
 
 def test_chromium_model_selector_retries_after_power_control_recycle() -> None:
