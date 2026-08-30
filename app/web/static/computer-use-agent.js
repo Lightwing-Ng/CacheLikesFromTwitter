@@ -1,4 +1,4 @@
-/* Code version: v3.24.1-codex.1 */
+/* Code version: v3.24.1-codex.2 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -8,7 +8,6 @@
 
     const elements = {
         agentPage: document.querySelector("[data-agent-route-prefix]"),
-        phaseChip: document.getElementById("agent_phase_chip"),
         statusMessage: document.getElementById("agent_empty_response"),
         statusMessageCopy: document.querySelector("[data-agent-empty-response-copy]"),
         statusSpinner: document.querySelector("[data-agent-session-history-spinner]"),
@@ -120,10 +119,24 @@
         return Object.fromEntries(new FormData(form).entries());
     }
 
-    function setChip(element, label, state) {
-        if (!element) return;
-        element.textContent = label;
-        element.className = `status-chip status-${state}`;
+    function formatAgentPhase(phase) {
+        const normalized = String(phase || "idle").trim().toLowerCase().replace(/[_-]+/g, " ");
+        if (!normalized) return "Idle";
+        return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+    }
+
+    function agentReadinessCopy(phase, message) {
+        const phaseLabel = formatAgentPhase(phase);
+        const messageText = String(message || "").trim();
+        return messageText ? `${phaseLabel} · ${messageText}` : phaseLabel;
+    }
+
+    function setAgentReadiness(phase, message) {
+        const normalizedPhase = String(phase || "idle").trim().toLowerCase() || "idle";
+        if (elements.readiness) elements.readiness.dataset.phase = normalizedPhase;
+        if (elements.readinessMessage) {
+            elements.readinessMessage.textContent = agentReadinessCopy(normalizedPhase, message);
+        }
     }
 
     function selectedValue(selector, fallback) {
@@ -720,7 +733,7 @@
                     elements.statusMessage.hidden = false;
                     elements.statusMessage.textContent = error.message;
                 }
-                setChip(elements.phaseChip, "failed", "failed");
+                setAgentReadiness("failed", error.message);
             }
         }, 250);
     }
@@ -1770,7 +1783,8 @@
             elements.promptInput.placeholder = "Do anything";
         }
 
-        setChip(elements.phaseChip, agent.phase || "idle", agent.phase || "idle");
+        const phase = agent.phase || (running ? "running" : "idle");
+        setAgentReadiness(phase, readiness.message);
         const hasAgentResponse = renderAgentResponse(agent);
         renderErrorRecord(agent);
         if (agentNeedsDoctor(persistedAgent)) {
@@ -1795,7 +1809,6 @@
             elements.statusMessage.hidden = hasAgentResponse && agent.phase !== "failed";
         }
         if (elements.readiness) elements.readiness.dataset.ready = String(readiness.ready);
-        if (elements.readinessMessage) elements.readinessMessage.textContent = readiness.message;
         renderTerminalExecution(lastPayload.runtime);
         renderActivity(agent.activity, running);
         updateSessionChoiceInputs();
@@ -1846,7 +1859,7 @@
                 elements.errorRecord.open = true;
             }
             if (elements.responseOutput && !responseHistory.length) elements.responseOutput.hidden = true;
-            setChip(elements.phaseChip, "failed", "failed");
+            setAgentReadiness("failed", error.message);
         }
     }
 
@@ -1943,7 +1956,7 @@
                 elements.statusMessage.hidden = false;
                 elements.statusMessage.textContent = error.message;
             }
-            setChip(elements.phaseChip, "failed", "failed");
+            setAgentReadiness("failed", error.message);
         });
     });
     elements.doctorPanel?.addEventListener("click", (event) => {

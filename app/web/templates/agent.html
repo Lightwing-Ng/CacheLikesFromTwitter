@@ -1,4 +1,4 @@
-<!-- Code version: v3.24.4-codex.1 -->
+<!-- Code version: v3.24.4-codex.2 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.2') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -17,6 +17,8 @@
 {% set selected_platform = platform_options | selectattr('key', 'equalto', settings.platform) | list | first %}
 {% set selected_model_options = model_options_by_platform.get(settings.platform, ()) %}
 {% set selected_model = selected_model_options | selectattr('key', 'equalto', settings.model) | list | first %}
+{% set agent_phase = (agent_snapshot.phase or "idle") | lower %}
+{% set agent_phase_label = agent_phase | replace("_", " ") | capitalize %}
 <main class="page agent-page" data-agent-route-prefix="/agent">
     <button type="button" class="sidebar-toggle" id="sidebar_toggle" data-layout-role="sidebar-toggle" aria-label="Toggle sidebar" aria-expanded="false">
         <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
@@ -253,11 +255,10 @@
                         <div>
                             <h2 data-agent-heading>{{ selected_platform.label }} Web Agent</h2>
                         </div>
-                        <span class="status-chip status-{{ agent_snapshot.phase }}" id="agent_phase_chip">{{ agent_snapshot.phase }}</span>
                     </div>
-                    <p class="agent-readiness" data-ready="{{ 'true' if runtime_snapshot.ready else 'false' }}">
+                    <p class="agent-readiness" data-ready="{{ 'true' if runtime_snapshot.ready else 'false' }}" data-phase="{{ agent_phase }}">
                         <span class="agent-readiness-dot" aria-hidden="true"></span>
-                        <span id="agent_readiness_message">{{ runtime_snapshot.message }}</span>
+                        <span id="agent_readiness_message">{{ agent_phase_label }} · {{ runtime_snapshot.message }}</span>
                     </p>
                 </article>
             </div>
@@ -434,6 +435,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.7.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.24.1-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.24.1-codex.2') }}"></script>
 </body>
 </html>

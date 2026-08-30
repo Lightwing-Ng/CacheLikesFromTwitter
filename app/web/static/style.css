@@ -1,4 +1,4 @@
-/* Code version: v2.90.1-codex.1 */
+/* Code version: v2.90.1-codex.2 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -3804,14 +3804,30 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-summary-card {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
     flex: 0 0 auto;
+    min-height: var(--workspace-title-rail-height);
+    max-height: none;
+    overflow: visible;
+    padding: var(--workspace-title-rail-pad-block-start)
+        var(--workspace-article-pad-inline)
+        var(--workspace-article-pad-block-end);
+}
+
+.agent-summary-card > .report-heading-row {
+    width: 100%;
+    min-height: var(--workspace-title-rail-control-height);
+    margin-bottom: 0;
 }
 
 .agent-summary-card > .agent-readiness {
     display: flex;
     align-items: center;
     gap: 8px;
-    margin-top: 10px;
+    margin: 6px 0 0;
     color: var(--muted);
     font-size: var(--font-table-body);
 }
@@ -3830,6 +3846,11 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .settings-agent-runtime-status[data-ready="true"] .settings-agent-runtime-dot {
     background: var(--theme-success-strong);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-success-strong) 14%, transparent);
+}
+
+.agent-readiness[data-phase="failed"] .agent-readiness-dot {
+    background: var(--theme-error);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-error) 14%, transparent);
 }
 
 .agent-workspace-grid {
@@ -4655,6 +4676,10 @@ body::before,
 
 .workspace > .workspace-header:first-child > .workspace-article-card:not(.cache-overview-title-card) {
     padding-top: max(10px, var(--workspace-title-safe-top));
+}
+
+.workspace > .workspace-header:first-child > .workspace-article-card:not(.cache-overview-title-card).agent-summary-card {
+    padding-top: var(--workspace-title-rail-pad-block-start);
 }
 
 .app-shell.is-sidebar-collapsed .sidebar,
