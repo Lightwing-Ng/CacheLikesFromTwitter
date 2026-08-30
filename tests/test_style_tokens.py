@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.1-codex.7
+Code version: v1.51.1-codex.13
 """
 
 from pathlib import Path
@@ -1758,7 +1758,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-                "/* Code version: v2.90.1-codex.10 */",
+                "/* Code version: v2.90.1-codex.16 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1789,8 +1789,10 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-os-combobox .browser-picker-option-icon {",
         ".agent-os-combobox .agent-combobox-option {",
         ".agent-combobox-loading-spinner {",
-        ".agent-empty-response {",
-        ".agent-empty-response-spinner {",
+        ".agent-response-status {",
+        ".agent-response-status-indicator {",
+        ".agent-response-status-dot {",
+        ".agent-response-status-spinner {",
         ".agent-conversation-link.is-traditional-handoff {",
         ".agent-conversation-link-label {",
         'background-image: url("/static/images/browser.edge.png");',
@@ -1813,7 +1815,6 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-summary-card > .report-heading-row {",
         ".agent-summary-card > .report-heading-row > div {",
         "align-items: center;",
-        "margin: 6px 0 0;",
         ".workspace > .workspace-header:first-child > .workspace-article-card:not(.cache-overview-title-card).agent-summary-card {",
         "padding-top: var(--workspace-title-rail-pad-block-start);",
         ".agent-task-card {",
@@ -1826,8 +1827,6 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-composer-submit.is-resume .agent-composer-submit-icon {",
         'mask-image: url("/static/images/stop.fill.svg");',
         "border-radius: var(--radius-soft);",
-        ".agent-readiness[data-ready=\"true\"] .agent-readiness-dot,",
-        ".agent-readiness[data-phase=\"failed\"] .agent-readiness-dot {",
         ".agent-activity-panel {",
         ".agent-activity-list {",
         "overflow-y: auto;",
@@ -1901,7 +1900,9 @@ def test_agent_composer_uses_a_two_line_lightweight_prompt_with_a_standard_toggl
     stylesheet = _stylesheet()
     prompt_start = stylesheet.index(".agent-prompt-input {")
     prompt_rule = stylesheet[prompt_start:stylesheet.index("\n}", prompt_start)]
-    toggle_start = stylesheet.index(".agent-composer-overflow-toggle {")
+    toggle_start = stylesheet.index(
+        ".browser-session-message-toggle.agent-composer-overflow-toggle {"
+    )
     toggle_rule = stylesheet[toggle_start:stylesheet.index("\n}", toggle_start)]
     pagination_start = stylesheet.index(".browser-pagination.agent-response-pagination {")
     pagination_rule = stylesheet[pagination_start:stylesheet.index("\n}", pagination_start)]
@@ -1914,7 +1915,13 @@ def test_agent_composer_uses_a_two_line_lightweight_prompt_with_a_standard_toggl
         "font-weight: var(--font-weight-light);",
     ):
         assert token in prompt_rule
-    for token in ("align-self: auto;", "margin: 0;"):
+    for token in (
+        "position: absolute;",
+        "top: 12px;",
+        "right: 12px;",
+        "z-index: var(--layer-control-affordance);",
+        "margin: 0;",
+    ):
         assert token in toggle_rule
     for token in (
         "padding: 0;",
@@ -1944,6 +1951,7 @@ def test_agent_composer_uses_one_frosted_surface_and_an_invisible_vertical_scrol
     scrollbar_rule = stylesheet[scrollbar_start:stylesheet.index("\n}", scrollbar_start)]
 
     for token in (
+        "position: relative;",
         "border: var(--frosted-glass-border);",
         "background: var(--frosted-glass-background);",
         "box-shadow: var(--frosted-glass-shadow);",
@@ -1971,6 +1979,58 @@ def test_agent_composer_uses_one_frosted_surface_and_an_invisible_vertical_scrol
     assert "height: 0;" in scrollbar_rule
 
 
+def test_agent_summary_rail_does_not_retain_redundant_readiness_copy() -> None:
+    """Keep the Agent title rail focused on its heading and remove stale status CSS."""
+    stylesheet = _stylesheet()
+
+    assert ".agent-summary-card > .agent-readiness" not in stylesheet
+    assert ".agent-readiness-dot" not in stylesheet
+
+
+def test_agent_response_toolbar_owns_the_compact_lifecycle_status() -> None:
+    """Keep Agent lifecycle feedback in the response toolbar beside the handoff action."""
+    stylesheet = _stylesheet()
+    toolbar_start = stylesheet.index(".agent-response-toolbar {\n    justify-content: space-between;")
+    toolbar_rule = stylesheet[toolbar_start:stylesheet.index("\n}", toolbar_start)]
+    status_start = stylesheet.index(".agent-response-status {\n")
+    status_rule = stylesheet[status_start:stylesheet.index("\n}", status_start)]
+
+    assert "gap: 12px;" in toolbar_rule
+    assert "min-width: 0;" in status_rule
+    assert "margin: 0;" in status_rule
+
+
+def test_agent_composer_triggers_use_the_compact_shared_height_token() -> None:
+    """Keep the model and effort controls aligned to the compact 32px rail."""
+    stylesheet = _stylesheet()
+    selector = ".agent-model-trigger,\n.agent-effort-trigger {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "--agent-composer-control-height: 32px;" in stylesheet
+    for token in (
+        "height: var(--agent-composer-control-height);",
+        "min-height: var(--agent-composer-control-height);",
+        "padding: 4px 10px;",
+    ):
+        assert token in selector_rule
+
+
+def test_agent_composer_dropdowns_open_above_the_bottom_composer() -> None:
+    """Keep Agent model and effort menus inside the viewport above the Composer."""
+    stylesheet = _stylesheet()
+    selector = ".agent-model-dropdown,\n.agent-effort-dropdown {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    for token in (
+        "top: auto;",
+        "bottom: calc(100% + 4px);",
+        "right: auto;",
+    ):
+        assert token in selector_rule
+
+
 def test_agent_session_lists_open_above_the_sidebar_trigger() -> None:
     """Keep long session menus inside the sidebar viewport near its bottom edge."""
     stylesheet = _stylesheet()
@@ -1991,8 +2051,27 @@ def test_agent_recent_session_list_is_inline_and_scrollable() -> None:
 
     assert "position: static;" in selector_rule
     assert "display: grid !important;" in selector_rule
-    assert "max-height: min(280px, max(28px, calc(100vh - 706px)));" in selector_rule
+    assert "--agent-session-list-dock-gap: var(--sidebar-dock-bottom-gap);" in selector_rule
+    assert "--agent-session-list-menu-min-height: var(--control-compact-height);" in selector_rule
+    assert "--agent-session-list-menu-available-height: var(--agent-session-list-menu-min-height);" in selector_rule
+    assert "max-height: min(" in selector_rule
     assert "overflow-y: auto;" in selector_rule
+    assert "scrollbar-width: none;" in selector_rule
+    assert "scrollbar-gutter: auto;" in selector_rule
+    assert "-ms-overflow-style: none;" in selector_rule
+
+    scrollbar_start = stylesheet.index(
+        ".agent-session-list-menu-direct::-webkit-scrollbar {",
+    )
+    scrollbar_rule = stylesheet[scrollbar_start:stylesheet.index("\n}", scrollbar_start)]
+    assert "width: 0;" in scrollbar_rule
+    assert "height: 0;" in scrollbar_rule
+
+    track_start = stylesheet.index(
+        ".agent-session-list-menu-direct::-webkit-scrollbar-track,",
+    )
+    track_rule = stylesheet[track_start:stylesheet.index("\n}", track_start)]
+    assert "background: transparent;" in track_rule
 
 
 def test_browser_session_status_labels_share_nonbold_left_typography() -> None:
@@ -2154,3 +2233,21 @@ def test_agent_error_record_is_collapsible_and_vertically_scrollable() -> None:
     assert "overscroll-behavior: contain;" in scroll_rule
     assert "white-space: pre-wrap;" in content_rule
     assert "overflow-wrap: anywhere;" in content_rule
+
+
+def test_agent_sidebar_primary_comboboxes_use_the_compact_form_height() -> None:
+    """Keep Web service and Session source controls on the shared 36px rail."""
+    stylesheet = _stylesheet()
+    selector = (
+        ".agent-platform-combobox .agent-combobox-trigger,\n"
+        ".agent-session-mode-combobox .agent-combobox-trigger {"
+    )
+    start = stylesheet.index(selector)
+    rule = stylesheet[start:stylesheet.index("\n}", start)]
+
+    for token in (
+        "height: var(--control-form-height);",
+        "min-height: var(--control-form-height);",
+        "padding-block: 3px;",
+    ):
+        assert token in rule

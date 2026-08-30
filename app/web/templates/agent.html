@@ -1,4 +1,4 @@
-<!-- Code version: v3.25.0-codex.1 -->
+<!-- Code version: v3.26.0-codex.4 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.9') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.16') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -17,8 +17,6 @@
 {% set selected_platform = platform_options | selectattr('key', 'equalto', settings.platform) | list | first %}
 {% set selected_model_options = model_options_by_platform.get(settings.platform, ()) %}
 {% set selected_model = selected_model_options | selectattr('key', 'equalto', settings.model) | list | first %}
-{% set agent_phase = (agent_snapshot.phase or "idle") | lower %}
-{% set agent_phase_label = agent_phase | replace("_", " ") | capitalize %}
 <main class="page agent-page" data-agent-route-prefix="/agent">
     <button type="button" class="sidebar-toggle" id="sidebar_toggle" data-layout-role="sidebar-toggle" aria-label="Toggle sidebar" aria-expanded="false">
         <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
@@ -256,10 +254,6 @@
                             <h2 data-agent-heading>{{ selected_platform.label }} Web Agent</h2>
                         </div>
                     </div>
-                    <p class="agent-readiness" data-ready="{{ 'true' if runtime_snapshot.ready else 'false' }}" data-phase="{{ agent_phase }}">
-                        <span class="agent-readiness-dot" aria-hidden="true"></span>
-                        <span id="agent_readiness_message">{{ agent_phase_label }} · {{ runtime_snapshot.message }}</span>
-                    </p>
                 </article>
             </div>
 
@@ -267,6 +261,13 @@
                 <article class="report-card workspace-article-card agent-task-card">
                     <article class="agent-response-card" aria-live="polite">
                         <div class="agent-response-toolbar">
+                            <p class="agent-response-status" id="agent_response_status" role="status" aria-live="polite">
+                                <span class="agent-response-status-indicator" data-agent-response-status-indicator aria-hidden="true">
+                                    <span class="agent-response-status-dot" data-agent-response-status-dot></span>
+                                    <span class="suggestion-loading-spinner agent-response-status-spinner" data-agent-response-status-spinner hidden></span>
+                                </span>
+                                <span class="agent-response-status-copy" data-agent-response-status-copy>{{ agent_snapshot.message or "Ready to use a signed-in Web AI session." }}</span>
+                            </p>
                             <a
                                 class="browser-media-round-action browser-media-source-link agent-conversation-link"
                                 id="agent_conversation_link"
@@ -332,10 +333,6 @@
                             </div>
                             <nav class="browser-pagination local-store-pagination agent-response-pagination" id="agent_response_pagination" data-layout-role="pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
                         </div>
-                        <p class="agent-empty-response" id="agent_empty_response"{% if initial_history_item or agent_snapshot.response %} hidden{% endif %}>
-                            <span class="suggestion-loading-spinner agent-empty-response-spinner" data-agent-session-history-spinner aria-hidden="true" hidden></span>
-                            <span data-agent-empty-response-copy>{{ agent_snapshot.message }}</span>
-                        </p>
                         <details class="agent-error-record" id="agent_error_record"{% if agent_snapshot.error_traceback or agent_snapshot.last_error %} open{% endif %}{% if not (agent_snapshot.error_traceback or agent_snapshot.last_error) %} hidden{% endif %}>
                             <summary>
                                 <span>Execution record</span>
@@ -371,6 +368,9 @@
                         <label class="field agent-composer-field">
                             <span class="agent-composer-shell">
                                 <textarea class="text-input-control agent-prompt-input" id="agent_prompt_input" name="prompt" rows="2" placeholder="Do anything" aria-label="Question or task" data-agent-prompt-input required>{{ agent_snapshot.prompt }}</textarea>
+                                <button type="button" class="browser-session-message-toggle agent-composer-overflow-toggle" data-agent-composer-overflow-toggle hidden aria-controls="agent_prompt_input" aria-expanded="false" aria-label="Expand question or task" title="Expand question or task">
+                                    <span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span>
+                                </button>
                                 <span class="agent-composer-footer">
                                     <span class="trade-strategy-combobox agent-combobox agent-model-combobox" data-agent-combobox>
                                         <input type="hidden" name="model" value="{{ settings.model }}" data-agent-combobox-input data-agent-model-input>
@@ -436,9 +436,6 @@
                                         </span>
                                     </span>
                                     <span class="agent-composer-actions">
-                                        <button type="button" class="browser-session-message-toggle agent-composer-overflow-toggle" data-agent-composer-overflow-toggle aria-controls="agent_prompt_input" aria-expanded="false" aria-label="Expand question or task" title="Expand question or task">
-                                            <span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span>
-                                        </button>
                                         <button type="button" class="agent-composer-submit is-resume" id="agent_resume_button" data-agent-resume hidden aria-label="Resume Agent task" title="Resume Agent task">
                                             <span class="icon agent-composer-submit-icon" aria-hidden="true"></span>
                                         </button>
@@ -464,6 +461,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.25.0-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.26.0-codex.4') }}"></script>
 </body>
 </html>

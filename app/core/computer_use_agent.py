@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.50.0-codex.1
+Code version: v3.51.0-codex.1
 """
 
 from __future__ import annotations
@@ -103,6 +103,15 @@ MAX_ACTION_OUTPUT_CHARS = 48_000
 RUN_OUTPUT_QUEUE_SIZE = 4
 MAX_FILE_READ_CHARS = 120_000
 MAX_CONTROLLER_DELETE_BYTES = 20 * 1_024 * 1_024
+_ANCHORED_DELETE_SUPPORTED = bool(
+    os.name == "posix"
+    and hasattr(os, "O_DIRECTORY")
+    and hasattr(os, "O_NOFOLLOW")
+    and os.open in getattr(os, "supports_dir_fd", set())
+    and os.unlink in getattr(os, "supports_dir_fd", set())
+    and os.stat in getattr(os, "supports_dir_fd", set())
+    and os.stat in getattr(os, "supports_follow_symlinks", set())
+)
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
 CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
@@ -668,6 +677,7 @@ class AgentRunSnapshot:
     thinking_effort: str = ""
     available_efforts: list[str] = field(default_factory=list)
     effort_catalog_complete: bool = False
+    conversation_bound: bool = False
     session_type: str = ""
     catalog_state: str = "idle"
     catalog_error: str = ""
@@ -692,6 +702,10 @@ class ActionState:
     bodycheck_generation: int = -1
     verification_generation: int = -1
     successful_checks: list[str] = field(default_factory=list)
+    read_receipts: dict[
+        str,
+        tuple[str, tuple[int, int, int, int, int], int],
+    ] = field(default_factory=dict)
 
     @property
     def bodycheck_current(self) -> bool:
@@ -2579,6 +2593,13 @@ class WorkspaceController:
         read_only: bool = False,
     ) -> None:
         self.workspace = workspace.resolve()
+        workspace_metadata = self.workspace.stat()
+        if not stat_module.S_ISDIR(workspace_metadata.st_mode):
+            raise ValueError("The selected Agent workspace must be a directory.")
+        self._workspace_identity = (
+            int(workspace_metadata.st_dev),
+            int(workspace_metadata.st_ino),
+        )
         self.settings = settings
         self.state = ActionState()
         self.should_stop = should_stop
@@ -2656,7 +2677,13 @@ class WorkspaceController:
     @staticmethod
     def _stable_file_identity(path: Path) -> tuple[int, int, int, int, int]:
         """Return one regular-file identity used to guard a destructive action."""
-        metadata = path.lstat()
+        return WorkspaceController._stable_file_identity_from_stat(path.lstat())
+
+    @staticmethod
+    def _stable_file_identity_from_stat(
+        metadata: os.stat_result,
+    ) -> tuple[int, int, int, int, int]:
+        """Validate and normalize one bounded regular-file identity."""
         if (
             not stat_module.S_ISREG(metadata.st_mode)
             or stat_module.S_ISLNK(metadata.st_mode)
@@ -2675,6 +2702,81 @@ class WorkspaceController:
             int(metadata.st_mtime_ns),
             int(metadata.st_mode),
         )
+
+    def _open_anchored_delete_parent(self, relative: Path) -> tuple[int, str]:
+        """Open a workspace-confined parent directory without following links."""
+        if not _ANCHORED_DELETE_SUPPORTED:
+            raise RuntimeError(
+                "Safe delete is unavailable on this host because anchored directory operations "
+                "are not supported."
+            )
+        if relative.is_absolute() or len(relative.parts) < 1 or ".." in relative.parts:
+            raise ValueError("The delete action requires one workspace-relative file path.")
+        leaf_name = relative.name
+        if leaf_name in {"", ".", ".."}:
+            raise ValueError("The delete action requires one regular file.")
+        directory_flags = (
+            os.O_RDONLY
+            | os.O_DIRECTORY
+            | os.O_NOFOLLOW
+            | getattr(os, "O_CLOEXEC", 0)
+        )
+        directory_fd = os.open(self.workspace, directory_flags)
+        try:
+            root_metadata = os.fstat(directory_fd)
+            if (
+                int(root_metadata.st_dev),
+                int(root_metadata.st_ino),
+            ) != self._workspace_identity:
+                raise RuntimeError(
+                    "The Agent workspace changed before deletion; start a new task."
+                )
+            for component in relative.parts[:-1]:
+                next_fd = os.open(component, directory_flags, dir_fd=directory_fd)
+                os.close(directory_fd)
+                directory_fd = next_fd
+            return directory_fd, leaf_name
+        except BaseException:
+            os.close(directory_fd)
+            raise
+
+    @staticmethod
+    def _hash_anchored_file(
+        directory_fd: int,
+        leaf_name: str,
+    ) -> tuple[str, int, tuple[int, int, int, int, int], int]:
+        """Open and hash one no-follow file relative to an anchored parent."""
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        file_fd = os.open(leaf_name, file_flags, dir_fd=directory_fd)
+        try:
+            before = WorkspaceController._stable_file_identity_from_stat(
+                os.fstat(file_fd)
+            )
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(file_fd, 64 * 1_024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            after = WorkspaceController._stable_file_identity_from_stat(
+                os.fstat(file_fd)
+            )
+            entry = WorkspaceController._stable_file_identity_from_stat(
+                os.stat(leaf_name, dir_fd=directory_fd, follow_symlinks=False)
+            )
+            if after != before or entry != before:
+                raise RuntimeError(
+                    "The file changed while the controller was checking it; read it again "
+                    "before retrying."
+                )
+            return digest.hexdigest(), before[2], before, file_fd
+        except BaseException:
+            os.close(file_fd)
+            raise
+
+    def _mark_edit(self) -> None:
+        """Advance the edit generation and invalidate all earlier read receipts."""
+        self.state.edit_generation += 1
 
     def _current_file_sha256(self, path: Path) -> tuple[str, int, tuple[int, int, int, int, int]]:
         """Hash one bounded regular file and reject changes while it is being read."""
@@ -2746,16 +2848,22 @@ class WorkspaceController:
             raise ValueError("The read action requires a regular file.")
         if path.stat().st_size > MAX_CONTROLLER_DELETE_BYTES:
             raise ValueError("The requested file is too large for a text read.")
-        sha256, _file_bytes, _identity = self._current_file_sha256(path)
+        sha256, _file_bytes, identity = self._current_file_sha256(path)
         text = path.read_text(encoding="utf-8", errors="replace").splitlines()
         start = max(1, int(payload.get("start_line", 1)))
         end = min(len(text), max(start, int(payload.get("end_line", start + 239))))
         lines = [f"{index}: {text[index - 1]}" for index in range(start, end + 1)]
         content = _truncate_text("\n".join(lines), MAX_FILE_READ_CHARS)
+        relative_path = path.relative_to(self.workspace).as_posix()
+        self.state.read_receipts[relative_path] = (
+            sha256,
+            identity,
+            self.state.edit_generation,
+        )
         return {
             "ok": True,
             "action": "read",
-            "path": path.relative_to(self.workspace).as_posix(),
+            "path": relative_path,
             "start_line": start,
             "end_line": end,
             "total_lines": len(text),
@@ -3049,7 +3157,7 @@ class WorkspaceController:
         if occurrences != 1:
             raise ValueError(f"Replace text must appear exactly once; found {occurrences:,} occurrences.")
         path.write_text(source.replace(old, new, 1), encoding="utf-8")
-        self.state.edit_generation += 1
+        self._mark_edit()
         return {
             "ok": True,
             "action": "replace",
@@ -3066,7 +3174,7 @@ class WorkspaceController:
             raise ValueError("The write action requires file content.")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        self.state.edit_generation += 1
+        self._mark_edit()
         return {
             "ok": True,
             "action": "write",
@@ -3096,7 +3204,7 @@ class WorkspaceController:
         if occurrences != 1:
             raise ValueError(f"Replace text must appear exactly once; found {occurrences:,} occurrences.")
         path.write_text(source.replace(old, new, 1), encoding="utf-8")
-        self.state.edit_generation += 1
+        self._mark_edit()
         return {
             "ok": True,
             "action": "replace_base64",
@@ -3118,7 +3226,7 @@ class WorkspaceController:
             raise ValueError("The write_base64 action requires non-empty decoded content.")
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
-        self.state.edit_generation += 1
+        self._mark_edit()
         return {
             "ok": True,
             "action": "write_base64",
@@ -3131,26 +3239,44 @@ class WorkspaceController:
         path = self._resolve_path(payload.get("path"))
         if not path.is_file():
             raise ValueError("The delete action requires an existing regular file.")
+        relative = path.relative_to(self.workspace)
+        relative_key = relative.as_posix()
         expected_sha256 = str(payload.get("expected_sha256") or "").strip().casefold()
         if not re.fullmatch(r"[0-9a-f]{64}", expected_sha256):
             raise ValueError(
                 "The delete action requires the lowercase SHA-256 from a current read action."
             )
-        current_sha256, deleted_bytes, identity = self._current_file_sha256(path)
-        if current_sha256 != expected_sha256:
+        receipt = self.state.read_receipts.get(relative_key)
+        if receipt is None or receipt[2] != self.state.edit_generation:
             raise ValueError(
-                "The file no longer matches the SHA-256 from the read action; read it again before deleting."
+                "The delete action requires this controller to read the current file first."
             )
-        if self._stable_file_identity(path) != identity:
-            raise RuntimeError(
-                "The file changed before deletion; read it again before retrying."
+        if receipt[0] != expected_sha256:
+            raise ValueError(
+                "The supplied SHA-256 does not match this controller's current read receipt."
             )
-        path.unlink()
-        self.state.edit_generation += 1
+        directory_fd, leaf_name = self._open_anchored_delete_parent(relative)
+        file_fd = -1
+        try:
+            current_sha256, deleted_bytes, identity, file_fd = self._hash_anchored_file(
+                directory_fd,
+                leaf_name,
+            )
+            if current_sha256 != expected_sha256 or identity != receipt[1]:
+                raise ValueError(
+                    "The file no longer matches the current read receipt; read it again "
+                    "before deleting."
+                )
+            os.unlink(leaf_name, dir_fd=directory_fd)
+        finally:
+            if file_fd >= 0:
+                os.close(file_fd)
+            os.close(directory_fd)
+        self._mark_edit()
         return {
             "ok": True,
             "action": "delete",
-            "path": path.relative_to(self.workspace).as_posix(),
+            "path": relative_key,
             "deleted_bytes": deleted_bytes,
         }
 
@@ -3243,7 +3369,7 @@ class WorkspaceController:
         workspace_scan_complete = before_scan_complete and after_scan_complete
         mutated_workspace = after_fingerprint != before_fingerprint
         if mutated_workspace or not workspace_scan_complete:
-            self.state.edit_generation += 1
+            self._mark_edit()
         elif run_error is None and not stopped and not timed_out and returncode == 0:
             self.state.verification_generation = self.state.edit_generation
             self.state.successful_checks.append(command)
@@ -4403,6 +4529,7 @@ class ComputerUseAgentService:
             "thinking_effort",
             "available_efforts",
             "effort_catalog_complete",
+            "conversation_bound",
             "context_attached",
             "context_file",
             "context_bytes",
@@ -4676,6 +4803,7 @@ class ComputerUseAgentService:
                 model=settings.model,
                 chatgpt_effort=settings.chatgpt_effort,
                 read_only=bool(read_only),
+                conversation_bound=False,
                 run_id=new_run_id(),
             )
             self._event_chain = AgentEventChain(self._runtime_root, self._snapshot.run_id)
@@ -4777,8 +4905,9 @@ class ComputerUseAgentService:
         """Validate the bounded metadata required for a no-context restart.
 
         Continuation intentionally has a narrow contract: an interrupted
-        ChatGPT session in Edge, a valid local workspace, and explicit prior
-        read-only state. It never falls back to mutable current preferences.
+        ChatGPT session in Edge, a valid local workspace, confirmed prior
+        conversation binding, and explicit local-permission state. It never
+        falls back to mutable current preferences.
         """
         snapshot = self._snapshot
         if snapshot.running or snapshot.phase != "interrupted":
@@ -4788,7 +4917,12 @@ class ComputerUseAgentService:
         if snapshot.operating_system not in SUPPORTED_OPERATING_SYSTEMS:
             return None, "The interrupted task has no supported recorded operating system."
         if not isinstance(snapshot.read_only, bool):
-            return None, "The interrupted task has no safe recorded read-only permission."
+            return None, "The interrupted task has no safe recorded local-permission state."
+        if snapshot.conversation_bound is not True:
+            return None, (
+                "The interrupted task ended before its ChatGPT conversation binding was "
+                "confirmed. Start a new task instead."
+            )
         try:
             workspace = resolve_workspace_path(snapshot.workspace_path)
         except (OSError, ValueError):
@@ -7257,7 +7391,7 @@ def _run_web_action_loop(
     expected_tab_id = session_binding.expected_tab_id
     expected_title = session_binding.expected_title
     if conversation_url:
-        update(conversation_url=conversation_url)
+        update(conversation_url=conversation_url, conversation_bound=True)
     record_page_observation(
         "browser_session",
         status="bound",
@@ -8814,13 +8948,14 @@ def _chatgpt_effort_slider_state(slider: Any) -> dict[str, int] | None:
         ok, raw_value = _read_chatgpt_locator_attribute(slider, name)
         if not ok or raw_value is None:
             return None
-        try:
-            values[key] = int(float(raw_value))
-        except (TypeError, ValueError):
+        normalized_value = str(raw_value).strip()
+        if not re.fullmatch(r"-?\d+", normalized_value):
             return None
+        values[key] = int(normalized_value)
     if values["max"] < values["min"]:
         return None
-    values["now"] = min(max(values["now"], values["min"]), values["max"])
+    if not values["min"] <= values["now"] <= values["max"]:
+        return None
     return values
 
 
@@ -9043,6 +9178,20 @@ def _select_chatgpt_model_chromium(
     """Use trusted Playwright clicks, then read back the remote Chromium model."""
     wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
     model_labels = _chatgpt_remote_model_labels(option, remote_labels)
+    requested_thinking_effort = normalize_chatgpt_effort(thinking_effort)
+
+    def effort_selection_failed(
+        result_payload: dict[str, Any],
+        catalog_complete: bool,
+    ) -> bool:
+        """Fail closed when the requested effort or a live slider was not proved."""
+        if catalog_complete:
+            return False
+        return bool(
+            requested_thinking_effort != CHATGPT_EFFORT_POLICY_HIGHEST
+            or result_payload.get("thinking_effort") is not None
+            or result_payload.get("effort_selection_error")
+        )
 
     def result_matches_target(result_payload: dict[str, Any], current_value: str) -> bool:
         selected_model = str(result_payload.get("selected_model") or "").strip()
@@ -9155,12 +9304,13 @@ def _select_chatgpt_model_chromium(
         if str(item).strip()
     ]
     effort_labels: list[str] = []
+    effort_selection_complete = False
     if result.get("ok") and result_matches_target(result, current):
         result, effort_labels, effort_selection_complete = _chatgpt_select_subscription_effort(
             page,
             result,
             wait_for_timeout,
-            thinking_effort,
+            requested_thinking_effort,
         )
         current = str(result.get("current") or current)
         available = [
@@ -9172,7 +9322,7 @@ def _select_chatgpt_model_chromium(
             return False
         _close_chatgpt_model_menu(page, power_button)
         effort_catalog_complete = bool(effort_selection_complete)
-        if result.get("thinking_effort") is not None and not effort_catalog_complete:
+        if effort_selection_failed(result, effort_catalog_complete):
             _record_model_observation(
                 observation,
                 observed=str(result.get("selected_model") or current),
@@ -9284,7 +9434,7 @@ def _select_chatgpt_model_chromium(
                 page,
                 result,
                 wait_for_timeout,
-                thinking_effort,
+                requested_thinking_effort,
             )
             current = str(result.get("current") or current)
         if stop_requested():
@@ -9292,7 +9442,7 @@ def _select_chatgpt_model_chromium(
         _close_chatgpt_model_menu(page, power_button)
         matched = bool(result.get("ok") and result_matches_after_selection(result, current))
         effort_catalog_complete = bool(effort_selection_complete)
-        if result.get("thinking_effort") is not None and not effort_catalog_complete:
+        if effort_selection_failed(result, effort_catalog_complete):
             matched = False
         observed_value, available_values, effort_values = observation_values(
             result,
@@ -9381,7 +9531,7 @@ def _select_chatgpt_model_chromium(
                             page,
                             result,
                             wait_for_timeout,
-                            thinking_effort,
+                            requested_thinking_effort,
                         )
                         current = str(result.get("current") or current)
                     if stop_requested():
@@ -9389,7 +9539,7 @@ def _select_chatgpt_model_chromium(
                     _close_chatgpt_model_menu(page, power_button)
                     matched = bool(result.get("ok") and result_matches_after_selection(result, current))
                     effort_catalog_complete = bool(effort_selection_complete)
-                    if result.get("thinking_effort") is not None and not effort_catalog_complete:
+                    if effort_selection_failed(result, effort_catalog_complete):
                         matched = False
                     observed_value, available_values, effort_values = observation_values(
                         result,

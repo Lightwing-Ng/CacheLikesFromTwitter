@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.50.0-codex.1
+Code version: v3.51.0-codex.1
 """
 
 from __future__ import annotations
@@ -44,6 +44,7 @@ from app.core.computer_use_agent import (
     _attach_context_file,
     _CONTROLLER_ACTION_SCHEMA_MARKERS,
     _chatgpt_response_snapshot,
+    _chatgpt_effort_slider_state,
     _chatgpt_visible_model_controls,
     _detect_browser_interruption,
     default_model_for_platform,
@@ -560,6 +561,41 @@ def test_chromium_reused_session_verifies_medium_trigger() -> None:
     assert ("button", "Medium", True) in page.role_calls
     assert observation["observed"] == "GPT-5.6 Sol"
     assert page.power.click_count == 2
+
+
+def test_chromium_explicit_effort_fails_closed_without_a_live_slider() -> None:
+    page = _chromium_model_page("Medium", current="GPT-5.6 Sol")
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        observation,
+        thinking_effort="Medium",
+    ) is False
+    assert observation["reason"] == "requested-effort-control-not-found"
+    assert observation["effort_catalog_complete"] is False
+
+
+@pytest.mark.parametrize(
+    ("now", "minimum", "maximum"),
+    (("1.5", "0", "4"), ("5", "0", "4"), ("-1", "0", "4")),
+)
+def test_chatgpt_effort_slider_state_rejects_unproved_values(
+    now: str,
+    minimum: str,
+    maximum: str,
+) -> None:
+    class _Slider:
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            return {
+                "aria-valuenow": now,
+                "aria-valuemin": minimum,
+                "aria-valuemax": maximum,
+            }.get(name)
+
+    assert _chatgpt_effort_slider_state(_Slider()) is None
 
 
 def test_chromium_selector_accepts_open_thinking_effort_menu() -> None:
@@ -4620,7 +4656,10 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
     assert "Controller observation for turn 1" in submitted[1]
     assert "fenced code block labelled json" in submitted[1]
     assert "JSON-escape embedded double quotes" in submitted[1]
-    assert {"conversation_url": "https://chatgpt.com/c/example"} in updates
+    assert {
+        "conversation_url": "https://chatgpt.com/c/example",
+        "conversation_bound": True,
+    } in updates
     events = event_chain.public_events()
     kinds = [event["kind"] for event in events]
     assert kinds[0] == "run.started"
@@ -6793,6 +6832,19 @@ def test_workspace_controller_delete_requires_a_current_read_sha256() -> None:
             lambda: False,
         )
 
+        known_digest_without_read = controller.execute(
+            {
+                "action": "delete",
+                "path": "obsolete.txt",
+                "expected_sha256": hashlib.sha256(
+                    b"retired fixture\n"
+                ).hexdigest(),
+            }
+        )
+        assert not known_digest_without_read["ok"]
+        assert "controller to read" in known_digest_without_read["error"]
+        assert obsolete.exists()
+
         first_read = controller.execute({"action": "read", "path": "obsolete.txt"})
         assert first_read["ok"]
         assert re.fullmatch(r"[0-9a-f]{64}", str(first_read["sha256"]))
@@ -6833,6 +6885,62 @@ def test_workspace_controller_delete_requires_a_current_read_sha256() -> None:
             "deleted_bytes": len("changed after read\n".encode("utf-8")),
         }
         assert not obsolete.exists()
+
+
+def test_workspace_controller_delete_anchors_the_parent_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    workspace = tmp_path / "project"
+    nested = workspace / "nested"
+    nested.mkdir(parents=True)
+    local_target = nested / "target.txt"
+    local_target.write_text("local target\n", encoding="utf-8")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    outside_target = outside / "target.txt"
+    outside_target.write_text("outside target\n", encoding="utf-8")
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+    receipt = controller.execute({"action": "read", "path": "nested/target.txt"})
+    assert receipt["ok"]
+
+    original_unlink = os.unlink
+    swapped_parent = workspace / "nested-original"
+    raced = False
+
+    def swap_parent_before_unlink(
+        path: str | bytes,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        nonlocal raced
+        if path == "target.txt" and dir_fd is not None and not raced:
+            raced = True
+            nested.rename(swapped_parent)
+            try:
+                nested.symlink_to(outside, target_is_directory=True)
+            except OSError:
+                swapped_parent.rename(nested)
+                pytest.skip("Directory symlinks are unavailable on this host.")
+        original_unlink(path, dir_fd=dir_fd)
+
+    monkeypatch.setattr(os, "unlink", swap_parent_before_unlink)
+    deleted = controller.execute(
+        {
+            "action": "delete",
+            "path": "nested/target.txt",
+            "expected_sha256": receipt["sha256"],
+        }
+    )
+
+    assert deleted["ok"], deleted
+    assert raced is True
+    assert outside_target.read_text(encoding="utf-8") == "outside target\n"
+    assert not (swapped_parent / "target.txt").exists()
 
 
 def test_workspace_search_uses_python_fallback_when_rg_is_unavailable(
@@ -9830,6 +9938,7 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
         "actual_model",
         "bodycheck_passed",
         "browser",
+        "conversation_bound",
         "conversation_url",
         "context_attached",
         "context_bytes",
@@ -9864,6 +9973,7 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
     assert payload["workspace_path"] == str(workspace)
     assert payload["operating_system"] == detect_host_operating_system()
     assert payload["read_only"] is False
+    assert payload["conversation_bound"] is False
     assert payload["chatgpt_effort"] == "highest_available"
     assert Path(payload["context_file"]).name == "context.md"
     assert payload["context_bytes"] > 0
@@ -9886,6 +9996,7 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
     assert recovered_snapshot["history"] == []
     assert recovered_snapshot["activity"] == []
     assert recovered_snapshot["context_attached"] is context_attached
+    assert recovered_snapshot["conversation_bound"] is False
     assert recovered_snapshot["context_file"] == payload["context_file"]
     assert recovered_snapshot["context_bytes"] == payload["context_bytes"]
     recovered_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))

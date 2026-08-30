@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-CAPABILITY_REGISTRY_VERSION = "1.1.0"
+CAPABILITY_REGISTRY_VERSION = "1.2.0"
 AGENT_OPTIMIZATION_CONTRACT_VERSION = "1.1.0"
 AGENT_OPTIMIZATION_PROFILE = "openai-site-tools-2026-08-28"
 
@@ -223,7 +223,10 @@ CAPABILITY_REGISTRY: tuple[CapabilityDefinition, ...] = (
         key="agent.recovery.doctor",
         kind="agent_recovery",
         label="Agent doctor recovery",
-        description="Diagnose and explicitly reconcile local Agent runtime state without retrying an external prompt.",
+        description=(
+            "Diagnose and explicitly reconcile local Agent runtime state. An eligible "
+            "interrupted Edge and ChatGPT task may continue only after an explicit user action."
+        ),
         read_only=False,
     ),
     _action(

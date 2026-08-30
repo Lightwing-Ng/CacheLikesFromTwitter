@@ -1,4 +1,4 @@
-/* Code version: v3.25.0-codex.1 */
+/* Code version: v3.26.0-codex.4 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -8,9 +8,10 @@
 
     const elements = {
         agentPage: document.querySelector("[data-agent-route-prefix]"),
-        statusMessage: document.getElementById("agent_empty_response"),
-        statusMessageCopy: document.querySelector("[data-agent-empty-response-copy]"),
-        statusSpinner: document.querySelector("[data-agent-session-history-spinner]"),
+        statusMessage: document.getElementById("agent_response_status"),
+        statusMessageCopy: document.querySelector("[data-agent-response-status-copy]"),
+        statusDot: document.querySelector("[data-agent-response-status-dot]"),
+        statusSpinner: document.querySelector("[data-agent-response-status-spinner]"),
         errorRecord: document.getElementById("agent_error_record"),
         errorRecordContent: document.querySelector("[data-agent-error-record-content]"),
         doctorPanel: document.getElementById("agent_doctor_panel"),
@@ -31,8 +32,6 @@
         projectPath: document.querySelector("[data-agent-project-path]"),
         projectChoose: document.getElementById("agent_project_path_choose"),
         projectName: document.querySelector("[data-agent-project-name]"),
-        readiness: document.querySelector(".agent-readiness"),
-        readinessMessage: document.getElementById("agent_readiness_message"),
         workspacePath: promptForm.querySelector('input[name="workspace_path"]'),
         promptOs: promptForm.querySelector("[data-agent-prompt-os]"),
         promptPlatform: promptForm.querySelector("[data-agent-prompt-platform]"),
@@ -108,6 +107,7 @@
     let agentPaginationRangeEventsBound = false;
     let agentPaginationRangePinnedPicker = null;
     let agentPaginationRangeFocusRestore = null;
+    let agentSessionListViewportFrame = 0;
     const paginationMotion = window.CACHELIKES_PAGINATION_MOTION;
 
     async function requestJson(url, options = {}) {
@@ -122,26 +122,6 @@
 
     function formPayload(form) {
         return Object.fromEntries(new FormData(form).entries());
-    }
-
-    function formatAgentPhase(phase) {
-        const normalized = String(phase || "idle").trim().toLowerCase().replace(/[_-]+/g, " ");
-        if (!normalized) return "Idle";
-        return normalized.charAt(0).toUpperCase() + normalized.slice(1);
-    }
-
-    function agentReadinessCopy(phase, message) {
-        const phaseLabel = formatAgentPhase(phase);
-        const messageText = String(message || "").trim();
-        return messageText ? `${phaseLabel} · ${messageText}` : phaseLabel;
-    }
-
-    function setAgentReadiness(phase, message) {
-        const normalizedPhase = String(phase || "idle").trim().toLowerCase() || "idle";
-        if (elements.readiness) elements.readiness.dataset.phase = normalizedPhase;
-        if (elements.readinessMessage) {
-            elements.readinessMessage.textContent = agentReadinessCopy(normalizedPhase, message);
-        }
     }
 
     function selectedValue(selector, fallback) {
@@ -363,9 +343,15 @@
 
         Array.from(menu.querySelectorAll("[data-agent-effort-generated]"))
             .forEach((option) => option.remove());
-        const liveLabels = Array.isArray(agent?.available_efforts)
-            ? agent.available_efforts
-            : [];
+        const statusMatchesSelection = lastBrowserStatus?.platform === "chatgpt"
+            && lastBrowserStatus?.browser === selectedBrowser();
+        const statusCatalogComplete = statusMatchesSelection
+            && Boolean(lastBrowserStatus?.effort_catalog_complete);
+        const liveLabels = statusCatalogComplete
+            ? lastBrowserStatus.available_efforts
+            : Array.isArray(agent?.available_efforts)
+                ? agent.available_efforts
+                : [];
         const labels = [];
         const remember = (value) => {
             const normalized = String(value || "").replace(/\s+/g, " ").trim();
@@ -373,9 +359,9 @@
             labels.push(normalized);
         };
         liveLabels.forEach(remember);
-        remember(agent?.thinking_effort);
+        remember(statusCatalogComplete ? lastBrowserStatus?.thinking_effort : agent?.thinking_effort);
         const current = selectedChatgptEffort();
-        if (current !== HIGHEST_CHATGPT_EFFORT) remember(current);
+        if (!statusCatalogComplete && current !== HIGHEST_CHATGPT_EFFORT) remember(current);
         labels.forEach((label) => {
             menu.append(createChatgptEffortOption(label, label));
         });
@@ -542,6 +528,35 @@
         }
     }
 
+    function syncAgentSessionListViewport() {
+        const menu = elements.recentSessionCombobox?.querySelector(
+            ".agent-session-list-menu-direct",
+        );
+        const dock = document.querySelector(".sidebar-dock");
+        if (!menu || !dock) return;
+        if (agentSessionListViewportFrame) {
+            window.cancelAnimationFrame(agentSessionListViewportFrame);
+        }
+        agentSessionListViewportFrame = window.requestAnimationFrame(() => {
+            agentSessionListViewportFrame = 0;
+            if (elements.recentSessionField?.hidden) {
+                menu.style.removeProperty("--agent-session-list-menu-available-height");
+                return;
+            }
+            const menuBox = menu.getBoundingClientRect();
+            const dockBox = dock.getBoundingClientRect();
+            if (menuBox.width <= 0 || dockBox.width <= 0) return;
+            const gap = Number.parseFloat(
+                getComputedStyle(menu).getPropertyValue("--agent-session-list-dock-gap"),
+            ) || 0;
+            const availableHeight = dockBox.top - menuBox.top - gap;
+            menu.style.setProperty(
+                "--agent-session-list-menu-available-height",
+                `${availableHeight}px`,
+            );
+        });
+    }
+
     function closeAllComboboxes() {
         document.querySelectorAll("[data-agent-combobox]").forEach((combobox) => {
             combobox.classList.remove("is-agent-combobox-open");
@@ -573,6 +588,7 @@
             elements.sessionSource.dataset.agentSessionMode = executionMode;
         }
         syncSessionModeTrigger();
+        syncAgentSessionListViewport();
     }
 
     function sourceOptionButton(value, label, icon = "", selected = false) {
@@ -807,11 +823,7 @@
                     body: JSON.stringify(preferencePayload()),
                 });
             } catch (error) {
-                if (elements.statusMessage) {
-                    elements.statusMessage.hidden = false;
-                    elements.statusMessage.textContent = error.message;
-                }
-                setAgentReadiness("failed", error.message);
+                setResponseStatusFallback(error.message);
             }
         }, 250);
     }
@@ -1115,6 +1127,7 @@
                 if (catalogState === "ready" && hasOptions) trigger.disabled = false;
             }
         });
+        syncAgentSessionListViewport();
     }
 
     async function loadAgentSources(options = {}) {
@@ -1264,6 +1277,84 @@
             ready: true,
             message: lastBrowserStatus.message || `${selectedBrowserLabel()} is ready for ${platformLabel} Web.`,
         };
+    }
+
+    function responseStatusPresentation(agent, readiness) {
+        const phase = String(agent?.phase || "").trim().toLowerCase();
+        const running = Boolean(agent?.running);
+        const hasAgentRun = running
+            || Boolean(agent?.started_at)
+            || Boolean(agent?.finished_at)
+            || Boolean(agent?.response)
+            || (Array.isArray(agent?.activity) && agent.activity.length > 0)
+            || ["starting", "preparing", "submitting", "running", "finalizing", "paused"].includes(phase);
+        const sessionMessage = remoteSessionHistoryLoading
+            ? "Loading the selected ChatGPT session history…"
+            : remoteSessionHistoryError;
+        const pauseCopy = agent?.paused
+            ? (agent.pause_reason || agent.message || "The Web Agent is paused.")
+            : "";
+        const message = sessionMessage
+            || pauseCopy
+            || (hasAgentRun ? String(agent?.message || "").trim() : "")
+            || String(readiness.message || "").trim()
+            || "Ready to use a signed-in Web AI session.";
+        let status = "ready";
+        let phaseLabel = "Ready";
+        if (remoteSessionHistoryLoading) {
+            status = "loading";
+            phaseLabel = "Loading";
+        } else if (running && agent?.paused) {
+            status = "paused";
+            phaseLabel = "Paused";
+        } else if (running) {
+            status = "running";
+            phaseLabel = "Working";
+        } else if (phase === "finished") {
+            status = "finished";
+            phaseLabel = "Finished";
+        } else if (phase === "stopped") {
+            status = "stopped";
+            phaseLabel = "Stopped";
+        } else if (phase === "failed") {
+            status = "failed";
+            phaseLabel = "Failed";
+        } else if (phase === "interrupted") {
+            status = "interrupted";
+            phaseLabel = "Interrupted";
+        } else if (!readiness.ready) {
+            status = lastBrowserStatus ? "failed" : "loading";
+            phaseLabel = lastBrowserStatus ? "Unavailable" : "Checking";
+        }
+        return {
+            status,
+            copy: `${phaseLabel} · ${message}`,
+            loading: status === "loading" || status === "running",
+        };
+    }
+
+    function renderResponseStatus(agent, readiness) {
+        if (!elements.statusMessage) return;
+        const presentation = responseStatusPresentation(agent, readiness);
+        elements.statusMessage.hidden = false;
+        elements.statusMessage.dataset.status = presentation.status;
+        elements.statusMessage.setAttribute("aria-label", presentation.copy);
+        elements.statusMessage.title = presentation.copy;
+        if (elements.statusMessageCopy) elements.statusMessageCopy.textContent = presentation.copy;
+        if (elements.statusDot) elements.statusDot.hidden = presentation.loading;
+        if (elements.statusSpinner) elements.statusSpinner.hidden = !presentation.loading;
+    }
+
+    function setResponseStatusFallback(message) {
+        if (!elements.statusMessage) return;
+        const copy = String(message || "The Agent request failed.").trim();
+        elements.statusMessage.hidden = false;
+        elements.statusMessage.dataset.status = "failed";
+        elements.statusMessage.setAttribute("aria-label", `Failed · ${copy}`);
+        elements.statusMessage.title = copy;
+        if (elements.statusMessageCopy) elements.statusMessageCopy.textContent = `Failed · ${copy}`;
+        if (elements.statusDot) elements.statusDot.hidden = false;
+        if (elements.statusSpinner) elements.statusSpinner.hidden = true;
     }
 
     function initializeBrowserSessionStatus() {
@@ -1879,9 +1970,7 @@
             elements.promptInput.placeholder = "Do anything";
         }
 
-        const phase = agent.phase || (running ? "running" : "idle");
-        setAgentReadiness(phase, readiness.message);
-        const hasAgentResponse = renderAgentResponse(agent);
+        renderAgentResponse(agent);
         renderErrorRecord(agent);
         if (agentNeedsDoctor(persistedAgent)) {
             if (!doctorPayload) loadDoctor();
@@ -1891,20 +1980,7 @@
             doctorRequestId += 1;
             renderDoctor(null);
         }
-        if (elements.statusMessage) {
-            const sessionMessage = remoteSessionHistoryLoading
-                ? "Loading the selected ChatGPT session history…"
-                : remoteSessionHistoryError;
-            const pauseCopy = paused
-                ? (agent.pause_reason || agent.message || "The Web Agent is paused.")
-                : "";
-            const statusCopy = sessionMessage || pauseCopy || agent.message || readiness.message;
-            if (elements.statusMessageCopy) elements.statusMessageCopy.textContent = statusCopy;
-            else elements.statusMessage.textContent = statusCopy;
-            if (elements.statusSpinner) elements.statusSpinner.hidden = !remoteSessionHistoryLoading;
-            elements.statusMessage.hidden = hasAgentResponse && agent.phase !== "failed";
-        }
-        if (elements.readiness) elements.readiness.dataset.ready = String(readiness.ready);
+        renderResponseStatus(agent, readiness);
         renderTerminalExecution(lastPayload.runtime);
         renderActivity(agent.activity, running);
         updateSessionChoiceInputs();
@@ -1945,17 +2021,13 @@
             if (response.doctor) doctorPayload = response.doctor;
             render(response);
         } catch (error) {
-            if (elements.statusMessage) {
-                elements.statusMessage.hidden = false;
-                elements.statusMessage.textContent = error.message;
-            }
+            setResponseStatusFallback(error.message);
             if (elements.errorRecord && elements.errorRecordContent) {
                 elements.errorRecordContent.textContent = error.message;
                 elements.errorRecord.hidden = false;
                 elements.errorRecord.open = true;
             }
             if (elements.responseOutput && !responseHistory.length) elements.responseOutput.hidden = true;
-            setAgentReadiness("failed", error.message);
         }
     }
 
@@ -1974,10 +2046,27 @@
         return elements.promptOverflowToggle?.getAttribute("aria-expanded") === "true";
     }
 
+    function syncPromptOverflowToggle(canExpand) {
+        const toggle = elements.promptOverflowToggle;
+        if (!toggle) return;
+        if (!canExpand) {
+            elements.promptInput?.classList.remove("is-expanded");
+            toggle.setAttribute("aria-expanded", "false");
+        }
+        const expanded = isPromptExpanded();
+        const label = expanded ? "Collapse question or task" : "Expand question or task";
+        toggle.hidden = !canExpand;
+        toggle.setAttribute("aria-label", label);
+        toggle.setAttribute("title", label);
+    }
+
     function resizePrompt() {
         if (!(elements.promptInput instanceof HTMLTextAreaElement)) return;
         const collapsedHeight = promptCollapsedHeight();
         elements.promptInput.style.height = "auto";
+        const canExpand = Boolean(elements.promptInput.value.trim())
+            && elements.promptInput.scrollHeight > collapsedHeight + 1;
+        syncPromptOverflowToggle(canExpand);
         if (!isPromptExpanded()) {
             elements.promptInput.style.height = `${collapsedHeight}px`;
             return;
@@ -2031,6 +2120,7 @@
         () => {
             resizePrompt();
             positionAgentPaginationIndicator({immediate: true});
+            syncAgentSessionListViewport();
         },
         {passive: true},
     );
@@ -2048,11 +2138,7 @@
         requestJson("/api/agent/open-conversation", {
             method: "POST",
         }).catch((error) => {
-            if (elements.statusMessage) {
-                elements.statusMessage.hidden = false;
-                elements.statusMessage.textContent = error.message;
-            }
-            setAgentReadiness("failed", error.message);
+            setResponseStatusFallback(error.message);
         });
     });
     elements.doctorPanel?.addEventListener("click", (event) => {

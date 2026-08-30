@@ -1,6 +1,6 @@
 """Route and service tests for Agent doctor recovery UX.
 
-Code version: v1.2.0-codex.1
+Code version: v1.3.0-codex.1
 """
 
 from __future__ import annotations
@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import time
+
+import pytest
 
 from app.core.computer_use_agent import (
     CONTINUE_INTERRUPTED_AGENT_PROMPT,
@@ -139,9 +141,9 @@ def test_capability_and_doctor_routes_are_local_and_bounded(client) -> None:
     assert remote_response.status_code == 403
     capabilities = capabilities_response.get_json()
     doctor = doctor_response.get_json()
-    assert capabilities["version"] == "1.1.0"
+    assert capabilities["version"] == "1.2.0"
     assert len(capabilities["capabilities"]) == 25
-    assert doctor["capability_registry_version"] == "1.1.0"
+    assert doctor["capability_registry_version"] == "1.2.0"
     assert "prompt" not in doctor
     assert "response" not in doctor
 
@@ -184,6 +186,7 @@ def test_doctor_continues_an_interrupted_edge_chatgpt_task_without_context_uploa
                 "model": "gpt-5.6-sol",
                 "chatgpt_effort": "Cruise review",
                 "read_only": True,
+                "conversation_bound": True,
                 "run_id": "run-0123456789abcdef",
             }
         ),
@@ -201,7 +204,11 @@ def test_doctor_continues_an_interrupted_edge_chatgpt_task_without_context_uploa
 
     def runner(**kwargs):
         observed.update(kwargs)
-        kwargs["update"](phase="running", message="Resuming controller actions.")
+        kwargs["update"](
+            phase="running",
+            message="Resuming controller actions.",
+            conversation_bound=True,
+        )
         return "Verified continuation", "https://chatgpt.com/c/interrupted-flight", 1, True
 
     service = ComputerUseAgentService(
@@ -254,3 +261,48 @@ def test_doctor_continues_an_interrupted_edge_chatgpt_task_without_context_uploa
         action["id"]: action for action in invalid_service.doctor()["actions"]
     }
     assert invalid_actions["continue"]["enabled"] is False
+
+
+def test_doctor_rejects_continuation_without_confirmed_conversation_binding(
+    tmp_path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    (runtime_root / "last-run.json").write_text(
+        json.dumps(
+            {
+                "running": True,
+                "phase": "running",
+                "workspace_path": str(workspace),
+                "conversation_url": "https://chatgpt.com/c/unproved-target",
+                "session_mode": "recent",
+                "operating_system": detect_host_operating_system(),
+                "platform": "chatgpt",
+                "browser": "edge",
+                "model": "gpt-5.6-sol",
+                "chatgpt_effort": "highest_available",
+                "read_only": False,
+                "conversation_bound": False,
+                "run_id": "run-fedcba9876543210",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=runtime_root,
+    )
+    doctor = service.doctor()
+    checks = {check["id"]: check for check in doctor["checks"]}
+    actions = {action["id"]: action for action in doctor["actions"]}
+
+    assert checks["interrupted_continuation"]["status"] == "warn"
+    assert "before its ChatGPT conversation binding" in checks[
+        "interrupted_continuation"
+    ]["detail"]
+    assert actions["continue"]["enabled"] is False
+    with pytest.raises(RuntimeError, match="binding was confirmed"):
+        service.recover("continue")

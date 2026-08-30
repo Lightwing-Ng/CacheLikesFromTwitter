@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.2-codex.7
+Code version: v1.26.2-codex.14
 """
 
 from __future__ import annotations
@@ -394,6 +394,12 @@ def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
                 if (!(summary instanceof HTMLElement)) return null;
                 const summaryRect = summary.getBoundingClientRect();
                 const summaryStyle = getComputedStyle(summary);
+                const controlHeight = selector => {
+                    const element = document.querySelector(selector);
+                    return element instanceof HTMLElement
+                        ? element.getBoundingClientRect().height
+                        : null;
+                };
                 return {
                     headingCenterY: centerY("[data-agent-heading]"),
                     toggleCenterY: centerY("#sidebar_toggle"),
@@ -401,7 +407,11 @@ def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
                     summaryHeight: summaryRect.height,
                     summaryOverflow: summaryStyle.overflow,
                     chipCount: document.querySelectorAll("#agent_phase_chip").length,
-                    readiness: document.querySelector("#agent_readiness_message")?.textContent || "",
+                    readinessCount: document.querySelectorAll(".agent-readiness").length,
+                    primaryControlHeights: [
+                        controlHeight(".agent-platform-combobox [data-agent-combobox-trigger]"),
+                        controlHeight(".agent-session-mode-combobox [data-agent-combobox-trigger]"),
+                    ],
                     horizontalOverflow: Math.max(
                         document.documentElement.scrollWidth,
                         document.body.scrollWidth,
@@ -418,7 +428,8 @@ def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
         assert desktop["summaryHeight"] < 120
         assert desktop["summaryOverflow"] == "visible"
         assert desktop["chipCount"] == 0
-        assert " · " in desktop["readiness"]
+        assert desktop["readinessCount"] == 0
+        assert desktop["primaryControlHeights"] == [36, 36]
         assert not desktop["horizontalOverflow"]
 
         page.set_viewport_size({"width": 390, "height": 844})
@@ -432,7 +443,8 @@ def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
         assert narrow["summaryHeight"] < 120
         assert narrow["summaryOverflow"] == "visible"
         assert narrow["chipCount"] == 0
-        assert " · " in narrow["readiness"]
+        assert narrow["readinessCount"] == 0
+        assert narrow["primaryControlHeights"] == [36, 36]
         assert not narrow["horizontalOverflow"]
     finally:
         context.close()
@@ -1103,12 +1115,44 @@ def test_agent_prompt_composer_stays_compact_until_expanded(
         expect(prompt).to_have_attribute("rows", "2")
         expect(toggle).to_have_attribute("aria-expanded", "false")
         expect(toggle).to_have_attribute("aria-label", "Expand question or task")
+        expect(toggle).to_be_hidden()
         compact = prompt.evaluate(
             "element => ({height: element.clientHeight, weight: getComputedStyle(element).fontWeight, resize: getComputedStyle(element).resize})"
         )
         assert compact["height"] > 0
         assert compact["weight"] == "300"
         assert compact["resize"] == "none"
+        control_heights = page.evaluate(
+            """() => ({
+                model: document.querySelector('.agent-model-trigger')?.getBoundingClientRect().height,
+                effort: document.querySelector('.agent-effort-trigger')?.getBoundingClientRect().height,
+            })"""
+        )
+        assert control_heights == {"model": 32, "effort": 32}
+
+        effort = page.locator(".agent-effort-trigger")
+        effort_menu = page.locator(".agent-effort-dropdown")
+        effort.click()
+        expect(effort_menu).to_be_visible()
+        effort_dropdown_geometry = page.evaluate(
+            """() => {
+                const trigger = document.querySelector('.agent-effort-trigger').getBoundingClientRect();
+                const menu = document.querySelector('.agent-effort-dropdown').getBoundingClientRect();
+                const style = getComputedStyle(document.querySelector('.agent-effort-dropdown'));
+                return {
+                    menuBottom: menu.bottom,
+                    triggerTop: trigger.top,
+                    position: style.position,
+                };
+            }"""
+        )
+        assert effort_dropdown_geometry["position"] == "absolute"
+        assert effort_dropdown_geometry["menuBottom"] <= effort_dropdown_geometry["triggerTop"]
+        effort.click()
+        expect(effort_menu).to_be_hidden()
+
+        prompt.fill("Short task.")
+        expect(toggle).to_be_hidden()
 
         prompt.fill("\n".join(f"Task line {line}" for line in range(1, 9)))
         collapsed = prompt.evaluate(
@@ -1116,6 +1160,26 @@ def test_agent_prompt_composer_stays_compact_until_expanded(
         )
         assert collapsed["height"] == compact["height"]
         assert collapsed["scrollHeight"] > collapsed["height"]
+        expect(toggle).to_be_visible()
+        toggle_geometry = toggle.evaluate(
+            """element => {
+                const shell = element.closest('.agent-composer-shell').getBoundingClientRect();
+                const rect = element.getBoundingClientRect();
+                const style = getComputedStyle(element);
+                return {
+                    position: style.position,
+                    top: style.top,
+                    right: style.right,
+                    topOffset: rect.top - shell.top,
+                    rightOffset: shell.right - rect.right,
+                };
+            }"""
+        )
+        assert toggle_geometry["position"] == "absolute"
+        assert toggle_geometry["top"] == "12px"
+        assert toggle_geometry["right"] == "12px"
+        assert toggle_geometry["topOffset"] == 13
+        assert toggle_geometry["rightOffset"] == 13
 
         toggle.click()
         expect(toggle).to_have_attribute("aria-expanded", "true")
@@ -1155,6 +1219,17 @@ def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
         )
         expect(main_button).to_have_count(1)
         expect(sidebar_button).to_have_count(1)
+
+        platform_button = page.locator(
+            ".agent-platform-combobox [data-agent-combobox-trigger]"
+        )
+        session_source_button = page.locator(
+            ".agent-session-mode-combobox [data-agent-combobox-trigger]"
+        )
+        expect(platform_button).to_have_count(1)
+        expect(session_source_button).to_have_count(1)
+        assert platform_button.evaluate("element => element.getBoundingClientRect().height") == 36
+        assert session_source_button.evaluate("element => element.getBoundingClientRect().height") == 36
 
         typography = page.evaluate(
             """([main, sidebar]) => {
@@ -2129,10 +2204,31 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
         assert menu_box["y"] + menu_box["height"] <= 720
         assert menu_box["y"] + menu_box["height"] <= dock_box["y"]
         scroll_metrics = recent_menu.evaluate(
-            "element => ({clientHeight: element.clientHeight, scrollHeight: element.scrollHeight, overflowY: getComputedStyle(element).overflowY})"
+            """element => {
+                const style = getComputedStyle(element);
+                const dock = document.querySelector('.sidebar-dock');
+                const elementBox = element.getBoundingClientRect();
+                const dockBox = dock?.getBoundingClientRect();
+                const dockGap = Number.parseFloat(
+                    style.getPropertyValue('--agent-session-list-dock-gap')
+                ) || 0;
+                return {
+                    clientHeight: element.clientHeight,
+                    scrollHeight: element.scrollHeight,
+                    overflowY: style.overflowY,
+                    scrollbarWidth: style.scrollbarWidth,
+                    scrollbarGutter: style.scrollbarGutter,
+                    dockGap,
+                    renderedDockGap: dockBox ? dockBox.top - elementBox.bottom : null,
+                };
+            }"""
         )
         assert scroll_metrics["scrollHeight"] > scroll_metrics["clientHeight"]
         assert scroll_metrics["overflowY"] == "auto"
+        assert scroll_metrics["scrollbarWidth"] == "none"
+        assert scroll_metrics["scrollbarGutter"] == "auto"
+        assert scroll_metrics["renderedDockGap"] is not None
+        assert abs(scroll_metrics["renderedDockGap"] - scroll_metrics["dockGap"]) <= 1
         expect(recent_option).to_be_visible()
         recent_option.click()
 
@@ -4770,10 +4866,7 @@ def test_agent_browser_status_retries_a_fresh_negative_cache_and_force_refreshes
     )
     try:
         page.goto(f"{sidebar_server_url}/agent/edge/gemini", wait_until="domcontentloaded")
-        expect(page.locator(".agent-readiness")).to_have_attribute("data-ready", "true")
-        expect(page.locator("#agent_readiness_message")).to_have_text(
-            f'Idle · {ready_status["message"]}'
-        )
+        expect(page.locator(".agent-readiness")).to_have_count(0)
         expect(page.locator("#agent_ask_button")).to_be_enabled()
         assert len(browser_status_requests) == 1
 
@@ -5028,10 +5121,7 @@ def test_stale_chatgpt_probe_failure_cannot_overwrite_grok_ready_state(
         ).click()
 
         expect(page.get_by_role("button", name="Web service: Grok", exact=True)).to_be_visible()
-        expect(page.locator(".agent-readiness")).to_have_attribute("data-ready", "true")
-        expect(page.locator("#agent_readiness_message")).to_have_text(
-            f"Idle · {grok_ready_message}"
-        )
+        expect(page.locator(".agent-readiness")).to_have_count(0)
         expect(page.locator("#agent_ask_button")).to_be_enabled()
         expect(page.locator("#agent_phase_chip")).to_have_count(0)
         expect(page.locator("#agent_response_output")).to_be_hidden()
@@ -5052,11 +5142,7 @@ def test_stale_chatgpt_probe_failure_cannot_overwrite_grok_ready_state(
         page.evaluate("() => new Promise((resolve) => setTimeout(resolve, 0))")
 
         expect(page.get_by_role("button", name="Web service: Grok", exact=True)).to_be_visible()
-        expect(page.locator(".agent-readiness")).to_have_attribute("data-ready", "true")
-        expect(page.locator("#agent_readiness_message")).to_have_text(
-            f"Idle · {grok_ready_message}"
-        )
-        expect(page.locator("#agent_readiness_message")).not_to_have_text(stale_chatgpt_error)
+        expect(page.locator(".agent-readiness")).to_have_count(0)
         expect(page.locator("#agent_ask_button")).to_be_enabled()
     finally:
         context.close()
@@ -5118,6 +5204,11 @@ def test_observed_agent_completion_refreshes_sources_exactly_once(
     page.route("**/api/agent/sources**", fulfill_sources)
     try:
         page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        response_status = page.locator("#agent_response_status")
+        response_status_spinner = page.locator("[data-agent-response-status-spinner]")
+        expect(response_status).to_be_visible()
+        expect(response_status).to_have_attribute("data-status", "running")
+        expect(response_status_spinner).to_be_visible()
         page.wait_for_function(
             """() => window.performance.getEntriesByType('resource').some((entry) =>
                 String(entry.name || '').includes('/api/agent/sources')
@@ -5127,6 +5218,9 @@ def test_observed_agent_completion_refreshes_sources_exactly_once(
         assert status_requests >= 2
         assert len(source_requests) == 1
         assert "refresh=1" in source_requests[0]
+        expect(response_status).to_have_attribute("data-status", "finished")
+        expect(response_status).to_contain_text("Finished")
+        expect(response_status_spinner).to_be_hidden()
     finally:
         context.close()
 

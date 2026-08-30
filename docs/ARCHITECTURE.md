@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.9.0-codex.2`
+Documentation version: `v1.10.0-codex.1`
 
 ## Runtime flow
 
@@ -73,9 +73,10 @@ export only the symbols needed by its caller and should not become a second impl
   Project URL, while atomic replacement preserves the other providers' entries.
 - `app/core/agent_access_security.py`: the Agent password resolver, constant-time password
   comparison, and loopback/private-network request boundary.
-- `app/core/computer_use_agent.py`: selected ChatGPT, Gemini, Grok, or Claude Web session targets, bounded context
-  packages, the local JSON action protocol, project path confinement, command policy, and
-  mandatory bodycheck ordering for the optional Agent workspace.
+- `app/core/computer_use_agent.py`: selected ChatGPT, Gemini, Grok, or Claude Web session targets,
+  runtime-discovered ChatGPT effort selection, bounded context packages, the local JSON action
+  protocol, anchored read-receipt deletion, project path confinement, command policy, confirmed
+  interrupted-session continuation, and mandatory bodycheck ordering for the optional Agent workspace.
 - `app/core/cache_catalog.py` and `app/core/local_media_browser.py`: durable local indexes,
   media discovery, secure path resolution, deletion tombstones, and restoration.
 - `app/core/logging_setup.py`: process-wide JSON-line logging.
@@ -116,8 +117,9 @@ new `run_id`, persists `run.started`, and appends ordered action, observation, v
 bodycheck, lifecycle/page observations, interruption, recovery, and terminal events. It stores
 bounded metadata rather than prompt, provider response, source, command, or page content.
 `ComputerUseAgentService.doctor()` and the `/api/agent/doctor` routes consume the same chain summary
-to offer an event timeline and explicit, local recovery actions; recovery never retries an external
-prompt implicitly.
+to offer an event timeline and explicit recovery actions. Recovery never retries the original
+external prompt implicitly; a user-selected continuation may send only the fixed continuation
+request after a persisted conversation-binding proof succeeds.
 
 ## Responsive application-shell contract
 
@@ -251,6 +253,9 @@ selected local project
        failed state retained
        same conversation opened in traditional Edge with background activation
        local file actions and bodycheck remain unfinished
+  -> on a persisted interrupted Edge and ChatGPT run with binding proof:
+       explicit Doctor continuation reuses the same conversation
+       recorded permissions and effort policy are retained; context is not uploaded again
 ```
 
 The web model never receives direct process or filesystem authority. The local controller resolves
@@ -268,10 +273,14 @@ path: process memory, the shared Parquet catalog, and the authenticated browser 
 key, and use stale-while-revalidate after expiry. They accept `refresh=1` for an explicit synchronous
 browser re-check. A failed refresh falls back to the last known entry and marks the response as
 stale; no remote conversation messages are written by this catalog.
-The ChatGPT `/agent` status route performs the account probe and root source collection together
-for one browser launch, returns the catalog to the page, and seeds the same cache through its
-explicit `store` path. This keeps the status request and Recent sessions selection on one browser
-opening; Project-session loading remains isolated by its canonical Project URL key.
+The ChatGPT `/agent` status route performs the account probe, complete live Sol effort discovery,
+and root source collection together in one Chromium browser launch, returns both catalogs to the
+page, and seeds the same source cache through its explicit `store` path. This keeps the status,
+first-run effort selector, and Recent sessions selection on one browser opening; Project-session
+loading remains isolated by its canonical Project URL key.
+The Agent-scoped browser-session status route uses that same cache. Passive polling reuses the
+current positive bootstrap; an explicit `refresh=1`, `true`, or `yes` forces one synchronous
+collector pass, stores the returned catalog, and supersedes any older in-flight browser response.
 Agent Chromium tasks clone the selected Edge or Chrome profile into a task-owned offscreen,
 minimized context. Both suppress browser prompts and clean the task-owned profile on exit. Stale
 cleanup is restricted to abandoned application-prefixed temporary directories older than 24 hours;
@@ -281,6 +290,10 @@ conversation URL to the browser selected by the completed or failed run. On macO
 handoff creates a traditional Edge window through the application's AppleScript model without an
 `activate` command; user-triggered opening uses normal activation. Neither path grants the remote
 ChatGPT page local filesystem authority.
+An interrupted continuation is eligible only when the persisted run records a confirmed provider
+conversation binding in addition to a valid Edge and ChatGPT target, workspace, operating system,
+permission state, and effort policy. A process failure before the first confirmed binding therefore
+cannot cause Doctor to send a continuation message to a merely selected recent-session URL.
 
 ## Data ownership
 

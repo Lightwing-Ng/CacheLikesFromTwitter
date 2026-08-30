@@ -1,6 +1,6 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.17.0-codex.1`
+Documentation version: `v1.18.0-codex.1`
 
 ## Edge Gemini and Grok Agent parity hardening on 28 Aug 2026
 
@@ -189,7 +189,7 @@ Documentation version: `v1.17.0-codex.1`
   same completion path instead of leaving a stale `running=true` snapshot. Closing the lid, choosing
   Sleep, or ending the service can still interrupt the Web task, but the assertion cannot outlive the
   service PID.
-- macOS and Windows prompts share the same complete 10-action JSON schema. Prompt migrations preserve
+- macOS and Windows prompts share the same complete 11-action JSON schema. Prompt migrations preserve
   custom guidance and use an owner-only, `fsync`-backed atomic settings replacement so a failed write
   cannot truncate the previous configuration.
 - Stop is checked during Safari composer/send polling and Chromium navigation retries. The exception

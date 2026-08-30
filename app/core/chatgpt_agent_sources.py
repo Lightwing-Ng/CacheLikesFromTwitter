@@ -1,6 +1,6 @@
 """Read ChatGPT Web sessions, projects, and conversation history for the local Agent.
 
-Code version: v1.4.0-codex.1
+Code version: v1.5.0-codex.1
 """
 
 from __future__ import annotations
@@ -55,6 +55,48 @@ CHATGPT_CONVERSATION_PATH_PATTERN = re.compile(
 )
 
 
+def _discover_chatgpt_agent_efforts(page: Any) -> dict[str, Any]:
+    """Return a bounded live Sol effort catalog without sending a message."""
+    from .computer_use_agent import (
+        CHATGPT_EFFORT_POLICY_HIGHEST,
+        DEFAULT_CHATGPT_MODEL,
+        _select_chatgpt_model,
+    )
+
+    observation: dict[str, Any] = {}
+    try:
+        model_verified = _select_chatgpt_model(
+            page,
+            "chromium",
+            DEFAULT_CHATGPT_MODEL,
+            observation,
+            thinking_effort=CHATGPT_EFFORT_POLICY_HIGHEST,
+        )
+    except Exception:  # pragma: no cover - provider DOM failures are runtime-specific
+        model_verified = False
+        observation = {"reason": "effort-probe-failed"}
+    available_efforts = [
+        str(label).strip()
+        for label in observation.get("available_efforts") or []
+        if str(label).strip()
+    ][:64]
+    effort_catalog_complete = bool(
+        model_verified and observation.get("effort_catalog_complete")
+    )
+    payload: dict[str, Any] = {
+        "model_verified": bool(model_verified),
+        "actual_model": str(observation.get("observed") or "").strip(),
+        "thinking_effort": str(observation.get("thinking_effort") or "").strip(),
+        "available_efforts": available_efforts,
+        "effort_catalog_complete": effort_catalog_complete,
+    }
+    if not effort_catalog_complete:
+        payload["effort_catalog_error"] = str(
+            observation.get("reason") or "effort-catalog-unavailable"
+        )[:160]
+    return payload
+
+
 def probe_and_collect_chatgpt_sources(
     browser_name: str,
     config: CrawlConfig,
@@ -97,7 +139,11 @@ def probe_and_collect_chatgpt_sources(
                 if not status["can_download"]:
                     return status, None
                 page.wait_for_timeout(1_000)
-                return status, {**_collect_sources(context, page, descriptor.label), "platform": "chatgpt"}
+                sources = {
+                    **_collect_sources(context, page, descriptor.label),
+                    "platform": "chatgpt",
+                }
+                return status, sources
 
         if descriptor.engine != "chromium":
             raise ValueError(f"ChatGPT Agent sources do not support {descriptor.label}.")
@@ -125,7 +171,12 @@ def probe_and_collect_chatgpt_sources(
                 if not status["can_download"]:
                     return status, None
                 page.wait_for_timeout(1_000)
-                return status, {**_collect_sources(context, page, descriptor.label), "platform": "chatgpt"}
+                sources = {
+                    **_collect_sources(context, page, descriptor.label),
+                    "platform": "chatgpt",
+                }
+                status.update(_discover_chatgpt_agent_efforts(page))
+                return status, sources
     except Exception as exc:  # pragma: no cover - depends on local browser state
         status["message"] = str(exc)
         return status, None

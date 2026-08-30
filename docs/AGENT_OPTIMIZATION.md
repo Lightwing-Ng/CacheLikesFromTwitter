@@ -1,6 +1,6 @@
 # OpenAI Site tools and Agent Optimization
 
-Documentation version: `v1.1.0-codex.2`
+Documentation version: `v1.2.0-codex.1`
 
 This project implements the shared Agent Optimization contract at
 `/Users/lightwing/Desktop/SHARED_AGENT_OPTIMIZATION.md`. That file owns the cross-project naming,
@@ -81,9 +81,11 @@ chain health summary and the last action/event identifiers.
 `GET /api/agent/doctor` exposes the same lifecycle, chain, verification, bodycheck, and temporary
 context-cleanup checks used by the Agent page. The Doctor panel appears when attention is needed or
 when a completed run has public event metadata to inspect. It renders the bounded event timeline
-and offers Resume, context cleanup, provider handoff, or a new-task affordance as appropriate.
-`POST /api/agent/doctor/recover` performs only explicit local recovery actions; it never resubmits a
-provider prompt.
+and offers Resume, context cleanup, provider handoff, a bound-session continuation, or a new-task
+affordance as appropriate. `POST /api/agent/doctor/recover` never implicitly resubmits the original
+provider prompt. Its explicit `continue` action may send one fixed generic continuation request only
+when persisted evidence proves that an interrupted Edge and ChatGPT run had already bound its
+conversation; it preserves the recorded permission and effort policy and does not upload context.
 
 ## Automated verification
 

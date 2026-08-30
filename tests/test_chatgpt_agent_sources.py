@@ -1,6 +1,6 @@
 """Focused tests for the Agent's ChatGPT Web source catalog.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -109,14 +109,27 @@ def test_chatgpt_status_and_sources_share_one_chromium_context() -> None:
     ) as launch_context, patch(
         "app.core.chatgpt_agent_sources._collect_sources",
         return_value=source_payload,
-    ) as collect_sources:
+    ) as collect_sources, patch(
+        "app.core.chatgpt_agent_sources._discover_chatgpt_agent_efforts",
+        return_value={
+            "model_verified": True,
+            "actual_model": "GPT-5.6 Sol",
+            "thinking_effort": "Landing proof",
+            "available_efforts": ["Launch brief", "Landing proof"],
+            "effort_catalog_complete": True,
+        },
+    ) as discover_efforts:
         status, sources = probe_and_collect_chatgpt_sources("edge", CrawlConfig())
 
     assert status["can_download"] is True
+    assert status["available_efforts"] == ["Launch brief", "Landing proof"]
+    assert status["thinking_effort"] == "Landing proof"
+    assert status["effort_catalog_complete"] is True
     assert sources == {**source_payload, "platform": "chatgpt"}
     playwright_factory.assert_called_once()
     launch_context.assert_called_once()
     collect_sources.assert_called_once_with(context, page, "Edge")
+    discover_efforts.assert_called_once_with(page)
 
 
 def test_root_sessions_filter_project_sessions_and_limit_to_twenty() -> None:

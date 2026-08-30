@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.48.0-codex.5`
+Documentation version: `v3.51.0-codex.1`
 
 ## Purpose
 
@@ -32,9 +32,16 @@ serve the last catalog while one background refresh runs per key. Add `refresh=1
 `/api/agent/sources` or `/api/agent/project-sessions` request when a synchronous browser re-check
 is required. If that refresh fails and an older entry exists, the API returns the older catalog
 with `cache.status: "stale"` so the selector remains usable and the condition stays observable.
+The Agent-scoped `/api/browser-session` bootstrap uses the same cache instead of launching its
+collector for every status poll. An explicit Refresh accepts `refresh=1`, `true`, or `yes`, writes
+the newly collected catalog back to the shared cache, and is ordered separately in the browser so
+an older passive response cannot overwrite the fresh result.
 
 On `/agent`, ChatGPT, Grok, and Claude use an agent-scoped bootstrap request: the selected browser
 context verifies the actual Web composer and collects Recent sessions and Projects in one launch.
+For Edge or Chrome with ChatGPT, that same launch also discovers the complete live Sol effort
+slider before the user submits a task, so the first-run selector is not limited to a hard-coded
+default.
 When `Recent sessions` is selected, the catalog is rendered directly as a bounded, vertically
 scrollable list in the sidebar rather than a second dropdown. A ready Agent status cached without
 its bootstrap catalog is treated as incomplete and refreshed once, so the status probe and source
@@ -118,11 +125,14 @@ older task cannot be submitted accidentally through a different Web session.
    unlabeled composer pill, or a `model-switcher` control. The controller therefore resolves the
    live menu-semantic trigger by its rendered DOM structure and composer relationship; it does not
    use a plan-specific effort vocabulary. Once the menu is open, the controller reads the slider's
-   `aria-valuemin`, `aria-valuemax`, and current rendered label, visits every exposed position, and
-   leaves the selected `GPT-5.6 Sol` model at the subscription's live maximum. A checked
-   `GPT-5.6 Sol` / `5.6 Sol` model item remains the required model proof. The observed effort labels
-   are recorded for status and diagnostics only, so a later subscription rename or additional tier
-   does not require a code change.
+   `aria-valuemin`, `aria-valuemax`, and current rendered label, then visits every exposed position.
+   `Highest available` is the default policy; after discovery, the Agent selector exposes every
+   subscription label and can request any exact label. Both the final integer `aria-valuenow` and
+   rendered label must match. Missing controls, fractional or out-of-range values, incomplete
+   catalogs, and unavailable requested labels fail closed before context attachment or submission.
+   A checked `GPT-5.6 Sol` / `5.6 Sol` model item remains the required model proof. The bounded
+   `available_efforts`, selected `thinking_effort`, and `effort_catalog_complete` evidence are
+   persisted with the run, so a subscription rename or additional tier needs no hard-coded update.
    If that trusted visible trigger is clicked but ChatGPT's Radix menu does not render, the
    controller closes any partial state and retries the control up to three times. A readable menu
    that proves a different model still fails immediately; the retry applies only to an unreadable
@@ -223,8 +233,9 @@ older task cannot be submitted accidentally through a different Web session.
    when the provider remains on that URL.
 7. The selected Web provider returns exactly one JSON action at a time inside a fenced `json` code block so
    rendered Markdown cannot consume action quotes, backslashes, asterisks, or source-code delimiters. The
-   controller prefers that code block's literal text and supports `list`, `read`, `search`, `replace`, `write`,
-   `run`, `bodycheck`, and `final`. Multiple exact copies of one action are harmlessly de-duplicated;
+   controller prefers that code block's literal text and supports `list`, `read`, `search`, `replace`,
+   `replace_base64`, `write`, `write_base64`, `delete`, `run`, `bodycheck`, and `final`. Multiple exact
+   copies of one action are harmlessly de-duplicated;
    any distinct second candidate is rejected as ambiguous, even when both use the same action name.
    `search` uses project-confined `rg` when available, with structured UTF-8 JSON output, a 2 MiB
    file-size cap, an 8,000-character single-line literal-query cap, and case-insensitive root and
@@ -302,8 +313,13 @@ When a run is paused, interrupted, failed, or leaves temporary context cleanup p
 page loads `GET /api/agent/doctor` and opens a Doctor panel with the failed checks, bounded event
 timeline, and safe actions. Completed runs with public event metadata retain that timeline for
 inspection. Resume continues a paused turn without a duplicate submit. Context cleanup reconciles
-only the app-owned temporary bundle. Provider handoff and New task remain explicit UI actions. The
-recovery endpoint never resubmits a provider prompt.
+only the app-owned temporary bundle. `Continue interrupted task` is narrower: it is enabled only for
+an interrupted Edge and ChatGPT run whose persisted metadata proves the original conversation was
+bound after its first submission. It revalidates the workspace, operating system, local-permission
+state, conversation URL, and effort policy, then sends one fixed generic continuation request in
+that conversation without reconstructing or uploading project context. It never runs automatically
+and never reuses an unbound pre-submission URL. Provider handoff and New task remain explicit UI
+actions.
 
 ## Safety boundary
 
@@ -311,7 +327,12 @@ recovery endpoint never resubmits a provider prompt.
   inaccessible. Environment files, credential stores, cookies, and private keys are excluded from
   context indexes and from `list`, `read`, and `search` observations.
 - Existing files change only through an exact, single-match replacement. New files use an
-  explicit write action.
+  explicit write action. `delete` accepts one regular, single-link file only after the same
+  controller has returned its current SHA-256 through `read`; any intervening edit invalidates the
+  receipt. On supported POSIX hosts, deletion opens every parent below the recorded workspace with
+  `O_NOFOLLOW` and unlinks the leaf through the anchored directory descriptor. Hosts without those
+  primitives fail closed. Directories, symlinks, hard links, recursive targets, and files larger
+  than 20 MiB are rejected.
 - Shell commands are restricted to bounded inspection, build, lint, and test work. Approved PATH
   tools are resolved once to an absolute executable outside the workspace before launch; Python
   verification is pinned to the service's own Python runtime. Approved Python modules are imported
@@ -381,7 +402,7 @@ recovery endpoint never resubmits a provider prompt.
   bodies, responses, conversation history, source text, or error stacks in that snapshot. The
   runtime directory and each task directory are owner-only, and context and snapshot files use mode
   `0600`. Its run identifier, event-chain state, event count, last action, last event kind, and
-  verification state are also bounded metadata. If a persisted run was
+  verification state and confirmed-conversation-binding flag are also bounded metadata. If a persisted run was
   still marked active when the service exited, the next process restores it as `interrupted`
   instead of claiming that it is still running or completed.
 - The generated context package is task-scoped and is normally deleted after success, stop, or
@@ -406,9 +427,10 @@ Settings → Agent stores:
 - the context Markdown byte limit;
 - the maximum controller-turn count;
 - the local command timeout;
+- the ChatGPT `Highest available` policy or an exact runtime-discovered effort label;
 - separate macOS and Windows system prompts.
 
-Both operating-system defaults use one shared, complete 10-action JSON schema. At load time, prompts
+Both operating-system defaults use one shared, complete 11-action JSON schema. At load time, prompts
 missing the fenced-JSON or base64 transport contract are replaced with the current safe defaults.
 Marker-complete prompts with an incomplete action schema receive the canonical schema; former
 `text or regex` query fields are normalized even when their JSON whitespace differs, and the
@@ -459,8 +481,9 @@ exposes `Build Beta`, and Claude exposes `Auto`. Each provider is fail-closed: t
 and then visibly read back the exact configured model before any attachment or send. ChatGPT proves that local option
 through a checked `GPT-5.6 Sol` / `5.6 Sol` model item after opening the live menu-semantic trigger. For subscriptions that
 expose a thinking-effort slider, the controller reads the complete ARIA range at runtime, records every rendered
-position, and selects the current maximum without assuming fixed labels. A localized or changed menu that cannot prove
-the model stops the run without transferring project data.
+position, and selects either `Highest available` or one exact observed label without assuming fixed names. The final
+integer position and visible label must both verify. A localized or changed menu that cannot prove the model and effort
+stops the run without transferring project data.
 For an `Auto` readback, a generic popup wrapper is insufficient: the trigger must also identify
 itself as a model or mode control, or expose provider-specific model metadata.
 

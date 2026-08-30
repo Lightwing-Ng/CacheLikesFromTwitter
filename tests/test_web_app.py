@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.1-codex.7
+# Code version: v1.88.1-codex.13
 
 from __future__ import annotations
 
@@ -491,7 +491,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.90.1-codex.9"
+                expected_style_version = "style-v2.90.1-codex.16"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -784,7 +784,7 @@ class WebAppTests(unittest.TestCase):
         local_body = local_page.get_data(as_text=True)
         self.assertIn("ChatGPT Web Agent", local_body)
         self.assertNotIn('id="agent_phase_chip"', local_body)
-        self.assertIn("Idle ·", local_body)
+        self.assertNotIn('class="agent-readiness"', local_body)
         self.assertNotIn("public tunnel, API key, or copied password", local_body)
         self.assertNotIn('data-agent-engine-kicker', local_body)
         self.assertNotIn('data-agent-engine-copy', local_body)
@@ -831,7 +831,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.25.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.26.0-codex.4', local_body)
         self.assertIn('data-agent-effort-field', local_body)
         self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -921,6 +921,10 @@ class WebAppTests(unittest.TestCase):
             "can_download": False,
             "account_name": "ChatGPT account",
             "message": "Ready",
+            "actual_model": "GPT-5.6 Sol",
+            "thinking_effort": "Pro",
+            "available_efforts": ["Instant", "Medium", "High", "Extra High", "Pro"],
+            "effort_catalog_complete": True,
         }
         lan_environ = {"REMOTE_ADDR": "192.168.124.20"}
         lan_headers = {"Host": "192.168.124.10:8666"}
@@ -955,6 +959,11 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(disallowed_network_response.status_code, 403)
         self.assertEqual(disallowed_host_response.status_code, 403)
         self.assertEqual(loopback_response.status_code, 200)
+        self.assertEqual(
+            loopback_response.get_json()["available_efforts"],
+            ["Instant", "Medium", "High", "Extra High", "Pro"],
+        )
+        self.assertTrue(loopback_response.get_json()["effort_catalog_complete"])
         self.assertIn("no-store", loopback_response.headers["Cache-Control"])
         self.assertEqual(loopback_response.headers["Pragma"], "no-cache")
         self.assertEqual(loopback_response.headers["Expires"], "0")
@@ -1079,7 +1088,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn("STALE_PROMPT_SENTINEL", body)
                 self.assertNotIn("STALE_RESPONSE_SENTINEL", body)
                 self.assertNotIn('id="agent_phase_chip"', body)
-                self.assertIn("Idle ·", body)
+                self.assertNotIn('class="agent-readiness"', body)
                 self.assertIn(
                     'data-agent-prompt-input required></textarea>',
                     body,
@@ -1223,6 +1232,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('syncModelOptionsForPlatform()', script)
         self.assertIn('syncChatgptEffortOptions(agent)', script)
         self.assertIn('agent?.available_efforts', script)
+        self.assertIn('lastBrowserStatus?.effort_catalog_complete', script)
+        self.assertIn('lastBrowserStatus.available_efforts', script)
         self.assertIn('data-agent-effort-generated', script)
         self.assertIn('browserStatusController?.setPlatform?.(platform)', script)
         self.assertIn('platform: selectedPlatform()', script)
@@ -1241,7 +1252,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('requestJson("/api/agent/open-conversation"', script)
         self.assertIn('elements.conversationLink.classList.toggle("is-traditional-handoff"', script)
         self.assertIn("agent?.traditional_handoff_available", script)
-        self.assertIn('agent.phase !== "failed"', script)
+        self.assertIn('agent?.phase === "failed"', script)
         self.assertNotIn('document.getElementById("agent_stop_button")', script)
 
     def test_agent_session_source_contract_is_explicit_and_not_persisted(self) -> None:
@@ -1290,7 +1301,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.25.0-codex.1',
+            'computer-use-agent-v3.26.0-codex.4',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'data-agent-direct-list="true"',
@@ -1299,9 +1310,10 @@ class WebAppTests(unittest.TestCase):
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
             'src="/static/images/clock.fill.svg" alt="" aria-hidden="true">\n                                    <span class="trade-strategy-dropdown-text">Recent sessions</span>',
-            'suggestion-loading-spinner agent-empty-response-spinner',
-            'data-agent-session-history-spinner',
-            'data-agent-empty-response-copy',
+            'id="agent_response_status" role="status" aria-live="polite"',
+            'data-agent-response-status-dot',
+            'suggestion-loading-spinner agent-response-status-spinner',
+            'data-agent-response-status-copy',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, body)
@@ -1310,6 +1322,11 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('const isDirectList = combobox.dataset.agentDirectList === "true"', script)
         self.assertIn("selectedOption?.dataset.agentComboboxLabel", script)
         self.assertNotIn('data-agent-session-platforms="chatgpt"', body)
+        self.assertNotIn('class="agent-readiness"', body)
+        self.assertNotIn('id="agent_readiness_message"', body)
+        self.assertNotIn("function setAgentReadiness", script)
+        self.assertNotIn("agentReadinessCopy", script)
+        self.assertNotIn("elements.readiness", script)
 
     def test_agent_page_exposes_a_collapsed_two_line_composer_control(self) -> None:
         app = create_app()
@@ -1824,11 +1841,9 @@ class WebAppTests(unittest.TestCase):
             "elements.errorRecord.hidden = !errorText",
             "renderAgentResponse(agent)",
             "renderTerminalExecution(lastPayload.runtime)",
-            "function formatAgentPhase(phase)",
-            "function agentReadinessCopy(phase, message)",
-            "function setAgentReadiness(phase, message)",
-            "setAgentReadiness(phase, readiness.message)",
-            "elements.readiness.dataset.phase",
+            "function readinessState(payload)",
+            "const readiness = readinessState(lastPayload);",
+            "const message = sessionMessage",
             'elements.responseAnswer.innerHTML = entry?.response_html || ""',
             "buildAgentPaginationItems(totalPages, responseHistoryPage)",
             "function buildAgentPaginationRanges(firstPage, lastPage, chunkSize = 5)",
@@ -1852,9 +1867,17 @@ class WebAppTests(unittest.TestCase):
             "loadSelectedSessionHistory(input.value)",
             "/api/agent/chatgpt-session-history?",
             "Loading the selected ChatGPT session history…",
-            'statusMessageCopy: document.querySelector("[data-agent-empty-response-copy]")',
-            'statusSpinner: document.querySelector("[data-agent-session-history-spinner]")',
-            "elements.statusSpinner.hidden = !remoteSessionHistoryLoading",
+            'statusMessageCopy: document.querySelector("[data-agent-response-status-copy]")',
+            'statusDot: document.querySelector("[data-agent-response-status-dot]")',
+            'statusSpinner: document.querySelector("[data-agent-response-status-spinner]")',
+            "function responseStatusPresentation(agent, readiness)",
+            "function renderResponseStatus(agent, readiness)",
+            "elements.statusSpinner.hidden = !presentation.loading",
+            "setResponseStatusFallback(error.message)",
+            "function syncAgentSessionListViewport()",
+            "const availableHeight = dockBox.top - menuBox.top - gap;",
+            '"--agent-session-list-menu-available-height"',
+            "syncAgentSessionListViewport();",
             "remoteHistoryMatchesSelection()",
             "sessionTitleOverride = option.dataset.agentComboboxLabel || \"\"",
             "elements.activityList.scrollTop = elements.activityList.scrollHeight",
@@ -2485,7 +2508,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.90.1-codex.9", body)
+            self.assertIn("style-v2.90.1-codex.16", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

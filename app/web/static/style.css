@@ -1,4 +1,4 @@
-/* Code version: v2.90.1-codex.10 */
+/* Code version: v2.90.1-codex.16 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -136,6 +136,7 @@
     --sidebar-action-button-padding-inline: 18px;
     --control-compact-height: 28px;
     --control-form-height: 36px;
+    --agent-composer-control-height: 32px;
     --sidebar-action-primary-background: var(--theme-accent-primary);
     --sidebar-action-primary-background-hover: color-mix(in srgb, var(--theme-accent-primary) 88%, var(--color-white-adaptive));
     --sidebar-action-primary-background-disabled: color-mix(in srgb, var(--theme-muted) 28%, transparent);
@@ -3410,17 +3411,58 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     flex-direction: column;
 }
 
-.agent-empty-response {
+.agent-response-status {
     display: flex;
     align-items: center;
     gap: 8px;
     margin: 0;
+    min-width: 0;
     color: var(--muted);
     font-size: var(--font-table-body);
     line-height: 1.45;
 }
 
-.agent-empty-response-spinner {
+.agent-response-status-indicator {
+    display: inline-grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    flex: 0 0 16px;
+}
+
+.agent-response-status-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--theme-success-strong);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-success-strong) 14%, transparent);
+}
+
+.agent-response-status-copy {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.agent-response-status[data-status="loading"] .agent-response-status-dot,
+.agent-response-status[data-status="running"] .agent-response-status-dot {
+    display: none;
+}
+
+.agent-response-status[data-status="paused"] .agent-response-status-dot {
+    background: var(--theme-warning);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-warning) 14%, transparent);
+}
+
+.agent-response-status[data-status="failed"] .agent-response-status-dot,
+.agent-response-status[data-status="interrupted"] .agent-response-status-dot,
+.agent-response-status[data-status="stopped"] .agent-response-status-dot {
+    background: var(--theme-error);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-error) 14%, transparent);
+}
+
+.agent-response-status-spinner {
     --loading-spinner-size: 16px;
 }
 
@@ -3684,12 +3726,36 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     display: grid !important;
     gap: 4px;
     width: 100%;
-    max-height: min(280px, max(28px, calc(100vh - 706px)));
+    --agent-session-list-dock-gap: var(--sidebar-dock-bottom-gap);
+    --agent-session-list-menu-min-height: var(--control-compact-height);
+    --agent-session-list-menu-available-height: var(--agent-session-list-menu-min-height);
+    max-height: min(
+        var(--shared-select-dropdown-max-height),
+        max(
+            var(--agent-session-list-menu-min-height),
+            var(--agent-session-list-menu-available-height)
+        )
+    );
     padding: 4px;
     border-radius: var(--radius-soft);
     box-sizing: border-box;
     overflow-y: auto;
     overscroll-behavior: contain;
+    scrollbar-width: none;
+    scrollbar-gutter: auto;
+    -ms-overflow-style: none;
+}
+
+.agent-session-list-menu-direct::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    background: transparent;
+}
+
+.agent-session-list-menu-direct::-webkit-scrollbar-track,
+.agent-session-list-menu-direct::-webkit-scrollbar-thumb,
+.agent-session-list-menu-direct::-webkit-scrollbar-corner {
+    background: transparent;
 }
 
 .agent-session-list-combobox .agent-session-list-menu {
@@ -3733,6 +3799,13 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-browser-combobox .agent-combobox-trigger {
+    min-height: var(--control-form-height);
+    padding-block: 3px;
+}
+
+.agent-platform-combobox .agent-combobox-trigger,
+.agent-session-mode-combobox .agent-combobox-trigger {
+    height: var(--control-form-height);
     min-height: var(--control-form-height);
     padding-block: 3px;
 }
@@ -3852,16 +3925,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     min-height: var(--workspace-title-rail-control-height);
 }
 
-.agent-summary-card > .agent-readiness {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin: 6px 0 0;
-    color: var(--muted);
-    font-size: var(--font-table-body);
-}
-
-.agent-readiness-dot,
 .settings-agent-runtime-dot {
     width: 8px;
     height: 8px;
@@ -3871,15 +3934,9 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-error) 14%, transparent);
 }
 
-.agent-readiness[data-ready="true"] .agent-readiness-dot,
 .settings-agent-runtime-status[data-ready="true"] .settings-agent-runtime-dot {
     background: var(--theme-success-strong);
     box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-success-strong) 14%, transparent);
-}
-
-.agent-readiness[data-phase="failed"] .agent-readiness-dot {
-    background: var(--theme-error);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--theme-error) 14%, transparent);
 }
 
 .agent-workspace-grid {
@@ -3920,6 +3977,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     min-height: 0;
     max-height: min(360px, 45svh);
     padding: 12px;
+    padding-inline-end: 52px;
     resize: none;
     border: 0;
     border-radius: 0;
@@ -3936,6 +3994,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-composer-shell {
     display: grid;
+    position: relative;
     gap: 8px;
     padding: 12px;
     border: var(--frosted-glass-border);
@@ -3993,9 +4052,11 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     min-width: 0;
 }
 
-.agent-model-trigger {
-    min-height: 36px;
-    padding: 7px 10px;
+.agent-model-trigger,
+.agent-effort-trigger {
+    height: var(--agent-composer-control-height);
+    min-height: var(--agent-composer-control-height);
+    padding: 4px 10px;
     border-radius: var(--radius-control);
 }
 
@@ -4022,7 +4083,8 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     font-weight: var(--font-weight-medium);
 }
 
-.agent-model-dropdown {
+.agent-model-dropdown,
+.agent-effort-dropdown {
     top: auto;
     bottom: calc(100% + 4px);
     right: auto;
@@ -4040,9 +4102,11 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     gap: 8px;
 }
 
-.agent-composer-overflow-toggle {
-    align-self: auto;
-    flex: 0 0 auto;
+.browser-session-message-toggle.agent-composer-overflow-toggle {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: var(--layer-control-affordance);
     margin: 0;
 }
 
@@ -4094,11 +4158,9 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-response-toolbar {
+    justify-content: space-between;
+    gap: 12px;
     min-height: 0;
-}
-
-.agent-response-toolbar:not(:has(.agent-conversation-link:not([hidden]))) {
-    display: none;
 }
 
 .agent-response-card {
