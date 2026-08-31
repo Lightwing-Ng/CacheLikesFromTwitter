@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.53.0-codex.1`
+Documentation version: `v3.53.1-codex.2`
 
 ## Purpose
 
@@ -476,13 +476,18 @@ Settings → Agent stores:
 Both operating-system defaults use one shared, complete 11-action JSON schema. The prompt also
 defines the Web provider as a transport-only reasoning surface, requires one action per turn,
 states the hard semantics for paths, receipts, writes, deletes, verification, and read-only tasks,
-and repeats the compact registry action catalog after each controller observation. At load time,
-prompts missing the fenced-JSON or base64 transport contract are replaced with the current safe
-defaults. Marker-complete prompts are normalized to one current action catalog and one current
-protocol section; repeated catalogs, incomplete sections, and placeholder delete digests are not
-retained. Former `text or regex` query fields are normalized even when their JSON whitespace
-differs, and the authoritative literal-only instruction is added when absent. User-authored
-guidance outside generated protocol sections and unrelated settings remain intact. Settings are
+and repeats a compact turn contract plus the registry action catalog after each controller
+observation. User-configured guidance is advisory: it cannot widen controller authority, the
+action schema, path boundaries, or verification gates, and model/session claims require controller
+observations rather than prompt text. A read-only run may end with `final` because it publishes
+only a local summary and does not mutate the workspace. At load time and every Settings write,
+prompts missing the
+fenced-JSON or base64 transport contract are replaced with the current safe defaults.
+Marker-complete prompts are normalized to one current action catalog and one current protocol
+section; repeated catalogs, incomplete sections, and placeholder delete digests are not retained.
+Former `text or regex` query fields are normalized even when their JSON whitespace differs, and the
+authoritative literal-only instruction is added when absent. User-authored guidance outside
+generated protocol sections and unrelated settings remain intact. Settings are
 written through an owner-only, same-directory temporary file, flushed with `fsync`, and atomically
 replaced. A failed write preserves the complete previous file. Successful migrations are immediate
 and idempotent across later service starts.

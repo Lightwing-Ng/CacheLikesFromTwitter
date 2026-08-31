@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.53.1-codex.1
+Code version: v3.53.1-codex.2
 """
 
 from __future__ import annotations
@@ -3105,9 +3105,9 @@ def test_non_regular_settings_file_returns_without_blocking(tmp_path: Path) -> N
 
 
 def test_default_prompts_share_the_complete_controller_action_schema() -> None:
-    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 5_281
+    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 5_769
     assert hashlib.sha256(DEFAULT_MACOS_SYSTEM_PROMPT.encode()).hexdigest() == (
-        "29e3af58a757ee4c8479ccee0e61ae9a4d70e33113785fbaf382d9da501ad300"
+        "c54d14a957f06bb500934e8bb42a0e94e1903d2f7d4d5e678c52c7b032108735"
     )
     for prompt in (DEFAULT_MACOS_SYSTEM_PROMPT, DEFAULT_WINDOWS_SYSTEM_PROMPT):
         for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS:
@@ -3127,7 +3127,7 @@ def test_default_prompts_share_the_complete_controller_action_schema() -> None:
         assert "Return exactly one action, then stop and wait" in prompt
         assert "`write` and `write_base64` create new files only" in prompt
         assert "`delete` requires a current controller `read`" in prompt
-        assert "For a read-only task, use only `list`, `read`, `search`, or `bodycheck`" in prompt
+        assert "For a read-only task, use only `list`, `read`, `search`, or `bodycheck`, then one `final` action" in prompt
 
 
 def test_marker_complete_prompt_migration_collapses_repeated_action_catalogs(
@@ -3206,12 +3206,85 @@ def test_marker_complete_prompt_migration_replaces_an_incomplete_protocol_sectio
     assert system_prompt_has_safe_protocol(loaded.macos_system_prompt)
 
 
+def test_marker_complete_prompt_migration_replaces_the_previous_protocol_version(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings_path = tmp_path / "settings.json"
+    previous_read_only_line = (
+        "- `bodycheck` must be requested after edits and after the latest successful verification. "
+        "`final` is valid only when verification and bodycheck are current after the latest edit. "
+        "For a read-only task, use only `list`, `read`, `search`, or `bodycheck`; do not edit, run, "
+        "or publish a final action."
+    )
+    current_read_only_line = next(
+        line
+        for line in DEFAULT_MACOS_SYSTEM_PROMPT.splitlines()
+        if line.startswith("- `bodycheck` must be requested")
+    )
+    previous_prompt = DEFAULT_MACOS_SYSTEM_PROMPT.replace(
+        current_read_only_line,
+        previous_read_only_line,
+    )
+    settings_path.write_text(
+        json.dumps(
+            asdict(
+                ComputerUseSettings(
+                    workspace_path=str(workspace),
+                    macos_system_prompt=previous_prompt,
+                    windows_system_prompt=DEFAULT_WINDOWS_SYSTEM_PROMPT,
+                )
+            ),
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_computer_use_settings(settings_path)
+
+    assert loaded.macos_system_prompt == DEFAULT_MACOS_SYSTEM_PROMPT
+    assert loaded.macos_system_prompt.count("Controller protocol rules:") == 1
+    assert system_prompt_has_safe_protocol(loaded.macos_system_prompt)
+
+
 def test_observation_message_repeats_compact_registry_action_catalog() -> None:
     message = _observation_message(3, {"ok": True, "action": "read"})
 
     assert "Controller observation for turn 3:" in message
     assert _CONTROLLER_ACTION_CATALOG in message
+    assert "Controller turn contract: emit exactly one fenced JSON action" in message
+    assert "Do not infer model, effort, browser, session, or destination" in message
+    assert "On rejection, return one corrected action only" in message
     assert "exactly one per turn" in message
+
+
+def test_settings_store_normalizes_prompts_before_persisting_or_exposing_them(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings_path = tmp_path / "settings.json"
+    custom_prompt = (
+        "Keep this custom project guidance. Return one action in a fenced code block labelled json. "
+        "Use replace_base64 and write_base64 when needed."
+    )
+    store = ComputerUseSettingsStore(settings_path)
+
+    updated = store.update(
+        ComputerUseSettings(
+            workspace_path=str(workspace),
+            macos_system_prompt=custom_prompt,
+            windows_system_prompt=DEFAULT_WINDOWS_SYSTEM_PROMPT,
+        )
+    )
+
+    assert updated.macos_system_prompt.startswith("Keep this custom project guidance.")
+    assert system_prompt_has_safe_protocol(updated.macos_system_prompt)
+    persisted = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert persisted["macos_system_prompt"] == updated.macos_system_prompt
+    assert store.settings == updated
 
 
 def test_initial_web_agent_message_states_fresh_and_read_only_contract() -> None:
@@ -3230,7 +3303,7 @@ def test_initial_web_agent_message_states_fresh_and_read_only_contract() -> None
 
     assert "first action must read `AGENTS.md`" in message
     assert "Task mode: read-only." in message
-    assert "do not edit, run, or publish a final action" in message
+    assert "followed by one non-mutating final summary; do not edit or run" in message
 
 
 def test_atomic_settings_replace_failure_preserves_the_previous_file(
