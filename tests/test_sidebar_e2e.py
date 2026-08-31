@@ -5333,7 +5333,7 @@ def test_incomplete_chatgpt_effort_catalog_hides_stale_snapshot_options(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
-    """Only a complete live probe may add provider effort options to the UI."""
+    """Incomplete browser payloads and Agent snapshots cannot add provider options."""
     agent_payload = _finished_chatgpt_agent_payload()
     agent_payload["agent"].update(
         {
@@ -5384,6 +5384,9 @@ def test_incomplete_chatgpt_effort_catalog_hides_stale_snapshot_options(
         expect(page.locator("[data-agent-effort-input]")).to_have_value(
             "highest_available"
         )
+        refresh_options = page.locator("[data-agent-effort-refresh]")
+        expect(refresh_options).to_be_visible()
+        expect(refresh_options).to_have_text("Refresh options")
         assert [text.strip() for text in effort_options.all_text_contents()] == [
             "Highest available"
         ]
@@ -5396,19 +5399,19 @@ def test_incomplete_chatgpt_effort_catalog_hides_stale_snapshot_options(
 @pytest.mark.parametrize(
     ("freshness_kind", "expect_provider_options"),
     (
-        ("server_cache", False),
-        ("stale_cache", False),
+        ("server_cache", True),
+        ("stale_cache", True),
         ("unknown", False),
         ("live_browser", True),
     ),
 )
-def test_complete_chatgpt_effort_catalog_requires_live_browser_provenance(
+def test_complete_chatgpt_effort_catalog_accepts_verified_browser_session_provenance(
     disposable_browser: Browser,
     sidebar_server_url: str,
     freshness_kind: str,
     expect_provider_options: bool,
 ) -> None:
-    """Expose provider labels only for the current browser probe, never its cache."""
+    """Expose complete provider labels from verified browser-session provenance only."""
     agent_payload = _finished_chatgpt_agent_payload()
     agent_payload["agent"].update(
         {
@@ -5430,7 +5433,12 @@ def test_complete_chatgpt_effort_catalog_requires_live_browser_provenance(
         "effort_catalog_complete": True,
         "browser_session_freshness": {
             "kind": freshness_kind,
-            "cache_status": "refreshed" if freshness_kind == "live_browser" else "hit",
+            "cache_status": {
+                "live_browser": "refreshed",
+                "server_cache": "hit",
+                "stale_cache": "stale",
+                "unknown": "hit",
+            }[freshness_kind],
             "cached_at": "2026-08-31T00:00:00Z",
             "age_seconds": 0 if freshness_kind == "live_browser" else 30,
         },
@@ -5459,17 +5467,33 @@ def test_complete_chatgpt_effort_catalog_requires_live_browser_provenance(
             "options => options.map((option) => option.dataset.agentComboboxOption)"
         ) == expected_values
         assert "Saved snapshot label" not in effort_options.all_text_contents()
+        if expect_provider_options:
+            expect(page.locator("[data-agent-effort-field]")).to_have_attribute(
+                "data-agent-effort-catalog-freshness",
+                freshness_kind,
+            )
+            page.locator(
+                ".agent-effort-combobox [data-agent-combobox-trigger]"
+            ).click()
+            page.locator(
+                '.agent-effort-dropdown [data-agent-combobox-option="Live first"]'
+            ).click()
+            expect(page.locator("[data-agent-effort-input]")).to_have_value("Live first")
+        else:
+            assert page.locator("[data-agent-effort-field]").get_attribute(
+                "data-agent-effort-catalog-freshness"
+            ) is None
     finally:
         context.close()
 
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_client_cached_chatgpt_effort_catalog_stays_policy_only_until_explicit_refresh(
+def test_client_cached_chatgpt_effort_catalog_exposes_verified_options_until_explicit_refresh(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
-    """A client cache stays policy-only until one user-requested live refresh."""
+    """A verified client cache is visible, while explicit refresh remains live-only."""
     browser_status_requests: list[str] = []
     cached_status = {
         "platform": "chatgpt",
@@ -5526,9 +5550,13 @@ def test_client_cached_chatgpt_effort_catalog_stays_policy_only_until_explicit_r
         effort_options = page.locator(
             ".agent-effort-dropdown [data-agent-combobox-option]"
         )
-        expect(effort_options).to_have_count(1)
-        expect(effort_options).to_have_attribute(
-            "data-agent-combobox-option", "highest_available"
+        expect(effort_options).to_have_count(2)
+        assert effort_options.evaluate_all(
+            "options => options.map((option) => option.dataset.agentComboboxOption)"
+        ) == ["highest_available", "Old live maximum"]
+        expect(page.locator("[data-agent-effort-field]")).to_have_attribute(
+            "data-agent-effort-catalog-freshness",
+            "client_cache",
         )
         assert browser_status_requests == []
 
@@ -6231,7 +6259,7 @@ def test_stale_chatgpt_probe_failure_cannot_overwrite_grok_ready_state(
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_observed_agent_completion_refreshes_sources_exactly_once(
+def test_observed_agent_completion_does_not_refresh_sources(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
@@ -6265,7 +6293,6 @@ def test_observed_agent_completion_refreshes_sources_exactly_once(
                 "can_download": True,
                 "account_name": "ChatGPT account",
                 "message": "Edge is ready for ChatGPT Web.",
-                "agent_sources": catalog_payload,
             }
         )
 
@@ -6290,16 +6317,10 @@ def test_observed_agent_completion_refreshes_sources_exactly_once(
         expect(response_status).to_be_visible()
         expect(response_status).to_have_attribute("data-status", "running")
         expect(response_status_spinner).to_be_visible()
-        page.wait_for_function(
-            """() => window.performance.getEntriesByType('resource').some((entry) =>
-                String(entry.name || '').includes('/api/agent/sources')
-                && String(entry.name || '').includes('refresh=1')
-            )"""
-        )
-        assert status_requests >= 2
-        assert len(source_requests) == 1
-        assert "refresh=1" in source_requests[0]
         expect(response_status).to_have_attribute("data-status", "finished")
+        page.wait_for_timeout(2_800)
+        assert status_requests >= 2
+        assert source_requests == []
         expect(response_status).to_contain_text("Finished")
         expect(response_status_spinner).to_be_hidden()
     finally:

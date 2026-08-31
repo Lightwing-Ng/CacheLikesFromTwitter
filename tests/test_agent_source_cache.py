@@ -1,6 +1,6 @@
 """Focused tests for the persistent Agent source cache."""
 
-# Code version: v2.1.0-codex.1
+# Code version: v2.1.1-codex.1
 
 from __future__ import annotations
 
@@ -258,6 +258,51 @@ class AgentSourceCacheTests(unittest.TestCase):
         self.assertEqual(stale["cache"]["status"], "stale")
         self.assertTrue(stale["cache"]["refresh_in_progress"])
         self.assertEqual(call_count, 2)
+
+    def test_passive_expired_read_preserves_stale_catalog_without_collecting(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            cache = AgentSourceCache(raw_root, ttl_seconds=1)
+            now = datetime(2026, 8, 15, 2, 0, tzinfo=timezone.utc)
+            collector = Mock(
+                return_value={"platform": "chatgpt", "recent_sessions": [{"id": "fresh"}]}
+            )
+            cache.get_or_collect(
+                platform="chatgpt",
+                browser="edge",
+                source_kind="browser-session",
+                collector=collector,
+                now=now,
+            )
+            stale = cache.get_or_collect(
+                platform="chatgpt",
+                browser="edge",
+                source_kind="browser-session",
+                collector=collector,
+                now=now + timedelta(seconds=2),
+                stale_while_revalidate=False,
+            )
+
+        self.assertEqual(stale["cache"]["status"], "stale")
+        self.assertFalse(stale["cache"]["refresh_in_progress"])
+        self.assertEqual(stale["recent_sessions"], [{"id": "fresh"}])
+        collector.assert_called_once()
+
+    def test_passive_catalog_miss_returns_unprobed_without_collecting(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            collector = Mock(return_value={"platform": "chatgpt", "recent_sessions": []})
+            payload = AgentSourceCache(raw_root).get_or_collect(
+                platform="chatgpt",
+                browser="edge",
+                source_kind="sources",
+                collector=collector,
+                collect_on_miss=False,
+                stale_while_revalidate=False,
+            )
+
+        self.assertEqual(payload["cache"]["status"], "unprobed")
+        self.assertEqual(payload["cache"]["cached_at"], "")
+        self.assertTrue(payload["cache"]["browser_check_required"])
+        collector.assert_not_called()
 
     def test_new_cache_instance_reuses_parquet_as_l2(self) -> None:
         with TemporaryDirectory() as raw_root:

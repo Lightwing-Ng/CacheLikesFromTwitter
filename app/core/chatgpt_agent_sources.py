@@ -1,6 +1,6 @@
 """Read ChatGPT Web sessions, projects, and conversation history for the local Agent.
 
-Code version: v1.5.0-codex.1
+Code version: v1.5.2-codex.1
 """
 
 from __future__ import annotations
@@ -152,6 +152,10 @@ def probe_and_collect_chatgpt_sources(
             with launch_chromium_context(
                 playwright,
                 descriptor,
+                # ChatGPT's Cloudflare challenge rejects the headless clone
+                # with HTTP 403. Keep this probe non-headless but backgrounded
+                # and offscreen so it can use the real browser fingerprint
+                # without surfacing a window to the user.
                 headless=False,
                 clone_profile_first=True,
                 background_window=True,

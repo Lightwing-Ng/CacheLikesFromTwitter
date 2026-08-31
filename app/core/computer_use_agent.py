@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.53.1-codex.2
+Code version: v3.53.2-codex.1
 """
 
 from __future__ import annotations
@@ -48,6 +48,8 @@ from .agent.capability_registry import (
     validate_controller_action_payload,
 )
 from .browser_sessions import (
+    CHROMIUM_WINDOW_MODE_OFFSCREEN,
+    CHROMIUM_WINDOW_MODE_TASK_STAGE,
     browser_descriptors,
     goto_with_retry,
     launch_chromium_context,
@@ -382,6 +384,13 @@ _CURRENT_WINDOWS_INTRO = (
 _LITERAL_SEARCH_PROMPT_INSTRUCTION = (
     "Search action queries are literal text, never regular expressions."
 )
+_INTERACTION_PERFORMANCE_PROMPT_INSTRUCTION = (
+    "For UI interaction-performance complaints such as hover jank, prioritize perceptual smoothness: "
+    "avoid expensive work on pointermove, mousemove, or hover; cache or precompute derived data; "
+    "update only when the hovered target or visible result actually changes; batch DOM reads and writes; "
+    "use requestAnimationFrame for visual work when appropriate; and verify the hot path with focused "
+    "browser-facing tests or instrumentation when available. Preserve correctness and accessibility."
+)
 _CONTROLLER_ACTION_SCHEMA = controller_action_prompt_schema()
 _CONTROLLER_ACTION_SCHEMA_MARKERS = tuple(
     line
@@ -443,6 +452,8 @@ Work autonomously from the user's request. Read the repository instruction files
     + _CONTROLLER_PROTOCOL_INSTRUCTIONS
     + "\n"
     + _LITERAL_SEARCH_PROMPT_INSTRUCTION
+    + "\n"
+    + _INTERACTION_PERFORMANCE_PROMPT_INSTRUCTION
     + _CONTROLLER_ACTION_SCHEMA
 ).rstrip()
 
@@ -456,6 +467,8 @@ The controller runs on Windows, uses PowerShell-compatible Windows paths, and ow
     + _CONTROLLER_PROTOCOL_INSTRUCTIONS
     + "\n"
     + _LITERAL_SEARCH_PROMPT_INSTRUCTION
+    + "\n"
+    + _INTERACTION_PERFORMANCE_PROMPT_INSTRUCTION
     + _CONTROLLER_ACTION_SCHEMA
 ).rstrip()
 
@@ -669,6 +682,7 @@ SAFE_PROTOCOL_PROMPT_MARKERS = (
     "Return exactly one action, then stop and wait for its controller observation",
     "For a fresh root or Project session, the first action must read `AGENTS.md`",
     _LITERAL_SEARCH_PROMPT_INSTRUCTION,
+    _INTERACTION_PERFORMANCE_PROMPT_INSTRUCTION,
 )
 
 
@@ -766,12 +780,14 @@ def _migrate_marker_complete_system_prompt(prompt: str) -> str:
             1,
         )
     migrated = migrated.replace(_LITERAL_SEARCH_PROMPT_INSTRUCTION, "")
+    migrated = migrated.replace(_INTERACTION_PERFORMANCE_PROMPT_INSTRUCTION, "")
     migrated = re.sub(r"[ \t]+\n", "\n", migrated)
     migrated = re.sub(r"\n{3,}", "\n\n", migrated)
     migrated = _strip_controller_action_catalogs(migrated)
     migrated = _normalize_controller_protocol_sections(migrated)
     migrated = re.sub(r"\n{3,}", "\n\n", migrated)
     migrated = f"{migrated.rstrip()}\n{_LITERAL_SEARCH_PROMPT_INSTRUCTION}"
+    migrated = f"{migrated.rstrip()}\n{_INTERACTION_PERFORMANCE_PROMPT_INSTRUCTION}"
     return f"{migrated.rstrip()}{_CONTROLLER_ACTION_SCHEMA}".rstrip()
 
 
@@ -5892,25 +5908,10 @@ class ComputerUseAgentService:
             handoff_opened = False
             handoff_message = ""
             if handoff_available:
-                try:
-                    self._browser_opener(
-                        settings.platform,
-                        settings.browser,
-                        handoff_url,
-                        background=True,
-                    )
-                    handoff_opened = True
-                    handoff_message = (
-                        "The same ChatGPT conversation was opened quietly in Edge for traditional "
-                        "continuation. Local edits and bodycheck remain unfinished until the Agent "
-                        "controller verifies them."
-                    )
-                except (OSError, RuntimeError, ValueError) as handoff_exc:
-                    LOGGER.warning("Could not open the traditional Edge handoff: %s", handoff_exc)
-                    handoff_message = (
-                        "Continue the same ChatGPT conversation with the Edge button. Local edits "
-                        "and bodycheck remain unfinished until the Agent controller verifies them."
-                    )
+                handoff_message = (
+                    "Continue the same ChatGPT conversation with the Edge button. Local edits "
+                    "and bodycheck remain unfinished until the Agent controller verifies them."
+                )
             failure_message = str(exc).splitlines()[0][:500]
             completion = {
                 "phase": "failed",
@@ -5965,6 +5966,93 @@ class ComputerUseAgentService:
             )
             self._sync_event_chain_summary_locked()
             self._persist_snapshot_locked()
+
+
+def _capture_macos_frontmost_application() -> str:
+    """Return the current macOS frontmost app without activating a browser."""
+    if sys.platform != "darwin":
+        return ""
+    command = [
+        "/usr/bin/osascript",
+        "-e",
+        'tell application "System Events"',
+        "-e",
+        "try",
+        "-e",
+        "return name of first application process whose frontmost is true",
+        "-e",
+        "end try",
+        "-e",
+        "end tell",
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        LOGGER.debug("Could not capture the macOS frontmost application: %s", result.stderr)
+        return ""
+    return str(result.stdout or "").strip()
+
+
+def _restore_macos_frontmost_application_after_task_stage(
+    previous_application: str,
+    browser_application: str,
+) -> None:
+    """Restore a prior macOS app only if the new task browser took focus."""
+    if sys.platform != "darwin":
+        return
+    previous = str(previous_application or "").strip()
+    browser = str(browser_application or "").strip()
+    if not previous or not browser or previous == browser:
+        return
+    command = [
+        "/usr/bin/osascript",
+        "-e",
+        "on run argv",
+        "-e",
+        "set previousFrontmostProcessName to item 1 of argv",
+        "-e",
+        "set taskBrowserProcessName to item 2 of argv",
+        "-e",
+        'tell application "System Events"',
+        "-e",
+        "try",
+        "-e",
+        "set currentFrontmostProcessName to name of first application process whose frontmost is true",
+        "-e",
+        "if currentFrontmostProcessName is taskBrowserProcessName then",
+        "-e",
+        "set frontmost of process previousFrontmostProcessName to true",
+        "-e",
+        "end if",
+        "-e",
+        "end try",
+        "-e",
+        "end tell",
+        "-e",
+        "end run",
+        previous,
+        browser,
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=3,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return
+    if result.returncode != 0:
+        LOGGER.debug("Could not restore the macOS frontmost application: %s", result.stderr)
 
 
 def run_web_computer_use(
@@ -6040,6 +6128,10 @@ def run_web_computer_use(
                 event_chain=event_chain,
             )
 
+    task_stage_window = settings.browser == "edge" and sys.platform == "darwin"
+    previous_frontmost_application = (
+        _capture_macos_frontmost_application() if task_stage_window else ""
+    )
     with sync_playwright_or_error() as playwright:
         with launch_chromium_context(
             playwright,
@@ -6048,7 +6140,23 @@ def run_web_computer_use(
             clone_profile_first=True,
             background_window=True,
             silent=settings.browser == "edge",
+            window_mode=(
+                CHROMIUM_WINDOW_MODE_TASK_STAGE
+                if task_stage_window
+                else CHROMIUM_WINDOW_MODE_OFFSCREEN
+            ),
         ) as context:
+            try:
+                if task_stage_window:
+                    pages = list(getattr(context, "pages", []) or [])
+                    if pages:
+                        _keep_task_stage_window_available(pages[0])
+            finally:
+                if task_stage_window:
+                    _restore_macos_frontmost_application_after_task_stage(
+                        previous_frontmost_application,
+                        "Microsoft Edge",
+                    )
             if should_stop():
                 return stopped_result
             page = select_provider_tab(
@@ -7102,6 +7210,34 @@ def _send_cdp_window_bounds(
             "Browser.setWindowBounds",
             {"windowId": window_id, "bounds": {"windowState": window_state}},
         )
+
+
+def _keep_task_stage_window_available(page: Any) -> None:
+    """Keep the owned Edge clone in a normal window without activating it."""
+    context = getattr(page, "context", None)
+    session = None
+    try:
+        new_cdp_session = getattr(context, "new_cdp_session", None)
+        if not callable(new_cdp_session):
+            return
+        session = new_cdp_session(page)
+        window = session.send("Browser.getWindowForTarget")
+        window_id = window.get("windowId") if isinstance(window, dict) else None
+        if window_id is None:
+            return
+        session.send(
+            "Browser.setWindowBounds",
+            {"windowId": window_id, "bounds": {"windowState": "normal"}},
+        )
+    except Exception as exc:
+        LOGGER.debug("Could not keep the task browser window available in Stage Manager: %s", exc)
+    finally:
+        detach = getattr(session, "detach", None)
+        if callable(detach):
+            try:
+                detach()
+            except Exception:
+                pass
 
 
 def _surface_provider_challenge_window(page: Any) -> dict[str, Any] | None:

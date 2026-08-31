@@ -1,4 +1,4 @@
-/* Code version: v1.8.1-codex.1 */
+/* Code version: v1.8.2-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v6:";
@@ -211,11 +211,9 @@
                     clientCachedPayload(cachedStatus.payload, cachedStatus.ageMs),
                     activeBrowser,
                 );
-                if (cachedStatus.payload.can_download && cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;
-                setRefreshingState(activeBrowser);
-            } else {
-                setLoadingState(activeBrowser);
+                return;
             }
+            setLoadingState(activeBrowser);
 
             try {
                 const payload = await requestBrowserStatus(requestPlatform, activeBrowser, scope, {refresh: forceRefresh});

@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.53.1-codex.2`
+Documentation version: `v3.53.2-codex.1`
 
 ## Purpose
 
@@ -27,26 +27,27 @@ performs project actions and returns compact observations to the same conversati
 The recent-session, Project, and Project-session catalogs use one shared read-through Parquet cache
 under `local_store/agent/agent_source_catalog.parquet`. The cache key isolates provider, browser,
 catalog kind, and Project URL. Fresh entries are reused from process memory for 15 minutes; the
-first process read hydrates that memory from Parquet. After expiry, passive requests immediately
-serve the last catalog while one background refresh runs per key. Add `refresh=1` to the relevant
-`/api/agent/sources` or `/api/agent/project-sessions` request when a synchronous browser re-check
-is required. If that refresh fails and an older entry exists, the API returns the older catalog
+first process read hydrates that memory from Parquet. After expiry, passive page loads, polling,
+and task-completion rendering return the last verified catalog without starting another browser
+collector. A cache miss performs one bounded bootstrap check; later re-checks require the visible
+`Refresh options` control or a submitted task. The control uses the Agent-scoped
+`/api/browser-session?refresh=1` request, writes the newly collected catalog back to the shared
+cache, and is ordered separately in the browser so an older passive response cannot overwrite the
+fresh result. If an explicit refresh fails and an older entry exists, the API returns that catalog
 with `cache.status: "stale"` so the selector remains usable and the condition stays observable.
-The Agent-scoped `/api/browser-session` bootstrap uses the same cache instead of launching its
-collector for every status poll. An explicit Refresh accepts `refresh=1`, `true`, or `yes`, writes
-the newly collected catalog back to the shared cache, and is ordered separately in the browser so
-an older passive response cannot overwrite the fresh result.
 
 On `/agent`, ChatGPT, Grok, and Claude use an agent-scoped bootstrap request: the selected browser
 context verifies the actual Web composer and collects Recent sessions and Projects in one launch.
 For Edge or Chrome with ChatGPT, that same launch also discovers the complete live Sol effort
 slider before the user submits a task, so the first-run selector is not limited to a hard-coded
 default.
-The selector always starts with the local `Highest available` policy. Provider labels appear only
-after a complete fresh browser probe marked `live_browser`; server-cache, stale-cache, and
-session-storage payloads retain the policy item only. The adjacent `Refresh live ChatGPT thinking
-efforts` control makes one explicit `refresh=1` probe when the user wants to inspect current
-subscription labels. It does not submit a prompt or start an Agent task.
+The selector always starts with the local `Highest available` policy. Every exact provider label is
+read dynamically from the live ChatGPT slider, never from a plan-specific list. A complete,
+matching catalog remains selectable while it retains verifiable browser-session provenance,
+including its server, stale, or session cache record; the UI identifies it as the latest verified
+result rather than implying that a passive render is a new probe. The adjacent `Refresh options`
+control makes one explicit `refresh=1` probe when the user wants the current subscription labels.
+It does not submit a prompt or start an Agent task.
 When `Recent sessions` is selected, the catalog is rendered directly as a bounded, vertically
 scrollable list in the sidebar rather than a second dropdown. A ready Agent status cached without
 its bootstrap catalog is treated as incomplete and refreshed once, so the status probe and source
@@ -137,9 +138,10 @@ older task cannot be submitted accidentally through a different Web session.
    subscription label and can request any exact label. Both the final integer `aria-valuenow` and
    rendered label must match. Missing controls, fractional or out-of-range values, incomplete
    catalogs, and unavailable requested labels fail closed before context attachment or submission.
-   Until a current probe marks `effort_catalog_complete`, the browser selector keeps only the
-   `Highest available` policy option; historical snapshot labels and saved provider selections
-   remain diagnostic state and never become selectable options.
+   Until a matching, complete catalog with browser-session provenance exists, the selector keeps
+   only the `Highest available` policy option. An older complete catalog remains visible as the
+   latest verified set for that same browser and provider, but execution always repeats the live
+   slider discovery and fails closed if the requested label is no longer present.
    A checked `GPT-5.6 Sol` / `5.6 Sol` model item remains the required model proof, even when a
    thinking-effort radio such as `Medium` is also selected in the same menu. `Highest available`
    is a local policy rather than a provider label, but a verified live integer reasoning-effort
@@ -296,11 +298,10 @@ older task cannot be submitted accidentally through a different Web session.
 9. After an edit, the controller rejects a final answer until at least one approved verification
    command and `bodycheck` both succeed for the current edit generation. If an
    Edge and ChatGPT run still fails after an exact conversation URL exists, the service preserves the
-   failed state and opens that same conversation in the user's traditional Edge browser with macOS
-   background activation. The local page exposes a `Continue in Edge` handoff instead of claiming
-   completion. A traditional ChatGPT window can continue the conversation, but it cannot perform or
-   verify local file actions through this controller; local edits and bodycheck therefore remain
-   unfinished.
+   failed state without opening traditional Edge. The local page exposes an explicit `Continue in
+   Edge` handoff instead of claiming completion. A traditional ChatGPT window can continue the
+   conversation, but it cannot perform or verify local file actions through this controller; local
+   edits and bodycheck therefore remain unfinished.
 10. The local page renders the final Markdown and links to the selected Web conversation in the
    browser encoded by the task, rather than the system default browser. When a
    ChatGPT recent session or project session is selected, the page fetches that conversation's
@@ -506,11 +507,14 @@ the strict Job Object completion barrier required for hostile child processes. S
 macOS-only. The selected operating system must match the host running the local service.
 
 Edge and Chrome run through an isolated clone of the selected signed-in profile and operate the
-selected provider's DOM directly. Agent Edge and Chrome tasks use offscreen, minimized temporary
-contexts, with first-run, crash, notification, and repost prompts disabled, so they do not create a
-visible Stage Manager window, take focus, or interrupt normal macOS use. The user's original profile
-is never opened for writing. A normal task exit closes the isolated context and removes its
-temporary profile; the next Chromium launch removes only abandoned `cachelikes-edge-*` or
+selected provider's DOM directly. Passive source checks use a quiet, task-independent context.
+On macOS, an executing Edge task uses one normal, non-offscreen task-owned window, rather than a
+full-display or permanently hidden window. It is restored to the normal macOS window state and the previous
+foreground app is restored if Edge took focus, leaving the task window available for the user to
+inspect through macOS window management. macOS ultimately determines Stage Manager grouping.
+The user's original profile is never opened for writing. Chromium still suppresses first-run,
+crash, notification, and repost prompts; a normal task exit closes the isolated context and removes
+its temporary profile. The next Chromium launch removes only abandoned `cachelikes-edge-*` or
 `cachelikes-chrome-*` directories older than 24 hours. Safari uses one shared Apple Events context,
 restores the previous frontmost application after window operations, and closes every task-owned
 window on success, stop, failure, or exception. Safari remains available only for ChatGPT's existing
@@ -523,11 +527,9 @@ errors as an idempotent second close, while still removing the temporary profile
 context-close failures continue to propagate instead of being hidden.
 
 The traditional Edge handoff is intentionally separate from the isolated Agent context. On a failed
-Edge and ChatGPT run with a verified conversation URL, macOS asks the normal `Microsoft Edge`
-application to create a new window and set its active tab URL through Edge's AppleScript window model.
-The handoff never calls `activate`, so the current foreground application remains unchanged while
-Stage Manager places the Edge window in the background. Clicking the handoff pill later opens the same
-URL in Edge normally.
+Edge and ChatGPT run with a verified conversation URL, the service records an available handoff but
+does not create a normal `Microsoft Edge` window automatically. Clicking the handoff pill is the
+user's explicit choice to open the same URL in Edge normally.
 
 The model selector is provider-specific: ChatGPT exposes the local option `5.6 Sol`, Gemini exposes `3.1 Pro`, Grok
 exposes `Build Beta`, and Claude exposes `Auto`. Each provider is fail-closed: the controller must select or observe

@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.8-codex.1
+Code version: v1.6.9-codex.1
 """
 
 from __future__ import annotations
@@ -14,6 +14,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from app.core.browser_sessions import (
+    CHROMIUM_WINDOW_MODE_TASK_STAGE,
     BrowserDescriptor,
     build_chromium_launch_args,
     clone_browser_profile,
@@ -221,6 +222,21 @@ def test_background_chromium_launch_args_keep_the_window_offscreen() -> None:
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
     ]
+    assert build_chromium_launch_args(
+        descriptor,
+        window_mode=CHROMIUM_WINDOW_MODE_TASK_STAGE,
+    ) == [
+        "--profile-directory=Default",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-session-crashed-bubble",
+        "--noerrdialogs",
+        "--disable-notifications",
+        "--disable-prompt-on-repost",
+        "--disable-background-timer-throttling",
+        "--disable-backgrounding-occluded-windows",
+        "--disable-renderer-backgrounding",
+    ]
 
 
 def test_gemini_browser_probe_routes_through_the_shared_browser_registry(macos_host) -> None:
@@ -361,6 +377,51 @@ def test_silent_edge_chromium_context_is_backgrounded_without_stealing_focus(
     assert "--profile-directory=Default" in launch_kwargs["args"]
     assert "--window-position=-32000,-32000" in launch_kwargs["args"]
     assert "--start-minimized" in launch_kwargs["args"]
+
+
+def test_task_stage_edge_context_is_not_forced_back_offscreen_by_silent_mode(
+    tmp_path: Path,
+) -> None:
+    source_user_data_dir = tmp_path / "Edge"
+    source_profile_dir = source_user_data_dir / "Default"
+    source_profile_dir.mkdir(parents=True)
+    (source_profile_dir / "Preferences").write_text("{}", encoding="utf-8")
+    descriptor = BrowserDescriptor(
+        browser_id="edge",
+        label="Edge",
+        icon_filename="images/browser.edge.png",
+        engine="chromium",
+        user_data_dir=source_user_data_dir,
+        profile_directory="Default",
+        channel="msedge",
+    )
+    context = SimpleNamespace(close=lambda: None)
+
+    class Chromium:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, object]] = []
+
+        def launch_persistent_context(self, **kwargs):
+            self.calls.append(kwargs)
+            return context
+
+    chromium = Chromium()
+    playwright = SimpleNamespace(chromium=chromium)
+
+    with launch_chromium_context(
+        playwright,
+        descriptor,
+        headless=False,
+        silent=True,
+        window_mode=CHROMIUM_WINDOW_MODE_TASK_STAGE,
+    ):
+        pass
+
+    launch_args = chromium.calls[0]["args"]
+    assert "--window-position=-32000,-32000" not in launch_args
+    assert "--window-size=1280,900" not in launch_args
+    assert "--start-minimized" not in launch_args
+    assert "--no-first-run" in launch_args
 
 
 @pytest.mark.parametrize(

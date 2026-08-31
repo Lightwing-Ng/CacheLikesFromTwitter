@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.48.4-codex.1
+Code version: v3.48.5-codex.1
 """
 
 from __future__ import annotations
@@ -1150,7 +1150,7 @@ class TestRecentSessionCatalog:
         assert "clearCatalogLoadingState" in script
         assert "Recent sessions timed out after 15 seconds." in script
 
-    def test_stale_cache_requires_explicit_refresh(self) -> None:
+    def test_passive_source_catalog_never_collects_on_refresh_query(self) -> None:
         first_payload = {
             "platform": "gemini",
             "browser_label": "Edge",
@@ -1173,15 +1173,14 @@ class TestRecentSessionCatalog:
             ) as sources:
                 with app.test_client() as client:
                     first_response = client.get("/api/agent/sources?platform=gemini&browser=edge")
-                    cached_response = client.get("/api/agent/sources?platform=gemini&browser=edge")
-                    refreshed_response = client.get(
+                    query_response = client.get(
                         "/api/agent/sources?platform=gemini&browser=edge&refresh=1"
                     )
-        assert first_response.get_json()["recent_sessions"] == [{"id": "first-session"}]
-        assert cached_response.get_json()["cache"]["status"] == "hit"
-        assert refreshed_response.get_json()["recent_sessions"] == [{"id": "second-session"}]
-        assert refreshed_response.get_json()["cache"]["status"] == "refreshed"
-        assert sources.call_count == 2
+        assert first_response.get_json()["recent_sessions"] == []
+        assert first_response.get_json()["cache"]["status"] == "unprobed"
+        assert query_response.get_json()["recent_sessions"] == []
+        assert query_response.get_json()["cache"]["status"] == "unprobed"
+        sources.assert_not_called()
 
     def test_post_session_catalog_refresh_uses_refresh_query(self) -> None:
         script = (
@@ -1190,7 +1189,8 @@ class TestRecentSessionCatalog:
         ).read_text(encoding="utf-8")
         bind_index = script.index("function bindCompletedAgentSession")
         bind_chunk = script[bind_index:bind_index + 1_800]
-        assert "loadAgentSources({forceRefresh: true})" in bind_chunk
+        assert "automaticSourcesSuppressedAfterCompletion = true;" in bind_chunk
+        assert "loadAgentSources({forceRefresh: true})" not in bind_chunk
         assert "if (!completedTransition" in bind_chunk
         assert "function runSupersedes(" in script
         assert "function agentRunRevision(" in script

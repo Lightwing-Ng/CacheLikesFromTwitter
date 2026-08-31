@@ -1769,7 +1769,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.90.13-codex.1 */",
+        "/* Code version: v2.90.14-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1906,6 +1906,30 @@ def test_agent_effort_trigger_uses_fifteen_pixel_type_token_without_wrapping() -
     assert "font-size: var(--font-size-5);" in selector_rule
     assert "padding-inline-end: 6px;" in selector_rule
     assert "white-space: nowrap;" in selector_rule
+
+
+def test_agent_effort_refresh_is_a_visible_labeled_action() -> None:
+    """Keep the explicit effort refresh action discoverable without overflowing mobile."""
+    stylesheet = _stylesheet()
+    selector = ".agent-effort-refresh {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+    label_selector = ".agent-effort-refresh-label {"
+    label_start = stylesheet.index(label_selector)
+    label_rule = stylesheet[label_start:stylesheet.index("\n}", label_start)]
+
+    for token in (
+        "display: inline-flex;",
+        "gap: 6px;",
+        "padding: 0 9px;",
+    ):
+        assert token in selector_rule
+    for token in (
+        "font-size: var(--font-size-4);",
+        "white-space: nowrap;",
+    ):
+        assert token in label_rule
+    assert "flex-wrap: wrap;" in stylesheet
 
 
 def test_visible_chatgpt_effort_uses_a_two_row_compact_composer_footer() -> None:

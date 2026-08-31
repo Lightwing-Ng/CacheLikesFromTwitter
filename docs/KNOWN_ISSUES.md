@@ -1,6 +1,6 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.18.0-codex.1`
+Documentation version: `v1.18.1-codex.1`
 
 ## Edge Gemini and Grok Agent parity hardening on 28 Aug 2026
 
@@ -200,17 +200,14 @@ Documentation version: `v1.18.0-codex.1`
   context cleanup ignores only known already-closed or driver-disconnected second-close errors,
   still removes the cloned profile, and propagates unexpected close failures.
 
-## Agentic failure handoff to traditional Edge on 20 Aug 2026
+## Agentic traditional Edge handoff is explicit on 31 Aug 2026
 
 - A normal ChatGPT browser window cannot perform project-confined local file actions, so it is not
   treated as a successful Agent replacement. When an Edge and ChatGPT controller run fails after the
-  exact conversation URL is known, the service now opens that same conversation through normal Edge
-  with macOS background activation, keeps the Agent phase failed, and marks local edits and bodycheck
-  unfinished.
-- The response toolbar expands to `Continue in Edge`, and explicit conversation opening targets the
-  browser selected for the task instead of the system default. The automatic Edge path creates a
-  normal window through Edge's AppleScript model without calling `activate`, leaving the current
-  foreground application unchanged while macOS controls Stage Manager grouping.
+  exact conversation URL is known, the service keeps the Agent phase failed and marks local edits and
+  bodycheck unfinished; it does not open a second traditional Edge window automatically.
+- The response toolbar exposes `Continue in Edge`. Opening targets the browser selected for the task
+  instead of the system default and occurs only after the user chooses that action.
 
 ## ChatGPT Agent rendered-action and history retry recovery on 19 Aug 2026
 

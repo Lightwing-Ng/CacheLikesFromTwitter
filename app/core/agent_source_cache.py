@@ -1,6 +1,6 @@
 """Read-through Parquet cache for Web Agent source discovery.
 
-Code version: v2.1.0-codex.1
+Code version: v2.1.1-codex.1
 """
 
 from __future__ import annotations
@@ -91,10 +91,10 @@ class AgentSourceCacheEntry:
 class AgentSourceCache:
     """Serve Agent catalogs from memory, Parquet, or the authenticated browser.
 
-    Fresh reads are L1 memory hits after the first catalog load. Expired passive
-    reads use stale-while-revalidate and coalesce concurrent refreshes by key.
-    Explicit refreshes remain synchronous so the caller receives the newest
-    available catalog or an observable stale fallback.
+    Fresh reads are L1 memory hits after the first catalog load. Callers can
+    return expired catalogs without revalidating them, so passive UI reads do
+    not launch a browser. Explicit refreshes remain synchronous so the caller
+    receives the newest available catalog or an observable stale fallback.
     """
 
     def __init__(
@@ -149,6 +149,7 @@ class AgentSourceCache:
         force_refresh: bool = False,
         now: datetime | None = None,
         stale_while_revalidate: bool = True,
+        collect_on_miss: bool = True,
     ) -> dict[str, Any]:
         """Return a cached catalog or collect it through one coalesced flight."""
         key = AgentSourceCacheKey.from_values(platform, browser, source_kind, project_url)
@@ -169,9 +170,12 @@ class AgentSourceCache:
                     ttl_seconds=self.ttl_seconds,
                 )
 
-            if cached and not force_refresh and stale_while_revalidate:
+            if cached and not force_refresh:
                 refresh_started = False
-                if not self._refresh_cooldown_active_locked(key, current_time):
+                if (
+                    stale_while_revalidate
+                    and not self._refresh_cooldown_active_locked(key, current_time)
+                ):
                     refresh_started = self._start_background_refresh_locked(key, collector)
                 layer = self._consume_cache_layer_locked(key)
                 return _with_cache_metadata(
@@ -182,6 +186,16 @@ class AgentSourceCache:
                     now=current_time,
                     ttl_seconds=self.ttl_seconds,
                     refresh_in_progress=refresh_started or key in self._refreshing,
+                )
+
+            if not collect_on_miss and not force_refresh:
+                return _with_cache_metadata(
+                    {},
+                    status="unprobed",
+                    layer="none",
+                    cached_at=None,
+                    now=current_time,
+                    ttl_seconds=self.ttl_seconds,
                 )
 
             while key in self._refreshing:
@@ -388,6 +402,7 @@ def get_or_collect_agent_source(
     now: datetime | None = None,
     ttl_seconds: int = AGENT_SOURCE_CACHE_TTL_SECONDS,
     stale_while_revalidate: bool = True,
+    collect_on_miss: bool = True,
 ) -> dict[str, Any]:
     """Use a shared process-local cache for callers outside the Flask app."""
     root = Path(local_store_root).expanduser().resolve(strict=False)
@@ -405,6 +420,7 @@ def get_or_collect_agent_source(
         force_refresh=force_refresh,
         now=now,
         stale_while_revalidate=stale_while_revalidate,
+        collect_on_miss=collect_on_miss,
     )
 
 
@@ -418,21 +434,25 @@ def _with_cache_metadata(
     *,
     status: str,
     layer: str,
-    cached_at: datetime,
+    cached_at: datetime | None,
     now: datetime,
     ttl_seconds: int,
     refresh_in_progress: bool = False,
 ) -> dict[str, Any]:
     """Add operational cache metadata without mutating the stored provider payload."""
     result = dict(payload)
-    expires_at = cached_at + timedelta(seconds=ttl_seconds)
+    expires_at = cached_at + timedelta(seconds=ttl_seconds) if cached_at is not None else None
     result["cache"] = {
         "status": status,
         "layer": layer,
-        "cached_at": _as_utc(cached_at).isoformat(),
-        "expires_at": _as_utc(expires_at).isoformat(),
-        "age_seconds": max(0, int((now - cached_at).total_seconds())),
-        "browser_check_required": status in {"miss", "refreshed", "stale"},
+        "cached_at": _as_utc(cached_at).isoformat() if cached_at is not None else "",
+        "expires_at": _as_utc(expires_at).isoformat() if expires_at is not None else "",
+        "age_seconds": (
+            max(0, int((now - cached_at).total_seconds()))
+            if cached_at is not None
+            else 0
+        ),
+        "browser_check_required": status in {"miss", "refreshed", "stale", "unprobed"},
         "refresh_in_progress": refresh_in_progress,
         "ttl_seconds": ttl_seconds,
     }

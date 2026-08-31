@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.53.1-codex.2
+Code version: v3.53.2-codex.1
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ import sys
 from tempfile import TemporaryDirectory
 from threading import Event, Thread
 import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -3105,9 +3106,9 @@ def test_non_regular_settings_file_returns_without_blocking(tmp_path: Path) -> N
 
 
 def test_default_prompts_share_the_complete_controller_action_schema() -> None:
-    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 5_769
+    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 6_250
     assert hashlib.sha256(DEFAULT_MACOS_SYSTEM_PROMPT.encode()).hexdigest() == (
-        "c54d14a957f06bb500934e8bb42a0e94e1903d2f7d4d5e678c52c7b032108735"
+        "d1bdb6374fb5a5fe117f6469fc665879f533e973279f0b5971debaee32863b60"
     )
     for prompt in (DEFAULT_MACOS_SYSTEM_PROMPT, DEFAULT_WINDOWS_SYSTEM_PROMPT):
         for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS:
@@ -3776,6 +3777,8 @@ def test_chromium_agent_selects_the_provider_tab_before_navigation(
     browser_context = _BrowserContext()
     navigated_pages: list[_Page] = []
     action_loop_pages: list[_Page] = []
+    launch_options: list[dict[str, object]] = []
+    restored_frontmost_apps: list[tuple[str, str]] = []
     expected_result = ("done", "https://gemini.google.com/app", 1, True)
     workspace = tmp_path / "project"
     workspace.mkdir()
@@ -3802,7 +3805,18 @@ def test_chromium_agent_selects_the_provider_tab_before_navigation(
     monkeypatch.setattr(
         computer_use_agent,
         "launch_chromium_context",
-        lambda *_args, **_kwargs: browser_context,
+        lambda *_args, **kwargs: (launch_options.append(kwargs) or browser_context),
+    )
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_capture_macos_frontmost_application",
+        lambda: "WeChat",
+    )
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_restore_macos_frontmost_application_after_task_stage",
+        lambda previous, browser: restored_frontmost_apps.append((previous, browser)),
     )
     monkeypatch.setattr(
         computer_use_agent,
@@ -3830,6 +3844,11 @@ def test_chromium_agent_selects_the_provider_tab_before_navigation(
     assert result == expected_result
     assert navigated_pages == [provider_page]
     assert action_loop_pages == [provider_page]
+    assert launch_options[0]["window_mode"] == "task_stage"
+    assert launch_options[0]["headless"] is False
+    assert launch_options[0]["background_window"] is True
+    assert launch_options[0]["silent"] is True
+    assert restored_frontmost_apps == [("WeChat", "Microsoft Edge")]
 
 
 def test_running_false_is_published_after_context_cleanup_and_sleep_release(
@@ -10800,7 +10819,7 @@ def test_agent_service_reports_browser_result_without_api_credentials(
         assert released_assertions == [sleep_assertion]
 
 
-def test_agent_service_hands_a_failed_chatgpt_session_to_background_edge(
+def test_agent_service_leaves_a_failed_chatgpt_session_for_explicit_edge_handoff(
     tmp_path: Path,
 ) -> None:
     workspace = tmp_path / "project"
@@ -10839,13 +10858,11 @@ def test_agent_service_hands_a_failed_chatgpt_session_to_background_edge(
     assert snapshot["phase"] == "failed"
     assert snapshot["conversation_url"] == "https://chatgpt.com/c/failed-session"
     assert snapshot["traditional_handoff_available"]
-    assert snapshot["traditional_handoff_opened"]
-    assert "opened quietly in Edge" in snapshot["message"]
+    assert not snapshot["traditional_handoff_opened"]
+    assert "Continue the same ChatGPT conversation with the Edge button" in snapshot["message"]
     assert "bodycheck remain unfinished" in snapshot["traditional_handoff_message"]
     assert not snapshot["bodycheck_passed"]
-    assert opened == [
-        ("chatgpt", "edge", "https://chatgpt.com/c/failed-session", True)
-    ]
+    assert opened == []
 
 
 def test_agent_service_does_not_auto_handoff_a_non_edge_failure(tmp_path: Path) -> None:
@@ -13516,6 +13533,75 @@ def test_provider_human_verification_uses_a_fixed_safe_reason(
 
     assert detected.startswith("Human verification required: ")
     assert reason in detected
+
+
+def test_task_stage_window_keeps_only_the_owned_clone_normal_without_focus() -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    calls: list[tuple[str, object]] = []
+
+    class _Session:
+        def send(self, method: str, params: object = None) -> dict[str, object]:
+            calls.append((method, params))
+            if method == "Browser.getWindowForTarget":
+                return {"windowId": 17}
+            return {}
+
+        def detach(self) -> None:
+            calls.append(("detach", None))
+
+    class _Context:
+        def new_cdp_session(self, selected_page: object) -> _Session:
+            assert selected_page is page
+            return _Session()
+
+    class _Page:
+        context = _Context()
+
+    page = _Page()
+    computer_use_agent._keep_task_stage_window_available(page)
+
+    assert calls == [
+        ("Browser.getWindowForTarget", None),
+        (
+            "Browser.setWindowBounds",
+            {"windowId": 17, "bounds": {"windowState": "normal"}},
+        ),
+        ("detach", None),
+    ]
+
+
+def test_macos_task_stage_restores_the_previous_frontmost_application(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    commands: list[tuple[list[str], dict[str, object]]] = []
+
+    def run(command: list[str], **kwargs: object) -> SimpleNamespace:
+        commands.append((command, kwargs))
+        if "return name of first application process whose frontmost is true" in command:
+            return SimpleNamespace(returncode=0, stdout="WeChat\n", stderr="")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "darwin")
+    monkeypatch.setattr(computer_use_agent.subprocess, "run", run)
+
+    previous_application = computer_use_agent._capture_macos_frontmost_application()
+    computer_use_agent._restore_macos_frontmost_application_after_task_stage(
+        previous_application,
+        "Microsoft Edge",
+    )
+
+    assert previous_application == "WeChat"
+    assert len(commands) == 2
+    restore_command, restore_kwargs = commands[1]
+    assert restore_command[-2:] == ["WeChat", "Microsoft Edge"]
+    assert "if currentFrontmostProcessName is taskBrowserProcessName then" in restore_command
+    assert "set frontmost of process previousFrontmostProcessName to true" in restore_command
+    assert "activate" not in "\n".join(restore_command).lower()
+    assert restore_kwargs["capture_output"] is True
+    assert restore_kwargs["timeout"] == 3
 
 
 def test_challenge_window_surfaces_and_restores_the_same_chromium_clone() -> None:

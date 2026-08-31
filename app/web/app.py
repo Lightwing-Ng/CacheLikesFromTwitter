@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.54.5-codex.1
+# Code version: v1.54.6-codex.1
 
 from __future__ import annotations
 
@@ -1012,7 +1012,10 @@ def create_app(
         collector: Callable[[], dict[str, Any]],
     ) -> dict[str, Any]:
         """Route every Agent catalog request through the shared cache policy."""
-        force_refresh = request.args.get("refresh", "").strip().lower() in {"1", "true", "yes"}
+        requested_refresh = request.args.get("refresh", "").strip().lower() in {"1", "true", "yes"}
+        is_browser_session = source_kind == "browser-session"
+        is_passive_source_catalog = source_kind == "sources"
+        force_refresh = requested_refresh and is_browser_session
         payload = agent_source_cache.get_or_collect(
             platform=platform,
             browser=browser,
@@ -1020,9 +1023,14 @@ def create_app(
             project_url=project_url,
             collector=collector,
             force_refresh=force_refresh,
+            stale_while_revalidate=not (is_browser_session or is_passive_source_catalog),
+            collect_on_miss=not is_passive_source_catalog,
         )
         if source_kind == "sources":
-            return normalize_agent_source_catalog_payload(platform, payload)
+            normalized = normalize_agent_source_catalog_payload(platform, payload)
+            normalized.setdefault("recent_sessions", [])
+            normalized.setdefault("limit", 0)
+            return normalized
         return payload
 
     def load_agent_browser_session_bootstrap(

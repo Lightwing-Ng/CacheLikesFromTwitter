@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.19.2-codex.1
+# Code version: v1.19.3-codex.1
 
 from __future__ import annotations
 
@@ -68,10 +68,9 @@ GROK_SECURITY_CHALLENGE_BODY_MARKERS = (
     "performance and security by cloudflare",
     "checking your browser before accessing",
 )
-BACKGROUND_CHROMIUM_WINDOW_ARGS = (
-    "--window-position=-32000,-32000",
-    "--window-size=1280,900",
-    "--start-minimized",
+CHROMIUM_WINDOW_MODE_OFFSCREEN = "offscreen"
+CHROMIUM_WINDOW_MODE_TASK_STAGE = "task_stage"
+CHROMIUM_RENDERING_BACKGROUND_ARGS = (
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-session-crashed-bubble",
@@ -81,6 +80,15 @@ BACKGROUND_CHROMIUM_WINDOW_ARGS = (
     "--disable-background-timer-throttling",
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
+)
+BACKGROUND_CHROMIUM_WINDOW_ARGS = (
+    "--window-position=-32000,-32000",
+    "--window-size=1280,900",
+    "--start-minimized",
+    *CHROMIUM_RENDERING_BACKGROUND_ARGS,
+)
+TASK_STAGE_CHROMIUM_WINDOW_ARGS = (
+    *CHROMIUM_RENDERING_BACKGROUND_ARGS,
 )
 CHROMIUM_TEMP_PROFILE_STALE_AFTER_SECONDS = 24 * 60 * 60
 _ACTIVE_CHROMIUM_PROFILE_ROOTS: set[Path] = set()
@@ -764,8 +772,9 @@ def launch_chromium_context(
     clone_profile_first: bool = True,
     background_window: bool = True,
     silent: bool = False,
+    window_mode: str = CHROMIUM_WINDOW_MODE_OFFSCREEN,
 ):
-    """Launch an isolated Chromium-family browser without surfacing its window."""
+    """Launch an isolated Chromium-family browser with an explicit window mode."""
     user_data_dir = descriptor.user_data_dir
     if user_data_dir is None:
         raise RuntimeError(f"{descriptor.label} does not expose a Chromium profile directory.")
@@ -776,7 +785,11 @@ def launch_chromium_context(
 
     def do_launch(target_user_data_dir: Path):
         effective_headless = headless
-        effective_background_window = background_window or (silent and descriptor.browser_id == "edge")
+        effective_background_window = background_window or (
+            silent
+            and descriptor.browser_id == "edge"
+            and window_mode == CHROMIUM_WINDOW_MODE_OFFSCREEN
+        )
         return playwright.chromium.launch_persistent_context(
             user_data_dir=str(target_user_data_dir),
             channel=descriptor.channel,
@@ -784,6 +797,7 @@ def launch_chromium_context(
             args=build_chromium_launch_args(
                 descriptor,
                 background_window=effective_background_window,
+                window_mode=window_mode,
             ),
             ignore_default_args=["--use-mock-keychain", "--password-store=basic"],
             viewport={"width": 1440, "height": 1200},
@@ -843,11 +857,23 @@ def launch_chromium_context(
     return ManagedContext()
 
 
-def build_chromium_launch_args(descriptor: BrowserDescriptor, background_window: bool = True) -> list[str]:
-    """Build Chromium launch arguments for an offscreen window by default."""
+def build_chromium_launch_args(
+    descriptor: BrowserDescriptor,
+    background_window: bool = True,
+    window_mode: str = CHROMIUM_WINDOW_MODE_OFFSCREEN,
+) -> list[str]:
+    """Build Chromium launch arguments for an isolated background or task-stage window."""
     args = [f"--profile-directory={descriptor.profile_directory}"]
+    window_args_by_mode = {
+        CHROMIUM_WINDOW_MODE_OFFSCREEN: BACKGROUND_CHROMIUM_WINDOW_ARGS,
+        CHROMIUM_WINDOW_MODE_TASK_STAGE: TASK_STAGE_CHROMIUM_WINDOW_ARGS,
+    }
+    try:
+        window_args = window_args_by_mode[window_mode]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported Chromium window mode: {window_mode}") from exc
     if background_window:
-        args.extend(BACKGROUND_CHROMIUM_WINDOW_ARGS)
+        args.extend(window_args)
     return args
 
 

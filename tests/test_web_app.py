@@ -1,10 +1,11 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.25-codex.1
+# Code version: v1.88.26-codex.1
 
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -391,7 +392,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.1-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.2-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -492,7 +493,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.90.13-codex.1"
+                    "style-v2.90.14-codex.1"
                     if page_source == "agent"
                     else "style-v2.90.8-codex.1"
                 )
@@ -833,9 +834,9 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.1-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.2-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.15-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.16-codex.1', local_body)
         self.assertIn('data-agent-effort-field', local_body)
         self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -1526,9 +1527,14 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('"X-CacheLikes-Agent-Platform": selectedPlatform()', script)
         self.assertIn('"X-CacheLikes-Agent-Workspace": String(elements.workspacePath?.value || "")', script)
         self.assertIn('syncModelOptionsForPlatform()', script)
-        self.assertIn('syncChatgptEffortOptions(agent)', script)
-        self.assertIn('lastBrowserStatus?.effort_catalog_complete', script)
-        self.assertIn('Array.isArray(lastBrowserStatus?.available_efforts)', script)
+        self.assertIn('syncChatgptEffortOptions()', script)
+        self.assertIn('status?.effort_catalog_complete', script)
+        self.assertIn('Array.isArray(values)', script)
+        self.assertIn('status?.available_efforts', script)
+        self.assertIn('CHATGPT_EFFORT_CATALOG_FRESHNESS', script)
+        self.assertIn('"server_cache", new Set(["hit"])', script)
+        self.assertIn('"stale_cache", new Set(["stale"])', script)
+        self.assertIn('"client_cache", new Set(["miss", "refreshed", "hit", "stale"])', script)
         self.assertNotIn('Array.isArray(agent?.available_efforts)', script)
         self.assertNotIn('agent?.thinking_effort', script)
         self.assertIn('data-agent-effort-generated', script)
@@ -1543,7 +1549,13 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('mutate("/api/agent/resume")', script)
         self.assertIn("CATALOG_TIMEOUT_MS = 15000", script)
         self.assertIn('query.set("refresh", "1")', script)
-        self.assertIn("loadAgentSources({forceRefresh: true})", script)
+        self.assertIn('automaticSourcesSuppressedAfterCompletion = true;', script)
+        self.assertIn('&& !automaticSourcesSuppressedAfterCompletion', script)
+        self.assertNotIn(
+            'boundAgentSessionSignature = signature;\n        loadAgentSources({forceRefresh: true});',
+            script,
+        )
+        self.assertIn('browserStatusController.refresh()', script)
         self.assertIn("Recent sessions timed out after 15 seconds.", script)
         self.assertIn("clearCatalogLoadingState", script)
         self.assertIn('requestJson("/api/agent/open-conversation"', script)
@@ -1598,9 +1610,10 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.27.15-codex.1',
+            'computer-use-agent-v3.27.16-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
+            'agent-effort-refresh-label">Refresh options</span>',
             'data-agent-direct-list="true"',
             'data-agent-session-list-state',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
@@ -1618,10 +1631,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('syncComboboxTriggerFromOption(combobox, option)', script)
         self.assertIn('const isDirectList = combobox.dataset.agentDirectList === "true"', script)
         self.assertIn("selectedOption?.dataset.agentComboboxLabel", script)
-        self.assertIn(
-            'lastBrowserStatus?.browser_session_freshness?.kind === "live_browser"',
-            script,
-        )
+        self.assertIn('function verifiedChatgptEffortCatalog()', script)
+        self.assertIn('const allowedCacheStatuses = CHATGPT_EFFORT_CATALOG_FRESHNESS.get(freshnessKind);', script)
         self.assertIn(
             'const workspacePath = String(agent?.workspace_path || "").trim();',
             script,
@@ -1841,12 +1852,14 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(project_response.status_code, 200)
         self.assertEqual(history_response.status_code, 200)
         self.assertEqual(remote_response.status_code, 403)
-        sources.assert_called_once()
+        self.assertEqual(source_response.get_json()["recent_sessions"], [])
+        self.assertEqual(source_response.get_json()["cache"]["status"], "unprobed")
+        sources.assert_not_called()
         sessions.assert_called_once()
         history.assert_called_once()
         self.assertIn("<p>The project uses Inter.</p>", history_response.get_json()["history"][0]["response_html"])
 
-    def test_agent_provider_source_route_reuses_one_recent_session_contract(self) -> None:
+    def test_agent_provider_source_route_returns_an_unprobed_contract_without_browser_collection(self) -> None:
         payload = {
             "platform": "gemini",
             "browser_label": "Edge",
@@ -1868,11 +1881,12 @@ class WebAppTests(unittest.TestCase):
                     response = client.get("/api/agent/sources?platform=gemini&browser=edge")
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["recent_sessions"], payload["recent_sessions"])
-        self.assertEqual(response.get_json()["projects"], payload["projects"])
-        self.assertEqual(response.get_json()["cache"]["status"], "miss")
-        sources.assert_called_once()
-        self.assertEqual(sources.call_args.args[:2], ("gemini", "edge"))
+        self.assertEqual(response.get_json()["platform"], "gemini")
+        self.assertEqual(response.get_json()["recent_sessions"], [])
+        self.assertEqual(response.get_json()["projects"], [])
+        self.assertEqual(response.get_json()["limit"], 0)
+        self.assertEqual(response.get_json()["cache"]["status"], "unprobed")
+        sources.assert_not_called()
 
     def test_agent_browser_session_bootstrap_reuses_each_provider_cache_until_refresh(self) -> None:
         providers = (
@@ -1984,6 +1998,45 @@ class WebAppTests(unittest.TestCase):
                 self.assertEqual(bootstrap.call_count, 2)
                 sources.assert_not_called()
 
+    def test_agent_browser_session_serves_an_expired_catalog_without_reprobing(self) -> None:
+        status_payload = {
+            "platform": "chatgpt",
+            "browser": "edge",
+            "browser_label": "Edge",
+            "logged_in": True,
+            "can_download": True,
+            "account_name": "ChatGPT account",
+            "message": "Cached ready",
+            "agent_sources": {
+                "platform": "chatgpt",
+                "recent_sessions": [{"id": "cached-session"}],
+                "projects": [],
+                "limit": 20,
+            },
+        }
+        with TemporaryDirectory() as raw_root:
+            app = create_app(Path(raw_root) / "local_store")
+            app.extensions["agent_source_cache"].store(
+                platform="chatgpt",
+                browser="edge",
+                source_kind="browser-session",
+                payload=status_payload,
+                now=datetime(2000, 1, 1, tzinfo=timezone.utc),
+            )
+            with patch("app.web.app.probe_and_collect_chatgpt_sources") as bootstrap:
+                with app.test_client() as client:
+                    response = client.get(
+                        "/api/browser-session?platform=chatgpt&browser=edge&scope=agent"
+                    )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["message"], "Cached ready")
+        self.assertEqual(
+            response.get_json()["browser_session_freshness"]["kind"],
+            "stale_cache",
+        )
+        bootstrap.assert_not_called()
+
     def test_agent_browser_session_refresh_does_not_retain_sources_after_readiness_fails(self) -> None:
         ready_status_payload = {
             "platform": "chatgpt",
@@ -2032,7 +2085,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("agent_sources_error", refreshed_response.get_json())
         self.assertEqual(bootstrap.call_count, 2)
 
-    def test_agent_provider_source_route_reuses_parquet_until_explicit_refresh(self) -> None:
+    def test_agent_provider_source_route_keeps_cached_catalog_during_automatic_refresh(self) -> None:
         first_payload = {
             "platform": "gemini",
             "browser_label": "Edge",
@@ -2040,30 +2093,30 @@ class WebAppTests(unittest.TestCase):
             "projects": [],
             "limit": 20,
         }
-        second_payload = {
-            "platform": "gemini",
-            "browser_label": "Edge",
-            "recent_sessions": [{"id": "second-session"}],
-            "projects": [],
-            "limit": 20,
-        }
         with TemporaryDirectory() as raw_root:
             app = create_app(Path(raw_root) / "local_store")
-            with patch("app.web.app.list_agent_sources", side_effect=[first_payload, second_payload]) as sources:
+            app.extensions["agent_source_cache"].store(
+                platform="gemini",
+                browser="edge",
+                source_kind="sources",
+                payload=first_payload,
+                now=datetime(2000, 1, 1, tzinfo=timezone.utc),
+            )
+            with patch("app.web.app.list_agent_sources") as sources:
                 with app.test_client() as client:
-                    first_response = client.get("/api/agent/sources?platform=gemini&browser=edge")
-                    cached_response = client.get("/api/agent/sources?platform=gemini&browser=edge")
-                    refreshed_response = client.get(
+                    passive_response = client.get("/api/agent/sources?platform=gemini&browser=edge")
+                    automatic_refresh_response = client.get(
                         "/api/agent/sources?platform=gemini&browser=edge&refresh=1"
                     )
 
-        self.assertEqual(first_response.get_json()["recent_sessions"], [{"id": "first-session"}])
-        self.assertEqual(first_response.get_json()["cache"]["status"], "miss")
-        self.assertEqual(cached_response.get_json()["recent_sessions"], [{"id": "first-session"}])
-        self.assertEqual(cached_response.get_json()["cache"]["status"], "hit")
-        self.assertEqual(refreshed_response.get_json()["recent_sessions"], [{"id": "second-session"}])
-        self.assertEqual(refreshed_response.get_json()["cache"]["status"], "refreshed")
-        self.assertEqual(sources.call_count, 2)
+        self.assertEqual(passive_response.get_json()["recent_sessions"], [{"id": "first-session"}])
+        self.assertEqual(passive_response.get_json()["cache"]["status"], "stale")
+        self.assertEqual(
+            automatic_refresh_response.get_json()["recent_sessions"],
+            [{"id": "first-session"}],
+        )
+        self.assertEqual(automatic_refresh_response.get_json()["cache"]["status"], "stale")
+        sources.assert_not_called()
 
     def test_agent_source_route_filters_a_persisted_gemini_creation_alias(self) -> None:
         cached_payload = {
@@ -2589,7 +2642,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("format_datetime_label(snapshot.started_at)", template)
         self.assertIn("format_datetime_label(snapshot.finished_at)", template)
 
-    def test_browser_status_uses_stale_while_revalidate_without_duplicate_probes(self) -> None:
+    def test_browser_status_reuses_cached_status_without_background_revalidation(self) -> None:
         script = BROWSER_SESSION_STATUS_SCRIPT_PATH.read_text(encoding="utf-8")
 
         for fragment in (
@@ -2608,8 +2661,7 @@ class WebAppTests(unittest.TestCase):
             'function clientCachedPayload(payload, ageMs)',
             'kind: "client_cache",',
             'clientCachedPayload(cachedStatus.payload, cachedStatus.ageMs),',
-            'if (cachedStatus.payload.can_download && cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;',
-            'setRefreshingState(activeBrowser);',
+            'if (!forceRefresh && cachedStatus && !requiresAgentBootstrap && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS)',
             'return load(activeBrowser, {force: true});',
             'if (statusRequests.has(requestKey)) return statusRequests.get(requestKey);',
             'statusCard.setAttribute("aria-busy", "true");',
@@ -2622,6 +2674,8 @@ class WebAppTests(unittest.TestCase):
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)
+
+        self.assertNotIn('setRefreshingState(activeBrowser);', script)
 
     def test_browser_copy_control_reports_a_replayable_feedback_state(self) -> None:
         script = LOCAL_MEDIA_BROWSER_SCRIPT_PATH.read_text(encoding="utf-8")

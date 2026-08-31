@@ -1,6 +1,6 @@
 """Focused tests for the Agent's ChatGPT Web source catalog.
 
-Code version: v1.2.0-codex.1
+Code version: v1.2.2-codex.1
 """
 
 from __future__ import annotations
@@ -128,6 +128,8 @@ def test_chatgpt_status_and_sources_share_one_chromium_context() -> None:
     assert sources == {**source_payload, "platform": "chatgpt"}
     playwright_factory.assert_called_once()
     launch_context.assert_called_once()
+    assert launch_context.call_args.kwargs["headless"] is False
+    assert launch_context.call_args.kwargs["background_window"] is True
     collect_sources.assert_called_once_with(context, page, "Edge")
     discover_efforts.assert_called_once_with(page)
 

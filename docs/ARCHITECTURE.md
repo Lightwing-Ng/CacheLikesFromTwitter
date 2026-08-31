@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.10.1-codex.1`
+Documentation version: `v1.10.2-codex.1`
 
 ## Runtime flow
 
@@ -251,7 +251,7 @@ selected local project
   -> final Markdown result
   -> on an Edge and ChatGPT failure with an exact conversation URL:
        failed state retained
-       same conversation opened in traditional Edge with background activation
+       explicit user handoff may open the same conversation in traditional Edge
        local file actions and bodycheck remain unfinished
   -> on a persisted interrupted Edge and ChatGPT run with binding proof:
        explicit Doctor continuation reuses the same conversation
@@ -269,10 +269,12 @@ For Gemini, Project-new binds a fresh transfer receipt to the selected Notebook 
 claim an independent provider-side subconversation identity.
 Source discovery is persisted separately from message history through a three-level read-through
 path: process memory, the shared Parquet catalog, and the authenticated browser collector. The
-`/agent` source routes reuse a 15-minute entry by default, coalesce concurrent refreshes by cache
-key, and use stale-while-revalidate after expiry. They accept `refresh=1` for an explicit synchronous
-browser re-check. A failed refresh falls back to the last known entry and marks the response as
-stale; no remote conversation messages are written by this catalog.
+`/agent` source routes reuse a 15-minute entry by default and coalesce concurrent explicit refreshes
+by cache key. Expired passive reads retain the last known entry without starting a background
+collector; a first Agent bootstrap cache miss performs one bounded check. The visible Agent refresh
+control uses `refresh=1` for an explicit synchronous browser re-check. A failed refresh falls back
+to the last known entry and marks the response as stale; no remote conversation messages are written
+by this catalog.
 The ChatGPT `/agent` status route performs the account probe, complete live Sol effort discovery,
 and root source collection together in one Chromium browser launch, returns both catalogs to the
 page, and seeds the same source cache through its explicit `store` path. This keeps the status,
@@ -282,15 +284,17 @@ The Agent-scoped browser-session status route uses that same cache. Passive poll
 cached bootstrap, including a bounded negative result; an explicit `refresh=1`, `true`, or `yes`
 requests a synchronous fresh result and coalesces with an in-flight collector for the same key.
 The fresh result is stored and supersedes any older in-flight browser response.
-Agent Chromium tasks clone the selected Edge or Chrome profile into a task-owned offscreen,
-minimized context. Both suppress browser prompts and clean the task-owned profile on exit. Stale
+Passive Agent bootstrap checks use quiet, task-independent Chromium contexts. On macOS, an executing
+Edge task clones the selected profile into one normal, non-offscreen task-owned window so the user can
+choose to inspect it through macOS window management without an automatic full-display takeover.
+The launcher restores the prior foreground app if Edge took focus; macOS controls any Stage Manager
+grouping. Chromium suppresses browser prompts and cleans the task-owned profile on exit. Stale
 cleanup is restricted to abandoned application-prefixed temporary directories older than 24 hours;
 the user's normal browser profile and unrelated temporary paths are not modified.
-Traditional failure handoff does not reuse that writable clone. It sends only the normalized official
-conversation URL to the browser selected by the completed or failed run. On macOS, automatic Edge
-handoff creates a traditional Edge window through the application's AppleScript model without an
-`activate` command; user-triggered opening uses normal activation. Neither path grants the remote
-ChatGPT page local filesystem authority.
+Traditional failure handoff does not reuse that writable clone. It records only the normalized
+official conversation URL for the browser selected by the failed run; a normal Edge window opens
+only after the user invokes the handoff action. That remote ChatGPT page never receives local
+filesystem authority.
 An interrupted continuation is eligible only when the persisted run records a confirmed provider
 conversation binding in addition to a valid Edge and ChatGPT target, workspace, operating system,
 permission state, and effort policy. A process failure before the first confirmed binding therefore

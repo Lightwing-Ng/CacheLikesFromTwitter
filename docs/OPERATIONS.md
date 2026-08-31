@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.6.1-codex.1`
+Documentation version: `v1.6.2-codex.1`
 
 ## Launch
 
@@ -36,10 +36,11 @@ to override it. A successful unlock is stored in the signed Flask session for th
   it must not hide, minimize, move offscreen, reuse, or accumulate Safari windows.
 - Chrome, Edge, and Safari support differs by source and automation engine; use the session probe
   in the console before a long sync.
-- Edge tasks clone the selected profile into one headless temporary context; Chrome tasks use
-  an isolated background context. Neither brings a browser window to the front, sends desktop
-  mouse or keyboard events, or writes to the user's normal profile. First-run, crash,
-  notification, and repost prompts are disabled for the task-owned context.
+- Passive Agent checks use a quiet, isolated Chromium context. On macOS, an executing Edge task uses
+  one non-offscreen, task-owned temporary window that is restored to a normal window state; if it
+  takes focus, the previous foreground app is restored. macOS decides whether it appears in
+  Stage Manager. It never writes to the user's normal profile. First-run, crash, notification,
+  and repost prompts are disabled for the task-owned context.
 - Normal task exit closes the isolated context and removes its temporary profile. Each subsequent
   Chromium launch also removes only abandoned `cachelikes-edge-*` or `cachelikes-chrome-*`
   directories older than 24 hours; unrelated temporary paths are not touched.
@@ -70,16 +71,17 @@ to override it. A successful unlock is stored in the signed Flask session for th
 - Stop requests end current web generation and terminate the active local command process group.
 - Agent source discovery is cached in `local_store/agent/agent_source_catalog.parquet` for 15
   minutes per provider/browser/Project key. Fresh reads use process memory; the first read after a
-  restart hydrates memory from Parquet. Expired passive reads return the previous catalog while a
-  single background refresh runs for that key. Use `refresh=1` on `/api/agent/sources` or
-  `/api/agent/project-sessions` for an intentional synchronous Edge/Chrome/Safari re-check. The
+  restart hydrates memory from Parquet. Expired passive reads retain the previous catalog and never
+  launch a background browser collector. One initial Agent bootstrap cache miss performs a bounded
+  check; later browser checks require the visible `Refresh options` control or task submission. The
   response's `cache.status` is `hit`, `miss`, `refreshed`, or `stale`; a stale response means the
-  browser check failed or is still refreshing while the previous catalog was retained.
+  previous verified catalog was retained after an explicit check failed.
 - ChatGPT and Claude on `/agent` use one agent-scoped browser bootstrap through Recent sessions:
-  the same browser context verifies readiness, collects the root session/project catalog, returns
-  it to the selector, and seeds the memory/Parquet cache. A second browser launch is reserved for
-  a later Project-session selection or an explicit refresh. Restricted Claude accounts remain
-  unavailable and are not sent through a login-bypass flow.
+  the same bounded initial check verifies readiness, collects the root session/project catalog,
+  returns it to the selector, and seeds the memory/Parquet cache. Cache reuse and task completion
+  do not add a browser launch. A later browser launch is reserved for an explicit refresh, task
+  submission, or later Project-session selection. Restricted Claude accounts remain unavailable
+  and are not sent through a login-bypass flow.
 
 ## Local data
 

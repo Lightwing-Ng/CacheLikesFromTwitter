@@ -1,4 +1,4 @@
-/* Code version: v3.27.15-codex.1 */
+/* Code version: v3.27.16-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -82,6 +82,7 @@
     let sourcePlatform = "";
     let sourcesLoaded = false;
     let sourcesLoading = false;
+    let automaticSourcesSuppressedAfterCompletion = false;
     let sourceRequestId = 0;
     let catalogState = "idle";
     let catalogError = "";
@@ -89,6 +90,12 @@
     let appliedBootstrapSignature = "";
     const CATALOG_TIMEOUT_MS = 15000;
     const HIGHEST_CHATGPT_EFFORT = "highest_available";
+    const CHATGPT_EFFORT_CATALOG_FRESHNESS = new Map([
+        ["live_browser", new Set(["miss", "refreshed"])],
+        ["server_cache", new Set(["hit"])],
+        ["stale_cache", new Set(["stale"])],
+        ["client_cache", new Set(["miss", "refreshed", "hit", "stale"])],
+    ]);
     let projectSessionRequestId = 0;
     let agentSources = {recent_sessions: [], projects: []};
     let projectSessions = [];
@@ -413,7 +420,42 @@
         return option;
     }
 
-    function syncChatgptEffortOptions(agent = {}) {
+    function normalizedChatgptEffortLabels(values) {
+        if (!Array.isArray(values)) return [];
+        const labels = [];
+        values.forEach((value) => {
+            const normalized = String(value || "").replace(/\s+/g, " ").trim();
+            if (
+                normalized
+                && !labels.some((label) => label.toLocaleLowerCase() === normalized.toLocaleLowerCase())
+            ) {
+                labels.push(normalized);
+            }
+        });
+        return labels;
+    }
+
+    function verifiedChatgptEffortCatalog() {
+        const status = lastBrowserStatus;
+        const platform = String(status?.platform || "").trim().toLowerCase();
+        const browser = String(status?.browser || "").trim().toLowerCase();
+        const freshness = status?.browser_session_freshness;
+        const freshnessKind = String(freshness?.kind || "").trim().toLowerCase();
+        const cacheStatus = String(freshness?.cache_status || "").trim().toLowerCase();
+        const allowedCacheStatuses = CHATGPT_EFFORT_CATALOG_FRESHNESS.get(freshnessKind);
+        const cachedAt = String(freshness?.cached_at || "").trim();
+        if (
+            platform !== "chatgpt"
+            || browser !== selectedBrowser()
+            || !status?.effort_catalog_complete
+            || !cachedAt
+            || !allowedCacheStatuses?.has(cacheStatus)
+        ) return null;
+        const labels = normalizedChatgptEffortLabels(status?.available_efforts);
+        return labels.length ? {freshnessKind, labels} : null;
+    }
+
+    function syncChatgptEffortOptions() {
         const field = elements.effortField;
         const combobox = elements.effortCombobox;
         const input = elements.effortInput;
@@ -425,26 +467,11 @@
 
         Array.from(menu.querySelectorAll("[data-agent-effort-generated]"))
             .forEach((option) => option.remove());
-        const statusMatchesSelection = lastBrowserStatus?.platform === "chatgpt"
-            && lastBrowserStatus?.browser === selectedBrowser();
-        const statusCatalogComplete = statusMatchesSelection
-            && Boolean(lastBrowserStatus?.effort_catalog_complete)
-            && lastBrowserStatus?.browser_session_freshness?.kind === "live_browser";
-        // Only a complete fresh browser probe may populate provider effort options.
-        // Server and client cache entries, persisted snapshots, and saved selections
-        // are diagnostic state, not a live provider catalog.
-        const liveLabels = statusCatalogComplete && Array.isArray(lastBrowserStatus?.available_efforts)
-            ? lastBrowserStatus.available_efforts
-            : [];
-        const labels = [];
-        const remember = (value) => {
-            const normalized = String(value || "").replace(/\s+/g, " ").trim();
-            if (!normalized || labels.some((label) => label.toLocaleLowerCase() === normalized.toLocaleLowerCase())) return;
-            labels.push(normalized);
-        };
-        liveLabels.forEach(remember);
+        const catalog = verifiedChatgptEffortCatalog();
+        if (catalog) field.dataset.agentEffortCatalogFreshness = catalog.freshnessKind;
+        else delete field.dataset.agentEffortCatalogFreshness;
         const current = selectedChatgptEffort();
-        labels.forEach((label) => {
+        (catalog?.labels || []).forEach((label) => {
             menu.append(createChatgptEffortOption(label, label));
         });
 
@@ -471,7 +498,7 @@
             elements.browserSession.dataset.browserSessionAccountLabel = selectedPlatformLabel();
         }
         syncModelOptionsForPlatform();
-        syncChatgptEffortOptions(agent);
+        syncChatgptEffortOptions();
         const sessionLabel = elements.sessionSource?.querySelector("[data-agent-session-platform-label]");
         if (sessionLabel) sessionLabel.textContent = "Session source";
         const sessionModeMenu = elements.sessionModeCombobox?.querySelector("[data-agent-combobox-menu]");
@@ -1359,12 +1386,13 @@
     function bindCompletedAgentSession(agent, completedTransition) {
         const platform = String(agent?.platform || selectedPlatform()).trim().toLowerCase();
         if (!completedTransition || platform !== selectedPlatform() || agent?.running) return;
+        // A completion transition must not start another browser collection.
+        automaticSourcesSuppressedAfterCompletion = true;
         const conversationUrl = String(agent?.conversation_url || "").trim();
         if (!isAgentConversationUrl(platform, conversationUrl)) return;
         const signature = `${agent.started_at || ""}|${agent.finished_at || ""}|${conversationUrl}`;
         if (!agent.finished_at || signature === boundAgentSessionSignature) return;
         boundAgentSessionSignature = signature;
-        loadAgentSources({forceRefresh: true});
     }
 
     function readinessState(payload) {
@@ -2183,6 +2211,7 @@
             : isolatedForeignRunningAgent(persistedAgent);
         const running = Boolean(agent.running);
         const paused = Boolean(agent.paused);
+        if (running) automaticSourcesSuppressedAfterCompletion = false;
         const platformLabel = selectedPlatformLabel();
         const phase = String(agent.phase || "").trim().toLowerCase();
         const runIdentity = agentRunIdentity(agent);
@@ -2269,7 +2298,12 @@
         renderTerminalExecution(lastPayload.runtime);
         renderActivity(agent.activity, running, shouldCollapseActivity);
         updateSessionChoiceInputs();
-        if (readiness.ready && !running) loadAgentSources();
+        if (
+            readiness.ready
+            && !running
+            && !completedTransition
+            && !automaticSourcesSuppressedAfterCompletion
+        ) loadAgentSources();
 
         if (elements.resume) {
             elements.resume.hidden = !paused;
