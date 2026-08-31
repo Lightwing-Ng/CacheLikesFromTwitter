@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.10.2-codex.1`
+Documentation version: `v1.10.3-codex.1`
 
 ## Runtime flow
 
@@ -284,7 +284,10 @@ The Agent-scoped browser-session status route uses that same cache. Passive poll
 cached bootstrap, including a bounded negative result; an explicit `refresh=1`, `true`, or `yes`
 requests a synchronous fresh result and coalesces with an in-flight collector for the same key.
 The fresh result is stored and supersedes any older in-flight browser response.
-Passive Agent bootstrap checks use quiet, task-independent Chromium contexts. On macOS, an executing
+Passive Agent bootstrap checks use quiet, task-independent Chromium contexts. ChatGPT source
+checks use a non-headless, backgrounded/offscreen context because its Cloudflare challenge rejects
+the headless clone with HTTP 403; this remains one bounded probe and does not surface a user-facing
+browser window. On macOS, an executing
 Edge task clones the selected profile into one normal, non-offscreen task-owned window so the user can
 choose to inspect it through macOS window management without an automatic full-display takeover.
 The launcher restores the prior foreground app if Edge took focus; macOS controls any Stage Manager

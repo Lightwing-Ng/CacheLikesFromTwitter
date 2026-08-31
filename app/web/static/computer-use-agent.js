@@ -1,4 +1,4 @@
-/* Code version: v3.27.16-codex.1 */
+/* Code version: v3.27.17-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -2468,7 +2468,9 @@
         setPromptExpanded(!isPromptExpanded());
         elements.promptInput?.focus();
     });
-    elements.effortRefresh?.addEventListener("click", () => {
+    elements.effortRefresh?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
         if (selectedPlatform() !== "chatgpt" || !browserStatusController) return;
         effortRefreshInFlight = true;
         elements.effortRefresh.disabled = true;

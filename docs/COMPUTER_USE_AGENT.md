@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.53.2-codex.1`
+Documentation version: `v3.53.3-codex.1`
 
 ## Purpose
 
@@ -508,6 +508,9 @@ macOS-only. The selected operating system must match the host running the local 
 
 Edge and Chrome run through an isolated clone of the selected signed-in profile and operate the
 selected provider's DOM directly. Passive source checks use a quiet, task-independent context.
+ChatGPT source checks use a non-headless, backgrounded/offscreen context because ChatGPT's
+Cloudflare challenge rejects the headless clone with HTTP 403; this remains one bounded probe and
+does not surface a user-facing browser window.
 On macOS, an executing Edge task uses one normal, non-offscreen task-owned window, rather than a
 full-display or permanently hidden window. It is restored to the normal macOS window state and the previous
 foreground app is restored if Edge took focus, leaving the task window available for the user to

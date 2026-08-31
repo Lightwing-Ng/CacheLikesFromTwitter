@@ -836,7 +836,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.2-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.16-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.17-codex.1', local_body)
         self.assertIn('data-agent-effort-field', local_body)
         self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -1610,7 +1610,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.27.16-codex.1',
+            'computer-use-agent-v3.27.17-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'agent-effort-refresh-label">Refresh options</span>',
@@ -2224,6 +2224,9 @@ class WebAppTests(unittest.TestCase):
             'trigger.disabled = !sessionSourceChoice',
             'event.key !== "Enter" || event.shiftKey || event.isComposing',
             "promptForm.requestSubmit()",
+            "elements.effortRefresh?.addEventListener(\"click\", (event) => {",
+            "event.preventDefault();",
+            "event.stopPropagation();",
             "renderActivity(agent.activity, running, shouldCollapseActivity)",
             "function clearCompletedPromptIfUnchanged(agent, shouldClear)",
             'const completedPrompt = String(agent?.prompt || "");',
