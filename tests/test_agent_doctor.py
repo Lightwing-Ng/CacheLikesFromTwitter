@@ -1,6 +1,6 @@
 """Route and service tests for Agent doctor recovery UX.
 
-Code version: v1.3.0-codex.1
+Code version: v1.4.1-codex.1
 """
 
 from __future__ import annotations
@@ -110,6 +110,12 @@ def test_completed_run_persists_event_chain_and_doctor_can_report_healthy(
         record["capability"] == "page.observe.agent_status"
         for record in records[1:5]
     )
+    assert records[0]["data"]["workspace_identity"] == {
+        "device": workspace.stat().st_dev,
+        "inode": workspace.stat().st_ino,
+    }
+    assert "workspace_path" not in records[0]["data"]
+    assert str(workspace) not in json.dumps(records)
 
     doctor = service.doctor()
     assert doctor["status"] == "healthy"
@@ -141,9 +147,9 @@ def test_capability_and_doctor_routes_are_local_and_bounded(client) -> None:
     assert remote_response.status_code == 403
     capabilities = capabilities_response.get_json()
     doctor = doctor_response.get_json()
-    assert capabilities["version"] == "1.2.0"
+    assert capabilities["version"] == "1.3.0"
     assert len(capabilities["capabilities"]) == 25
-    assert doctor["capability_registry_version"] == "1.2.0"
+    assert doctor["capability_registry_version"] == "1.3.0"
     assert "prompt" not in doctor
     assert "response" not in doctor
 

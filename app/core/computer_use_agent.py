@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.51.3-codex.1
+Code version: v3.52.0-codex.1
 """
 
 from __future__ import annotations
@@ -43,7 +43,10 @@ from .agent_session_sources import (
     normalize_agent_conversation_url,
     normalize_agent_project_url,
 )
-from .agent.capability_registry import controller_action_prompt_schema
+from .agent.capability_registry import (
+    controller_action_prompt_schema,
+    validate_controller_action_payload,
+)
 from .browser_sessions import (
     browser_descriptors,
     goto_with_retry,
@@ -2586,6 +2589,34 @@ def _decode_base64_utf8(
         raise ValueError(f"Decoded {field_name} is not valid UTF-8.") from exc
 
 
+def _workspace_audit_metadata(
+    workspace: Path,
+    *,
+    metadata: os.stat_result | None = None,
+) -> dict[str, Any]:
+    """Return the canonical workspace identity retained in owner-only audit records."""
+    canonical_workspace = Path(workspace).resolve()
+    workspace_metadata = metadata or canonical_workspace.stat()
+    if not stat_module.S_ISDIR(workspace_metadata.st_mode):
+        raise ValueError("The selected Agent workspace must be a directory.")
+    return {
+        "workspace_identity": {
+            "device": int(workspace_metadata.st_dev),
+            "inode": int(workspace_metadata.st_ino),
+        },
+    }
+
+
+def _conversation_audit_identity(platform: str, conversation_url: str) -> str:
+    """Return a stable non-URL identifier for one canonical provider conversation."""
+    normalized = normalize_agent_conversation_url(platform, conversation_url)
+    if not normalized:
+        return ""
+    return hashlib.sha256(
+        f"{str(platform or '').strip().lower()}\x00{normalized}".encode("utf-8")
+    ).hexdigest()
+
+
 
 class WorkspaceController:
     """Execute a narrow action protocol inside one selected project."""
@@ -2606,16 +2637,72 @@ class WorkspaceController:
             int(workspace_metadata.st_dev),
             int(workspace_metadata.st_ino),
         )
+        self._workspace_audit_metadata = _workspace_audit_metadata(
+            self.workspace,
+            metadata=workspace_metadata,
+        )
         self.settings = settings
         self.state = ActionState()
         self.should_stop = should_stop
         self.process_changed = process_changed or (lambda _process: None)
         self.read_only = read_only
 
+    def event_chain_start_metadata(self) -> dict[str, Any]:
+        """Return immutable workspace evidence for the root event of this run."""
+        return dict(self._workspace_audit_metadata)
+
+    def action_event_metadata(
+        self,
+        payload: Any,
+        *,
+        include_read_receipt: bool = True,
+    ) -> dict[str, Any]:
+        """Return bounded receipt provenance for one controller action event."""
+        metadata = dict(self._workspace_audit_metadata)
+        if not isinstance(payload, dict):
+            return metadata
+        action_name = str(payload.get("action") or "").strip().lower()
+        if action_name not in {"read", "delete"}:
+            return metadata
+        if action_name == "read" and not include_read_receipt:
+            return metadata
+        try:
+            path = self._resolve_path(
+                payload.get("path"),
+                allow_missing=action_name == "delete",
+            )
+            relative_path = path.relative_to(self.workspace).as_posix()
+        except (OSError, ValueError):
+            return metadata
+        receipt = self.state.read_receipts.get(relative_path)
+        if receipt is None:
+            return metadata
+        digest, identity, generation = receipt
+        metadata["read_receipt"] = {
+            "sha256": digest,
+            "generation": int(generation),
+            "file_identity": {
+                "device": int(identity[0]),
+                "inode": int(identity[1]),
+                "size": int(identity[2]),
+                "mtime_ns": int(identity[3]),
+                "mode": int(identity[4]),
+            },
+        }
+        if action_name == "delete":
+            metadata["delete_digest"] = digest
+        return metadata
+
     def execute(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Execute one validated action and return a compact observation."""
         if self.should_stop():
             return {"ok": False, "stopped": True, "error": "Stop requested."}
+        if not isinstance(payload, dict):
+            return {
+                "ok": False,
+                "action": "",
+                "error": "Agent action payload must be an object.",
+            }
         action = str(payload.get("action") or "").strip().lower()
         registered_capability = _registered_action_capability(action)
         if registered_capability is None:
@@ -2624,6 +2711,10 @@ class WorkspaceController:
                 "action": action,
                 "error": f"Unsupported controller action: {action or '[missing]'}",
             }
+        try:
+            validate_controller_action_payload(registered_capability, payload)
+        except ValueError as exc:
+            return {"ok": False, "action": action, "error": str(exc)[:2_000]}
         if self.read_only and not registered_capability.read_only_task_allowed:
             return {
                 "ok": False,
@@ -4856,6 +4947,7 @@ class ComputerUseAgentService:
                     "platform": settings.platform,
                     "browser": settings.browser,
                     "session_mode": normalized_session_mode,
+                    **_workspace_audit_metadata(workspace),
                 }
             )
             if started_event is None:
@@ -7116,7 +7208,7 @@ def _run_web_action_loop(
         session_mode,
     )
     if event_chain is not None and event_chain.summary()["count"] == 0:
-        event_chain.start()
+        event_chain.start(data=controller.event_chain_start_metadata())
 
     def record_page_observation(
         observation_name: str,
@@ -7136,6 +7228,20 @@ def _run_web_action_loop(
             detail=detail,
             data=data,
         )
+
+    def event_observation_payload(
+        action_payload: dict[str, Any],
+        observation: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Attach local receipt provenance only to the owner-only event chain."""
+        event_payload = dict(observation)
+        event_payload.update(
+            controller.action_event_metadata(
+                action_payload,
+                include_read_receipt=bool(observation.get("ok")),
+            )
+        )
+        return event_payload
 
     def provider_availability_check() -> tuple[bool, float]:
         if should_stop():
@@ -7445,6 +7551,10 @@ def _run_web_action_loop(
             "browser": browser_kind,
             "session_mode": session_binding.session_mode,
             "session_type": session_type,
+            "conversation_identity": _conversation_audit_identity(
+                platform,
+                conversation_url,
+            ),
         },
     )
     activity: list[dict[str, str]] = []
@@ -7633,9 +7743,48 @@ def _run_web_action_loop(
                 action_capability_key,
                 turn=turn_index,
                 action_name=action_name or "unknown",
+                data=controller.action_event_metadata(
+                    action,
+                    include_read_receipt=False,
+                ),
             )
             update(last_action_id=action_id)
         if action_name == "final":
+            try:
+                if action_capability is None:
+                    raise ValueError("The final action is not registered.")
+                validate_controller_action_payload(action_capability, action)
+            except ValueError as exc:
+                invalid_final_observation = {
+                    "ok": False,
+                    "action": "final",
+                    "error": str(exc),
+                }
+                if event_chain is not None and action_id:
+                    event_chain.observation(
+                        action_id,
+                        action_capability_key,
+                        event_observation_payload(action, invalid_final_observation),
+                        status="failed",
+                        detail="Final action was rejected by the registry-owned schema boundary.",
+                    )
+                response = _submit_and_wait(
+                    page,
+                    browser_kind,
+                    _observation_message(turn_index, invalid_final_observation),
+                    should_stop,
+                    platform=platform,
+                    session_check=session_binding.check,
+                    session_recover=session_binding.ensure_response_session,
+                    submission_target_url=selected_target_url,
+                    session_mode=session_binding.session_mode,
+                    availability_check=provider_availability_check,
+                    on_submitted=lambda: update(
+                        phase="running",
+                        message=f"Final schema correction sent; waiting for the next {AGENT_PLATFORM_BY_KEY[platform]['label']} action.",
+                    ),
+                )
+                continue
             final_blocker = ""
             if (
                 controller.state.edit_generation > 0
@@ -7654,7 +7803,14 @@ def _run_web_action_loop(
                     event_chain.observation(
                         action_id,
                         action_capability_key,
-                        {"ok": False, "action": "final", "error": final_blocker},
+                        event_observation_payload(
+                            action,
+                            {
+                                "ok": False,
+                                "action": "final",
+                                "error": final_blocker,
+                            },
+                        ),
                         status="blocked",
                         detail="Final action was blocked by the current verification gates.",
                     )
@@ -7693,7 +7849,10 @@ def _run_web_action_loop(
                     event_chain.observation(
                         action_id,
                         action_capability_key,
-                        {"ok": False, "action": "final", "stopped": True},
+                        event_observation_payload(
+                            action,
+                            {"ok": False, "action": "final", "stopped": True},
+                        ),
                         status="stopped",
                         detail="Final action was not published because Stop won the completion gate.",
                     )
@@ -7715,11 +7874,14 @@ def _run_web_action_loop(
                     event_chain.observation(
                         action_id,
                         action_capability_key,
-                        {
-                            "ok": False,
-                            "action": "final",
-                            "error_type": type(exc).__name__,
-                        },
+                        event_observation_payload(
+                            action,
+                            {
+                                "ok": False,
+                                "action": "final",
+                                "error_type": type(exc).__name__,
+                            },
+                        ),
                         status="failed",
                         detail="Final action rendering failed before publication.",
                     )
@@ -7728,12 +7890,15 @@ def _run_web_action_loop(
                 event_chain.observation(
                     action_id,
                     action_capability_key,
-                    {
-                        "ok": True,
-                        "action": "final",
-                        "bodycheck_current": controller.state.bodycheck_current,
-                        "verification_current": controller.state.verification_current,
-                    },
+                    event_observation_payload(
+                        action,
+                        {
+                            "ok": True,
+                            "action": "final",
+                            "bodycheck_current": controller.state.bodycheck_current,
+                            "verification_current": controller.state.verification_current,
+                        },
+                    ),
                     status="accepted",
                     detail="Final action passed the current verification gates.",
                 )
@@ -7787,34 +7952,38 @@ def _run_web_action_loop(
                 event_chain.observation(
                     action_id,
                     action_capability_key,
-                    {
-                        "ok": False,
-                        "action": action_name,
-                        "error_type": type(exc).__name__,
-                    },
+                    event_observation_payload(
+                        action,
+                        {
+                            "ok": False,
+                            "action": action_name,
+                            "error_type": type(exc).__name__,
+                        },
+                    ),
                     status="failed",
                     detail="Controller action raised before returning an observation.",
                 )
             raise
         activity[-1]["status"] = "completed" if observation.get("ok") else "failed"
         if event_chain is not None and action_id:
+            audit_observation = event_observation_payload(action, observation)
             event_chain.observation(
                 action_id,
                 action_capability_key,
-                observation,
+                audit_observation,
             )
             if action_name == "run":
                 event_chain.verification(
                     action_id,
                     action_capability_key,
-                    observation,
+                    audit_observation,
                     detail="Approved verification command result recorded.",
                 )
             elif action_name == "bodycheck":
                 event_chain.bodycheck(
                     action_id,
                     action_capability_key,
-                    observation,
+                    audit_observation,
                 )
         update(
             activity=activity,

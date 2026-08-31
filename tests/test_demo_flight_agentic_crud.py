@@ -1,6 +1,6 @@
 """Controller integration coverage against a copied Global Flight Atlas workspace.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -28,20 +28,28 @@ DEMO_FLIGHT_FILES = (
 )
 
 
+def _demo_flight_hashes(root: Path) -> dict[str, str]:
+    """Return deterministic digests for every immutable demo source copied into a test."""
+    return {
+        name: hashlib.sha256((root / name).read_bytes()).hexdigest()
+        for name in DEMO_FLIGHT_FILES
+    }
+
+
 @pytest.mark.integration
 def test_copied_demo_flight_supports_safe_agentic_crud_and_cold_verification() -> None:
     """Use the real demo as immutable input and exercise the controller end-to-end."""
     if not DEMO_FLIGHT_ROOT.is_dir():
         pytest.skip("The local demo_flight acceptance project is unavailable.")
 
-    source_readme = DEMO_FLIGHT_ROOT / "README.md"
-    source_digest = hashlib.sha256(source_readme.read_bytes()).hexdigest()
+    source_hashes = _demo_flight_hashes(DEMO_FLIGHT_ROOT)
 
     with TemporaryDirectory(prefix="demo-flight-agentic-") as raw_workspace:
         workspace = Path(raw_workspace) / "demo_flight"
         workspace.mkdir()
         for name in DEMO_FLIGHT_FILES:
             shutil.copy2(DEMO_FLIGHT_ROOT / name, workspace / name)
+        assert _demo_flight_hashes(workspace) == source_hashes
 
         controller = WorkspaceController(
             workspace,
@@ -58,7 +66,7 @@ def test_copied_demo_flight_supports_safe_agentic_crud_and_cold_verification() -
 
         readme = controller.execute({"action": "read", "path": "README.md"})
         assert readme["ok"]
-        assert readme["sha256"] == source_digest
+        assert readme["sha256"] == source_hashes["README.md"]
         assert "Global Flight Atlas" in readme["content"]
 
         replaced = controller.execute(
@@ -75,6 +83,29 @@ def test_copied_demo_flight_supports_safe_agentic_crud_and_cold_verification() -
             "path": "README.md",
             "changed_characters": -5,
         }
+
+        styles = controller.execute({"action": "read", "path": "styles.css"})
+        assert styles["ok"]
+        assert "--blue: #0055cc;" in styles["content"]
+        changed_styles = controller.execute(
+            {
+                "action": "replace",
+                "path": "styles.css",
+                "old": "--blue: #0055cc;",
+                "new": "--blue: #0055cd;",
+            }
+        )
+        assert changed_styles["ok"]
+        restored_styles = controller.execute(
+            {
+                "action": "replace",
+                "path": "styles.css",
+                "old": "--blue: #0055cd;",
+                "new": "--blue: #0055cc;",
+            }
+        )
+        assert restored_styles["ok"]
+        assert _demo_flight_hashes(workspace)["styles.css"] == source_hashes["styles.css"]
 
         written = controller.execute(
             {
@@ -129,4 +160,4 @@ def test_copied_demo_flight_supports_safe_agentic_crud_and_cold_verification() -
         assert bodycheck["verification_current"]
         assert bodycheck["bodycheck_current"]
 
-    assert hashlib.sha256(source_readme.read_bytes()).hexdigest() == source_digest
+    assert _demo_flight_hashes(DEMO_FLIGHT_ROOT) == source_hashes

@@ -1,6 +1,6 @@
 """One registry for Agent actions, page observations, and WebMCP tools.
 
-Code version: v1.2.0-codex.1
+Code version: v1.3.0-codex.1
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-CAPABILITY_REGISTRY_VERSION = "1.2.0"
+CAPABILITY_REGISTRY_VERSION = "1.3.0"
 AGENT_OPTIMIZATION_CONTRACT_VERSION = "1.1.0"
 AGENT_OPTIMIZATION_PROFILE = "openai-site-tools-2026-08-28"
 
@@ -173,6 +173,107 @@ def _integer_property(
         "minimum": minimum,
         "maximum": maximum,
     }
+
+
+class ControllerActionValidationError(ValueError):
+    """Raised when an action violates its registry-owned controller schema."""
+
+
+def _schema_validation_error(path: str, message: str) -> None:
+    """Raise one concise, non-content-bearing action-schema validation error."""
+    raise ControllerActionValidationError(f"Agent action payload {path} {message}")
+
+
+def _validate_controller_schema(value: Any, schema: dict[str, Any], *, path: str) -> None:
+    """Validate the bounded JSON-Schema subset used by Agent Action definitions."""
+    if not isinstance(schema, dict):
+        _schema_validation_error(path, "uses an unsupported registered schema.")
+
+    expected_type = schema.get("type")
+    if expected_type == "object":
+        if not isinstance(value, dict):
+            _schema_validation_error(path, "must be an object.")
+        properties = schema.get("properties", {})
+        required = schema.get("required", ())
+        if not isinstance(properties, dict) or not isinstance(required, (list, tuple)):
+            _schema_validation_error(path, "uses an unsupported registered schema.")
+        if any(not isinstance(key, str) for key in value):
+            _schema_validation_error(path, "must use string field names.")
+        for required_name in required:
+            if not isinstance(required_name, str):
+                _schema_validation_error(path, "uses an unsupported registered schema.")
+            if required_name not in value:
+                _schema_validation_error(f"{path}.{required_name}", "is required.")
+        if schema.get("additionalProperties") is False:
+            unknown = sorted(str(key) for key in value if key not in properties)
+            if unknown:
+                _schema_validation_error(
+                    path,
+                    "contains unsupported field(s): " + ", ".join(unknown[:8]) + ".",
+                )
+        for key, nested_schema in properties.items():
+            if key in value:
+                _validate_controller_schema(
+                    value[key],
+                    nested_schema,
+                    path=f"{path}.{key}",
+                )
+    elif expected_type == "string":
+        if not isinstance(value, str):
+            _schema_validation_error(path, "must be a string.")
+        minimum = schema.get("minLength")
+        maximum = schema.get("maxLength")
+        if isinstance(minimum, int) and len(value) < minimum:
+            _schema_validation_error(path, f"must contain at least {minimum:,} character(s).")
+        if isinstance(maximum, int) and len(value) > maximum:
+            _schema_validation_error(path, f"must contain at most {maximum:,} character(s).")
+    elif expected_type == "integer":
+        if isinstance(value, bool) or not isinstance(value, int):
+            _schema_validation_error(path, "must be an integer.")
+        minimum = schema.get("minimum")
+        maximum = schema.get("maximum")
+        if isinstance(minimum, int) and value < minimum:
+            _schema_validation_error(path, f"must be at least {minimum:,}.")
+        if isinstance(maximum, int) and value > maximum:
+            _schema_validation_error(path, f"must be at most {maximum:,}.")
+    elif expected_type == "array":
+        if not isinstance(value, list):
+            _schema_validation_error(path, "must be an array.")
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            _schema_validation_error(path, f"must contain at least {minimum:,} item(s).")
+        if isinstance(maximum, int) and len(value) > maximum:
+            _schema_validation_error(path, f"must contain at most {maximum:,} item(s).")
+        item_schema = schema.get("items")
+        if item_schema is not None:
+            if not isinstance(item_schema, dict):
+                _schema_validation_error(path, "uses an unsupported registered schema.")
+            for index, item in enumerate(value):
+                _validate_controller_schema(
+                    item,
+                    item_schema,
+                    path=f"{path}[{index}]",
+                )
+    else:
+        _schema_validation_error(path, "uses an unsupported registered schema.")
+
+    if "const" in schema and value != schema["const"]:
+        _schema_validation_error(path, "does not match the registered action value.")
+
+
+def validate_controller_action_payload(
+    capability: CapabilityDefinition,
+    payload: Any,
+) -> None:
+    """Enforce one Agent Action's registry schema at the controller boundary."""
+    if capability.kind != "agent_action" or not capability.action_name:
+        raise ControllerActionValidationError(
+            "The requested capability is not a registered Agent Action."
+        )
+    if not isinstance(payload, dict):
+        raise ControllerActionValidationError("Agent action payload must be an object.")
+    _validate_controller_schema(payload, capability.input_schema, path="root")
 
 
 CAPABILITY_REGISTRY: tuple[CapabilityDefinition, ...] = (
@@ -425,7 +526,7 @@ CAPABILITY_REGISTRY: tuple[CapabilityDefinition, ...] = (
         "Delete one previously read workspace file only when its current SHA-256 matches the supplied value.",
         read_only=False,
         handler_name="_delete",
-        prompt_example='{"action":"delete","path":"relative/obsolete-file","expected_sha256":"sha256-from-a-current-read"}',
+        prompt_example='{"action":"delete","path":"relative/obsolete-file","expected_sha256":"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"}',
         input_schema=_action_schema(
             "delete",
             {

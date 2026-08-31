@@ -1,9 +1,11 @@
 """Contract tests for the unified Agent capability registry.
 
-Code version: v1.2.0-codex.1
+Code version: v1.3.1-codex.1
 """
 
 from __future__ import annotations
+
+import pytest
 
 from app.core.agent.capability_registry import (
     AGENT_ACTIONS,
@@ -12,6 +14,7 @@ from app.core.agent.capability_registry import (
     WEBMCP_TOOLS,
     build_agent_optimization_manifest,
     capability_registry_snapshot,
+    validate_controller_action_payload,
 )
 
 
@@ -72,7 +75,7 @@ def test_public_manifest_is_derived_from_the_registry_and_stays_bounded() -> Non
 
 def test_internal_snapshot_contains_transport_schemas_but_no_runtime_content() -> None:
     snapshot = capability_registry_snapshot()
-    assert snapshot["version"] == "1.2.0"
+    assert snapshot["version"] == "1.3.0"
     records = {record["key"]: record for record in snapshot["capabilities"]}
     assert records["agent.action.replace"]["read_only"] is False
     assert records["agent.action.delete"]["handler_name"] == "_delete"
@@ -85,6 +88,22 @@ def test_internal_snapshot_contains_transport_schemas_but_no_runtime_content() -
     assert records["agent.action.run"]["handler_name"] == "_run"
     assert records["agent.action.run"]["input_schema"]["required"] == ["action", "command"]
     assert records["agent.action.final"]["handler_name"] == ""
+    assert records["agent.action.final"]["input_schema"]["required"] == [
+        "action",
+        "summary",
+    ]
+    assert records["agent.action.final"]["input_schema"]["additionalProperties"] is False
+    assert records["agent.action.final"]["input_schema"]["properties"]["action"]["const"] == "final"
+    assert records["agent.action.final"]["input_schema"]["properties"]["verification"] == {
+        "type": "array",
+        "items": {
+            "type": "string",
+            "description": "One verification result.",
+            "maxLength": 1_000,
+            "minLength": 1,
+        },
+        "maxItems": 20,
+    }
     assert records["webmcp.get_page_context"]["read_only"] is True
     assert records["webmcp.get_page_context"]["input_schema"] == {
         "type": "object",
@@ -98,6 +117,56 @@ def test_internal_snapshot_contains_transport_schemas_but_no_runtime_content() -
     assert "prompt" not in snapshot
     assert "response" not in snapshot
     assert "page_content" not in snapshot
+
+
+def test_controller_action_payload_validation_uses_the_registry_owned_schema() -> None:
+    validate_controller_action_payload(
+        AGENT_ACTIONS["list"],
+        {"action": "list", "path": ".", "depth": 2},
+    )
+    validate_controller_action_payload(
+        AGENT_ACTIONS["read"],
+        {"action": "read", "path": "README.md", "start_line": 1},
+    )
+    validate_controller_action_payload(
+        AGENT_ACTIONS["final"],
+        {
+            "action": "final",
+            "summary": "Completed.",
+            "verification": ["Focused test passed."],
+            "limitations": ["No remote task was sent."],
+        },
+    )
+
+    for capability, payload, field in (
+        (
+            "read",
+            {"action": "read", "path": "README.md", "start_line": True},
+            "start_line",
+        ),
+        (
+            "read",
+            {"action": "read"},
+            "path",
+        ),
+        (
+            "read",
+            {"action": "read", "path": "README.md", "unexpected": True},
+            "unsupported field",
+        ),
+        (
+            "read",
+            {"action": "list", "path": "README.md"},
+            "registered action value",
+        ),
+        (
+            "final",
+            {"action": "final", "summary": "Completed.", "verification": "not-an-array"},
+            "verification",
+        ),
+    ):
+        with pytest.raises(ValueError, match=field):
+            validate_controller_action_payload(AGENT_ACTIONS[capability], payload)
 
 
 def test_manifest_webmcp_definitions_are_registry_owned() -> None:

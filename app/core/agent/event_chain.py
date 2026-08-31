@@ -1,6 +1,6 @@
 """Durable, bounded event chains for one Web Agent run.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.1-codex.1
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ SENSITIVE_EVENT_KEYS = frozenset(
     {
         "body",
         "command",
+        "conversation_url",
         "content",
         "error",
         "html",
@@ -42,8 +43,11 @@ SENSITIVE_EVENT_KEYS = frozenset(
         "response",
         "source",
         "text",
+        "token",
         "transcript",
         "output",
+        "url",
+        "workspace_path",
     }
 )
 EVENT_KINDS = frozenset(
@@ -160,7 +164,15 @@ def summarize_observation(observation: dict[str, Any] | None) -> dict[str, Any]:
         summary["successful_check_count"] = len(observation["successful_checks"])
     if isinstance(observation.get("output"), str):
         summary["output_chars"] = len(observation["output"])
-    for key in ("path", "changed_characters", "bytes", "deleted_bytes"):
+    for key in (
+        "path",
+        "changed_characters",
+        "bytes",
+        "deleted_bytes",
+        "workspace_identity",
+        "read_receipt",
+        "delete_digest",
+    ):
         if key in observation:
             summary[key] = _bounded_value(observation[key])
     return bounded_event_data(summary)
@@ -459,6 +471,7 @@ class AgentEventChain:
         *,
         turn: int,
         action_name: str,
+        data: dict[str, Any] | None = None,
     ) -> tuple[str, AgentEvent | None]:
         """Create a stable action id and its action.requested event."""
         action_id = f"action-{self._next_action_number:04d}"
@@ -469,7 +482,7 @@ class AgentEventChain:
             action_id=action_id,
             status="requested",
             detail=f"Requested {action_name} action for turn {int(turn):,}.",
-            data={"turn": int(turn), "action": action_name},
+            data={**(data or {}), "turn": int(turn), "action": action_name},
         )
         return action_id, event
 

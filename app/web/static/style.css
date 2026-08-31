@@ -1,4 +1,4 @@
-/* Code version: v2.90.1-codex.16 */
+/* Code version: v2.90.4-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -4257,6 +4257,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-response-answer {
+    --agent-response-copy-global-rail-bleed: calc(var(--workspace-article-pad-inline) - var(--layout-edge-gap));
     display: flex;
     position: relative;
     flex-direction: column;
@@ -4264,6 +4265,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     min-width: 0;
     min-height: 0;
     max-height: min(42rem, 62svh, 100%);
+    margin-inline-end: calc(-1 * var(--agent-response-copy-global-rail-bleed));
     padding-top: 12px;
     overflow-x: hidden;
     overflow-y: auto;
@@ -4279,6 +4281,19 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-response-answer-content {
     flex: 0 0 auto;
     min-width: 0;
+    padding-inline-end: calc(var(--settings-round-icon-button-size) + var(--layout-edge-gap));
+}
+
+.agent-response-copy {
+    position: absolute;
+    top: 12px;
+    right: 0;
+    z-index: var(--layer-control-affordance);
+}
+
+.agent-response-copy:disabled {
+    cursor: not-allowed;
+    opacity: 0.48;
 }
 
 .agent-response-answer .agent-response-overflow-toggle {
@@ -4959,6 +4974,10 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 
     .global-quick-actions {
         top: var(--global-quick-actions-top);
+    }
+
+    .agent-response-answer {
+        --agent-response-copy-global-rail-bleed: 0px;
     }
 
     .notice-floating-banner-global {
@@ -6241,7 +6260,8 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .browser-prompt-add-feedback,
-.browser-prompt-copy-feedback {
+.browser-prompt-copy-feedback,
+.agent-response-copy-feedback {
     position: absolute;
     width: 1px;
     height: 1px;
@@ -6265,7 +6285,8 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .browser-prompt-add-icon,
-.browser-prompt-copy-icon {
+.browser-prompt-copy-icon,
+.agent-response-copy-icon {
     display: inline-block;
     width: 17px;
     height: 18px;
@@ -6277,30 +6298,36 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     -webkit-mask: url("/static/images/text.bubble.fill.svg") center/contain no-repeat;
 }
 
-.browser-prompt-copy-icon {
+.browser-prompt-copy-icon,
+.agent-response-copy-icon {
     mask: url("/static/images/document.on.document.fill.svg") center/contain no-repeat;
     -webkit-mask: url("/static/images/document.on.document.fill.svg") center/contain no-repeat;
 }
 
 .browser-prompt-copy-button.is-copied,
-.browser-prompt-copy-button.is-copy-failed {
+.browser-prompt-copy-button.is-copy-failed,
+.agent-response-copy.is-copied,
+.agent-response-copy.is-copy-failed {
     outline: none;
     background: var(--settings-round-icon-button-background-hover);
     color: var(--settings-round-icon-button-color-hover);
     box-shadow: var(--settings-round-icon-button-shadow-hover);
 }
 
-.browser-prompt-copy-button.is-copied {
+.browser-prompt-copy-button.is-copied,
+.agent-response-copy.is-copied {
     color: var(--color-success);
     animation: browser-copy-feedback 1.6s var(--motion-emphasized);
 }
 
-.browser-prompt-copy-button.is-copy-failed {
+.browser-prompt-copy-button.is-copy-failed,
+.agent-response-copy.is-copy-failed {
     color: var(--color-error);
     animation: browser-copy-feedback 520ms var(--motion-emphasized);
 }
 
-.browser-prompt-copy-button.is-copied .browser-prompt-copy-icon {
+.browser-prompt-copy-button.is-copied .browser-prompt-copy-icon,
+.agent-response-copy.is-copied .agent-response-copy-icon {
     mask-image: url("/static/images/checkmark.svg");
     -webkit-mask-image: url("/static/images/checkmark.svg");
     animation: browser-copy-icon-pop 360ms var(--motion-bouncy);
@@ -8841,7 +8868,10 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     .browser-media-copy-source-url.is-copied,
     .browser-media-copy-source-url.is-copy-failed,
     .browser-media-copy-source-url.is-copied .browser-media-copy-source-url-icon,
-    .browser-media-reveal.is-revealed {
+    .browser-media-reveal.is-revealed,
+    .agent-response-copy.is-copied,
+    .agent-response-copy.is-copy-failed,
+    .agent-response-copy.is-copied .agent-response-copy-icon {
         animation: none;
     }
 

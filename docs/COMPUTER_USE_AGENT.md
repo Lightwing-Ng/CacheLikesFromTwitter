@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.51.4-codex.1`
+Documentation version: `v3.51.5-codex.1`
 
 ## Purpose
 
@@ -304,7 +304,14 @@ rejects any action that is not registered before dispatch, and the WebMCP manife
 the same registry. The public Site surface still exposes only the bounded discovery, page-context,
 and allowlisted-navigation tools; it does not expose Agent execution or recovery routes.
 
-Every run receives a `run-<hex>` identifier. The service persists an owner-readable JSONL event
+The registry-owned closed schema is an execution boundary, not only prompt or manifest metadata.
+Before `WorkspaceController` dispatches a non-final Action, it validates the action constant,
+required fields, field types and bounds, and rejects undeclared fields. `final` has no controller
+handler, so the Web loop validates it against that same registry before verification and bodycheck
+gates, rendering, or publication. A provider message therefore cannot create a more permissive
+execution path.
+
+Every run receives a `run-<hex>` identifier. The service persists an owner-only JSONL event
 chain at the runtime root under `events/<run_id>.jsonl`. A valid chain starts at `run.started`,
 then links each parsed Action to `action.requested`, its bounded controller observation, and the
 relevant `verification` or `bodycheck` event before one terminal event. The real loop also emits
@@ -314,6 +321,12 @@ while Resume, Continue, and context cleanup are recorded as recovery events. Pro
 responses, source text, command text, and page content are removed from event payloads; the
 persisted `last-run.json` keeps bounded run metadata documented above alongside chain health and
 last-event metadata, while still omitting prompt, response, source, command, and page-content text.
+The root event stores workspace identity only as `{device,inode}`. Successful read observations and
+delete audit data can add a read receipt's SHA-256 digest, generation, and file identity; delete
+also records that digest as `delete_digest`. A browser-session event stores only a SHA-256 conversation identity
+derived from the platform and canonical conversation URL. The chain records no absolute workspace
+path, raw provider URL, or file/page/provider content; ordinary action summaries may retain a
+bounded workspace-relative path.
 
 When a run is paused, interrupted, failed, or leaves temporary context cleanup pending, the Agent
 page loads `GET /api/agent/doctor` and opens a Doctor panel with the failed checks, bounded event
@@ -530,6 +543,11 @@ contract is covered by mocked readiness, URL, source, and route checks in this c
 probe was not possible because the selected account is currently restricted. The probes did not
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
+
+The local `demo_flight` controller acceptance treats the named Demo as immutable input. It snapshots
+the SHA-256 digest of every `DEMO_FLIGHT_FILES` member, copies only that allowlist into a temporary
+workspace, exercises controller CRUD and cold verification in the copy, and recomputes every
+original allowlisted digest before returning. It never modifies the original Demo project.
 
 On 27 Aug 2026, delayed Gemini hydration, Stop interruption, strict model proof, bounded diagnostic
 privacy, localized region gating, and transient navigation retry coverage passed 307 controller

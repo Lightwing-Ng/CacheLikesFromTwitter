@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.51.3-codex.1
+Code version: v3.52.0-codex.1
 """
 
 from __future__ import annotations
@@ -2733,16 +2733,19 @@ def test_non_regular_settings_file_returns_without_blocking(tmp_path: Path) -> N
 
 
 def test_default_prompts_share_the_complete_controller_action_schema() -> None:
-    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 2_688
+    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 2_726
     assert hashlib.sha256(DEFAULT_MACOS_SYSTEM_PROMPT.encode()).hexdigest() == (
-        "f1638945976ee9fdb58d32e6446f86814e05062ce5bb9c72b162542c374bc075"
+        "ea4c8ee8cbc2dc2b76285567b753f2e0f1be8b1daefd980fda7c85587056af19"
     )
     for prompt in (DEFAULT_MACOS_SYSTEM_PROMPT, DEFAULT_WINDOWS_SYSTEM_PROMPT):
         for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS:
             assert marker in prompt
         assert '"old_base64":"base64-of-old"' in prompt
         assert '"content_base64":"base64-of-content"' in prompt
-        assert '"expected_sha256":"sha256-from-a-current-read"' in prompt
+        assert (
+            '"expected_sha256":"0123456789abcdef0123456789abcdef'
+            '0123456789abcdef0123456789abcdef"'
+        ) in prompt
         assert '"verification":["check and result"]' in prompt
         assert '"limitations":["remaining limitation"]' in prompt
 
@@ -4972,6 +4975,129 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
     assert event_chain.summary()["state"] == "ready"
 
 
+def test_action_loop_records_workspace_and_delete_receipt_provenance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://chatgpt.com/c/audit-provenance"
+
+        def evaluate(self, *_args: object, **_kwargs: object) -> bool:
+            return False
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    secret = "PRIVATE_AUDIT_CONTENT\n"
+    audit_file = workspace / "audit.txt"
+    audit_file.write_text(secret, encoding="utf-8")
+    digest = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+    stop_requested = Event()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace), max_turns=3),
+        stop_requested.is_set,
+    )
+    responses = iter(
+        (
+            '{"action":"read","path":"audit.txt"}',
+            json.dumps(
+                {
+                    "action": "delete",
+                    "path": "audit.txt",
+                    "expected_sha256": digest,
+                }
+            ),
+        )
+    )
+    submitted: list[str] = []
+    event_chain = AgentEventChain(tmp_path / "runtime", new_run_id())
+
+    def submit(
+        _page: object,
+        _browser: str,
+        message: str,
+        _should_stop: object,
+        **_kwargs: object,
+    ) -> str:
+        submitted.append(message)
+        if len(submitted) == 3:
+            stop_requested.set()
+            return ""
+        return next(responses)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(
+        computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        computer_use_agent, "_attach_context_file", lambda *_args: False
+    )
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Read and remove the local audit fixture.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=ComputerUseSettings(workspace_path=str(workspace), max_turns=3),
+        session_mode="recent",
+        selected_target_url="https://chatgpt.com/c/audit-provenance",
+        should_stop=stop_requested.is_set,
+        update=lambda **_changes: None,
+        event_chain=event_chain,
+    )
+
+    expected_workspace_identity = {
+        "device": workspace.stat().st_dev,
+        "inode": workspace.stat().st_ino,
+    }
+    records = [
+        json.loads(line)
+        for line in event_chain.path.read_text(encoding="utf-8").splitlines()
+    ]
+    root = records[0]
+    read_observation = next(
+        record
+        for record in records
+        if record["kind"] == "observation"
+        and record["data"].get("action") == "read"
+    )
+    delete_observation = next(
+        record
+        for record in records
+        if record["kind"] == "observation"
+        and record["data"].get("action") == "delete"
+    )
+    browser_session = next(
+        record
+        for record in records
+        if record["capability"] == "page.observe.browser_session"
+    )
+
+    assert result[2:] == (2, False)
+    assert len(submitted) == 3
+    assert not audit_file.exists()
+    assert root["data"]["workspace_identity"] == expected_workspace_identity
+    assert read_observation["data"]["workspace_identity"] == expected_workspace_identity
+    assert read_observation["data"]["read_receipt"]["sha256"] == digest
+    assert delete_observation["data"]["workspace_identity"] == expected_workspace_identity
+    assert delete_observation["data"]["read_receipt"]["sha256"] == digest
+    assert delete_observation["data"]["delete_digest"] == digest
+    assert re.fullmatch(
+        r"[0-9a-f]{64}",
+        str(browser_session["data"].get("conversation_identity") or ""),
+    )
+    persisted = json.dumps(records, ensure_ascii=False)
+    assert secret not in persisted
+    assert str(workspace) not in persisted
+    assert _Page.url not in persisted
+    assert event_chain.summary()["state"] == "ready"
+
+
 @pytest.mark.parametrize(
     ("platform", "model", "provider_label", "expected_model", "target_url"),
     (
@@ -5347,6 +5473,77 @@ def test_completed_action_loop_reports_attachment_and_normalizes_conversation_ur
         and "#" not in str(update.get("conversation_url", ""))
         for update in updates
     )
+
+
+def test_final_schema_violation_is_rejected_before_completion_and_recovers(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://chatgpt.com/c/final-schema"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace), max_turns=2),
+        lambda: False,
+    )
+    controller.state.bodycheck_generation = controller.state.edit_generation
+    responses = iter(
+        (
+            '{"action":"final","summary":"Do not publish.","verification":"not-a-list"}',
+            '{"action":"final","summary":"Published."}',
+        )
+    )
+    submitted: list[str] = []
+    rendered: list[dict[str, object]] = []
+    original_render_final = computer_use_agent._render_final_action
+
+    def submit(
+        _page: object,
+        _browser: str,
+        message: str,
+        _should_stop: object,
+        **_kwargs: object,
+    ) -> str:
+        submitted.append(message)
+        return next(responses)
+
+    def render_final(payload: dict[str, object]) -> str:
+        rendered.append(dict(payload))
+        return original_render_final(payload)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(
+        computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True
+    )
+    monkeypatch.setattr(
+        computer_use_agent, "_attach_context_file", lambda *_args: False
+    )
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+    monkeypatch.setattr(computer_use_agent, "_render_final_action", render_final)
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Publish only a schema-valid final action.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=ComputerUseSettings(workspace_path=str(workspace), max_turns=2),
+        session_mode="recent",
+        selected_target_url="https://chatgpt.com/c/final-schema",
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+    )
+
+    assert result == ("Published.", "https://chatgpt.com/c/final-schema", 2, True)
+    assert rendered == [{"action": "final", "summary": "Published."}]
+    assert len(submitted) == 2
+    assert "verification" in submitted[1]
 
 
 def test_final_requires_a_successful_run_and_then_current_bodycheck_after_an_edit(
@@ -7103,6 +7300,60 @@ def test_workspace_controller_stays_inside_project_and_requires_current_bodychec
         assert bodycheck_result["bodycheck_current"]
 
 
+def test_workspace_controller_enforces_registry_schema_before_mutation(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        lambda: False,
+    )
+
+    unknown_field = controller.execute(
+        {
+            "action": "write",
+            "path": "unexpected.txt",
+            "content": "must not be written",
+            "untrusted": True,
+        }
+    )
+    wrong_type = controller.execute(
+        {
+            "action": "write",
+            "path": "typed.txt",
+            "content": True,
+        }
+    )
+    missing_required = controller.execute(
+        {
+            "action": "write",
+            "path": "missing.txt",
+        }
+    )
+
+    assert unknown_field["ok"] is False
+    assert unknown_field["action"] == "write"
+    assert "untrusted" in unknown_field["error"]
+    assert wrong_type["ok"] is False
+    assert wrong_type["action"] == "write"
+    assert "content" in wrong_type["error"]
+    assert missing_required["ok"] is False
+    assert missing_required["action"] == "write"
+    assert "content" in missing_required["error"]
+    assert not (workspace / "unexpected.txt").exists()
+    assert not (workspace / "typed.txt").exists()
+    assert not (workspace / "missing.txt").exists()
+    assert controller.state.edit_generation == 0
+
+    accepted = controller.execute(
+        {"action": "write", "path": "accepted.txt", "content": "accepted\n"}
+    )
+    assert accepted["ok"] is True
+    assert (workspace / "accepted.txt").read_text(encoding="utf-8") == "accepted\n"
+
+
 def test_workspace_controller_delete_requires_a_current_read_sha256() -> None:
     with TemporaryDirectory() as raw_root:
         workspace = Path(raw_root) / "project"
@@ -7928,11 +8179,13 @@ def test_search_rejects_unbounded_or_control_character_queries(
         {"action": "search", "query": query, "path": "."}
     )
 
-    assert result == {
-        "ok": False,
-        "action": "search",
-        "error": "The search query is invalid or exceeds the controller limit.",
-    }
+    assert result["ok"] is False
+    assert result["action"] == "search"
+    if len(query) > 8_000:
+        assert "query" in result["error"]
+        assert "8,000" in result["error"]
+    else:
+        assert result["error"] == "The search query is invalid or exceeds the controller limit."
 
 
 def test_workspace_search_rg_normalizes_paths_and_post_filters_nested_ignored_output(

@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.1-codex.13
+Code version: v1.51.3-codex.1
 """
 
 from pathlib import Path
@@ -1758,7 +1758,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-                "/* Code version: v2.90.1-codex.16 */",
+        "/* Code version: v2.90.4-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -2151,6 +2151,37 @@ def test_agent_response_pagination_keeps_spatial_effects_unclipped() -> None:
     answer_rule = stylesheet[answer_start:stylesheet.index("\n}", answer_start)]
     assert "overflow-x: hidden;" in answer_rule
     assert "overflow-y: auto;" in answer_rule
+
+
+def test_agent_response_copy_uses_the_global_action_rail_without_consuming_scroll_space() -> None:
+    """Keep the answer copy control aligned to the global rail and out of answer text flow."""
+    stylesheet = _stylesheet()
+
+    answer_start = stylesheet.index(".agent-response-answer {")
+    answer_rule = stylesheet[answer_start:stylesheet.index("\n}", answer_start)]
+    content_start = stylesheet.index(".agent-response-answer-content {")
+    content_rule = stylesheet[content_start:stylesheet.index("\n}", content_start)]
+    copy_start = stylesheet.index(".agent-response-copy {")
+    copy_rule = stylesheet[copy_start:stylesheet.index("\n}", copy_start)]
+
+    assert (
+        "--agent-response-copy-global-rail-bleed: "
+        "calc(var(--workspace-article-pad-inline) - var(--layout-edge-gap));"
+    ) in answer_rule
+    assert "position: relative;" in answer_rule
+    assert "margin-inline-end: calc(-1 * var(--agent-response-copy-global-rail-bleed));" in answer_rule
+    assert "overflow-x: hidden;" in answer_rule
+    assert "overflow-y: auto;" in answer_rule
+    assert "padding-inline-end: calc(var(--settings-round-icon-button-size) + var(--layout-edge-gap));" in content_rule
+    for declaration in (
+        "position: absolute;",
+        "top: 12px;",
+        "right: 0;",
+        "z-index: var(--layer-control-affordance);",
+    ):
+        assert declaration in copy_rule
+    assert ".agent-response-copy-feedback {" in stylesheet
+    assert ".agent-response-copy.is-copied .agent-response-copy-icon {" in stylesheet
 
 
 def test_agent_response_question_and_answer_use_requested_type_sizes() -> None:

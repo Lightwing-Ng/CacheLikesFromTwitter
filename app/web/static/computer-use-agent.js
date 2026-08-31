@@ -1,4 +1,4 @@
-/* Code version: v3.26.1-codex.1 */
+/* Code version: v3.27.1-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -24,6 +24,8 @@
         responseQuestion: document.querySelector("[data-agent-response-question]"),
         responseAnswer: document.querySelector("[data-agent-response-answer]"),
         responseAnswerContent: document.querySelector("[data-agent-response-answer-content]"),
+        responseCopy: document.querySelector("[data-agent-response-copy]"),
+        responseCopyFeedback: document.querySelector("[data-agent-response-copy-feedback]"),
         responsePagination: document.querySelector("[data-agent-response-pagination]"),
         conversationLink: document.getElementById("agent_conversation_link"),
         conversationLinkLabel: document.querySelector("[data-agent-conversation-link-label]"),
@@ -94,6 +96,9 @@
     let responseHistory = [];
     let responseHistoryPage = 1;
     let responseHistorySignature = "";
+    let responseCopyValue = "";
+    let responseCopyRevision = 0;
+    let responseCopyFeedbackTimer = 0;
     let remoteSessionHistory = [];
     let remoteSessionHistoryUrl = "";
     let remoteSessionHistoryBrowser = "";
@@ -108,6 +113,7 @@
     let agentPaginationRangePinnedPicker = null;
     let agentPaginationRangeFocusRestore = null;
     let agentSessionListViewportFrame = 0;
+    let agentSessionListViewportDock = null;
     const paginationMotion = window.CACHELIKES_PAGINATION_MOTION;
 
     async function requestJson(url, options = {}) {
@@ -526,12 +532,43 @@
         }
     }
 
+    function resyncAgentSessionListViewportAfterDockTransition(event) {
+        if (event.target !== agentSessionListViewportDock) return;
+        const propertyName = String(event.propertyName || "");
+        if (propertyName !== "opacity" && !propertyName.endsWith("transform")) return;
+        syncAgentSessionListViewport();
+    }
+
+    function bindAgentSessionListViewportDock(dock) {
+        if (agentSessionListViewportDock === dock) return;
+        if (agentSessionListViewportDock) {
+            agentSessionListViewportDock.removeEventListener(
+                "transitionend",
+                resyncAgentSessionListViewportAfterDockTransition,
+            );
+            agentSessionListViewportDock.removeEventListener(
+                "transitioncancel",
+                resyncAgentSessionListViewportAfterDockTransition,
+            );
+        }
+        agentSessionListViewportDock = dock;
+        dock.addEventListener(
+            "transitionend",
+            resyncAgentSessionListViewportAfterDockTransition,
+        );
+        dock.addEventListener(
+            "transitioncancel",
+            resyncAgentSessionListViewportAfterDockTransition,
+        );
+    }
+
     function syncAgentSessionListViewport() {
         const menu = elements.recentSessionCombobox?.querySelector(
             ".agent-session-list-menu-direct",
         );
         const dock = document.querySelector(".sidebar-dock");
         if (!menu || !dock) return;
+        bindAgentSessionListViewportDock(dock);
         if (agentSessionListViewportFrame) {
             window.cancelAnimationFrame(agentSessionListViewportFrame);
         }
@@ -1866,9 +1903,78 @@
         });
     }
 
+    function clearResponseCopyFeedback() {
+        if (responseCopyFeedbackTimer) {
+            window.clearTimeout(responseCopyFeedbackTimer);
+            responseCopyFeedbackTimer = 0;
+        }
+        const button = elements.responseCopy;
+        if (!button) return;
+        button.classList.remove("is-copied", "is-copy-failed");
+        button.setAttribute("aria-label", "Copy answer");
+        button.setAttribute("title", "Copy answer");
+        if (elements.responseCopyFeedback) elements.responseCopyFeedback.textContent = "";
+    }
+
+    function renderResponseCopy(entry) {
+        responseCopyRevision += 1;
+        responseCopyValue = typeof entry?.response === "string" ? entry.response : "";
+        clearResponseCopyFeedback();
+        if (!elements.responseCopy) return;
+        const copyAvailable = Boolean(responseCopyValue);
+        elements.responseCopy.hidden = !copyAvailable;
+        elements.responseCopy.disabled = !copyAvailable;
+    }
+
+    function copyResponseTextFallback(value) {
+        const textarea = document.createElement("textarea");
+        textarea.value = value;
+        textarea.setAttribute("readonly", "");
+        textarea.setAttribute("aria-hidden", "true");
+        textarea.style.position = "fixed";
+        textarea.style.opacity = "0";
+        textarea.style.pointerEvents = "none";
+        document.body.append(textarea);
+        try {
+            textarea.select();
+            textarea.setSelectionRange(0, textarea.value.length);
+            return document.execCommand("copy");
+        } catch (_error) {
+            return false;
+        } finally {
+            textarea.remove();
+        }
+    }
+
+    async function copyResponseText(value) {
+        if (!value) return false;
+        if (navigator.clipboard?.writeText) {
+            try {
+                await navigator.clipboard.writeText(value);
+                return true;
+            } catch (_error) {
+            }
+        }
+        return copyResponseTextFallback(value);
+    }
+
+    function setResponseCopyFeedback(didCopy) {
+        const button = elements.responseCopy;
+        if (!button) return;
+        const copied = Boolean(didCopy);
+        button.classList.toggle("is-copied", copied);
+        button.classList.toggle("is-copy-failed", !copied);
+        const label = copied ? "Answer copied" : "Unable to copy answer";
+        button.setAttribute("aria-label", label);
+        button.setAttribute("title", label);
+        if (elements.responseCopyFeedback) elements.responseCopyFeedback.textContent = label;
+        responseCopyFeedbackTimer = window.setTimeout(clearResponseCopyFeedback, 1_600);
+    }
+
     function renderAgentResponsePage({animationState = null} = {}) {
         const entry = responseHistory[responseHistoryPage - 1] || null;
         if (elements.responseQuestion) elements.responseQuestion.textContent = entry?.prompt || "";
+        renderResponseCopy(entry);
         if (elements.responseAnswerContent) {
             elements.responseAnswerContent.innerHTML = entry?.response_html || "";
         } else if (elements.responseAnswer) {
@@ -2112,6 +2218,14 @@
     elements.promptOverflowToggle?.addEventListener("click", () => {
         setPromptExpanded(!isPromptExpanded());
         elements.promptInput?.focus();
+    });
+    elements.responseCopy?.addEventListener("click", async () => {
+        const value = responseCopyValue;
+        const revision = responseCopyRevision;
+        if (!value || elements.responseCopy?.disabled) return;
+        const didCopy = await copyResponseText(value);
+        if (revision !== responseCopyRevision) return;
+        setResponseCopyFeedback(didCopy);
     });
     window.addEventListener(
         "resize",

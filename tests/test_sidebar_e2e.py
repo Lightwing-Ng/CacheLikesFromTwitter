@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.2-codex.15
+Code version: v1.26.5-codex.1
 """
 
 from __future__ import annotations
@@ -2253,6 +2253,211 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
         assert captured_ask_payloads[0]["conversation_url"] == session_url
         assert captured_ask_payloads[0]["session_title"] == f"{platform_label} selected session"
         assert any(f"platform={platform}" in url for url in source_requests)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_chatgpt_edge_recent_sessions_are_a_direct_scrollable_keyboard_list(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep ChatGPT/Edge recent sessions direct, scrollable, and keyboard-selectable."""
+    session_count = 36
+    first_session_url = "https://chatgpt.com/c/recent-session-keyboard-0"
+    catalog_payload = _chatgpt_catalog_sessions(
+        *[
+            {
+                "id": f"recent-session-{index}",
+                "title": f"ChatGPT recent session {index:02d}",
+                "url": f"https://chatgpt.com/c/recent-session-keyboard-{index}",
+                "updated_at": "2026-08-31T00:00:00Z",
+            }
+            for index in range(session_count)
+        ]
+    )
+    source_requests: list[str] = []
+
+    def fulfill_agent_status(route) -> None:
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    def fulfill_browser_status(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "chatgpt",
+                "browser": "edge",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "ChatGPT account",
+                "message": "Edge is ready for ChatGPT Web.",
+                "agent_sources": catalog_payload,
+            }
+        )
+
+    def fulfill_preferences(route) -> None:
+        route.fulfill(json=_finished_chatgpt_agent_payload())
+
+    def fulfill_sources(route) -> None:
+        source_requests.append(route.request.url)
+        route.fulfill(json=catalog_payload)
+
+    def fulfill_history(route) -> None:
+        route.fulfill(json={"title": "", "history": []})
+
+    def assert_direct_list_geometry(width: int, height: int) -> None:
+        page.wait_for_function(
+            """() => {
+                const menu = document.querySelector(
+                    '[data-agent-session-list="recent"] [data-agent-combobox-menu]'
+                );
+                const dock = document.querySelector('.sidebar-dock');
+                if (!(menu instanceof HTMLElement) || !(dock instanceof HTMLElement)) return false;
+                const menuBox = menu.getBoundingClientRect();
+                const dockBox = dock.getBoundingClientRect();
+                return menuBox.width > 0
+                    && menuBox.height > 0
+                    && dockBox.width > 0
+                    && dockBox.height > 0
+                    && Number.parseFloat(
+                        menu.style.getPropertyValue('--agent-session-list-menu-available-height'),
+                    ) > 0;
+            }"""
+        )
+        geometry = page.evaluate(
+            """() => {
+                const menu = document.querySelector(
+                    '[data-agent-session-list="recent"] [data-agent-combobox-menu]'
+                );
+                const dock = document.querySelector('.sidebar-dock');
+                if (!(menu instanceof HTMLElement) || !(dock instanceof HTMLElement)) return null;
+                const menuBox = menu.getBoundingClientRect();
+                const dockBox = dock.getBoundingClientRect();
+                const style = getComputedStyle(menu);
+                menu.scrollTop = menu.scrollHeight;
+                return {
+                    menu: {
+                        bottom: menuBox.bottom,
+                        left: menuBox.left,
+                        right: menuBox.right,
+                        top: menuBox.top,
+                    },
+                    dock: {top: dockBox.top},
+                    clientHeight: menu.clientHeight,
+                    scrollHeight: menu.scrollHeight,
+                    scrollTop: menu.scrollTop,
+                    overflowY: style.overflowY,
+                    dockGap: Number.parseFloat(
+                        style.getPropertyValue('--agent-session-list-dock-gap'),
+                    ) || 0,
+                    renderedDockGap: dockBox.top - menuBox.bottom,
+                    horizontalOverflow: Math.max(
+                        document.documentElement.scrollWidth,
+                        document.body.scrollWidth,
+                    ) - document.documentElement.clientWidth,
+                    viewportWidth: window.innerWidth,
+                };
+            }"""
+        )
+        assert geometry is not None
+        assert geometry["scrollHeight"] > geometry["clientHeight"], (width, height, geometry)
+        assert geometry["scrollTop"] > 0, (width, height, geometry)
+        assert geometry["overflowY"] == "auto", (width, height, geometry)
+        assert geometry["menu"]["left"] >= -1, (width, height, geometry)
+        assert geometry["menu"]["right"] <= geometry["viewportWidth"] + 1, (width, height, geometry)
+        assert geometry["menu"]["bottom"] <= geometry["dock"]["top"] + 1, (width, height, geometry)
+        assert geometry["renderedDockGap"] >= geometry["dockGap"] - 1, (width, height, geometry)
+        assert geometry["horizontalOverflow"] <= 1, (width, height, geometry)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 900},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/preferences", fulfill_preferences)
+    page.route("**/api/agent/sources**", fulfill_sources)
+    page.route("**/api/agent/chatgpt-session-history**", fulfill_history)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        expect(
+            page.locator(".agent-platform-combobox [data-agent-combobox-input]")
+        ).to_have_value("chatgpt")
+        expect(
+            page.locator(".agent-browser-combobox [data-agent-combobox-input]")
+        ).to_have_value("edge")
+
+        session_mode_trigger = page.locator(
+            ".agent-session-mode-combobox [data-agent-combobox-trigger]"
+        )
+        session_mode_trigger.click()
+        page.locator(
+            '.agent-session-mode-combobox [data-agent-combobox-option="recent"]'
+        ).click()
+
+        recent_field = page.locator("[data-agent-recent-session-field]")
+        recent_list = page.locator('[data-agent-session-list="recent"]')
+        recent_menu = recent_list.locator("[data-agent-combobox-menu]")
+        first_option = recent_menu.locator(
+            f'[data-agent-combobox-option="{first_session_url}"]'
+        )
+        expect(recent_field).to_be_visible()
+        expect(recent_list).to_have_attribute("data-agent-direct-list", "true")
+        expect(recent_list.locator("[data-agent-combobox-trigger]")).to_have_count(0)
+        expect(recent_menu).to_be_visible()
+        expect(recent_menu).to_have_attribute("role", "listbox")
+        expect(recent_menu.locator("[data-agent-combobox-option]")).to_have_count(session_count)
+        expect(first_option).to_have_attribute("role", "option")
+        expect(first_option).to_have_attribute("tabindex", "0")
+        assert first_option.evaluate("element => element.tagName") == "BUTTON"
+        assert source_requests == [], (
+            "ChatGPT/Edge must consume the bootstrapped recent-session catalog instead of "
+            "starting an independent source request."
+        )
+
+        assert_direct_list_geometry(1_280, 900)
+
+        session_mode_trigger.focus()
+        page.keyboard.press("Tab")
+        expect(first_option).to_be_focused()
+        page.keyboard.press("Enter")
+
+        expect(first_option).to_have_attribute("aria-selected", "true")
+        expect(
+            recent_menu.locator('[data-agent-combobox-option]:not([aria-selected="true"])')
+        ).to_have_count(session_count - 1)
+        expect(page.locator("[data-agent-prompt-session-mode]")).to_have_value("recent")
+        expect(page.locator("[data-agent-recent-session-url]")).to_have_value(first_session_url)
+        expect(page.locator("[data-agent-prompt-conversation-url]")).to_have_value(first_session_url)
+        expect(page.locator("[data-agent-prompt-session-title]")).to_have_value(
+            "ChatGPT recent session 00"
+        )
+        expect(page.locator("[data-agent-session-source]")).to_have_attribute(
+            "data-agent-session-mode", "recent"
+        )
+
+        page.set_viewport_size({"width": 390, "height": 844})
+        toggle = page.locator("#sidebar_toggle")
+        if toggle.get_attribute("aria-expanded") != "true":
+            _tap_toggle_center(page, toggle)
+        expect(toggle).to_have_attribute("aria-expanded", "true")
+        expect(recent_field).to_be_visible()
+        page.wait_for_function(
+            """() => {
+                const dock = document.querySelector('.sidebar-dock');
+                if (!(dock instanceof HTMLElement)) return false;
+                const matrix = new DOMMatrix(getComputedStyle(dock).transform);
+                return matrix.a > 0.999
+                    && matrix.d > 0.999
+                    && Math.abs(matrix.m42) <= 0.5
+                    && Number.parseFloat(getComputedStyle(dock).opacity) > 0.999;
+            }"""
+        )
+        assert_direct_list_geometry(390, 844)
     finally:
         context.close()
 
@@ -4867,6 +5072,128 @@ def test_incomplete_chatgpt_effort_catalog_hides_stale_snapshot_options(
         assert [text.strip() for text in effort_options.all_text_contents()] == [
             "Highest available"
         ]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_response_copy_uses_raw_history_text_and_the_global_action_rail(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Copy raw answers across history pages without shifting the global action rail."""
+    older_raw_response = "Older source **Markdown**\n\nKeep this exact text."
+    latest_raw_response = "Latest source `payload`\n\nKeep this exact text too."
+    agent_payload = _finished_chatgpt_agent_payload()
+    agent_payload["agent"].update(
+        {
+            "prompt": "Latest prompt",
+            "response": latest_raw_response,
+            "response_html": "<p>Rendered latest answer only.</p>",
+            "history": [
+                {
+                    "prompt": "Older prompt",
+                    "response": older_raw_response,
+                    "response_html": "<p>Rendered older answer only.</p>",
+                    "started_at": "2026-08-31T00:00:00Z",
+                    "finished_at": "2026-08-31T00:01:00Z",
+                },
+                {
+                    "prompt": "Latest prompt",
+                    "response": latest_raw_response,
+                    "response_html": "<p>Rendered latest answer only.</p>",
+                    "started_at": "2026-08-31T00:02:00Z",
+                    "finished_at": "2026-08-31T00:03:00Z",
+                },
+            ],
+        }
+    )
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": _chatgpt_catalog_sessions(),
+    }
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 900},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.add_init_script(
+        """
+        Object.defineProperty(navigator, "clipboard", {
+            configurable: true,
+            value: {
+                writeText: async (value) => {
+                    window.__agentResponseCopiedText = value;
+                },
+            },
+        });
+        """
+    )
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=agent_payload))
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        answer = page.locator("[data-agent-response-answer-content]")
+        copy_button = page.locator("[data-agent-response-copy]")
+        expect(answer).to_have_text("Rendered latest answer only.")
+        expect(copy_button).to_be_visible()
+
+        copy_button.click()
+        page.wait_for_function(
+            "expected => window.__agentResponseCopiedText === expected",
+            arg=latest_raw_response,
+        )
+        expect(copy_button).to_have_attribute("aria-label", "Answer copied")
+
+        page.get_by_role("button", name="Conversation page 1", exact=True).click()
+        expect(answer).to_have_text("Rendered older answer only.")
+        copy_button.click()
+        page.wait_for_function(
+            "expected => window.__agentResponseCopiedText === expected",
+            arg=older_raw_response,
+        )
+
+        for width, height in ((1_280, 900), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.evaluate(
+                """() => new Promise(resolve => {
+                    requestAnimationFrame(() => requestAnimationFrame(resolve));
+                })"""
+            )
+            rail = page.evaluate(
+                """() => {
+                    const copy = document.querySelector("[data-agent-response-copy]");
+                    const theme = document.querySelector("#global_theme_toggle");
+                    const answer = document.querySelector("[data-agent-response-answer]");
+                    if (!(copy instanceof HTMLElement)
+                        || !(theme instanceof HTMLElement)
+                        || !(answer instanceof HTMLElement)) return null;
+                    const copyRect = copy.getBoundingClientRect();
+                    const themeRect = theme.getBoundingClientRect();
+                    const answerRect = answer.getBoundingClientRect();
+                    return {
+                        answer: {left: answerRect.left, right: answerRect.right, top: answerRect.top},
+                        copy: {left: copyRect.left, right: copyRect.right, top: copyRect.top},
+                        theme: {right: themeRect.right},
+                        hasHorizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
+                    };
+                }"""
+            )
+            assert rail is not None
+            assert abs(rail["copy"]["right"] - rail["theme"]["right"]) <= 1, (width, rail)
+            assert rail["copy"]["top"] >= rail["answer"]["top"]
+            assert rail["copy"]["left"] >= rail["answer"]["left"]
+            assert rail["copy"]["right"] <= rail["answer"]["right"] + 1
+            assert not rail["hasHorizontalOverflow"]
     finally:
         context.close()
 

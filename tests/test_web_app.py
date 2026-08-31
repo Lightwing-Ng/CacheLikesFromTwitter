@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.1-codex.14
+# Code version: v1.88.4-codex.1
 
 from __future__ import annotations
 
@@ -491,7 +491,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.90.1-codex.16"
+                expected_style_version = "style-v2.90.4-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -831,7 +831,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.26.1-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.1-codex.1', local_body)
         self.assertIn('data-agent-effort-field', local_body)
         self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -873,6 +873,10 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="agent_response_question_header"', local_body)
         self.assertIn('data-browser-session-message-toggle', local_body)
         self.assertIn('class="agent-response-answer browser-media-prompt-markdown', local_body)
+        self.assertIn('class="global-quick-action-button agent-response-copy"', local_body)
+        self.assertIn('data-agent-response-copy', local_body)
+        self.assertIn('data-agent-response-copy-feedback', local_body)
+        self.assertIn('aria-label="Copy answer"', local_body)
         self.assertIn('data-agent-response-answer-content', local_body)
         self.assertIn('data-agent-response-pagination', local_body)
         self.assertIn('class="browser-pagination local-store-pagination agent-response-pagination"', local_body)
@@ -1302,7 +1306,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.26.1-codex.1',
+            'computer-use-agent-v3.27.1-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'data-agent-direct-list="true"',
@@ -1871,11 +1875,22 @@ class WebAppTests(unittest.TestCase):
             'statusMessageCopy: document.querySelector("[data-agent-response-status-copy]")',
             'statusDot: document.querySelector("[data-agent-response-status-dot]")',
             'statusSpinner: document.querySelector("[data-agent-response-status-spinner]")',
+            'responseCopy: document.querySelector("[data-agent-response-copy]")',
+            'responseCopyFeedback: document.querySelector("[data-agent-response-copy-feedback]")',
+            "function renderResponseCopy(entry)",
+            "function copyResponseTextFallback(value)",
+            "navigator.clipboard?.writeText",
+            'document.execCommand("copy")',
+            'elements.responseCopy?.addEventListener("click", async () => {',
             "function responseStatusPresentation(agent, readiness)",
             "function renderResponseStatus(agent, readiness)",
             "elements.statusSpinner.hidden = !presentation.loading",
             "setResponseStatusFallback(error.message)",
             "function syncAgentSessionListViewport()",
+            "function resyncAgentSessionListViewportAfterDockTransition(event)",
+            "function bindAgentSessionListViewportDock(dock)",
+            '"transitionend"',
+            '"transitioncancel"',
             "const availableHeight = dockBox.top - menuBox.top - gap;",
             '"--agent-session-list-menu-available-height"',
             "syncAgentSessionListViewport();",
@@ -1889,6 +1904,17 @@ class WebAppTests(unittest.TestCase):
 
         self.assertNotIn("MCP runtime", script)
         self.assertNotIn("agent_phase_chip", script)
+
+        copy_render_start = script.index("function renderResponseCopy(entry)")
+        copy_render_end = script.index("function copyResponseTextFallback", copy_render_start)
+        copy_render = script[copy_render_start:copy_render_end]
+        self.assertIn(
+            'responseCopyValue = typeof entry?.response === "string" ? entry.response : ""',
+            copy_render,
+        )
+        self.assertNotIn("response_html", copy_render)
+        self.assertIn("elements.responseCopy.hidden = !copyAvailable", copy_render)
+        self.assertIn("elements.responseCopy.disabled = !copyAvailable", copy_render)
 
     def test_agent_settings_client_owns_host_detection_and_terminal_authorization(self) -> None:
         script = AGENT_SETTINGS_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -2509,7 +2535,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.90.1-codex.16", body)
+            self.assertIn("style-v2.90.4-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

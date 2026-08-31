@@ -1,6 +1,6 @@
 """Focused tests for the durable, bounded Agent event chain.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.1-codex.1
 """
 
 from __future__ import annotations
@@ -114,6 +114,8 @@ def test_event_chain_rejects_verification_before_action_observation(tmp_path) ->
 
 
 def test_observation_summary_keeps_evidence_metadata_without_raw_content() -> None:
+    digest = "a" * 64
+    deleted_digest = "b" * 64
     summary = summarize_observation(
         {
             "ok": True,
@@ -122,6 +124,20 @@ def test_observation_summary_keeps_evidence_metadata_without_raw_content() -> No
             "matches": ["PRIVATE_SOURCE_CONTENT"],
             "checks": [{"name": "bodycheck", "ok": True}],
             "path": "README.md",
+            "workspace_identity": {"device": 123, "inode": 456},
+            "read_receipt": {
+                "sha256": digest,
+                "generation": 7,
+                "file_identity": {
+                    "device": 123,
+                    "inode": 789,
+                    "size": 42,
+                    "mtime_ns": 999,
+                    "mode": 0o100644,
+                },
+                "content": "PRIVATE_READ_RECEIPT_CONTENT",
+            },
+            "delete_digest": deleted_digest,
         }
     )
 
@@ -132,19 +148,41 @@ def test_observation_summary_keeps_evidence_metadata_without_raw_content() -> No
         "checks": [{"name": "bodycheck", "ok": True}],
         "output_chars": len("PRIVATE_COMMAND_OUTPUT"),
         "path": "README.md",
+        "workspace_identity": {"device": 123, "inode": 456},
+        "read_receipt": {
+            "sha256": digest,
+            "generation": 7,
+            "file_identity": {
+                "device": 123,
+                "inode": 789,
+                "size": 42,
+                "mtime_ns": 999,
+                "mode": 0o100644,
+            },
+        },
+        "delete_digest": deleted_digest,
     }
     assert "PRIVATE_COMMAND_OUTPUT" not in str(summary)
     assert "PRIVATE_SOURCE_CONTENT" not in str(summary)
+    assert "PRIVATE_READ_RECEIPT_CONTENT" not in str(summary)
 
 
 def test_nested_event_data_does_not_reintroduce_sensitive_values(tmp_path) -> None:
     chain = AgentEventChain(tmp_path / "runtime", new_run_id())
     safe = chain.start(
         data={
+            "workspace_path": "/private/workspace",
+            "conversation_url": "https://chatgpt.com/c/private-conversation",
+            "url": "https://example.invalid/private",
+            "token": "PRIVATE_TOKEN",
             "outer": {
                 "middle": {
                     "inner": {
                         "output": "PRIVATE_NESTED_OUTPUT",
+                        "workspace_path": "/private/nested-workspace",
+                        "conversation_url": "https://chatgpt.com/c/private-nested",
+                        "url": "https://example.invalid/private-nested",
+                        "token": "PRIVATE_NESTED_TOKEN",
                     },
                 },
             },
@@ -152,7 +190,19 @@ def test_nested_event_data_does_not_reintroduce_sensitive_values(tmp_path) -> No
     )
 
     assert safe is not None
-    assert "PRIVATE_NESTED_OUTPUT" not in str(safe.as_dict())
+    serialized = str(safe.as_dict())
+    for private_value in (
+        "PRIVATE_NESTED_OUTPUT",
+        "/private/workspace",
+        "https://chatgpt.com/c/private-conversation",
+        "https://example.invalid/private",
+        "PRIVATE_TOKEN",
+        "/private/nested-workspace",
+        "https://chatgpt.com/c/private-nested",
+        "https://example.invalid/private-nested",
+        "PRIVATE_NESTED_TOKEN",
+    ):
+        assert private_value not in serialized
 
 
 def test_recovery_metadata_may_follow_a_terminal_event_but_not_an_action(tmp_path) -> None:

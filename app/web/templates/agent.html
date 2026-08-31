@@ -1,4 +1,4 @@
-<!-- Code version: v3.26.0-codex.4 -->
+<!-- Code version: v3.27.1-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.1-codex.16') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.4-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -318,6 +318,17 @@
                                 ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
                             </header>
                             <div class="agent-response-answer browser-media-prompt-markdown browser-session-table-message-shell" id="agent_response_answer" data-agent-response-answer>
+                                <button
+                                    type="button"
+                                    class="global-quick-action-button agent-response-copy"
+                                    data-agent-response-copy
+                                    aria-label="Copy answer"
+                                    title="Copy answer"
+                                    {% if not (initial_history_item.response if initial_history_item else agent_snapshot.response) %}hidden disabled{% endif %}
+                                >
+                                    <span class="icon agent-response-copy-icon" aria-hidden="true"></span>
+                                    <span class="agent-response-copy-feedback" data-agent-response-copy-feedback aria-live="polite"></span>
+                                </button>
                                 <div class="agent-response-answer-content" data-agent-response-answer-content>{{ (initial_history_item.response_html if initial_history_item else render_prompt_markdown(agent_snapshot.response)) | safe }}</div>
                                 <button
                                     type="button"
@@ -461,6 +472,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.26.1-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.27.1-codex.1') }}"></script>
 </body>
 </html>

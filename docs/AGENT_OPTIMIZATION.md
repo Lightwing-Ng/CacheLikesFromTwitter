@@ -1,6 +1,6 @@
 # OpenAI Site tools and Agent Optimization
 
-Documentation version: `v1.2.2-codex.1`
+Documentation version: `v1.2.3-codex.1`
 
 This project implements the shared Agent Optimization contract at
 `/Users/lightwing/Desktop/SHARED_AGENT_OPTIMIZATION.md`. That file owns the cross-project naming,
@@ -38,6 +38,11 @@ the public manifest small by publishing three aggregate groups for the internal 
 observations, and WebMCP tools rather than exposing executable Agent Action schemas to the browser
 tool surface.
 
+The closed schema is also an execution boundary. `WorkspaceController` validates every registered
+non-final Action against its registry-owned schema before dispatch, including the action constant,
+required fields, types, bounds, and undeclared fields. The Web loop validates `final` against the
+same schema before verification or bodycheck gates, rendering, and publication.
+
 ## v1 tools
 
 | Tool | Result | Data boundary |
@@ -68,7 +73,7 @@ promotion workflow and reuse existing core services and route authorization.
 
 ## Agent event chain and doctor recovery
 
-Each new Agent run receives a `run-<hex>` identifier and appends an owner-readable JSONL chain
+Each new Agent run receives a `run-<hex>` identifier and appends an owner-only JSONL chain
 under the runtime root at `events/<run_id>.jsonl`. The chain starts with `run.started`, then links
 each parsed Agent Action to an `action.requested` event, a bounded controller `observation`, and,
 when applicable, a `verification` or `bodycheck` event before one terminal run event. The real loop
@@ -78,6 +83,13 @@ events; Resume, Continue, and cleanup are recovery events. Event payloads are bo
 response, source, command, output, and page-content fields. The persisted snapshot stores bounded
 run metadata documented in `COMPUTER_USE_AGENT.md` alongside the chain health summary and the last
 action/event identifiers; it does not store prompt or provider-content text.
+
+The root event records workspace identity only as `{device,inode}`. Successful read observations and
+delete audit data can retain the SHA-256 read-receipt digest, generation, and file identity; delete
+also retains that digest as `delete_digest`. The browser-session event records a SHA-256 identity derived from the platform
+and canonical conversation URL. The chain does not record an absolute workspace path, raw provider
+URL, or file/page/provider content; ordinary action summaries may retain a bounded
+workspace-relative path.
 
 `GET /api/agent/doctor` exposes the same lifecycle, chain, verification, bodycheck, and temporary
 context-cleanup checks used by the Agent page. The Doctor panel appears when attention is needed or
@@ -102,14 +114,28 @@ node --test tests/test_agent_optimization.mjs
   tests/test_agent_optimization_browser.py
 ```
 
+Run the local controller acceptance separately:
+
+```bash
+/usr/local/bin/python3.13 -m pytest -q -p no:cacheprovider \
+  tests/test_demo_flight_agentic_crud.py
+```
+
+It snapshots the SHA-256 digest of every `DEMO_FLIGHT_FILES` member from the local `demo_flight`
+source, copies only that allowlist into an ephemeral workspace, exercises CRUD and cold verification
+there, then rechecks the complete original allowlist after teardown. The original Demo is read-only
+test input.
+
 Run the complete project gate with:
 
 ```bash
 TZ=UTC CACHELIKES_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh
 ```
 
-All tests use the pytest temporary runtime and a disposable browser context. They do not open an
-authenticated profile, call a remote service, or touch the user-owned cache, logs, or settings.
+The suite uses pytest temporary runtime paths and disposable browser contexts where applicable. The
+local Demo acceptance additionally reads its named source project as immutable input. Tests do not
+open an authenticated profile, call a remote service, or touch the user-owned cache, logs, or
+settings.
 
 Current automated evidence from 30 Aug 2026: all 9 shared Node contract cases and the focused
 registry, event-chain, Doctor, manifest, rendering, disposable-browser, and controller checks

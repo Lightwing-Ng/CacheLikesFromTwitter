@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.48.0-codex.2
+Code version: v3.48.1-codex.1
 """
 
 from __future__ import annotations
@@ -914,7 +914,9 @@ class TestBase64Actions:
             "content_base64": oversized,
         })
         assert result["ok"] is False
-        assert "size limit" in result.get("error", "").lower()
+        assert "content_base64" in result.get("error", "")
+        assert "160,000" in result.get("error", "")
+        assert not (tmp_path / "huge.html").exists()
 
 
 # ---------------------------------------------------------------------------
