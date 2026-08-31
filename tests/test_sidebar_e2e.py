@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.22-codex.1
+Code version: v1.26.23-codex.1
 """
 
 from __future__ import annotations
@@ -189,6 +189,43 @@ def _tap_toggle_center(page: Page, toggle) -> None:
     box = toggle.bounding_box()
     assert box is not None
     page.touchscreen.tap(box["x"] + (box["width"] / 2), box["y"] + (box["height"] / 2))
+
+
+def _assert_agent_session_source_menu_is_hit_testable(page: Page) -> None:
+    """Verify the source menu stays above both the inline list and the Dock."""
+    trigger = page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]")
+    trigger.click()
+    project_option = page.locator(
+        '.agent-session-mode-combobox [data-agent-combobox-option="project"]'
+    )
+    expect(project_option).to_be_visible()
+    hit_test = project_option.evaluate(
+        """option => {
+            const rect = option.getBoundingClientRect();
+            const point = {
+                x: rect.left + rect.width / 2,
+                y: rect.top + rect.height / 2,
+            };
+            const hit = document.elementFromPoint(point.x, point.y);
+            const modeMenu = option.closest('.agent-session-mode-combobox')
+                ?.querySelector('[data-agent-combobox-menu]');
+            const dock = document.querySelector('.sidebar-dock');
+            const modeMenuBox = modeMenu?.getBoundingClientRect();
+            const dockBox = dock?.getBoundingClientRect();
+            return {
+                hitIsOption: hit === option || option.contains(hit),
+                modeMenuAboveDock: modeMenuBox && dockBox
+                    ? modeMenuBox.bottom <= dockBox.top + 1
+                    : false,
+                modeMenuZIndex: getComputedStyle(
+                    option.closest('.agent-session-mode-combobox'),
+                ).zIndex,
+            };
+        }"""
+    )
+    assert hit_test["modeMenuAboveDock"], hit_test
+    assert hit_test["hitIsOption"], hit_test
+    trigger.click()
 
 
 def _decode_screenshot(png_bytes: bytes) -> Image.Image:
@@ -2510,43 +2547,7 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
         expect(page.locator('[data-agent-prompt-session-title]')).to_have_value(
             f"{platform_label} selected session"
         )
-        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
-        project_option = page.locator(
-            '.agent-session-mode-combobox [data-agent-combobox-option="project"]'
-        )
-        expect(project_option).to_be_visible()
-        hit_test = project_option.evaluate(
-            """option => {
-                const rect = option.getBoundingClientRect();
-                const point = {
-                    x: rect.left + rect.width / 2,
-                    y: rect.top + rect.height / 2,
-                };
-                const hit = document.elementFromPoint(point.x, point.y);
-                const modeCombobox = option.closest('.agent-session-mode-combobox');
-                const directMenu = document.querySelector('.agent-session-list-menu-direct');
-                const describe = element => element ? {
-                    tag: element.tagName,
-                    className: element.className,
-                    option: element.dataset?.agentComboboxOption || '',
-                } : null;
-                return {
-                    hitIsOption: hit === option || option.contains(hit),
-                    hit: describe(hit),
-                    optionBox: {
-                        left: rect.left,
-                        top: rect.top,
-                        right: rect.right,
-                        bottom: rect.bottom,
-                    },
-                    directMenuBox: directMenu?.getBoundingClientRect().toJSON() || null,
-                    modeMenuZIndex: getComputedStyle(modeCombobox).zIndex,
-                    directMenuZIndex: directMenu ? getComputedStyle(directMenu).zIndex : '',
-                };
-            }"""
-        )
-        assert hit_test["hitIsOption"], hit_test
-        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        _assert_agent_session_source_menu_is_hit_testable(page)
         expect(page.locator("#agent_ask_button")).to_be_enabled()
 
         page.locator('[data-agent-prompt-input]').fill(f"Inspect the {platform_label} task workspace.")
@@ -2750,6 +2751,7 @@ def test_chatgpt_edge_recent_sessions_are_a_direct_scrollable_keyboard_list(
         expect(page.locator("[data-agent-session-source]")).to_have_attribute(
             "data-agent-session-mode", "recent"
         )
+        _assert_agent_session_source_menu_is_hit_testable(page)
 
         page.set_viewport_size({"width": 390, "height": 844})
         toggle = page.locator("#sidebar_toggle")
@@ -2769,6 +2771,7 @@ def test_chatgpt_edge_recent_sessions_are_a_direct_scrollable_keyboard_list(
             }"""
         )
         assert_direct_list_geometry(390, 844)
+        _assert_agent_session_source_menu_is_hit_testable(page)
     finally:
         context.close()
 
@@ -6431,6 +6434,7 @@ def test_successful_agent_completion_collapses_activity_without_erasing_a_new_dr
                     headerScrollHeight: header?.scrollHeight,
                     questionClientWidth: question?.clientWidth,
                     questionScrollWidth: question?.scrollWidth,
+                    questionFontWeight: question ? getComputedStyle(question).fontWeight : null,
                     outputBottom: outputRect?.bottom,
                     composerTop: composerRect?.top,
                     headerBottom: headerRect?.bottom,
@@ -6443,6 +6447,7 @@ def test_successful_agent_completion_collapses_activity_without_erasing_a_new_dr
         )
         assert question_layout["headerScrollHeight"] > question_layout["headerClientHeight"]
         assert question_layout["questionScrollWidth"] <= question_layout["questionClientWidth"] + 1
+        assert question_layout["questionFontWeight"] == "500"
         assert question_layout["outputBottom"] <= question_layout["composerTop"] + 1
         assert question_layout["horizontalOverflow"] <= 1
 

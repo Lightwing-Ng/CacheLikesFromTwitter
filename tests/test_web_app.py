@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.24-codex.1
+# Code version: v1.88.25-codex.1
 
 from __future__ import annotations
 
@@ -492,7 +492,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
                 expected_style_version = (
-                    "style-v2.90.11-codex.1"
+                    "style-v2.90.13-codex.1"
                     if page_source == "agent"
                     else "style-v2.90.8-codex.1"
                 )

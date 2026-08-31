@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.53.0-codex.1
+Code version: v3.53.1-codex.1
 """
 
 from __future__ import annotations
@@ -78,6 +78,7 @@ from app.core.computer_use_agent import (
     _web_last_text,
     _web_is_generating,
     _is_web_response_complete,
+    _format_binary_size,
     build_context_markdown,
     detect_host_operating_system,
     is_loopback_address,
@@ -5042,6 +5043,27 @@ def test_context_markdown_contains_instructions_request_and_bounded_index(
         assert "credentials/token.txt" not in content
         assert path.stat().st_mode & 0o777 == 0o600
         assert path.parent.stat().st_mode & 0o777 == 0o700
+
+
+@pytest.mark.parametrize(
+    ("byte_count", "expected"),
+    (
+        (0, "0 B"),
+        (512, "512 B"),
+        (36_898, "36.03 KiB"),
+        (1_048_576, "1.00 MiB"),
+        (1_073_741_824, "1.00 GiB"),
+        (1_099_511_627_776, "1.00 TiB"),
+    ),
+)
+def test_format_binary_size_uses_iec_units(
+    byte_count: int,
+    expected: str,
+) -> None:
+    formatted = _format_binary_size(byte_count)
+
+    assert formatted == expected
+    assert "byte" not in formatted
 
 
 def test_context_post_write_failure_leaves_no_orphan_or_recovery_pointer(
@@ -10651,6 +10673,7 @@ def test_agent_service_reports_browser_result_without_api_credentials(
             "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
             released_assertions.append,
         )
+        service_holder: dict[str, ComputerUseAgentService] = {}
 
         def runner(**kwargs):
             assert kwargs["prompt"] == "Inspect the workspace"
@@ -10662,10 +10685,19 @@ def test_agent_service_reports_browser_result_without_api_credentials(
             assert kwargs["target_url"] == "https://chatgpt.com/"
             assert not kwargs["read_only"]
             assert kwargs["context_path"].is_file()
+            preparing_snapshot = service_holder["service"].snapshot()
+            assert preparing_snapshot["context_bytes"] > 0
+            assert preparing_snapshot["message"] == (
+                "Prepared a "
+                f"{_format_binary_size(preparing_snapshot['context_bytes'])} "
+                "Markdown context bundle."
+            )
+            assert "byte" not in preparing_snapshot["message"]
             kwargs["update"](phase="running", message="Using local controller actions.")
             return "Verified result", "https://chatgpt.com/c/example", 4, True
 
         service = ComputerUseAgentService(store, runner=runner, runtime_root=root / "runtime")
+        service_holder["service"] = service
         service.start("Inspect the workspace", str(workspace), CrawlConfig())
         deadline = time.monotonic() + 2
         while service.snapshot()["running"] and time.monotonic() < deadline:

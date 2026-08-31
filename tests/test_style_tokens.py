@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.9-codex.1
+Code version: v1.51.10-codex.1
 """
 
 from pathlib import Path
@@ -1769,7 +1769,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.90.11-codex.1 */",
+        "/* Code version: v2.90.13-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -2125,6 +2125,12 @@ def test_agent_session_source_raises_above_the_inline_recent_session_list_when_o
 
     assert "z-index: var(--layer-surface-content);" in selector_rule
     assert "z-index: calc(var(--layer-global-popover) + 1);" in open_rule
+    upward_start = stylesheet.index(
+        ".agent-session-source:has(> .agent-session-detail-field:not([hidden]))",
+    )
+    upward_rule = stylesheet[upward_start:stylesheet.index("\n}", upward_start)]
+    assert "top: auto;" in upward_rule
+    assert "bottom: calc(100% + 4px);" in upward_rule
 
 
 def test_browser_session_status_labels_share_nonbold_left_typography() -> None:
@@ -2251,6 +2257,8 @@ def test_agent_response_question_and_answer_use_requested_type_sizes() -> None:
     subheading_rule = stylesheet[subheading_start:stylesheet.index("\n}", subheading_start)]
 
     assert "font-size: 17px;" in question_rule
+    assert "font-weight: var(--font-weight-medium);" in question_rule
+    assert "font-weight: var(--font-weight-semibold);" not in question_rule
     assert "font-size: var(--font-card-title);" not in question_rule
     assert "font-size: var(--font-size-5);" in answer_rule
     assert ".agent-response-output h3" not in heading_rule

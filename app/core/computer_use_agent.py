@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.53.0-codex.1
+Code version: v3.53.1-codex.1
 """
 
 from __future__ import annotations
@@ -1635,6 +1635,20 @@ def session_type_for_mode(session_mode: str) -> str:
     if mode in {"project_new", "project_session"}:
         return "project"
     return "fresh"
+
+
+def _format_binary_size(byte_count: int) -> str:
+    """Format a byte count with IEC binary units for user-facing status text."""
+    size = max(0, int(byte_count))
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    unit_index = 0
+    value = float(size)
+    while value >= 1_024 and unit_index < len(units) - 1:
+        value /= 1_024
+        unit_index += 1
+    if unit_index == 0:
+        return f"{size:,} {units[unit_index]}"
+    return f"{value:,.2f} {units[unit_index]}"
 
 
 def build_context_markdown(
@@ -5767,7 +5781,10 @@ class ComputerUseAgentService:
                 )
                 self._update(
                     phase="preparing",
-                    message=f"Prepared a {context_bytes:,}-byte Markdown context bundle.",
+                    message=(
+                        "Prepared a "
+                        f"{_format_binary_size(context_bytes)} Markdown context bundle."
+                    ),
                     context_file=str(context_path),
                     context_bytes=context_bytes,
                 )
