@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.21-codex.1
+# Code version: v1.88.24-codex.1
 
 from __future__ import annotations
 
@@ -491,7 +491,11 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.90.7-codex.1"
+                expected_style_version = (
+                    "style-v2.90.11-codex.1"
+                    if page_source == "agent"
+                    else "style-v2.90.8-codex.1"
+                )
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -831,7 +835,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.1-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.14-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.15-codex.1', local_body)
         self.assertIn('data-agent-effort-field', local_body)
         self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -1594,7 +1598,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.27.14-codex.1',
+            'computer-use-agent-v3.27.15-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'data-agent-direct-list="true"',
@@ -2201,6 +2205,9 @@ class WebAppTests(unittest.TestCase):
             "const readiness = readinessState(nextPayload);",
             "const message = sessionMessage",
             'elements.responseAnswer.innerHTML = entry?.response_html || ""',
+            'const pageChanged = pageKey !== renderedResponsePageKey;',
+            'const wasAtBottom = preserveScrollPosition',
+            'else if (wasAtBottom) answer.scrollTop = answer.scrollHeight;',
             "buildAgentPaginationItems(totalPages, responseHistoryPage)",
             "function buildAgentPaginationRanges(firstPage, lastPage, chunkSize = 5)",
             "createAgentPaginationRangePicker(item, pagination)",
@@ -2890,7 +2897,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.90.7-codex.1", body)
+            self.assertIn("style-v2.90.8-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

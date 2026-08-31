@@ -1,4 +1,4 @@
-/* Code version: v2.90.7-codex.1 */
+/* Code version: v2.90.11-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -3763,6 +3763,14 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     bottom: calc(100% + 4px);
 }
 
+.agent-session-mode-combobox {
+    z-index: var(--layer-surface-content);
+}
+
+.agent-session-mode-combobox.is-agent-combobox-open {
+    z-index: calc(var(--layer-global-popover) + 1);
+}
+
 .agent-session-list-menu .agent-combobox-option {
     min-height: 44px;
     white-space: normal;
@@ -3984,7 +3992,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     background: transparent;
     box-shadow: none;
     font-size: var(--font-agent-prompt);
-    font-weight: var(--font-weight-light);
+    font-weight: var(--font-weight-regular);
     line-height: 1.5;
     overflow-x: hidden;
     overflow-y: auto;
@@ -4080,6 +4088,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-effort-trigger .trade-strategy-trigger-label {
     font-size: var(--font-size-5);
+    padding-inline-end: 6px;
     white-space: nowrap;
 }
 
@@ -4358,6 +4367,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
+    overflow-anchor: none;
     scrollbar-gutter: stable;
     font-size: var(--font-size-5);
 }
@@ -4397,7 +4407,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     position: relative;
     z-index: var(--layer-control-affordance);
     flex: 0 0 auto;
-    margin: 12px auto 0;
+    margin: 0 auto;
     padding: 0;
     border: 0;
     background: transparent;

@@ -1,4 +1,4 @@
-/* Code version: v3.27.14-codex.1 */
+/* Code version: v3.27.15-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -108,6 +108,8 @@
     let responseHistory = [];
     let responseHistoryPage = 1;
     let responseHistorySignature = "";
+    let renderedResponsePageKey = "";
+    let renderedResponseContentSignature = "";
     let responseCopyValue = "";
     let responseCopyRevision = 0;
     let responseCopyFeedbackTimer = 0;
@@ -2058,6 +2060,30 @@
 
     function renderAgentResponsePage({animationState = null} = {}) {
         const entry = responseHistory[responseHistoryPage - 1] || null;
+        const pageKey = String(responseHistoryPage);
+        const contentSignature = JSON.stringify([
+            entry?.prompt || "",
+            entry?.response || "",
+            entry?.response_html || "",
+        ]);
+        const pageChanged = pageKey !== renderedResponsePageKey;
+        const contentChanged = contentSignature !== renderedResponseContentSignature;
+        if (!pageChanged && !contentChanged) return;
+
+        const answer = elements.responseAnswer;
+        const previousScrollTop = answer?.scrollTop || 0;
+        const previousScrollHeight = answer?.scrollHeight || 0;
+        const previousClientHeight = answer?.clientHeight || 0;
+        const hadRenderedContent = Boolean(renderedResponseContentSignature);
+        const preserveScrollPosition = Boolean(answer)
+            && !pageChanged
+            && hadRenderedContent;
+        const wasAtBottom = preserveScrollPosition
+            && previousScrollHeight > previousClientHeight
+            && previousScrollHeight - previousClientHeight - previousScrollTop <= 1;
+
+        renderedResponsePageKey = pageKey;
+        renderedResponseContentSignature = contentSignature;
         if (elements.responseQuestion) elements.responseQuestion.textContent = entry?.prompt || "";
         renderResponseCopy(entry);
         if (elements.responseAnswerContent) {
@@ -2065,9 +2091,17 @@
         } else if (elements.responseAnswer) {
             elements.responseAnswer.innerHTML = entry?.response_html || "";
         }
-        if (elements.responseAnswer) elements.responseAnswer.scrollTop = 0;
         if (elements.responseOutput) elements.responseOutput.hidden = !entry;
         renderAgentResponsePagination({animationState});
+
+        if (answer) {
+            if (!preserveScrollPosition) answer.scrollTop = 0;
+            else if (wasAtBottom) answer.scrollTop = answer.scrollHeight;
+            else answer.scrollTop = Math.min(
+                previousScrollTop,
+                Math.max(answer.scrollHeight - answer.clientHeight, 0),
+            );
+        }
     }
 
     function renderAgentResponse(agent) {
@@ -2100,6 +2134,7 @@
                 item.finished_at || "",
                 item.prompt || "",
                 item.response || "",
+                item.response_html || "",
             ]),
         );
         if (signature !== responseHistorySignature) {

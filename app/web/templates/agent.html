@@ -1,4 +1,4 @@
-<!-- Code version: v3.27.17-codex.1 -->
+<!-- Code version: v3.27.20-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.7-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.11-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -343,7 +343,6 @@
                                     hidden
                                 ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
                             </div>
-                            <nav class="browser-pagination local-store-pagination agent-response-pagination" id="agent_response_pagination" data-layout-role="pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
                         </div>
                         <details class="agent-error-record" id="agent_error_record"{% if agent_snapshot.error_traceback or agent_snapshot.last_error %} open{% endif %}{% if not (agent_snapshot.error_traceback or agent_snapshot.last_error) %} hidden{% endif %}>
                             <summary>
@@ -367,6 +366,8 @@
                             </div>
                         </details>
                     </article>
+
+                    <nav class="browser-pagination local-store-pagination agent-response-pagination" id="agent_response_pagination" data-layout-role="pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
 
                     <form id="agent_prompt_form" class="agent-prompt-form">
                         <input type="hidden" name="workspace_path" value="{{ settings.workspace_path }}" data-agent-workspace-input>
@@ -478,6 +479,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.27.14-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.27.15-codex.1') }}"></script>
 </body>
 </html>

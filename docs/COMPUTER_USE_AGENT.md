@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.52.0-codex.1`
+Documentation version: `v3.53.0-codex.1`
 
 ## Purpose
 
@@ -152,14 +152,20 @@ older task cannot be submitted accidentally through a different Web session.
    closed. A model-looking option in another menu cannot preempt a uniquely trusted composer
    slider. If the trigger cannot prove its controlled surface, only the uniquely bound composer
    slider remains eligible.
-   If that trusted visible trigger is clicked but ChatGPT's Radix menu does not render, the
-   controller closes any partial state and retries the control up to three times. A readable menu
+   ChatGPT's combined composer pill can expose the checked model in a separate `Select model`
+   view while keeping the live effort slider in its simple view. The controller enters that
+   exact controlled view for model readback, then closes and reopens the same trigger to return
+   to the effort view before binding the slider. Inert alternate views are excluded from both
+   model and effort evidence. If that trusted visible trigger is clicked but ChatGPT's Radix menu
+   does not render, the controller closes any partial state and retries the control up to three
+   times. A readable menu
    that proves a different model still fails immediately; the retry applies only to an unreadable
    menu or a trigger replaced during the open transition.
    Chromium first reuses the matching official provider tab, without focusing it, before navigation.
    Some provider shells expose a composer before their model picker has hydrated. A missing
-   Gemini or Claude control is therefore rechecked up to 61 times in 250 ms Stop-aware slices, for a
-   maximum wait of about 15 seconds. Grok's trusted selector independently waits up to 121 slices,
+   ChatGPT, Gemini, or Claude control is therefore rechecked up to 61 times in 250 ms Stop-aware
+   slices, for a maximum wait of about 15 seconds. Grok's trusted selector independently waits up
+   to 121 slices,
    or about 30 seconds, for its current Radix control to hydrate. Only `model-control-not-found` is
    eligible for either wait;
    an ambiguous control, invalid surface, unavailable option, failed readback, or unproved menu close
@@ -467,14 +473,19 @@ Settings → Agent stores:
 - the ChatGPT `Highest available` policy or an exact runtime-discovered effort label;
 - separate macOS and Windows system prompts.
 
-Both operating-system defaults use one shared, complete 11-action JSON schema. At load time, prompts
-missing the fenced-JSON or base64 transport contract are replaced with the current safe defaults.
-Marker-complete prompts with an incomplete action schema receive the canonical schema; former
-`text or regex` query fields are normalized even when their JSON whitespace differs, and the
-authoritative literal-only instruction is added when absent. All other user-authored guidance and
-unrelated settings remain intact. Settings are written through an owner-only, same-directory
-temporary file, flushed with `fsync`, and atomically replaced. A failed write preserves the complete
-previous file. Successful migrations are immediate and idempotent across later service starts.
+Both operating-system defaults use one shared, complete 11-action JSON schema. The prompt also
+defines the Web provider as a transport-only reasoning surface, requires one action per turn,
+states the hard semantics for paths, receipts, writes, deletes, verification, and read-only tasks,
+and repeats the compact registry action catalog after each controller observation. At load time,
+prompts missing the fenced-JSON or base64 transport contract are replaced with the current safe
+defaults. Marker-complete prompts are normalized to one current action catalog and one current
+protocol section; repeated catalogs, incomplete sections, and placeholder delete digests are not
+retained. Former `text or regex` query fields are normalized even when their JSON whitespace
+differs, and the authoritative literal-only instruction is added when absent. User-authored
+guidance outside generated protocol sections and unrelated settings remain intact. Settings are
+written through an owner-only, same-directory temporary file, flushed with `fsync`, and atomically
+replaced. A failed write preserves the complete previous file. Successful migrations are immediate
+and idempotent across later service starts.
 
 The selected provider's file-upload limit remains authoritative. ChatGPT documents a 512 MB hard
 file limit and a 2 million-token limit for text and document files; the application uses the lower

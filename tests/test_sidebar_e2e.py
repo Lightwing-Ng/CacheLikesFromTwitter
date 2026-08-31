@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.18-codex.1
+Code version: v1.26.22-codex.1
 """
 
 from __future__ import annotations
@@ -1086,17 +1086,24 @@ def test_cache_sidebars_reuse_the_chatgpt_base_contract(
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.parametrize(
+    ("width", "height", "touch"),
+    ((1_280, 900, False), (390, 844, True)),
+)
 def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
     disposable_browser: Browser,
     sidebar_server_url: str,
+    width: int,
+    height: int,
+    touch: bool,
 ) -> None:
     """Verify the Agent pagination is surface-free without clipping its interactions."""
     page, context = _open_page(
         disposable_browser,
         f"{sidebar_server_url}/agent",
-        1_280,
-        900,
-        touch=False,
+        width,
+        height,
+        touch=touch,
         init_script="""
             (() => {
                 const originalFetch = window.fetch.bind(window);
@@ -1121,7 +1128,9 @@ def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
                 const answer = document.querySelector("#agent_response_answer");
                 const card = output?.closest(".agent-response-card");
                 const task = card?.closest(".agent-task-card");
-                if (!pagination || !output || !answer || !card || !task) return null;
+                const composer = task?.querySelector(".agent-prompt-form");
+                const answerContent = answer?.querySelector("[data-agent-response-answer-content]");
+                if (!pagination || !output || !answer || !card || !task || !composer || !answerContent) return null;
 
                 output.hidden = false;
                 pagination.hidden = false;
@@ -1145,6 +1154,24 @@ def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
                 }
                 pagination.classList.add("is-animated");
 
+                const readPosition = () => {
+                    const paginationRect = pagination.getBoundingClientRect();
+                    const composerRect = composer.getBoundingClientRect();
+                    return {
+                        paginationBottom: paginationRect.bottom,
+                        composerTop: composerRect.top,
+                        composerGap: composerRect.top - paginationRect.bottom,
+                    };
+                };
+                answerContent.textContent = "Short answer";
+                const shortPosition = readPosition();
+                answerContent.textContent = Array.from(
+                    {length: 160},
+                    (_, index) => `Response line ${index + 1}`,
+                ).join(" ");
+                answer.scrollTop = answer.scrollHeight;
+                const longPosition = readPosition();
+
                 const read = (element) => {
                     const style = window.getComputedStyle(element);
                     return {
@@ -1156,9 +1183,13 @@ def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
                     };
                 };
                 return {
-                    ancestors: [task, card, output, pagination].map(read),
+                    ancestors: [task, pagination].map(read),
+                    responseOutput: read(output),
                     answer: read(answer),
+                    paginationParentIsTask: pagination.parentElement === task,
                     paginationWidth: pagination.getBoundingClientRect().width,
+                    shortPosition,
+                    longPosition,
                     indicatorVisible: window.getComputedStyle(indicator).opacity === "1",
                     paginationSurface: {
                         background: window.getComputedStyle(pagination).background,
@@ -1179,8 +1210,17 @@ def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
         assert all(item["overflow"] == "visible" for item in contract["ancestors"])
         assert contract["ancestors"][-1]["position"] == "relative"
         assert contract["ancestors"][-1]["zIndex"] == "2"
+        assert contract["responseOutput"]["overflow"] == "visible"
         assert contract["answer"]["overflowX"] == "hidden"
         assert contract["answer"]["overflowY"] == "auto"
+        assert contract["paginationParentIsTask"]
+        assert contract["shortPosition"]["composerGap"] >= 13
+        assert contract["shortPosition"]["composerGap"] <= 15
+        assert abs(
+            contract["shortPosition"]["composerGap"]
+            - contract["longPosition"]["composerGap"]
+        ) <= 1
+        assert contract["longPosition"]["paginationBottom"] <= contract["longPosition"]["composerTop"]
 
         ellipsis = page.locator("#agent_response_pagination .local-store-page-ellipsis")
         expect(ellipsis).to_have_count(1)
@@ -1231,7 +1271,7 @@ def test_agent_prompt_composer_stays_compact_until_expanded(
             "element => ({height: element.clientHeight, weight: getComputedStyle(element).fontWeight, resize: getComputedStyle(element).resize})"
         )
         assert compact["height"] > 0
-        assert compact["weight"] == "300"
+        assert compact["weight"] == "400"
         assert compact["resize"] == "none"
         control_heights = page.evaluate(
             """() => ({
@@ -2471,9 +2511,41 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
             f"{platform_label} selected session"
         )
         page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
-        expect(
-            page.locator('.agent-session-mode-combobox [data-agent-combobox-option="project"]')
-        ).to_be_visible()
+        project_option = page.locator(
+            '.agent-session-mode-combobox [data-agent-combobox-option="project"]'
+        )
+        expect(project_option).to_be_visible()
+        hit_test = project_option.evaluate(
+            """option => {
+                const rect = option.getBoundingClientRect();
+                const point = {
+                    x: rect.left + rect.width / 2,
+                    y: rect.top + rect.height / 2,
+                };
+                const hit = document.elementFromPoint(point.x, point.y);
+                const modeCombobox = option.closest('.agent-session-mode-combobox');
+                const directMenu = document.querySelector('.agent-session-list-menu-direct');
+                const describe = element => element ? {
+                    tag: element.tagName,
+                    className: element.className,
+                    option: element.dataset?.agentComboboxOption || '',
+                } : null;
+                return {
+                    hitIsOption: hit === option || option.contains(hit),
+                    hit: describe(hit),
+                    optionBox: {
+                        left: rect.left,
+                        top: rect.top,
+                        right: rect.right,
+                        bottom: rect.bottom,
+                    },
+                    directMenuBox: directMenu?.getBoundingClientRect().toJSON() || null,
+                    modeMenuZIndex: getComputedStyle(modeCombobox).zIndex,
+                    directMenuZIndex: directMenu ? getComputedStyle(directMenu).zIndex : '',
+                };
+            }"""
+        )
+        assert hit_test["hitIsOption"], hit_test
         page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
         expect(page.locator("#agent_ask_button")).to_be_enabled()
 
@@ -5716,6 +5788,99 @@ def test_agent_response_copy_uses_raw_history_text_and_the_global_action_rail(
             assert rail["copy"]["left"] >= rail["answer"]["left"]
             assert rail["copy"]["right"] <= rail["answer"]["right"] + 1
             assert not rail["hasHorizontalOverflow"]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_response_scroll_stays_at_the_bottom_during_status_refresh(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep a user's bottom position when a refreshed answer grows in place."""
+    initial_lines = "\n".join(f"Response line {line}" for line in range(1, 161))
+    updated_lines = f"{initial_lines}\nResponse line 161"
+    initial_payload = _finished_chatgpt_agent_payload()
+    initial_payload["agent"].update(
+        {
+            "prompt": "Keep the answer scroll position stable.",
+            "response": initial_lines,
+            "response_html": f"<pre>{initial_lines}</pre>",
+        }
+    )
+    updated_payload = _finished_chatgpt_agent_payload()
+    updated_payload["agent"].update(
+        {
+            "prompt": "Keep the answer scroll position stable.",
+            "response": updated_lines,
+            "response_html": f"<pre>{updated_lines}</pre>",
+        }
+    )
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": _chatgpt_catalog_sessions(),
+    }
+    status_requests = 0
+
+    def fulfill_agent_status(route) -> None:
+        nonlocal status_requests
+        status_requests += 1
+        route.fulfill(json=initial_payload if status_requests == 1 else updated_payload)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_008, "height": 1_085},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        answer_content = page.locator("[data-agent-response-answer-content]")
+        page.wait_for_function(
+            """() => {
+                const answer = document.querySelector('[data-agent-response-answer]');
+                return answer && answer.scrollHeight > answer.clientHeight + 100;
+            }"""
+        )
+        page.evaluate(
+            """() => {
+                const answer = document.querySelector('[data-agent-response-answer]');
+                answer.scrollTop = answer.scrollHeight;
+            }"""
+        )
+        expect(answer_content).to_contain_text("Response line 160")
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').filter((entry) =>
+                String(entry.name || '').includes('/api/agent/status')
+            ).length >= 2"""
+        )
+        expect(answer_content).to_contain_text("Response line 161")
+        scroll_state = page.evaluate(
+            """() => {
+                const answer = document.querySelector('[data-agent-response-answer]');
+                const style = getComputedStyle(answer);
+                return {
+                    atBottom: answer.scrollHeight - answer.clientHeight - answer.scrollTop <= 1,
+                    overflowAnchor: style.overflowAnchor,
+                    scrollTop: answer.scrollTop,
+                    scrollHeight: answer.scrollHeight,
+                    clientHeight: answer.clientHeight,
+                };
+            }"""
+        )
+        assert scroll_state["atBottom"]
+        assert scroll_state["scrollTop"] > 0
+        assert scroll_state["overflowAnchor"] == "none"
     finally:
         context.close()
 

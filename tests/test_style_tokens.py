@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.6-codex.1
+Code version: v1.51.9-codex.1
 """
 
 from pathlib import Path
@@ -1769,7 +1769,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.90.7-codex.1 */",
+        "/* Code version: v2.90.11-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1904,6 +1904,7 @@ def test_agent_effort_trigger_uses_fifteen_pixel_type_token_without_wrapping() -
     selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
 
     assert "font-size: var(--font-size-5);" in selector_rule
+    assert "padding-inline-end: 6px;" in selector_rule
     assert "white-space: nowrap;" in selector_rule
 
 
@@ -1932,7 +1933,7 @@ def test_agent_prompt_uses_the_dedicated_sixteen_pixel_type_token() -> None:
     assert "font-size: var(--font-agent-prompt);" in prompt_rule
 
 
-def test_agent_composer_uses_a_two_line_lightweight_prompt_with_a_standard_toggle() -> None:
+def test_agent_composer_uses_a_two_line_regular_weight_prompt_with_a_standard_toggle() -> None:
     """Keep the Agent question field compact until its shared control expands it."""
     stylesheet = _stylesheet()
     prompt_start = stylesheet.index(".agent-prompt-input {")
@@ -1944,12 +1945,12 @@ def test_agent_composer_uses_a_two_line_lightweight_prompt_with_a_standard_toggl
     pagination_start = stylesheet.index(".browser-pagination.agent-response-pagination {")
     pagination_rule = stylesheet[pagination_start:stylesheet.index("\n}", pagination_start)]
 
-    assert "--font-weight-light: 300;" in stylesheet
+    assert "--font-weight-regular: 400;" in stylesheet
     for token in (
         "min-height: 0;",
         "max-height: min(360px, 45svh);",
         "resize: none;",
-        "font-weight: var(--font-weight-light);",
+        "font-weight: var(--font-weight-regular);",
     ):
         assert token in prompt_rule
     for token in (
@@ -1961,6 +1962,7 @@ def test_agent_composer_uses_a_two_line_lightweight_prompt_with_a_standard_toggl
     ):
         assert token in toggle_rule
     for token in (
+        "margin: 0 auto;",
         "padding: 0;",
         "border: 0;",
         "background: transparent;",
@@ -2109,6 +2111,20 @@ def test_agent_recent_session_list_is_inline_and_scrollable() -> None:
     )
     track_rule = stylesheet[track_start:stylesheet.index("\n}", track_start)]
     assert "background: transparent;" in track_rule
+
+
+def test_agent_session_source_raises_above_the_inline_recent_session_list_when_open() -> None:
+    """Keep the source menu hit-testable while the selected recent list remains inline."""
+    stylesheet = _stylesheet()
+    selector = ".agent-session-mode-combobox {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+    open_selector = ".agent-session-mode-combobox.is-agent-combobox-open {"
+    open_start = stylesheet.index(open_selector)
+    open_rule = stylesheet[open_start:stylesheet.index("\n}", open_start)]
+
+    assert "z-index: var(--layer-surface-content);" in selector_rule
+    assert "z-index: calc(var(--layer-global-popover) + 1);" in open_rule
 
 
 def test_browser_session_status_labels_share_nonbold_left_typography() -> None:
@@ -2279,6 +2295,7 @@ def test_agent_response_header_and_answer_pin_the_composer() -> None:
         assert "overflow-y: auto;" in rule
         assert "scrollbar-gutter: stable;" in rule
         assert "overscroll-behavior: contain;" in rule
+    assert "overflow-anchor: none;" in answer_rule
     assert "position: sticky;" in composer_rule
     assert "bottom: 0;" in composer_rule
     assert "flex: 0 0 auto;" in composer_rule

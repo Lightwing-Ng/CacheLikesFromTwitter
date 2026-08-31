@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.52.5-codex.1
+Code version: v3.53.0-codex.1
 """
 
 from __future__ import annotations
@@ -43,6 +43,7 @@ from app.core.computer_use_agent import (
     _restore_provider_challenge_window,
     _surface_provider_challenge_window,
     _attach_context_file,
+    _CONTROLLER_ACTION_CATALOG,
     _CONTROLLER_ACTION_SCHEMA_MARKERS,
     _chatgpt_response_snapshot,
     _chatgpt_effort_slider_binding,
@@ -50,6 +51,8 @@ from app.core.computer_use_agent import (
     _chatgpt_find_effort_slider_in_scope,
     _chatgpt_effort_slider_state,
     _chatgpt_select_subscription_effort,
+    _chatgpt_slider_effort_label,
+    _chatgpt_set_model_view,
     _read_chatgpt_model_menu,
     _chatgpt_visible_model_controls,
     _detect_browser_interruption,
@@ -59,6 +62,7 @@ from app.core.computer_use_agent import (
     _grok_existing_conversation_urls,
     _web_target_is_open,
     _initial_web_agent_message,
+    _observation_message,
     _run_web_action_loop,
     _select_chatgpt_model,
     _select_web_model,
@@ -88,6 +92,7 @@ from app.core.computer_use_agent import (
     DEFAULT_MACOS_SYSTEM_PROMPT,
     DEFAULT_WINDOWS_SYSTEM_PROMPT,
     SAFE_PROTOCOL_PROMPT_MARKERS,
+    system_prompt_has_safe_protocol,
     terminal_execution_permission_snapshot,
     _submit_and_wait,
     validate_computer_use_settings,
@@ -1281,6 +1286,86 @@ def test_chatgpt_effort_slider_binding_requires_the_verified_menu_owner() -> Non
             assert scope == "menu:real-menu"
             assert slider is not None
             assert slider.get_attribute("id") == "real"
+
+            combined_menu = """
+                <form data-type="unified-composer">
+                  <button class="__composer-pill" aria-haspopup="menu" aria-expanded="true"
+                    aria-controls="combined-menu">Thinking effort</button>
+                  <div id="combined-menu" role="menu">
+                    <div data-testid="composer-intelligence-picker-content" role="group">
+                      <div data-model-selection-view="true">
+                        <div data-testid="composer-model-picker-slider-simple-view">
+                          <div data-model-reasoning-effort-slider>
+                            <div id="combined" role="slider" aria-valuemin="0"
+                              aria-valuemax="4" aria-valuenow="1"></div>
+                          </div>
+                          <span>Medium, 2 of 5.</span>
+                          <span>Use Left and Right arrow keys to adjust power.</span>
+                        </div>
+                        <div data-testid="composer-model-picker-slider-advanced-view" inert>
+                          <div role="menuitemradio" aria-checked="true">GPT-5.6 Sol</div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </form>
+                <textarea id="prompt-textarea"></textarea>
+            """
+            slider, scope = bind(combined_menu)
+            assert scope == "menu:combined-menu"
+            assert slider is not None
+            assert slider.get_attribute("id") == "combined"
+            assert _chatgpt_slider_effort_label(slider) == "Medium"
+
+            view_menu = """
+                <form data-type="unified-composer">
+                  <button id="view-trigger" type="button" class="__composer-pill" aria-haspopup="menu"
+                    aria-expanded="true" aria-controls="view-menu">Thinking effort</button>
+                  <div id="view-menu" role="menu">
+                    <div data-testid="composer-model-picker-slider-simple-view">
+                      <div role="menuitem" aria-label="Select model">Medium</div>
+                    </div>
+                    <div data-testid="composer-model-picker-slider-advanced-view" inert>
+                      <div role="menuitemradio" aria-checked="true">GPT-5.6 Sol</div>
+                    </div>
+                  </div>
+                </form>
+                <script>
+                  (() => {
+                    const trigger = document.querySelector('#view-trigger');
+                    const menu = document.querySelector('#view-menu');
+                    const simple = menu.querySelector('[data-testid$="simple-view"]');
+                    const advanced = menu.querySelector('[data-testid$="advanced-view"]');
+                    const setView = (isAdvanced) => {
+                      simple.toggleAttribute('inert', isAdvanced);
+                      advanced.toggleAttribute('inert', !isAdvanced);
+                      simple.dataset.active = String(!isAdvanced);
+                      advanced.dataset.active = String(isAdvanced);
+                    };
+                    menu.querySelector('[aria-label="Select model"]').addEventListener(
+                      'click', () => setView(true)
+                    );
+                    trigger.addEventListener('click', () => {
+                      const wasOpen = trigger.getAttribute('aria-expanded') === 'true';
+                      trigger.setAttribute('aria-expanded', String(!wasOpen));
+                      menu.style.display = wasOpen ? 'none' : 'block';
+                      if (!wasOpen) setView(false);
+                    });
+                  })();
+                </script>
+            """
+            page.set_content(
+                "<style>[role=menuitem] { display: block; }</style>" + view_menu
+            )
+            view_trigger = page.locator("#view-trigger")
+            assert _chatgpt_set_model_view(page, view_trigger, True)
+            assert page.locator(
+                '[data-testid="composer-model-picker-slider-advanced-view"]'
+            ).get_attribute("inert") is None
+            assert _chatgpt_set_model_view(page, view_trigger, False)
+            assert page.locator(
+                '[data-testid="composer-model-picker-slider-simple-view"]'
+            ).get_attribute("inert") is None
 
             page.set_content(
                 "<style>[role=slider] { display: block; width: 12px; height: 12px; }</style>"
@@ -3019,9 +3104,9 @@ def test_non_regular_settings_file_returns_without_blocking(tmp_path: Path) -> N
 
 
 def test_default_prompts_share_the_complete_controller_action_schema() -> None:
-    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 2_726
+    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 5_281
     assert hashlib.sha256(DEFAULT_MACOS_SYSTEM_PROMPT.encode()).hexdigest() == (
-        "ea4c8ee8cbc2dc2b76285567b753f2e0f1be8b1daefd980fda7c85587056af19"
+        "29e3af58a757ee4c8479ccee0e61ae9a4d70e33113785fbaf382d9da501ad300"
     )
     for prompt in (DEFAULT_MACOS_SYSTEM_PROMPT, DEFAULT_WINDOWS_SYSTEM_PROMPT):
         for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS:
@@ -3034,6 +3119,117 @@ def test_default_prompts_share_the_complete_controller_action_schema() -> None:
         ) in prompt
         assert '"verification":["check and result"]' in prompt
         assert '"limitations":["remaining limitation"]' in prompt
+        assert system_prompt_has_safe_protocol(prompt)
+        assert prompt.count("Use one of these actions:") == 1
+        assert "sha256-from-a-current-read" not in prompt
+        assert "The Web provider is only a reasoning and transport surface." in prompt
+        assert "Return exactly one action, then stop and wait" in prompt
+        assert "`write` and `write_base64` create new files only" in prompt
+        assert "`delete` requires a current controller `read`" in prompt
+        assert "For a read-only task, use only `list`, `read`, `search`, or `bodycheck`" in prompt
+
+
+def test_marker_complete_prompt_migration_collapses_repeated_action_catalogs(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings_path = tmp_path / "settings.json"
+    duplicated_prompt = (
+        DEFAULT_MACOS_SYSTEM_PROMPT
+        + "\n\nUse one of these actions:\n"
+        + "\n".join(
+            marker.replace(
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+                "sha256-from-a-current-read",
+            )
+            for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS
+        )
+        + "\n\nKeep this custom controller guidance."
+    )
+    settings_path.write_text(
+        json.dumps(
+            asdict(
+                ComputerUseSettings(
+                    workspace_path=str(workspace),
+                    macos_system_prompt=duplicated_prompt,
+                    windows_system_prompt=DEFAULT_WINDOWS_SYSTEM_PROMPT,
+                )
+            ),
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_computer_use_settings(settings_path)
+
+    assert not system_prompt_has_safe_protocol(duplicated_prompt)
+    assert loaded.macos_system_prompt.count("Use one of these actions:") == 1
+    assert loaded.macos_system_prompt.count("sha256-from-a-current-read") == 0
+    assert "Keep this custom controller guidance." in loaded.macos_system_prompt
+    assert system_prompt_has_safe_protocol(loaded.macos_system_prompt)
+    assert loaded.macos_system_prompt == load_computer_use_settings(
+        settings_path
+    ).macos_system_prompt
+
+
+def test_marker_complete_prompt_migration_replaces_an_incomplete_protocol_section(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings_path = tmp_path / "settings.json"
+    incomplete_prompt = DEFAULT_MACOS_SYSTEM_PROMPT.replace(
+        "- For a fresh root or Project session, the first action must read `AGENTS.md` when it exists; if it does not exist, list the project root and then read the applicable instruction files.\n",
+        "",
+    )
+    settings_path.write_text(
+        json.dumps(
+            asdict(
+                ComputerUseSettings(
+                    workspace_path=str(workspace),
+                    macos_system_prompt=incomplete_prompt,
+                    windows_system_prompt=DEFAULT_WINDOWS_SYSTEM_PROMPT,
+                )
+            ),
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    loaded = load_computer_use_settings(settings_path)
+
+    assert loaded.macos_system_prompt == DEFAULT_MACOS_SYSTEM_PROMPT
+    assert system_prompt_has_safe_protocol(loaded.macos_system_prompt)
+
+
+def test_observation_message_repeats_compact_registry_action_catalog() -> None:
+    message = _observation_message(3, {"ok": True, "action": "read"})
+
+    assert "Controller observation for turn 3:" in message
+    assert _CONTROLLER_ACTION_CATALOG in message
+    assert "exactly one per turn" in message
+
+
+def test_initial_web_agent_message_states_fresh_and_read_only_contract() -> None:
+    with TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        workspace = root / "project"
+        workspace.mkdir()
+        message = _initial_web_agent_message(
+            "Inspect the text cache",
+            workspace,
+            ComputerUseSettings(workspace_path=str(workspace)),
+            root / "context.md",
+            "new",
+            read_only=True,
+        )
+
+    assert "first action must read `AGENTS.md`" in message
+    assert "Task mode: read-only." in message
+    assert "do not edit, run, or publish a final action" in message
 
 
 def test_atomic_settings_replace_failure_preserves_the_previous_file(
@@ -3257,7 +3453,10 @@ def test_load_normalizes_a_whitespace_variant_of_the_legacy_search_query(
     loaded = load_computer_use_settings(settings_path)
 
     assert "text or regex" not in loaded.macos_system_prompt
-    assert '"query" : "literal text"' in loaded.macos_system_prompt
+    assert (
+        '{"action":"search","query":"literal text","path":".",'
+        '"glob":"*.py","max_results":80}'
+    ) in loaded.macos_system_prompt
     for marker in SAFE_PROTOCOL_PROMPT_MARKERS:
         assert marker in loaded.macos_system_prompt
     persisted_once = settings_path.read_text(encoding="utf-8")
