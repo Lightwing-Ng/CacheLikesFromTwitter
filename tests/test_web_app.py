@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.20-codex.1
+# Code version: v1.88.21-codex.1
 
 from __future__ import annotations
 
@@ -979,6 +979,126 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(loopback_response.headers["Pragma"], "no-cache")
         self.assertEqual(loopback_response.headers["Expires"], "0")
         probe.assert_called_once()
+
+    def test_isolated_agent_app_injects_private_state_and_blocks_external_operations(
+        self,
+    ) -> None:
+        """Keep an explicit E2E app from touching host browser or Agent state."""
+        with TemporaryDirectory() as raw_root:
+            root = Path(raw_root)
+            workspace = root / "workspace"
+            workspace.mkdir()
+            settings_path = root / "settings" / "computer-use-agent.json"
+            runtime_root = root / "computer-use-runtime"
+            app = create_app(
+                root / "local-store",
+                computer_use_settings_path=settings_path,
+                computer_use_runtime_root=runtime_root,
+                agent_external_operations_enabled=False,
+            )
+            settings_store = app.extensions["computer_use_settings"]
+            agent_service = app.extensions["computer_use_agent_service"]
+            self.assertEqual(settings_store._settings_path, settings_path)
+            self.assertEqual(agent_service._runtime_root, runtime_root)
+
+            calls: list[str] = []
+
+            def poison(*_args, **_kwargs):
+                calls.append("external")
+                raise AssertionError("An isolated Agent app must not perform an external operation.")
+
+            with patch(
+                "app.web.app.probe_and_collect_chatgpt_sources",
+                side_effect=poison,
+            ), patch("app.web.app.probe_browser_session", side_effect=poison), patch(
+                "app.web.app.list_agent_sources",
+                side_effect=poison,
+            ), patch(
+                "app.web.app.list_chatgpt_agent_sources",
+                side_effect=poison,
+            ), patch(
+                "app.web.app.list_chatgpt_project_sessions",
+                side_effect=poison,
+            ), patch("app.web.app.list_agent_project_sessions", side_effect=poison), patch(
+                "app.web.app.fetch_chatgpt_conversation_history",
+                side_effect=poison,
+            ), patch("app.web.app.open_agent_in_browser", side_effect=poison), patch(
+                "app.web.app.launch_terminal_authorization",
+                side_effect=poison,
+            ), patch.object(agent_service, "start", side_effect=poison), patch.object(
+                agent_service,
+                "recover",
+                side_effect=poison,
+            ), patch.object(agent_service, "request_stop", side_effect=poison), patch.object(
+                agent_service,
+                "request_resume",
+                side_effect=poison,
+            ), patch.object(app.extensions["chatgpt_service"], "start", side_effect=poison):
+                with app.test_client() as client:
+                    preferences_response = client.post(
+                        "/api/agent/preferences",
+                        json={
+                            "workspace_path": str(workspace),
+                            "operating_system": "macos",
+                            "browser": "edge",
+                            "platform": "chatgpt",
+                            "model": "gpt-5.6-sol",
+                            "chatgpt_effort": "highest_available",
+                        },
+                    )
+                    browser_session_response = client.get(
+                        "/api/browser-session?platform=chatgpt&browser=edge&scope=agent"
+                    )
+                    default_browser_session_response = client.get(
+                        "/api/browser-session?platform=x&browser=edge"
+                    )
+                    blocked_responses = (
+                        client.post("/api/agent/doctor/recover", json={"action": "continue"}),
+                        client.post("/api/agent/terminal-authorization", json={"operating_system": "macos"}),
+                        client.post("/api/agent/open-conversation", json={}),
+                        client.post("/api/agent/ask", json={"prompt": "Do not run."}),
+                        client.get("/api/agent/chatgpt-sources?browser=edge"),
+                        client.get("/api/agent/sources?platform=chatgpt&browser=edge"),
+                        client.get(
+                            "/api/agent/chatgpt-project-sessions?browser=edge&project_url=https://chatgpt.com/g/demo"
+                        ),
+                        client.get(
+                            "/api/agent/project-sessions?platform=chatgpt&browser=edge&project_url=https://chatgpt.com/g/demo"
+                        ),
+                        client.get(
+                            "/api/agent/chatgpt-session-history?browser=edge&conversation_url=https://chatgpt.com/c/demo"
+                        ),
+                        client.post("/api/agent/stop", json={}),
+                        client.post("/api/agent/resume", json={}),
+                        client.post(
+                            "/api/browser/chatgpt/session/refresh",
+                            json={"conversation_url": "https://chatgpt.com/c/demo"},
+                        ),
+                    )
+
+            self.assertEqual(preferences_response.status_code, 200)
+            self.assertTrue(settings_path.is_file())
+            self.assertEqual(settings_store.settings.workspace_path, str(workspace.resolve()))
+            self.assertEqual(browser_session_response.status_code, 200)
+            browser_session_payload = browser_session_response.get_json()
+            self.assertFalse(browser_session_payload["can_download"])
+            self.assertEqual(
+                browser_session_payload["browser_session_freshness"]["kind"],
+                "disabled",
+            )
+            self.assertEqual(default_browser_session_response.status_code, 200)
+            self.assertEqual(
+                default_browser_session_response.get_json()["browser_session_freshness"]["kind"],
+                "disabled",
+            )
+            self.assertEqual(len(blocked_responses), 12)
+            for response in blocked_responses:
+                self.assertEqual(response.status_code, 409)
+                self.assertEqual(
+                    response.get_json()["error"],
+                    "External Agent operations are disabled for this isolated application.",
+                )
+            self.assertEqual(calls, [])
 
     def test_agent_browser_status_card_uses_compact_provider_and_terminal_rows(self) -> None:
         app = create_app()

@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.17-codex.1
+Code version: v1.26.18-codex.1
 """
 
 from __future__ import annotations
@@ -53,13 +53,23 @@ DESKTOP_VIEWPORTS = (
 
 
 @pytest.fixture(scope="module")
-def sidebar_server_url() -> Iterator[str]:
-    from app.core.config import LOCAL_STORE_ROOT
+def sidebar_server_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str]:
     from app.web.app import create_app
 
-    application = create_app(LOCAL_STORE_ROOT)
+    sandbox = tmp_path_factory.mktemp("cachelikes-sidebar-e2e")
+    settings_path = sandbox / "settings" / "computer-use-agent.json"
+    runtime_root = sandbox / "computer-use-runtime"
+    application = create_app(
+        sandbox / "local-store",
+        computer_use_settings_path=settings_path,
+        computer_use_runtime_root=runtime_root,
+        agent_external_operations_enabled=False,
+    )
     application.config.update(TESTING=True)
+    assert application.extensions["computer_use_settings"]._settings_path == settings_path
+    assert application.extensions["computer_use_agent_service"]._runtime_root == runtime_root
     server: BaseWSGIServer = make_server("127.0.0.1", 0, application, threaded=True)
+    assert server.server_port != 8666
     server_thread = Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     try:

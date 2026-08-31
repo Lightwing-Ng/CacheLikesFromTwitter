@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.51.9-codex.1`
+Documentation version: `v3.52.0-codex.1`
 
 ## Purpose
 
@@ -552,7 +552,14 @@ a task.
 
 ## Verification
 
-Default tests use temporary projects, fake browser runners, and isolated settings paths. Live
+Default tests use temporary projects, fake browser runners, and isolated settings paths. Browser
+E2E fixtures create their own App with explicit settings and runtime roots, plus an opt-in
+external-operations boundary. That boundary permits fixture-private preference persistence but
+returns a deterministic unavailable browser status and rejects every operation that could probe a
+signed-in browser, collect remote sessions or history, open a browser or Terminal authorization
+surface, start or resume an Agent worker, or start a ChatGPT download refresh. It is not inferred
+from `TESTING`, so production behavior and route-level tests remain unchanged unless the fixture
+explicitly requests the boundary. Live
 read-only capability probes verified signed-in sessions, composers, send controls, and model-menu
 behavior for ChatGPT, Gemini, and Grok in both Edge and Chrome on 14 Aug 2026. Claude's provider
 contract is covered by mocked readiness, URL, source, and route checks in this change; a live Claude
