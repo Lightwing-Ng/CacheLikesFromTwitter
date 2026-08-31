@@ -392,7 +392,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.2-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.3-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -834,7 +834,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.2-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.3-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
         self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.18-codex.1', local_body)
         self.assertIn('data-agent-effort-field', local_body)
@@ -2672,7 +2672,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("format_datetime_label(snapshot.started_at)", template)
         self.assertIn("format_datetime_label(snapshot.finished_at)", template)
 
-    def test_browser_status_reuses_cached_status_without_background_revalidation(self) -> None:
+    def test_browser_status_reuses_fresh_cached_status_without_background_revalidation(self) -> None:
         script = BROWSER_SESSION_STATUS_SCRIPT_PATH.read_text(encoding="utf-8")
 
         for fragment in (
@@ -2692,6 +2692,8 @@ class WebAppTests(unittest.TestCase):
             'kind: "client_cache",',
             'clientCachedPayload(cachedStatus.payload, cachedStatus.ageMs),',
             'if (!forceRefresh && cachedStatus && !requiresAgentBootstrap && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS)',
+            'if (cachedStatus.payload.can_download && cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;',
+            'setRefreshingState(activeBrowser);',
             'return load(activeBrowser, {force: true});',
             'if (statusRequests.has(requestKey)) return statusRequests.get(requestKey);',
             'statusCard.setAttribute("aria-busy", "true");',
@@ -2705,7 +2707,6 @@ class WebAppTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)
 
-        self.assertNotIn('setRefreshingState(activeBrowser);', script)
 
     def test_browser_copy_control_reports_a_replayable_feedback_state(self) -> None:
         script = LOCAL_MEDIA_BROWSER_SCRIPT_PATH.read_text(encoding="utf-8")
