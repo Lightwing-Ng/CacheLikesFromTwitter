@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.52.1-codex.1
+Code version: v3.52.5-codex.1
 """
 
 from __future__ import annotations
@@ -696,11 +696,26 @@ class AgentRunSnapshot:
     traditional_handoff_opened: bool = False
     traditional_handoff_message: str = ""
     run_id: str = ""
+    run_revision: int = 0
     last_action_id: str = ""
     event_count: int = 0
     event_chain_state: str = "idle"
     last_event_kind: str = ""
     verification_passed: bool = False
+
+
+_MAX_AGENT_RUN_REVISION = (1 << 53) - 1
+
+
+def _next_agent_run_revision(value: object) -> int:
+    """Advance the persisted, JavaScript-safe order for a new Agent run."""
+    try:
+        current = int(value)
+    except (TypeError, ValueError):
+        current = 0
+    if current < 0 or current >= _MAX_AGENT_RUN_REVISION:
+        raise RuntimeError("The persisted Agent run revision is outside the safe range.")
+    return current + 1
 
 
 @dataclass(slots=True)
@@ -4627,6 +4642,12 @@ class ComputerUseAgentService:
             if key in payload
         }
         snapshot = AgentRunSnapshot(**allowed)
+        try:
+            snapshot.run_revision = int(snapshot.run_revision)
+        except (TypeError, ValueError):
+            snapshot.run_revision = 0
+        if not 0 <= snapshot.run_revision < _MAX_AGENT_RUN_REVISION:
+            snapshot.run_revision = 0
         if snapshot.running:
             snapshot.running = False
             snapshot.phase = "interrupted"
@@ -4669,6 +4690,7 @@ class ComputerUseAgentService:
             "context_file",
             "context_bytes",
             "run_id",
+            "run_revision",
             "last_action_id",
             "event_count",
             "event_chain_state",
@@ -4916,6 +4938,8 @@ class ComputerUseAgentService:
             )
             from .agent.event_chain import AgentEventChain, new_run_id
 
+            run_revision = _next_agent_run_revision(self._snapshot.run_revision)
+
             self._snapshot = AgentRunSnapshot(
                 running=True,
                 phase="starting",
@@ -4940,6 +4964,7 @@ class ComputerUseAgentService:
                 read_only=bool(read_only),
                 conversation_bound=False,
                 run_id=new_run_id(),
+                run_revision=run_revision,
             )
             self._event_chain = AgentEventChain(self._runtime_root, self._snapshot.run_id)
             started_event = self._event_chain.start(
@@ -7369,6 +7394,16 @@ def _run_web_action_loop(
         )
     )
     run_with_provider_availability(session_binding.check)
+    if (
+        platform == "chatgpt"
+        and model_selected
+        and not bool(model_observation.get("effort_catalog_complete"))
+    ):
+        # Every ChatGPT model path must prove the current subscription slider.
+        # Keep this gate adjacent to context attachment so a future compatibility
+        # selector cannot silently bypass the controller-level safety boundary.
+        model_selected = False
+        model_observation.setdefault("reason", "effort-catalog-unverified")
     if should_stop():
         return (
             "",
@@ -8925,24 +8960,58 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
                     && style.display !== 'none'
                     && style.visibility !== 'hidden';
             };
-            const menus = Array.from(document.querySelectorAll('[role="menu"]')).filter(visible);
+            const menus = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"]'))
+                .filter(visible);
+            const modelPattern = /^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
+            const controlText = (element) => normalize([
+                element?.getAttribute('aria-label'),
+                element?.getAttribute('data-testid'),
+                element?.innerText,
+                element?.textContent,
+            ].filter(Boolean).join(' '));
+            const hasModelTriggerSemantics = (trigger) => {
+                const testId = String(trigger?.getAttribute('data-testid') || '').toLowerCase();
+                const text = controlText(trigger);
+                return testId.includes('model-switcher')
+                    || testId.includes('model-picker')
+                    || /(?:^|\s)(?:model(?:\s|$)|gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)(?:\s|$)/i.test(text);
+            };
             const selectedChoices = (candidate) => Array.from(candidate?.querySelectorAll(
                 '[role="menuitemradio"], [role="option"]'
             ) || []).filter((item) => visible(item) && (
                 item.getAttribute('aria-checked') === 'true'
                 || item.getAttribute('aria-selected') === 'true'
             ));
-            const menu = menus.find((candidate) =>
-                selectedChoices(candidate).length
-                || Array.from(candidate.querySelectorAll('[role="menuitem"]')).some((item) =>
-                    normalize(item.innerText || item.textContent).toLowerCase().startsWith('model')
-                )
-            );
+            const controlledModelMenu = (trigger) => {
+                if (!visible(trigger) || !hasModelTriggerSemantics(trigger)) return null;
+                if (String(trigger.getAttribute('aria-expanded') || '').toLowerCase() !== 'true') {
+                    return null;
+                }
+                const controlledId = normalize(trigger.getAttribute('aria-controls'));
+                if (!controlledId) return null;
+                const surfaces = Array.from(document.querySelectorAll('[id]'))
+                    .filter((element) => element.id === controlledId);
+                if (surfaces.length !== 1 || !visible(surfaces[0])) return null;
+                const surface = surfaces[0];
+                if (!['menu', 'listbox'].includes(surface.getAttribute('role'))) return null;
+                const selected = selectedChoices(surface);
+                const hasSelectedModel = selected.some((item) => modelPattern.test(
+                    normalize(item.innerText || item.textContent)
+                ));
+                const hasModelItem = Array.from(surface.querySelectorAll('[role="menuitem"]'))
+                    .some((item) => visible(item) && /^model(?:\s|$)/i.test(
+                        normalize(item.innerText || item.textContent)
+                    ));
+                return hasSelectedModel || hasModelItem ? surface : null;
+            };
+            const modelMenus = Array.from(document.querySelectorAll('[aria-controls]'))
+                .map(controlledModelMenu)
+                .filter((menu, index, all) => menu && all.indexOf(menu) === index);
+            const menu = modelMenus.length === 1 ? modelMenus[0] : null;
             const selectedChoice = selectedChoices(menu)[0];
             const selectedChoiceText = normalize(
                 selectedChoice?.innerText || selectedChoice?.textContent || ''
             );
-            const modelPattern = /^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
             const selectedModelChoice = selectedChoices(menu).find((item) =>
                 modelPattern.test(normalize(item.innerText || item.textContent || ''))
             );
@@ -8955,28 +9024,43 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             const modelOptionTexts = modelChoices.map((item) => normalize(
                 item.innerText || item.textContent || ''
             )).filter(Boolean);
+            const accessibleText = (element) => {
+                if (!element) return '';
+                const labelledBy = String(element.getAttribute('aria-labelledby') || '')
+                    .split(/\s+/)
+                    .map((identifier) => document.getElementById(identifier)?.innerText
+                        || document.getElementById(identifier)?.textContent
+                        || '')
+                    .join(' ');
+                return normalize([
+                    element.getAttribute('aria-label'),
+                    labelledBy,
+                    element.getAttribute('data-testid'),
+                    element.getAttribute('data-model-reasoning-effort-slider'),
+                ].filter(Boolean).join(' '));
+            };
+            const hasTrustedEffortSemantics = (slider) => {
+                if (!slider || !visible(slider)) return false;
+                if (slider.closest('[data-model-reasoning-effort-slider]')) return true;
+                for (let owner = slider; owner; owner = owner.parentElement) {
+                    if (/\b(?:thinking|reasoning)\s+effort\b/i.test(accessibleText(owner))) {
+                        return true;
+                    }
+                }
+                return false;
+            };
             const pageSliders = Array.from(document.querySelectorAll(
                 '[data-model-reasoning-effort-slider] [role="slider"], [role="slider"][aria-valuemax]'
-            )).filter(visible);
+            )).filter(hasTrustedEffortSemantics);
             const menuSliders = Array.from(menu?.querySelectorAll('[role="slider"]') || [])
-                .filter(visible);
-            const slider = menuSliders.find((item) => item.closest('[data-model-reasoning-effort-slider]'))
-                || pageSliders.find((item) => item.closest('[data-model-reasoning-effort-slider]'))
-                || menuSliders[0]
-                || pageSliders[0];
+                .filter(hasTrustedEffortSemantics);
+            const preferredSliders = menuSliders.length ? menuSliders : pageSliders;
+            const slider = preferredSliders.length === 1 ? preferredSliders[0] : null;
             const sliderContainer = slider?.closest('[data-model-reasoning-effort-slider]');
             const sliderOwner = sliderContainer?.closest('[role="menuitem"], [role="group"]')
                 || slider?.closest('[role="menuitem"], [role="group"]');
-            const effortToggle = Array.from(menu?.querySelectorAll(
-                '[role="menuitem"]'
-            ) || []).find((item) => (
-                String(item.getAttribute('aria-label') || '').trim().toLowerCase() === 'select model'
-            ));
             const sliderOwnerLines = String(
                 sliderOwner?.innerText || sliderOwner?.textContent || ''
-            ).split(/\n+/).map((value) => normalize(value)).filter(Boolean);
-            const effortToggleLines = String(
-                effortToggle?.innerText || effortToggle?.textContent || ''
             ).split(/\n+/).map((value) => normalize(value)).filter(Boolean);
             const normalizeEffort = (value) => normalize(value)
                 .replace(/,\s*\d+\s+of\s+\d+\.?$/i, '')
@@ -8984,7 +9068,6 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             const effortCandidates = [
                 normalizeEffort(slider?.getAttribute('aria-valuetext') || ''),
                 normalizeEffort(slider?.getAttribute('aria-label') || ''),
-                ...effortToggleLines,
                 ...sliderOwnerLines,
             ].map(normalizeEffort).filter((value) => (
                 value
@@ -9138,34 +9221,219 @@ def _click_chatgpt_control(control: Any) -> bool:
     return True
 
 
-def _chatgpt_find_effort_slider(page: Any) -> Any | None:
-    """Find the subscription-backed thinking-effort slider in the menu or composer."""
+_CHATGPT_EFFORT_BINDING_ATTRIBUTE = "data-cachelikes-effort-binding"
+_CHATGPT_EFFORT_BINDING_TOKEN = "live-chatgpt-effort"
+
+
+def _chatgpt_effort_slider_binding(
+    page: Any,
+    *,
+    expected_scope: str = "",
+    trusted_model_menu_scope: str | None = None,
+) -> tuple[Any | None, str]:
+    """Bind discovery, keyboard input, and readback to one trusted live slider.
+
+    The browser-side discovery reads owner ARIA semantics rather than provider
+    labels. It prioritizes one slider in the active model menu, then one slider
+    beside the composer. More than one candidate, a scope change, or an
+    unlabelled generic slider fails closed. A short-lived DOM marker lets each
+    redraw reacquire the same verified scope without falling back to a global
+    keyboard event.
+    """
+    evaluate = getattr(page, "evaluate", None)
     locator_fn = getattr(page, "locator", None)
-    if not callable(locator_fn):
-        return None
-    selectors = (
-        '[role="menu"] [data-model-reasoning-effort-slider] [role="slider"]',
-        '[role="menu"] [role="slider"][aria-valuemax]',
-        '[data-model-reasoning-effort-slider] [role="slider"]',
-        '[role="slider"][aria-valuemax]',
-    )
-    for selector in selectors:
+    if not callable(evaluate) or not callable(locator_fn):
+        return None, ""
+    try:
+        binding_script = r"""({attribute, token, expectedScope, trustedModelMenuScope}) => {
+                const normalize = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+                const visible = (element) => {
+                    if (!element) return false;
+                    const style = getComputedStyle(element);
+                    return element.getClientRects().length > 0
+                        && style.display !== 'none'
+                        && style.visibility !== 'hidden';
+                };
+                const accessibleText = (element) => {
+                    if (!element) return '';
+                    const labelledBy = String(element.getAttribute('aria-labelledby') || '')
+                        .split(/\s+/)
+                        .map((identifier) => document.getElementById(identifier)?.innerText
+                            || document.getElementById(identifier)?.textContent
+                            || '')
+                        .join(' ');
+                    return normalize([
+                        element.getAttribute('aria-label'),
+                        labelledBy,
+                        element.getAttribute('data-testid'),
+                        element.getAttribute('data-model-reasoning-effort-slider'),
+                    ].filter(Boolean).join(' '));
+                };
+                const hasEffortSemantics = (slider) => {
+                    if (!slider || !visible(slider)) return false;
+                    if (slider.closest('[data-model-reasoning-effort-slider]')) return true;
+                    for (let owner = slider; owner; owner = owner.parentElement) {
+                        if (/\b(?:thinking|reasoning)\s+effort\b/i.test(accessibleText(owner))) {
+                            return true;
+                        }
+                    }
+                    return false;
+                };
+                const modelPattern = /^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
+                const modelTriggerText = (trigger) => normalize([
+                    accessibleText(trigger),
+                    trigger?.innerText,
+                    trigger?.textContent,
+                ].filter(Boolean).join(' '));
+                const hasModelTriggerSemantics = (trigger) => {
+                    const testId = String(trigger?.getAttribute('data-testid') || '').toLowerCase();
+                    const text = modelTriggerText(trigger);
+                    return testId.includes('model-switcher')
+                        || testId.includes('model-picker')
+                        || /(?:^|\s)(?:model(?:\s|$)|gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)(?:\s|$)/i.test(text);
+                };
+                const controlledModelMenu = (trigger) => {
+                    if (!visible(trigger) || !hasModelTriggerSemantics(trigger)) return null;
+                    if (String(trigger.getAttribute('aria-expanded') || '').toLowerCase() !== 'true') {
+                        return null;
+                    }
+                    const controlledId = normalize(trigger.getAttribute('aria-controls'));
+                    if (!controlledId) return null;
+                    const surfaces = Array.from(document.querySelectorAll('[id]'))
+                        .filter((element) => element.id === controlledId);
+                    if (surfaces.length !== 1 || !visible(surfaces[0])) return null;
+                    const surface = surfaces[0];
+                    if (!['menu', 'listbox'].includes(surface.getAttribute('role'))) return null;
+                    const choices = Array.from(surface.querySelectorAll(
+                        '[role="menuitemradio"], [role="option"]'
+                    ));
+                    const hasSelectedModel = choices.some((item) => (
+                        visible(item)
+                        && (item.getAttribute('aria-checked') === 'true'
+                            || item.getAttribute('aria-selected') === 'true')
+                        && modelPattern.test(normalize(item.innerText || item.textContent))
+                    ));
+                    const hasModelItem = Array.from(surface.querySelectorAll('[role="menuitem"]')).some((item) => (
+                        visible(item)
+                        && /^model(?:\s|$)/i.test(normalize(item.innerText || item.textContent))
+                    ));
+                    return hasSelectedModel || hasModelItem
+                        ? {menu: surface, scope: `menu:${controlledId}`}
+                        : null;
+                };
+                const composer = document.querySelector('#prompt-textarea, [contenteditable="true"]');
+                const nearComposer = (element) => {
+                    if (!composer || !visible(composer)) return false;
+                    const elementRect = element.getBoundingClientRect();
+                    const composerRect = composer.getBoundingClientRect();
+                    const verticalGap = Math.min(
+                        Math.abs(elementRect.bottom - composerRect.top),
+                        Math.abs(elementRect.top - composerRect.bottom),
+                    );
+                    const horizontalOverlap = elementRect.right >= composerRect.left - 96
+                        && elementRect.left <= composerRect.right + 96;
+                    return verticalGap <= 180 && horizontalOverlap;
+                };
+                document.querySelectorAll(`[${attribute}]`).forEach((element) => {
+                    element.removeAttribute(attribute);
+                });
+                const sliders = Array.from(document.querySelectorAll('[role="slider"]'))
+                    .filter(hasEffortSemantics);
+                const modelMenus = Array.from(document.querySelectorAll('[aria-controls]'))
+                    .map(controlledModelMenu)
+                    .filter((entry, index, all) => entry
+                        && all.findIndex((candidate) => candidate.menu === entry.menu) === index);
+                const trustedMenus = trustedModelMenuScope === null
+                    ? modelMenus
+                    : modelMenus.filter((entry) => entry.scope === trustedModelMenuScope);
+                const menuCandidates = sliders.map((slider) => ({
+                    slider,
+                    entry: trustedMenus.find((candidate) => (
+                        slider.closest('[role="menu"], [role="listbox"]') === candidate.menu
+                    )),
+                })).filter(({entry}) => entry);
+                const composerCandidates = sliders.filter((slider) => (
+                    !slider.closest('[role="menu"], [role="listbox"]')
+                    && (slider.closest('[data-model-reasoning-effort-slider]') || nearComposer(slider))
+                ));
+                const scope = menuCandidates.length ? menuCandidates[0].entry.scope : 'composer';
+                const candidates = menuCandidates.length
+                    ? menuCandidates.map(({slider}) => slider)
+                    : composerCandidates;
+                if (expectedScope && expectedScope !== scope
+                    && !(expectedScope === 'menu' && scope.startsWith('menu:'))) {
+                    return {ok: false, reason: 'scope-changed'};
+                }
+                if (candidates.length !== 1) {
+                    return {ok: false, reason: candidates.length ? 'ambiguous' : 'not-found'};
+                }
+                candidates[0].setAttribute(attribute, token);
+                return {ok: true, scope};
+            }"""
+        binding_arguments = {
+            "attribute": _CHATGPT_EFFORT_BINDING_ATTRIBUTE,
+            "token": _CHATGPT_EFFORT_BINDING_TOKEN,
+            "expectedScope": expected_scope,
+            "trustedModelMenuScope": trusted_model_menu_scope,
+        }
         try:
-            handle = locator_fn(selector)
-            count = getattr(handle, "count", None)
-            if not callable(count):
-                continue
-            for index in range(count()):
-                candidate = handle.nth(index)
-                is_visible = getattr(candidate, "is_visible", None)
-                if callable(is_visible) and not is_visible():
-                    continue
-                return candidate
-        except Exception as exc:
-            if _is_composer_wait_timeout(exc):
-                continue
-            raise
-    return None
+            result = evaluate(binding_script, binding_arguments)
+        except TypeError:
+            # Legacy test doubles and older wrappers may only accept the script.
+            result = evaluate(binding_script)
+    except Exception as exc:
+        if _is_composer_wait_timeout(exc):
+            return None, ""
+        raise
+    if not isinstance(result, dict) or not result.get("ok"):
+        return None, ""
+    raw_scope = str(result.get("scope") or "").strip()
+    normalized_scope = raw_scope.casefold()
+    if normalized_scope == "composer":
+        scope = "composer"
+    elif normalized_scope == "menu":
+        scope = "menu"
+    elif normalized_scope.startswith("menu:") and raw_scope[5:].strip():
+        scope = f"menu:{raw_scope[5:].strip()}"
+    else:
+        return None, ""
+    try:
+        handle = locator_fn(
+            f'[{_CHATGPT_EFFORT_BINDING_ATTRIBUTE}="{_CHATGPT_EFFORT_BINDING_TOKEN}"]'
+        )
+        count = getattr(handle, "count", None)
+        if not callable(count) or count() != 1:
+            return None, ""
+        slider = handle.nth(0)
+        is_visible = getattr(slider, "is_visible", None)
+        if callable(is_visible) and not is_visible():
+            return None, ""
+        return slider, scope
+    except Exception as exc:
+        if _is_composer_wait_timeout(exc):
+            return None, ""
+        raise
+
+
+def _chatgpt_find_effort_slider_in_scope(
+    page: Any,
+    scope: str,
+    *,
+    trusted_model_menu_scope: str | None = None,
+) -> Any | None:
+    """Reacquire the same trusted slider scope after a ChatGPT redraw."""
+    slider, rebound_scope = _chatgpt_effort_slider_binding(
+        page,
+        expected_scope=scope,
+        trusted_model_menu_scope=trusted_model_menu_scope,
+    )
+    return slider if rebound_scope == scope else None
+
+
+def _chatgpt_find_effort_slider(page: Any) -> Any | None:
+    """Find one uniquely bound ChatGPT reasoning-effort slider."""
+    slider, _scope = _chatgpt_effort_slider_binding(page)
+    return slider
 
 
 def _chatgpt_effort_slider_state(slider: Any) -> dict[str, int] | None:
@@ -9190,12 +9458,23 @@ def _chatgpt_effort_slider_state(slider: Any) -> dict[str, int] | None:
     return values
 
 
-def _chatgpt_press_effort_key(page: Any, slider: Any | None, key: str) -> bool:
+def _chatgpt_press_effort_key(
+    page: Any,
+    slider: Any | None,
+    key: str,
+    *,
+    scope: str,
+    trusted_model_menu_scope: str | None = None,
+) -> bool:
     """Press one slider key, reacquiring the element once when ChatGPT redraws it."""
     candidate = slider
     for _attempt in range(2):
         if candidate is None:
-            candidate = _chatgpt_find_effort_slider(page)
+            candidate = _chatgpt_find_effort_slider_in_scope(
+                page,
+                scope,
+                trusted_model_menu_scope=trusted_model_menu_scope,
+            )
         press = getattr(candidate, "press", None)
         if callable(press):
             try:
@@ -9207,16 +9486,11 @@ def _chatgpt_press_effort_key(page: Any, slider: Any | None, key: str) -> bool:
             except Exception as exc:
                 if not _is_composer_wait_timeout(exc):
                     raise
-        candidate = _chatgpt_find_effort_slider(page)
-    keyboard = getattr(page, "keyboard", None)
-    press = getattr(keyboard, "press", None)
-    if callable(press):
-        try:
-            press(key)
-            return True
-        except Exception as exc:
-            if not _is_composer_wait_timeout(exc):
-                raise
+        candidate = _chatgpt_find_effort_slider_in_scope(
+            page,
+            scope,
+            trusted_model_menu_scope=trusted_model_menu_scope,
+        )
     return False
 
 
@@ -9289,6 +9563,8 @@ def _chatgpt_select_subscription_effort(
     result: dict[str, Any],
     wait_for_timeout: Callable[[int], Any],
     requested_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST,
+    *,
+    trusted_model_menu_scope: str | None = None,
 ) -> tuple[dict[str, Any], list[str], bool]:
     """Discover every live effort position and prove the selected final state.
 
@@ -9310,16 +9586,14 @@ def _chatgpt_select_subscription_effort(
             result.pop("effort_selection_error", None)
         return result, labels, complete
 
-    slider = _chatgpt_find_effort_slider(page)
-    thinking_payload = result.get("thinking_effort")
-    if slider is None and not isinstance(thinking_payload, dict):
-        if requested != CHATGPT_EFFORT_POLICY_HIGHEST:
-            return finish(complete=False, error="requested-effort-control-not-found")
-        return finish(complete=False)
+    slider, slider_scope = _chatgpt_effort_slider_binding(
+        page,
+        trusted_model_menu_scope=trusted_model_menu_scope,
+    )
     if slider is None:
         if requested != CHATGPT_EFFORT_POLICY_HIGHEST:
-            return finish(complete=False, error="effort-slider-not-found")
-        return finish(complete=False)
+            return finish(complete=False, error="requested-effort-control-not-found")
+        return finish(complete=False, error="effort-slider-not-found")
     state = _chatgpt_effort_slider_state(slider)
     if state is None:
         return finish(complete=False, error="effort-slider-unreadable")
@@ -9335,17 +9609,33 @@ def _chatgpt_select_subscription_effort(
     position_count = state["max"] - state["min"] + 1
     if position_count > CHATGPT_MAX_SUBSCRIPTION_EFFORT_POSITIONS:
         return finish(complete=False, error="effort-range-exceeds-safe-bound")
-    if not _chatgpt_press_effort_key(page, slider, "Home"):
+    if not _chatgpt_press_effort_key(
+        page,
+        slider,
+        "Home",
+        scope=slider_scope,
+        trusted_model_menu_scope=trusted_model_menu_scope,
+    ):
         return finish(complete=False, error="effort-catalog-key-failed")
     wait_for_timeout(80)
 
     labels_by_position: dict[int, str] = {}
     for position in range(state["min"], state["max"] + 1):
         if position > state["min"]:
-            if not _chatgpt_press_effort_key(page, slider, "ArrowRight"):
+            if not _chatgpt_press_effort_key(
+                page,
+                slider,
+                "ArrowRight",
+                scope=slider_scope,
+                trusted_model_menu_scope=trusted_model_menu_scope,
+            ):
                 return finish(complete=False, error="effort-catalog-key-failed")
             wait_for_timeout(80)
-        slider = _chatgpt_find_effort_slider(page)
+        slider = _chatgpt_find_effort_slider_in_scope(
+            page,
+            slider_scope,
+            trusted_model_menu_scope=trusted_model_menu_scope,
+        )
         current_state = (
             _chatgpt_effort_slider_state(slider) if slider is not None else None
         )
@@ -9356,14 +9646,24 @@ def _chatgpt_select_subscription_effort(
         reread = _read_chatgpt_model_menu(page)
         if reread.get("ok"):
             result = reread
-        elif not _chatgpt_slider_effort_label(slider):
-            return finish(complete=False, error="effort-menu-unreadable")
-        label = _chatgpt_effort_label(result) or _chatgpt_slider_effort_label(slider)
+        label = _chatgpt_slider_effort_label(slider)
         if not label:
             return finish(complete=False, error="effort-label-unreadable")
+        if any(
+            existing.casefold() == label.casefold()
+            for existing in labels_by_position.values()
+        ):
+            return finish(complete=False, error="effort-label-duplicate")
         labels_by_position[position] = label
         if label not in labels:
             labels.append(label)
+        result["thinking_effort"] = {
+            "label": label,
+            "value": str(current_state["now"]),
+            "min": str(current_state["min"]),
+            "max": str(current_state["max"]),
+            "available": [label],
+        }
 
     if requested == CHATGPT_EFFORT_POLICY_HIGHEST:
         target_position = state["max"]
@@ -9377,27 +9677,51 @@ def _chatgpt_select_subscription_effort(
             return finish(complete=False, error="requested-effort-unavailable")
         target_position = matching_positions[-1]
 
-    slider = _chatgpt_find_effort_slider(page)
+    slider = _chatgpt_find_effort_slider_in_scope(
+        page,
+        slider_scope,
+        trusted_model_menu_scope=trusted_model_menu_scope,
+    )
     final_state = _chatgpt_effort_slider_state(slider) if slider is not None else None
     if final_state is None:
         return finish(complete=False, error="effort-slider-unreadable")
     if not range_is_stable(final_state):
         return finish(complete=False, error="effort-range-changed")
     if final_state["now"] != target_position:
-        if not _chatgpt_press_effort_key(page, slider, "Home"):
+        if not _chatgpt_press_effort_key(
+            page,
+            slider,
+            "Home",
+            scope=slider_scope,
+            trusted_model_menu_scope=trusted_model_menu_scope,
+        ):
             return finish(complete=False, error="effort-selection-key-failed")
         wait_for_timeout(80)
-        slider = _chatgpt_find_effort_slider(page)
+        slider = _chatgpt_find_effort_slider_in_scope(
+            page,
+            slider_scope,
+            trusted_model_menu_scope=trusted_model_menu_scope,
+        )
         final_state = _chatgpt_effort_slider_state(slider) if slider is not None else None
         if not range_is_stable(final_state):
             return finish(complete=False, error="effort-range-changed")
         if final_state["now"] != state["min"]:
             return finish(complete=False, error="effort-selection-readback-mismatch")
         for position in range(state["min"] + 1, target_position + 1):
-            if not _chatgpt_press_effort_key(page, slider, "ArrowRight"):
+            if not _chatgpt_press_effort_key(
+                page,
+                slider,
+                "ArrowRight",
+                scope=slider_scope,
+                trusted_model_menu_scope=trusted_model_menu_scope,
+            ):
                 return finish(complete=False, error="effort-selection-key-failed")
             wait_for_timeout(80)
-            slider = _chatgpt_find_effort_slider(page)
+            slider = _chatgpt_find_effort_slider_in_scope(
+                page,
+                slider_scope,
+                trusted_model_menu_scope=trusted_model_menu_scope,
+            )
             final_state = (
                 _chatgpt_effort_slider_state(slider) if slider is not None else None
             )
@@ -9409,7 +9733,11 @@ def _chatgpt_select_subscription_effort(
     reread = _read_chatgpt_model_menu(page)
     if reread.get("ok"):
         result = reread
-    post_menu_slider = _chatgpt_find_effort_slider(page)
+    post_menu_slider = _chatgpt_find_effort_slider_in_scope(
+        page,
+        slider_scope,
+        trusted_model_menu_scope=trusted_model_menu_scope,
+    )
     post_menu_state = (
         _chatgpt_effort_slider_state(post_menu_slider)
         if post_menu_slider is not None
@@ -9419,12 +9747,17 @@ def _chatgpt_select_subscription_effort(
         return finish(complete=False, error="effort-range-changed")
     if post_menu_state["now"] != target_position:
         return finish(complete=False, error="effort-selection-readback-mismatch")
-    final_label = _chatgpt_effort_label(result) or _chatgpt_slider_effort_label(
-        post_menu_slider
-    )
+    final_label = _chatgpt_slider_effort_label(post_menu_slider)
     expected_label = labels_by_position[target_position]
     if not final_label or final_label.casefold() != expected_label.casefold():
         return finish(complete=False, error="effort-selection-label-mismatch")
+    result["thinking_effort"] = {
+        "label": final_label,
+        "value": str(post_menu_state["now"]),
+        "min": str(post_menu_state["min"]),
+        "max": str(post_menu_state["max"]),
+        "available": [final_label],
+    }
     return finish(complete=True)
 
 
@@ -9449,6 +9782,27 @@ def _chatgpt_power_button_state(
         if read_ok:
             return candidate, expanded == "true"
     return None, None
+
+
+def _chatgpt_model_menu_scope_for_control(control: Any | None) -> str:
+    """Return one exact ``aria-controls`` scope for a verified model trigger."""
+    get_attribute = getattr(control, "get_attribute", None)
+    if not callable(get_attribute):
+        return ""
+    try:
+        try:
+            controlled_id = get_attribute(
+                "aria-controls",
+                timeout=CHATGPT_MODEL_LOCATOR_TIMEOUT_MILLISECONDS,
+            )
+        except TypeError:
+            controlled_id = get_attribute("aria-controls")
+    except Exception as exc:
+        if _is_composer_wait_timeout(exc):
+            return ""
+        raise
+    normalized_id = str(controlled_id or "").strip()
+    return f"menu:{normalized_id}" if normalized_id else ""
 
 
 def _close_chatgpt_model_menu(page: Any, power_button: Any) -> bool:
@@ -9499,18 +9853,9 @@ def _select_chatgpt_model_chromium(
     model_labels = _chatgpt_remote_model_labels(option, remote_labels)
     requested_thinking_effort = normalize_chatgpt_effort(thinking_effort)
 
-    def effort_selection_failed(
-        result_payload: dict[str, Any],
-        catalog_complete: bool,
-    ) -> bool:
-        """Fail closed when the requested effort or a live slider was not proved."""
-        if catalog_complete:
-            return False
-        return bool(
-            requested_thinking_effort != CHATGPT_EFFORT_POLICY_HIGHEST
-            or result_payload.get("thinking_effort") is not None
-            or result_payload.get("effort_selection_error")
-        )
+    def effort_selection_failed(catalog_complete: bool) -> bool:
+        """Require a complete live catalog for every ChatGPT execution request."""
+        return not catalog_complete
 
     def result_matches_target(result_payload: dict[str, Any], current_value: str) -> bool:
         selected_model = str(result_payload.get("selected_model") or "").strip()
@@ -9566,6 +9911,18 @@ def _select_chatgpt_model_chromium(
             attempted_labels=remote_labels,
         )
         return False
+
+    def select_effort_catalog(result_payload: dict[str, Any]) -> tuple[dict[str, Any], list[str], bool]:
+        """Restrict menu sliders to the exact model trigger selected for this run."""
+        return _chatgpt_select_subscription_effort(
+            page,
+            result_payload,
+            wait_for_timeout,
+            requested_thinking_effort,
+            trusted_model_menu_scope=(
+                _chatgpt_model_menu_scope_for_control(power_button) or ""
+            ),
+        )
 
     _wait_for_chatgpt_composer_if_available(page, should_stop=should_stop)
     if stop_requested():
@@ -9625,12 +9982,7 @@ def _select_chatgpt_model_chromium(
     effort_labels: list[str] = []
     effort_selection_complete = False
     if result.get("ok") and result_matches_target(result, current):
-        result, effort_labels, effort_selection_complete = _chatgpt_select_subscription_effort(
-            page,
-            result,
-            wait_for_timeout,
-            requested_thinking_effort,
-        )
+        result, effort_labels, effort_selection_complete = select_effort_catalog(result)
         current = str(result.get("current") or current)
         available = [
             str(item).strip()
@@ -9641,7 +9993,7 @@ def _select_chatgpt_model_chromium(
             return False
         _close_chatgpt_model_menu(page, power_button)
         effort_catalog_complete = bool(effort_selection_complete)
-        if effort_selection_failed(result, effort_catalog_complete):
+        if effort_selection_failed(effort_catalog_complete):
             _record_model_observation(
                 observation,
                 observed=str(result.get("selected_model") or current),
@@ -9671,10 +10023,9 @@ def _select_chatgpt_model_chromium(
         )
         return True
 
-    # Legacy ChatGPT menus expose the effort as the selected menu item and do
-    # not report a selected model or a slider. Keep the old strongest-label
-    # fallback only for that older surface; modern subscriptions are handled
-    # by the live slider above.
+    # Legacy menus may still read back the model, but they do not prove the
+    # subscription effort. Use the same live-slider discovery before allowing
+    # any local context attachment or prompt submission.
     strongest = _chatgpt_strongest_available_label(current, available, remote_labels)
     already_selected = bool(
         strongest and _chatgpt_model_text_matches(current, (strongest,))
@@ -9682,10 +10033,13 @@ def _select_chatgpt_model_chromium(
     if result.get("ok") and already_selected:
         if stop_requested():
             return False
+        result, effort_labels, effort_selection_complete = select_effort_catalog(result)
         _close_chatgpt_model_menu(page, power_button)
+        effort_catalog_complete = bool(effort_selection_complete)
         observed_value, available_values, effort_values = observation_values(
             result,
             current,
+            effort_labels,
         )
         _record_model_observation(
             observation,
@@ -9693,10 +10047,16 @@ def _select_chatgpt_model_chromium(
             available=available_values or [current],
             thinking_effort=_chatgpt_effort_label(result),
             available_efforts=effort_values,
+            effort_catalog_complete=effort_catalog_complete,
             attempted_labels=remote_labels,
             menu_text=current,
+            reason=(
+                ""
+                if not effort_selection_failed(effort_catalog_complete)
+                else str(result.get("effort_selection_error") or "effort-selection-unverified")
+            ),
         )
-        return True
+        return not effort_selection_failed(effort_catalog_complete)
 
     model_choice = None
     choice_labels = (
@@ -9749,19 +10109,14 @@ def _select_chatgpt_model_chromium(
         current = str(result.get("current") or "")
         effort_labels = []
         if result.get("ok") and result_matches_target(result, current):
-            result, effort_labels, effort_selection_complete = _chatgpt_select_subscription_effort(
-                page,
-                result,
-                wait_for_timeout,
-                requested_thinking_effort,
-            )
+            result, effort_labels, effort_selection_complete = select_effort_catalog(result)
             current = str(result.get("current") or current)
         if stop_requested():
             return False
         _close_chatgpt_model_menu(page, power_button)
         matched = bool(result.get("ok") and result_matches_after_selection(result, current))
         effort_catalog_complete = bool(effort_selection_complete)
-        if effort_selection_failed(result, effort_catalog_complete):
+        if effort_selection_failed(effort_catalog_complete):
             matched = False
         observed_value, available_values, effort_values = observation_values(
             result,
@@ -9846,19 +10201,14 @@ def _select_chatgpt_model_chromium(
                     current = str(result.get("current") or "")
                     effort_labels = []
                     if result.get("ok") and result_matches_target(result, current):
-                        result, effort_labels, effort_selection_complete = _chatgpt_select_subscription_effort(
-                            page,
-                            result,
-                            wait_for_timeout,
-                            requested_thinking_effort,
-                        )
+                        result, effort_labels, effort_selection_complete = select_effort_catalog(result)
                         current = str(result.get("current") or current)
                     if stop_requested():
                         return False
                     _close_chatgpt_model_menu(page, power_button)
                     matched = bool(result.get("ok") and result_matches_after_selection(result, current))
                     effort_catalog_complete = bool(effort_selection_complete)
-                    if effort_selection_failed(result, effort_catalog_complete):
+                    if effort_selection_failed(effort_catalog_complete):
                         matched = False
                     observed_value, available_values, effort_values = observation_values(
                         result,
@@ -9924,6 +10274,53 @@ def _select_chatgpt_model(
         raise ValueError("Choose a supported ChatGPT model.")
 
     remote_labels = tuple(option.get("remote_labels") or (option.get("label", ""),))
+
+    def verify_fallback_effort_catalog(result_payload: dict[str, Any]) -> bool:
+        """Apply the same live effort proof when a compatibility selector chose the model."""
+        current = str(
+            result_payload.get("selected")
+            or result_payload.get("selected_model")
+            or result_payload.get("current")
+            or ""
+        ).strip()
+        verification_payload = {
+            "ok": True,
+            "current": current,
+            "selected_model": current,
+            "available": [
+                str(item).strip()
+                for item in (result_payload.get("available") or [])
+                if str(item).strip()
+            ],
+            "thinking_effort": None,
+        }
+        verified_payload, effort_labels, catalog_complete = _chatgpt_select_subscription_effort(
+            page,
+            verification_payload,
+            wait_for_timeout,
+            thinking_effort,
+            trusted_model_menu_scope="",
+        )
+        _record_model_observation(
+            observation,
+            observed=str(verified_payload.get("selected_model") or current),
+            available=list(verified_payload.get("available") or []),
+            thinking_effort=_chatgpt_effort_label(verified_payload),
+            available_efforts=effort_labels,
+            effort_catalog_complete=catalog_complete,
+            attempted_labels=remote_labels,
+            menu_text=current,
+            reason=(
+                ""
+                if catalog_complete
+                else str(
+                    verified_payload.get("effort_selection_error")
+                    or "effort-selection-unverified"
+                )
+            ),
+        )
+        return catalog_complete
+
     if browser_kind != "safari" and hasattr(page, "get_by_role"):
         wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
         attempt_observation = observation if observation is not None else {}
@@ -10097,14 +10494,7 @@ def _select_chatgpt_model(
             break
         wait_for_timeout(500)
     if isinstance(result, dict) and result.get("ok"):
-        _record_model_observation(
-            observation,
-            observed=str(result.get("selected") or ""),
-            available=list(result.get("available") or []),
-            attempted_labels=remote_labels,
-            menu_text=str(result.get("selected") or ""),
-        )
-        return True
+        return verify_fallback_effort_catalog(result)
     if isinstance(result, dict) and result.get("reason") == "selection-required":
         wait_for_timeout(350)
         selection = page.evaluate(
@@ -10118,14 +10508,7 @@ def _select_chatgpt_model(
                 {"labels": list(remote_labels), "phase": "verify"},
             )
             if isinstance(result, dict) and result.get("ok"):
-                _record_model_observation(
-                    observation,
-                    observed=str(result.get("selected") or ""),
-                    available=list(result.get("available") or []),
-                    attempted_labels=remote_labels,
-                    menu_text=str(result.get("selected") or ""),
-                )
-                return True
+                return verify_fallback_effort_catalog(result)
         else:
             result = selection
     available = []

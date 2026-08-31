@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.52.1-codex.1
+Code version: v3.52.5-codex.1
 """
 
 from __future__ import annotations
@@ -45,6 +45,9 @@ from app.core.computer_use_agent import (
     _attach_context_file,
     _CONTROLLER_ACTION_SCHEMA_MARKERS,
     _chatgpt_response_snapshot,
+    _chatgpt_effort_slider_binding,
+    _chatgpt_find_effort_slider,
+    _chatgpt_find_effort_slider_in_scope,
     _chatgpt_effort_slider_state,
     _chatgpt_select_subscription_effort,
     _read_chatgpt_model_menu,
@@ -94,6 +97,27 @@ from app.core.computer_use_agent import (
 )
 from app.core.agent.event_chain import AgentEventChain, new_run_id
 from app.core.config import CrawlConfig
+
+
+def _select_verified_chatgpt_model(*args: object, **kwargs: object) -> bool:
+    """Model-selection stub that includes the mandatory live effort proof."""
+    observation = kwargs.get("observation")
+    if observation is None:
+        observation = next(
+            (candidate for candidate in reversed(args) if isinstance(candidate, dict)),
+            None,
+        )
+    if isinstance(observation, dict):
+        observation.update(
+            {
+                "observed": "GPT-5.6 Sol",
+                "thinking_effort": "Dynamic maximum",
+                "available_efforts": ["Dynamic maximum"],
+                "effort_catalog_complete": True,
+            }
+        )
+    return True
+
 
 
 def test_settings_validate_workspace_environment_browser_and_limits() -> None:
@@ -357,7 +381,7 @@ def test_model_selection_keeps_the_remote_default_when_the_menu_is_not_exposed()
     assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is False
 
 
-def test_chatgpt_extra_high_control_reads_back_gpt_5_6_sol() -> None:
+def test_chatgpt_compatibility_reader_rejects_model_without_live_effort_proof() -> None:
     calls: list[dict[str, object]] = []
 
     class _Page:
@@ -375,12 +399,12 @@ def test_chatgpt_extra_high_control_reads_back_gpt_5_6_sol() -> None:
                 "available": ["gpt-5.6 sol"],
             }
 
-    assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is True
+    assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is False
     assert calls[0]["phase"] == "inspect"
     assert calls[0]["labels"][:2] == ["GPT-5.6 Sol", "5.6 Sol"]
 
 
-def test_chromium_model_selector_uses_trusted_locator_clicks_and_read_only_evaluate() -> None:
+def test_chromium_model_selector_rejects_readback_without_live_effort_proof() -> None:
     class _EmptyLocator:
         def count(self) -> int:
             return 0
@@ -447,14 +471,15 @@ def test_chromium_model_selector_uses_trusted_locator_clicks_and_read_only_evalu
 
     page = _Page()
 
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is False
     assert page.power.click_count == 2
     assert not page.power.expanded
     assert ("button", "Subscription power", True) in page.role_calls
     assert "#prompt-textarea" in page.locator_calls
     assert any("model-switcher" in selector for selector in page.locator_calls)
     assert page.waits == [200]
-    assert len(page.evaluate_scripts) == 2
+    assert len(page.evaluate_scripts) == 3
+    assert any("expectedScope" in script for script in page.evaluate_scripts)
     assert all(".click(" not in expression for expression in page.evaluate_scripts)
     assert any("current:" in expression for expression in page.evaluate_scripts)
 
@@ -539,28 +564,28 @@ def _chromium_model_page(trigger_name: str, current: str = "GPT-5.6 Sol"):
     return _Page()
 
 
-def test_chromium_reused_session_verifies_gpt_5_6_sol_trigger() -> None:
+def test_chromium_reused_session_rejects_gpt_5_6_sol_without_effort_slider() -> None:
     page = _chromium_model_page("GPT-5.6 Sol")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert ("button", "GPT-5.6 Sol", True) in page.role_calls
     assert observation["observed"] == "GPT-5.6 Sol"
     assert page.power.click_count == 2
 
 
-def test_chromium_reused_session_verifies_instant_trigger() -> None:
+def test_chromium_reused_session_rejects_instant_without_effort_slider() -> None:
     page = _chromium_model_page("Instant")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert ("button", "Instant", True) in page.role_calls
     assert observation["observed"] == "GPT-5.6 Sol"
     assert page.power.click_count == 2
 
 
-def test_chromium_reused_session_verifies_medium_trigger() -> None:
+def test_chromium_reused_session_rejects_medium_without_effort_slider() -> None:
     page = _chromium_model_page("Medium", current="Extra High")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert ("button", "Medium", True) in page.role_calls
     assert observation["observed"] == "GPT-5.6 Sol"
     assert page.power.click_count == 2
@@ -601,7 +626,7 @@ def test_chatgpt_effort_slider_state_rejects_unproved_values(
     assert _chatgpt_effort_slider_state(_Slider()) is None
 
 
-def test_chromium_selector_accepts_open_thinking_effort_menu() -> None:
+def test_chromium_selector_rejects_open_effort_menu_without_slider() -> None:
     class _EmptyLocator:
         def count(self) -> int:
             return 0
@@ -667,7 +692,7 @@ def test_chromium_selector_accepts_open_thinking_effort_menu() -> None:
         "chromium",
         DEFAULT_CHATGPT_MODEL,
         observation,
-    ) is True
+    ) is False
     assert ("button", "Thinking effort", True) in page.role_calls
     assert page.power.click_count == 1
     assert observation["observed"] == "GPT-5.6 Sol"
@@ -727,6 +752,7 @@ def test_chromium_selector_uses_all_subscription_efforts_and_leaves_sol_at_maxim
                 "aria-valuenow": str(self.value),
                 "aria-valuemin": "11",
                 "aria-valuemax": "13",
+                "aria-valuetext": self.labels[self.value - 11],
             }.get(name)
 
         def press(self, key: str, **_kwargs: object) -> None:
@@ -754,11 +780,13 @@ def test_chromium_selector_uses_all_subscription_efforts_and_leaves_sol_at_maxim
             return _EmptyLocator()
 
         def locator(self, selector: str) -> _SliderLocator | _EmptyLocator:
-            if "role=\"slider\"" in selector:
+            if "role=\"slider\"" in selector or "data-cachelikes-effort-binding" in selector:
                 return self.slider
             return _EmptyLocator()
 
         def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "expectedScope" in expression:
+                return {"ok": True, "scope": "menu"}
             if "current:" in expression:
                 effort = self.slider.labels[self.slider.value - 11]
                 return {
@@ -845,6 +873,7 @@ def test_chatgpt_effort_discovery_rejects_subscription_range_drift() -> None:
                 "aria-valuenow": str(self.value),
                 "aria-valuemin": str(self.minimum),
                 "aria-valuemax": str(self.maximum),
+                "aria-valuetext": "Cruise review",
             }.get(name)
 
         def press(self, key: str, **_kwargs: object) -> None:
@@ -859,11 +888,13 @@ def test_chatgpt_effort_discovery_rejects_subscription_range_drift() -> None:
             self.slider = _Slider(self)
 
         def locator(self, selector: str) -> _Slider | _EmptyLocator:
-            if '[role="slider"]' in selector:
+            if '[role="slider"]' in selector or "data-cachelikes-effort-binding" in selector:
                 return self.slider
             return _EmptyLocator()
 
         def evaluate(self, _expression: str, *_args: object) -> dict[str, object]:
+            if "expectedScope" in _expression:
+                return {"ok": True, "scope": "composer"}
             return {
                 "ok": True,
                 "current": "GPT-5.6 Sol",
@@ -896,7 +927,7 @@ def test_chatgpt_effort_discovery_rejects_subscription_range_drift() -> None:
     assert updated["effort_selection_error"] == "effort-range-changed"
 
 
-def test_chromium_selector_can_choose_gpt_5_6_sol_from_thinking_effort_menu() -> None:
+def test_chromium_selector_rejects_model_choice_without_effort_slider() -> None:
     class _EmptyLocator:
         def count(self) -> int:
             return 0
@@ -990,13 +1021,13 @@ def test_chromium_selector_can_choose_gpt_5_6_sol_from_thinking_effort_menu() ->
         "chromium",
         DEFAULT_CHATGPT_MODEL,
         observation,
-    ) is True
+    ) is False
     assert page.choice.click_count == 1
     assert page.power.click_count == 2
     assert observation["observed"] == "GPT-5.6 Sol"
 
 
-def test_chromium_selector_chooses_extra_high_from_a_medium_thinking_effort_menu() -> None:
+def test_chromium_selector_rejects_legacy_effort_choice_without_slider() -> None:
     class _EmptyLocator:
         def count(self) -> int:
             return 0
@@ -1097,7 +1128,7 @@ def test_chromium_selector_chooses_extra_high_from_a_medium_thinking_effort_menu
         "chromium",
         DEFAULT_CHATGPT_MODEL,
         observation,
-    ) is True
+    ) is False
     assert page.extra_high_choice.click_count == 0
     assert page.sol_choice.click_count == 1
     assert page.power.click_count == 3
@@ -1111,15 +1142,15 @@ def test_chromium_wrong_model_readback_fails_closed() -> None:
     assert observation.get("reason") == "model-mismatch"
 
 
-def test_chromium_medium_trigger_without_stronger_effort_accepts_medium() -> None:
+def test_chromium_medium_trigger_rejects_missing_effort_slider() -> None:
     page = _chromium_model_page("Medium", current="Medium")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert observation.get("observed") == "GPT-5.6 Sol"
     assert ("button", "Medium", True) in page.role_calls
 
 
-def test_chatgpt_highest_available_without_slider_does_not_fail_closed() -> None:
+def test_chatgpt_highest_available_without_slider_fails_closed() -> None:
     class _Page:
         def locator(self, _selector: str) -> object:
             class _Empty:
@@ -1142,7 +1173,170 @@ def test_chatgpt_highest_available_without_slider_does_not_fail_closed() -> None
 
     assert complete is False
     assert labels == []
-    assert "effort_selection_error" not in updated
+    assert updated["effort_selection_error"] == "effort-slider-not-found"
+
+
+def test_chatgpt_effort_slider_finder_rejects_an_unrelated_generic_slider() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _UnrelatedSlider:
+        def __init__(self) -> None:
+            self.press_count = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_UnrelatedSlider":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def press(self, _key: str) -> None:
+            self.press_count += 1
+
+    class _Page:
+        def __init__(self) -> None:
+            self.selectors: list[str] = []
+            self.slider = _UnrelatedSlider()
+
+        def locator(self, selector: str) -> object:
+            self.selectors.append(selector)
+            if selector == '[role="slider"][aria-valuemax]':
+                return self.slider
+            return _EmptyLocator()
+
+    page = _Page()
+
+    assert _chatgpt_find_effort_slider(page) is None
+    assert '[role="slider"][aria-valuemax]' not in page.selectors
+    assert page.slider.press_count == 0
+
+
+@pytest.mark.integration
+def test_chatgpt_effort_slider_binding_requires_the_verified_menu_owner() -> None:
+    """Exercise the browser DOM binding without accessing a provider page."""
+    playwright_sync = pytest.importorskip("playwright.sync_api")
+    with playwright_sync.sync_playwright() as playwright:
+        browser_type = playwright.chromium
+        if Path(browser_type.executable_path).is_file():
+            browser = browser_type.launch(headless=True)
+        else:
+            launch_errors: list[str] = []
+            browser = None
+            for channel in ("chrome", "msedge"):
+                try:
+                    browser = browser_type.launch(channel=channel, headless=True)
+                    break
+                except Exception as exc:  # pragma: no cover - host browser inventory
+                    launch_errors.append(f"{channel}: {exc}")
+            if browser is None:
+                pytest.skip(
+                    "A local Chromium, Chrome, or Edge executable is unavailable: "
+                    + " | ".join(launch_errors)
+                )
+        try:
+            page = browser.new_page()
+
+            def bind(html: str, **kwargs: object) -> tuple[object | None, str]:
+                page.set_content(
+                    "<style>[role=slider] { display: block; width: 12px; height: 12px; }</style>"
+                    + html
+                )
+                return _chatgpt_effort_slider_binding(page, **kwargs)
+
+            slider, scope = bind(
+                """
+                <button aria-expanded="true" aria-controls="unrelated-menu">Theme</button>
+                <div id="unrelated-menu" role="menu">
+                  <div role="option" aria-selected="true">GPT-5.6 Sol</div>
+                  <div aria-label="Thinking effort"><div id="unrelated" role="slider"
+                    aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div></div>
+                </div>
+                <textarea id="prompt-textarea"></textarea>
+                <div data-model-reasoning-effort-slider><div id="composer" role="slider"
+                  aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div></div>
+                """
+            )
+            assert scope == "composer"
+            assert slider is not None
+            assert slider.get_attribute("id") == "composer"
+
+            real_menu = """
+                <button data-testid="model-switcher-dropdown" aria-expanded="true"
+                  aria-controls="real-menu">GPT-5.6 Sol</button>
+                <div id="real-menu" role="menu">
+                  <div role="option" aria-selected="true">GPT-5.6 Sol</div>
+                  <div aria-label="Thinking effort"><div id="real" role="slider"
+                    aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div></div>
+                </div>
+                <textarea id="prompt-textarea"></textarea>
+                <div data-model-reasoning-effort-slider><div id="composer" role="slider"
+                  aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div></div>
+            """
+            slider, scope = bind(real_menu)
+            assert scope == "menu:real-menu"
+            assert slider is not None
+            assert slider.get_attribute("id") == "real"
+
+            page.set_content(
+                "<style>[role=slider] { display: block; width: 12px; height: 12px; }</style>"
+                + real_menu
+            )
+            initial_slider, initial_scope = _chatgpt_effort_slider_binding(page)
+            assert initial_slider is not None
+            page.evaluate("""() => {
+                const trigger = document.querySelector('[data-testid="model-switcher-dropdown"]');
+                const menu = document.querySelector('#real-menu');
+                trigger.setAttribute('aria-controls', 'replacement-menu');
+                menu.id = 'replacement-menu';
+            }""")
+            assert _chatgpt_find_effort_slider_in_scope(page, initial_scope) is None
+
+            slider, scope = bind(
+                """
+                <button data-testid="model-switcher-dropdown" aria-expanded="true"
+                  aria-controls="real-menu">GPT-5.6 Sol</button>
+                <div id="real-menu" role="menu"><div role="option" aria-selected="true">GPT-5.6 Sol</div></div>
+                <button data-testid="model-switcher-alias" aria-expanded="true"
+                  aria-controls="fake-menu">GPT-5.6 Sol</button>
+                <div id="fake-menu" role="menu">
+                  <div role="option" aria-selected="true">GPT-5.6 Sol</div>
+                  <div aria-label="Thinking effort"><div id="fake" role="slider"
+                    aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div></div>
+                </div>
+                <textarea id="prompt-textarea"></textarea>
+                <div data-model-reasoning-effort-slider><div id="composer" role="slider"
+                  aria-valuemin="0" aria-valuemax="1" aria-valuenow="0"></div></div>
+                """,
+                trusted_model_menu_scope="menu:real-menu",
+            )
+            assert scope == "composer"
+            assert slider is not None
+            assert slider.get_attribute("id") == "composer"
+
+            slider, scope = bind(
+                real_menu.replace(
+                    "<textarea id=\"prompt-textarea\"></textarea>",
+                    """
+                    <button data-testid=\"model-switcher-second\" aria-expanded=\"true\"
+                      aria-controls=\"second-menu\">GPT-5.6 Sol</button>
+                    <div id=\"second-menu\" role=\"menu\">
+                      <div role=\"option\" aria-selected=\"true\">GPT-5.6 Sol</div>
+                      <div aria-label=\"Thinking effort\"><div id=\"second\" role=\"slider\"
+                        aria-valuemin=\"0\" aria-valuemax=\"1\" aria-valuenow=\"0\"></div></div>
+                    </div>
+                    <textarea id=\"prompt-textarea\"></textarea>
+                    """,
+                )
+            )
+            assert slider is None
+            assert scope == ""
+        finally:
+            browser.close()
 
 
 def test_chatgpt_menu_reader_discovers_effort_slider_outside_the_open_menu() -> None:
@@ -1150,6 +1344,8 @@ def test_chatgpt_menu_reader_discovers_effort_slider_outside_the_open_menu() -> 
     assert 'document.querySelectorAll(' in source
     assert '[data-model-reasoning-effort-slider] [role="slider"]' in source
     assert "aria-valuetext" in source
+    assert "hasTrustedEffortSemantics" in source
+    assert "menuSliders[0]" not in source
 
 
 def test_chatgpt_highest_available_uses_live_slider_when_menu_omits_effort() -> None:
@@ -1195,11 +1391,13 @@ def test_chatgpt_highest_available_uses_live_slider_when_menu_omits_effort() -> 
             self.slider = _Slider()
 
         def locator(self, selector: str) -> object:
-            if '[role="slider"]' in selector:
+            if '[role="slider"]' in selector or "data-cachelikes-effort-binding" in selector:
                 return self.slider
             return _Empty()
 
         def evaluate(self, _expression: str, *_args: object) -> dict[str, object]:
+            if "expectedScope" in _expression:
+                return {"ok": True, "scope": "composer"}
             return {
                 "ok": True,
                 "current": "GPT-5.6 Sol",
@@ -1224,14 +1422,14 @@ def test_chatgpt_highest_available_uses_live_slider_when_menu_omits_effort() -> 
         lambda _milliseconds: None,
     )
 
-    assert complete is True
+    assert complete is True, updated
     assert page.slider.value == 4
     assert labels == ["Instant", "Medium", "High", "Extra High", "Pro"]
     assert updated["effort_catalog_complete"] is True
     assert "effort_selection_error" not in updated
 
 
-def test_chatgpt_medium_radio_does_not_hide_checked_sol_without_slider() -> None:
+def test_chatgpt_checked_sol_without_slider_fails_closed() -> None:
     class _EmptyLocator:
         def count(self) -> int:
             return 0
@@ -1301,13 +1499,13 @@ def test_chatgpt_medium_radio_does_not_hide_checked_sol_without_slider() -> None
         "chromium",
         DEFAULT_CHATGPT_MODEL,
         observation,
-    ) is True
+    ) is False
     assert observation["observed"] == "GPT-5.6 Sol"
-    assert observation.get("reason") == ""
+    assert observation.get("reason") == "effort-slider-not-found"
     assert observation.get("available") == ["Medium", "GPT-5.6 Sol", "GPT-5.5"]
 
 
-def test_chatgpt_clicks_sol_when_medium_is_the_first_selected_radio() -> None:
+def test_chatgpt_clicks_sol_but_rejects_missing_effort_slider() -> None:
     class _EmptyLocator:
         def count(self) -> int:
             return 0
@@ -1403,13 +1601,13 @@ def test_chatgpt_clicks_sol_when_medium_is_the_first_selected_radio() -> None:
         "chromium",
         DEFAULT_CHATGPT_MODEL,
         observation,
-    ) is True
+    ) is False
     assert page.choice.click_count == 1
     assert observation["observed"] == "GPT-5.6 Sol"
-    assert observation.get("reason") == ""
+    assert observation.get("reason") == "effort-slider-not-found"
 
 
-def test_chromium_model_selector_retries_after_power_control_recycle() -> None:
+def test_chromium_model_selector_retries_but_rejects_missing_effort_slider() -> None:
     class _EmptyLocator:
         def count(self) -> int:
             return 0
@@ -1477,12 +1675,12 @@ def test_chromium_model_selector_retries_after_power_control_recycle() -> None:
     page = _Page()
     observation: dict[str, object] = {}
 
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert page.power.click_count == 2
     assert observation["observed"] == "GPT-5.6 Sol"
 
 
-def test_chromium_model_selector_retries_when_visible_trigger_does_not_open_menu() -> None:
+def test_chromium_model_selector_retries_then_rejects_missing_effort_slider() -> None:
     class _EmptyLocator:
         def count(self) -> int:
             return 0
@@ -1562,7 +1760,7 @@ def test_chromium_model_selector_retries_when_visible_trigger_does_not_open_menu
     page = _Page()
     observation: dict[str, object] = {}
 
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert page.power.click_count == 3
     assert page.menu_reads == 11
     assert 500 in page.waits
@@ -1578,7 +1776,7 @@ def test_chatgpt_model_click_targets_exclude_generic_text_labels() -> None:
     assert "Advanced" not in CHATGPT_MODEL_TRIGGER_LABELS
 
 
-def test_chromium_unlabeled_composer_pill_accepts_sol() -> None:
+def test_chromium_unlabeled_composer_pill_requires_live_effort_slider() -> None:
     class _EmptyLocator:
         def count(self) -> int:
             return 0
@@ -1646,15 +1844,15 @@ def test_chromium_unlabeled_composer_pill_accepts_sol() -> None:
 
     page = _Page()
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert page.power.click_count == 2
     assert observation["observed"] == "GPT-5.6 Sol"
 
 
-def test_chromium_high_is_accepted_when_extra_high_is_not_exposed() -> None:
+def test_chromium_high_without_a_live_effort_slider_fails_closed() -> None:
     page = _chromium_model_page("Medium", current="High")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is True
+    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
     assert observation["observed"] == "GPT-5.6 Sol"
 
 
@@ -5007,7 +5205,7 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
 
     monkeypatch.setattr(computer_use_agent, "_verify_chatgpt_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_chatgpt_model", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(computer_use_agent, "_select_chatgpt_model", _select_verified_chatgpt_model)
     monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
     monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
 
@@ -5118,7 +5316,7 @@ def test_action_loop_records_workspace_and_delete_receipt_provenance(
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
     monkeypatch.setattr(
-        computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True
+        computer_use_agent, "_select_web_model", _select_verified_chatgpt_model
     )
     monkeypatch.setattr(
         computer_use_agent, "_attach_context_file", lambda *_args: False
@@ -5361,7 +5559,8 @@ def test_stop_after_model_verification_never_attaches_or_submits(
     controller = WorkspaceController(workspace, settings, stop_requested.is_set)
     calls = {"attach": 0, "submit": 0}
 
-    def select_model(*_args: object, **_kwargs: object) -> bool:
+    def select_model(*args: object, **kwargs: object) -> bool:
+        _select_verified_chatgpt_model(*args, **kwargs)
         if stop_stage == "model":
             stop_requested.set()
         return True
@@ -5529,7 +5728,7 @@ def test_completed_action_loop_reports_attachment_and_normalizes_conversation_ur
 
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", _select_verified_chatgpt_model)
     monkeypatch.setattr(
         computer_use_agent,
         "_attach_context_file",
@@ -5607,7 +5806,7 @@ def test_final_schema_violation_is_rejected_before_completion_and_recovers(
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
     monkeypatch.setattr(
-        computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True
+        computer_use_agent, "_select_web_model", _select_verified_chatgpt_model
     )
     monkeypatch.setattr(
         computer_use_agent, "_attach_context_file", lambda *_args: False
@@ -5683,7 +5882,7 @@ def test_final_requires_a_successful_run_and_then_current_bodycheck_after_an_edi
 
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", _select_verified_chatgpt_model)
     monkeypatch.setattr(
         computer_use_agent, "_attach_context_file", lambda *_args: False
     )
@@ -5767,7 +5966,7 @@ def test_verification_gate_resets_after_every_edit(
 
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", _select_verified_chatgpt_model)
     monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
     monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
     monkeypatch.setattr(
@@ -10628,6 +10827,7 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
         "project_url",
         "running",
         "run_id",
+        "run_revision",
         "read_only",
         "session_mode",
         "session_title",
@@ -10644,6 +10844,7 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
     assert payload["read_only"] is False
     assert payload["conversation_bound"] is False
     assert payload["chatgpt_effort"] == "highest_available"
+    assert payload["run_revision"] == 1
     assert Path(payload["context_file"]).name == "context.md"
     assert payload["context_bytes"] > 0
     assert snapshot_path.stat().st_mode & 0o777 == 0o600
@@ -10666,6 +10867,7 @@ def test_last_run_persists_only_bounded_metadata_and_recovers_running_as_interru
     assert recovered_snapshot["activity"] == []
     assert recovered_snapshot["context_attached"] is context_attached
     assert recovered_snapshot["conversation_bound"] is False
+    assert recovered_snapshot["run_revision"] == 1
     assert recovered_snapshot["context_file"] == payload["context_file"]
     assert recovered_snapshot["context_bytes"] == payload["context_bytes"]
     recovered_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
@@ -10790,6 +10992,7 @@ def test_snapshot_defaults_are_safe_and_idle() -> None:
     assert snapshot["phase"] == "idle"
     assert not snapshot["running"]
     assert snapshot["engine"] == "computer_use"
+    assert snapshot["run_revision"] == 0
 
 
 def test_read_only_controller_rejects_mutating_actions(tmp_path: Path) -> None:

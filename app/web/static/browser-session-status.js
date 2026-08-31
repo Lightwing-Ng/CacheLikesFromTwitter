@@ -1,7 +1,7 @@
-/* Code version: v1.8.0-codex.1 */
+/* Code version: v1.8.1-codex.1 */
 
 (() => {
-    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v5:";
+    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v6:";
     const SESSION_CACHE_TTL_MS = 300_000;
     const SESSION_STALE_MAX_AGE_MS = 1_800_000;
     const BOOTSTRAPPED_AGENT_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -39,6 +39,23 @@
         } catch (_error) {
             return null;
         }
+    }
+
+    function clientCachedPayload(payload, ageMs) {
+        const source = payload && typeof payload === "object" ? payload : {};
+        const freshness = source.browser_session_freshness
+            && typeof source.browser_session_freshness === "object"
+            ? source.browser_session_freshness
+            : {};
+        return {
+            ...source,
+            browser_session_freshness: {
+                kind: "client_cache",
+                cache_status: String(freshness.cache_status || "client_cache"),
+                cached_at: String(freshness.cached_at || ""),
+                age_seconds: Math.max(0, Math.floor(Number(ageMs || 0) / 1000)),
+            },
+        };
     }
 
     function requestBrowserStatus(platform, browserId, scope, options = {}) {
@@ -190,7 +207,10 @@
                 && !Object.prototype.hasOwnProperty.call(cachedPayload || {}, "agent_sources")
                 && !Object.prototype.hasOwnProperty.call(cachedPayload || {}, "agent_sources_error");
             if (!forceRefresh && cachedStatus && !requiresAgentBootstrap && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
-                setStatus(cachedStatus.payload, activeBrowser);
+                setStatus(
+                    clientCachedPayload(cachedStatus.payload, cachedStatus.ageMs),
+                    activeBrowser,
+                );
                 if (cachedStatus.payload.can_download && cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;
                 setRefreshingState(activeBrowser);
             } else {

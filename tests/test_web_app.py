@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.5-codex.1
+# Code version: v1.88.20-codex.1
 
 from __future__ import annotations
 
@@ -391,7 +391,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.0-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.1-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -491,7 +491,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.90.4-codex.1"
+                expected_style_version = "style-v2.90.7-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -829,9 +829,9 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.0-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.1-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.2-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.14-codex.1', local_body)
         self.assertIn('data-agent-effort-field', local_body)
         self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -963,11 +963,18 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(disallowed_network_response.status_code, 403)
         self.assertEqual(disallowed_host_response.status_code, 403)
         self.assertEqual(loopback_response.status_code, 200)
+        loopback_payload = loopback_response.get_json()
         self.assertEqual(
-            loopback_response.get_json()["available_efforts"],
+            loopback_payload["available_efforts"],
             ["Instant", "Medium", "High", "Extra High", "Pro"],
         )
-        self.assertTrue(loopback_response.get_json()["effort_catalog_complete"])
+        self.assertTrue(loopback_payload["effort_catalog_complete"])
+        self.assertNotIn("cache", loopback_payload)
+        freshness = loopback_payload["browser_session_freshness"]
+        self.assertEqual(freshness["kind"], "live_browser")
+        self.assertEqual(freshness["cache_status"], "miss")
+        self.assertTrue(freshness["cached_at"])
+        self.assertGreaterEqual(freshness["age_seconds"], 0)
         self.assertIn("no-store", loopback_response.headers["Cache-Control"])
         self.assertEqual(loopback_response.headers["Pragma"], "no-cache")
         self.assertEqual(loopback_response.headers["Expires"], "0")
@@ -1001,6 +1008,7 @@ class WebAppTests(unittest.TestCase):
         agent_service = app.extensions["computer_use_agent_service"]
         snapshot = agent_service.snapshot()
         snapshot["response"] = "**Verified** <script>alert('x')</script>"
+        snapshot["run_revision"] = 73
         snapshot["history"] = [
             {
                 "prompt": "Inspect rendering",
@@ -1020,6 +1028,56 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("<strong>History</strong>", history_html)
         self.assertNotIn("<script>", history_html)
         self.assertIn("&lt;script&gt;", history_html)
+        self.assertEqual(payload["agent"]["run_revision"], 73)
+
+    def test_agent_status_isolates_a_foreign_running_snapshot_for_the_requested_route(self) -> None:
+        """Keep the polling API on the same privacy boundary as the rendered Agent page."""
+        app = create_app()
+        agent_service = app.extensions["computer_use_agent_service"]
+        snapshot = agent_service.snapshot()
+        snapshot.update(
+            {
+                "running": True,
+                "phase": "running",
+                "browser": "edge",
+                "platform": "chatgpt",
+                "workspace_path": "/tmp/foreign-agent-workspace",
+                "prompt": "FOREIGN_STATUS_PROMPT_SENTINEL",
+                "response": "FOREIGN_STATUS_RESPONSE_SENTINEL",
+                "last_error": "FOREIGN_STATUS_ERROR_SENTINEL",
+                "activity": [{"label": "FOREIGN_STATUS_ACTIVITY_SENTINEL"}],
+                "history": [{"prompt": "FOREIGN_STATUS_HISTORY_SENTINEL"}],
+                "run_id": "FOREIGN_STATUS_RUN_SENTINEL",
+            }
+        )
+
+        with patch.object(agent_service, "snapshot", return_value=snapshot):
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/agent/status",
+                    headers={
+                        "X-CacheLikes-Agent-Browser": "edge",
+                        "X-CacheLikes-Agent-Platform": "chatgpt",
+                        "X-CacheLikes-Agent-Workspace": "/tmp/current-agent-workspace",
+                    },
+                )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        rendered = json.dumps(payload, sort_keys=True)
+        for sentinel in (
+            "FOREIGN_STATUS_PROMPT_SENTINEL",
+            "FOREIGN_STATUS_RESPONSE_SENTINEL",
+            "FOREIGN_STATUS_ERROR_SENTINEL",
+            "FOREIGN_STATUS_ACTIVITY_SENTINEL",
+            "FOREIGN_STATUS_HISTORY_SENTINEL",
+            "FOREIGN_STATUS_RUN_SENTINEL",
+            "/tmp/foreign-agent-workspace",
+        ):
+            self.assertNotIn(sentinel, rendered)
+        self.assertTrue(payload["agent"]["running"])
+        self.assertEqual(payload["agent"]["phase"], "running")
+        self.assertIn("another project", payload["agent"]["message"])
 
     def test_agent_page_renders_error_traceback_in_a_collapsible_record(self) -> None:
         app = create_app()
@@ -1032,7 +1090,9 @@ class WebAppTests(unittest.TestCase):
                 "message": "The selected provider tab navigated away from the newly created session.",
                 "phase": "failed",
                 "platform": "chatgpt",
+                "prompt": "RETRY_PROMPT_SENTINEL",
                 "browser": "edge",
+                "workspace_path": app.extensions["computer_use_settings"].settings.workspace_path,
             }
         )
 
@@ -1045,10 +1105,15 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-error-record-content', body)
         self.assertIn("Traceback (most recent call last):", body)
         self.assertIn("RuntimeError: &lt;unsafe&gt;", body)
+        self.assertIn(
+            'data-agent-prompt-input required>RETRY_PROMPT_SENTINEL</textarea>',
+            body,
+        )
 
-    def test_agent_page_isolates_completed_snapshots_by_provider_and_browser(self) -> None:
+    def test_agent_page_isolates_completed_snapshots_by_route_and_workspace(self) -> None:
         app = create_app()
         agent_service = app.extensions["computer_use_agent_service"]
+        current_workspace = app.extensions["computer_use_settings"].settings.workspace_path
         snapshot = agent_service.snapshot()
         snapshot.update(
             {
@@ -1072,7 +1137,11 @@ class WebAppTests(unittest.TestCase):
                 "platform": "chatgpt",
                 "prompt": "STALE_PROMPT_SENTINEL",
                 "response": "STALE_RESPONSE_SENTINEL",
+                "last_error": "STALE_ERROR_SENTINEL",
+                "error_traceback": "STALE_TRACEBACK_SENTINEL",
+                "run_revision": 73,
                 "running": False,
+                "workspace_path": current_workspace,
             }
         )
 
@@ -1081,9 +1150,32 @@ class WebAppTests(unittest.TestCase):
                 matching_body = client.get("/agent/edge/chatgpt").get_data(as_text=True)
                 provider_mismatch = client.get("/agent/edge/grok").get_data(as_text=True)
                 browser_mismatch = client.get("/agent/chrome/chatgpt").get_data(as_text=True)
+                workspace_mismatch = dict(snapshot)
+                workspace_mismatch["workspace_path"] = "/tmp/other-agent-workspace"
+                with patch.object(agent_service, "snapshot", return_value=workspace_mismatch):
+                    wrong_workspace_body = client.get("/agent/edge/chatgpt").get_data(as_text=True)
 
         self.assertIn("STALE_HISTORY_RESPONSE_SENTINEL", matching_body)
-        for body in (provider_mismatch, browser_mismatch):
+        self.assertIn('data-agent-running="false"', matching_body)
+        self.assertIn('data-agent-run-revision="73"', matching_body)
+        self.assertIn(
+            'data-agent-response-question>STALE_HISTORY_PROMPT_SENTINEL</h3>',
+            matching_body,
+        )
+        self.assertIn('id="agent_activity_panel"', matching_body)
+        self.assertNotIn(
+            '<details class="agent-activity-panel" id="agent_activity_panel" open>',
+            matching_body,
+        )
+        self.assertIn(
+            'data-agent-prompt-input required></textarea>',
+            matching_body,
+        )
+        self.assertNotIn(
+            'data-agent-prompt-input required>STALE_PROMPT_SENTINEL</textarea>',
+            matching_body,
+        )
+        for body in (provider_mismatch, browser_mismatch, wrong_workspace_body):
             with self.subTest(route_body=body[:80]):
                 self.assertNotIn("STALE_ACTIVITY_SENTINEL", body)
                 self.assertNotIn("STALE_HISTORY_PROMPT_SENTINEL", body)
@@ -1091,12 +1183,85 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn("STALE_MESSAGE_SENTINEL", body)
                 self.assertNotIn("STALE_PROMPT_SENTINEL", body)
                 self.assertNotIn("STALE_RESPONSE_SENTINEL", body)
+                self.assertNotIn("STALE_ERROR_SENTINEL", body)
+                self.assertNotIn("STALE_TRACEBACK_SENTINEL", body)
                 self.assertNotIn('id="agent_phase_chip"', body)
                 self.assertNotIn('class="agent-readiness"', body)
                 self.assertIn(
                     'data-agent-prompt-input required></textarea>',
                     body,
                 )
+                self.assertIn('data-agent-run-revision="0"', body)
+
+    def test_agent_page_isolates_foreign_running_snapshot_but_keeps_stop_control(self) -> None:
+        """Do not render another project's task data while preserving its stop affordance."""
+        app = create_app()
+        agent_service = app.extensions["computer_use_agent_service"]
+        snapshot = agent_service.snapshot()
+        snapshot.update(
+            {
+                "activity": [
+                    {
+                        "status": "running",
+                        "label": "FOREIGN_ACTIVITY_SENTINEL",
+                        "detail": "FOREIGN_ACTIVITY_DETAIL_SENTINEL",
+                        "meta": "FOREIGN_ACTIVITY_META_SENTINEL",
+                    }
+                ],
+                "browser": "edge",
+                "error_traceback": "FOREIGN_TRACEBACK_SENTINEL",
+                "history": [
+                    {
+                        "prompt": "FOREIGN_HISTORY_PROMPT_SENTINEL",
+                        "response": "FOREIGN_HISTORY_RESPONSE_SENTINEL",
+                    }
+                ],
+                "last_error": "FOREIGN_ERROR_SENTINEL",
+                "message": "FOREIGN_MESSAGE_SENTINEL",
+                "phase": "running",
+                "platform": "chatgpt",
+                "prompt": "FOREIGN_PROMPT_SENTINEL",
+                "response": "FOREIGN_RESPONSE_SENTINEL",
+                "run_id": "FOREIGN_RUN_ID_SENTINEL",
+                "run_revision": 88,
+                "running": True,
+                "workspace_path": "/tmp/FOREIGN_WORKSPACE_PATH_SENTINEL",
+            }
+        )
+
+        with patch.object(agent_service, "snapshot", return_value=snapshot):
+            with app.test_client() as client:
+                body = client.get("/agent/edge/chatgpt").get_data(as_text=True)
+
+        self.assertIn('data-agent-running="true"', body)
+        self.assertIn('data-agent-action="stop"', body)
+        self.assertIn('aria-label="Stop Agent task"', body)
+        self.assertIn(
+            "An Agent task is running in another project. Stop remains available here.",
+            body,
+        )
+        self.assertIn('data-agent-prompt-input required></textarea>', body)
+        self.assertRegex(
+            body,
+            r'<details class="agent-activity-panel" id="agent_activity_panel"[^>]*\bhidden\b',
+        )
+        self.assertIn('<details class="agent-error-record" id="agent_error_record" hidden>', body)
+        for sentinel in (
+            "FOREIGN_ACTIVITY_SENTINEL",
+            "FOREIGN_ACTIVITY_DETAIL_SENTINEL",
+            "FOREIGN_ACTIVITY_META_SENTINEL",
+            "FOREIGN_ERROR_SENTINEL",
+            "FOREIGN_HISTORY_PROMPT_SENTINEL",
+            "FOREIGN_HISTORY_RESPONSE_SENTINEL",
+            "FOREIGN_MESSAGE_SENTINEL",
+            "FOREIGN_PROMPT_SENTINEL",
+            "FOREIGN_RESPONSE_SENTINEL",
+            "FOREIGN_RUN_ID_SENTINEL",
+            "FOREIGN_TRACEBACK_SENTINEL",
+            "FOREIGN_WORKSPACE_PATH_SENTINEL",
+        ):
+            with self.subTest(sentinel=sentinel):
+                self.assertNotIn(sentinel, body)
 
     def test_agent_project_picker_uses_the_shared_directory_route(self) -> None:
         selected_path = Path("/tmp/Selected Agent Project")
@@ -1233,6 +1398,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('elements.modelInput.value = selectedModel()', script)
         self.assertIn('elements.effortInput.value = selectedChatgptEffort()', script)
         self.assertIn('chatgpt_effort: selectedChatgptEffort()', script)
+        self.assertIn('"X-CacheLikes-Agent-Browser": selectedBrowser()', script)
+        self.assertIn('"X-CacheLikes-Agent-Platform": selectedPlatform()', script)
+        self.assertIn('"X-CacheLikes-Agent-Workspace": String(elements.workspacePath?.value || "")', script)
         self.assertIn('syncModelOptionsForPlatform()', script)
         self.assertIn('syncChatgptEffortOptions(agent)', script)
         self.assertIn('lastBrowserStatus?.effort_catalog_complete', script)
@@ -1306,7 +1474,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.27.2-codex.1',
+            'computer-use-agent-v3.27.14-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'data-agent-direct-list="true"',
@@ -1326,6 +1494,18 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('syncComboboxTriggerFromOption(combobox, option)', script)
         self.assertIn('const isDirectList = combobox.dataset.agentDirectList === "true"', script)
         self.assertIn("selectedOption?.dataset.agentComboboxLabel", script)
+        self.assertIn(
+            'lastBrowserStatus?.browser_session_freshness?.kind === "live_browser"',
+            script,
+        )
+        self.assertIn(
+            'const workspacePath = String(agent?.workspace_path || "").trim();',
+            script,
+        )
+        self.assertIn(
+            'const selectedWorkspacePath = String(elements.workspacePath?.value || "").trim();',
+            script,
+        )
         self.assertNotIn('data-agent-session-platforms="chatgpt"', body)
         self.assertNotIn('class="agent-readiness"', body)
         self.assertNotIn('id="agent_readiness_message"', body)
@@ -1627,22 +1807,49 @@ class WebAppTests(unittest.TestCase):
                             )
 
                 self.assertEqual(first_response.status_code, 200)
+                first_payload = first_response.get_json()
                 self.assertEqual(
-                    first_response.get_json()["agent_sources"]["recent_sessions"],
+                    first_payload["agent_sources"]["recent_sessions"],
                     [{"id": f"{platform}-first"}],
                 )
-                self.assertNotIn("cache", first_response.get_json())
-                self.assertEqual(cached_response.status_code, 200)
-                self.assertEqual(cached_response.get_json()["message"], "Ready")
+                self.assertNotIn("cache", first_payload)
                 self.assertEqual(
-                    cached_response.get_json()["agent_sources"]["recent_sessions"],
+                    first_payload["browser_session_freshness"]["kind"],
+                    "live_browser",
+                )
+                self.assertEqual(
+                    first_payload["browser_session_freshness"]["cache_status"],
+                    "miss",
+                )
+                self.assertEqual(cached_response.status_code, 200)
+                cached_payload = cached_response.get_json()
+                self.assertEqual(cached_payload["message"], "Ready")
+                self.assertEqual(
+                    cached_payload["agent_sources"]["recent_sessions"],
                     [{"id": f"{platform}-first"}],
+                )
+                self.assertEqual(
+                    cached_payload["browser_session_freshness"]["kind"],
+                    "server_cache",
+                )
+                self.assertEqual(
+                    cached_payload["browser_session_freshness"]["cache_status"],
+                    "hit",
                 )
                 self.assertEqual(refreshed_response.status_code, 200)
-                self.assertEqual(refreshed_response.get_json()["message"], "Refreshed")
+                refreshed_payload = refreshed_response.get_json()
+                self.assertEqual(refreshed_payload["message"], "Refreshed")
                 self.assertEqual(
-                    refreshed_response.get_json()["agent_sources"]["recent_sessions"],
+                    refreshed_payload["agent_sources"]["recent_sessions"],
                     [{"id": f"{platform}-refreshed"}],
+                )
+                self.assertEqual(
+                    refreshed_payload["browser_session_freshness"]["kind"],
+                    "live_browser",
+                )
+                self.assertEqual(
+                    refreshed_payload["browser_session_freshness"]["cache_status"],
+                    "refreshed",
                 )
                 self.assertEqual(catalog_response.status_code, 200)
                 self.assertEqual(
@@ -1840,14 +2047,38 @@ class WebAppTests(unittest.TestCase):
             'trigger.disabled = !sessionSourceChoice',
             'event.key !== "Enter" || event.shiftKey || event.isComposing',
             "promptForm.requestSubmit()",
-            "renderActivity(agent.activity, running)",
+            "renderActivity(agent.activity, running, shouldCollapseActivity)",
+            "function clearCompletedPromptIfUnchanged(agent, shouldClear)",
+            'const completedPrompt = String(agent?.prompt || "");',
+            "elements.promptInput.value !== completedPrompt",
+            "let promptHasLocalDraft = false;",
+            "let promptSubmissionPending = false;",
+            "let pendingSubmissionPreviousRunIdentity = \"\";",
+            "let pendingSubmissionPreviousRunRevision = 0;",
+            "let pendingSubmissionPreviousRunStartedAt = \"\";",
+            "function agentRunIdentity(agent)",
+            "function agentRunRevision(agent)",
+            "function agentRunStartedAt(agent)",
+            "function runSupersedes(",
+            "previousRevision,",
+            'const hasPersistedAgent = Object.prototype.hasOwnProperty.call(nextPayload, "agent");',
+            "if (incomingRunIsStale) return;\n        lastPayload = {...nextPayload, agent};",
+            "function render(payload, {fromAsk = false} = {})",
+            "const incomingRunIsStale = Boolean(lastRenderedAgentRunIdentity)",
+            "const acknowledgedNewRun = fromAsk",
+            "const pendingRunConfirmed = promptSubmissionPending",
+            "const shouldCollapseActivity = finishedTransition;",
+            'render(response, {fromAsk: url === "/api/agent/ask"});',
+            "if (promptHasLocalDraft) return;",
+            "elements.activityPanel.open = false;",
+            "const finishedTransition = completedTransition",
             "function renderErrorRecord(agent)",
             "errorRecordContent.textContent = errorText",
             "elements.errorRecord.hidden = !errorText",
             "renderAgentResponse(agent)",
             "renderTerminalExecution(lastPayload.runtime)",
             "function readinessState(payload)",
-            "const readiness = readinessState(lastPayload);",
+            "const readiness = readinessState(nextPayload);",
             "const message = sessionMessage",
             'elements.responseAnswer.innerHTML = entry?.response_html || ""',
             "buildAgentPaginationItems(totalPages, responseHistoryPage)",
@@ -1860,8 +2091,10 @@ class WebAppTests(unittest.TestCase):
             "paginationMotion?.capturePaginationAnimation(",
             "bindCompletedAgentSession(agent, completedTransition)",
             "function agentSnapshotMatchesSelection(agent)",
-            "const persistedAgent = lastPayload.agent || {};",
-            "running || agentSnapshotMatchesSelection(persistedAgent)",
+            "const persistedAgent = nextPayload.agent || {};",
+            "const selectionMatchesAgent = agentSnapshotMatchesSelection(persistedAgent);",
+            "const agent = selectionMatchesAgent",
+            "isolatedForeignRunningAgent(persistedAgent)",
             "function applyAgentSources(payload)",
             "lastBrowserStatus?.agent_sources",
             "lastBrowserStatus?.agent_sources_error",
@@ -2245,7 +2478,9 @@ class WebAppTests(unittest.TestCase):
             'requestBrowserStatus(requestPlatform, activeBrowser, scope, {refresh: forceRefresh})',
             'let statusRequestRevision = 0;',
             'requestRevision !== statusRequestRevision',
-            'setStatus(cachedStatus.payload, activeBrowser);',
+            'function clientCachedPayload(payload, ageMs)',
+            'kind: "client_cache",',
+            'clientCachedPayload(cachedStatus.payload, cachedStatus.ageMs),',
             'if (cachedStatus.payload.can_download && cachedStatus.ageMs < SESSION_CACHE_TTL_MS) return;',
             'setRefreshingState(activeBrowser);',
             'return load(activeBrowser, {force: true});',
@@ -2535,7 +2770,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.90.4-codex.1", body)
+            self.assertIn("style-v2.90.7-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

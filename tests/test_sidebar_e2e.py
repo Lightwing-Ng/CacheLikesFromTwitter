@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.6-codex.1
+Code version: v1.26.17-codex.1
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from app.core.computer_use_agent import (
     _provider_turn_snapshot,
     _select_web_model,
     _submit_chromium_web_prompt,
+    load_computer_use_settings,
     parse_agent_action,
 )
 from app.core.gemini_downloader import inspect_gemini_session
@@ -891,6 +892,78 @@ def test_style_tokens_component_catalog_is_interactive_and_responsive(
 
 @pytest.mark.integration
 @pytest.mark.slow
+def test_shared_segmented_controls_shrink_wrap_and_center(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep every Cache reuse of the shared blue pill compact and centered."""
+    cases = (
+        (
+            "/settings/style-tokens",
+            "#segmented-control .range-mode-shell",
+            ".style-token-demo",
+        ),
+        (
+            "/browser?view=text&session_view=1&q=&source=chatgpt&sort=newest",
+            ".browser-content-mode-control",
+            "#browser_filter_form",
+        ),
+        (
+            "/cache/chatgpt",
+            "[data-cache-content-mode]",
+            ".cache-page-content-mode-section",
+        ),
+    )
+    for width, height, touch in ((1_280, 900, False), (390, 844, True)):
+        page, context = _open_page(
+            disposable_browser,
+            f"{sidebar_server_url}{cases[0][0]}",
+            width,
+            height,
+            touch=touch,
+        )
+        try:
+            for route, control_selector, owner_selector in cases:
+                page.goto(f"{sidebar_server_url}{route}", wait_until="domcontentloaded")
+                geometry = page.evaluate(
+                    """({controlSelector, ownerSelector}) => {
+                        const control = document.querySelector(controlSelector);
+                        const owner = control?.closest(ownerSelector);
+                        if (!(control instanceof HTMLElement) || !(owner instanceof HTMLElement)) {
+                            return null;
+                        }
+                        const controlRect = control.getBoundingClientRect();
+                        const ownerRect = owner.getBoundingClientRect();
+                        const optionWidths = Array.from(
+                            control.querySelectorAll('.segmented-control-option, .range-mode-option'),
+                        ).map(option => option.getBoundingClientRect().width);
+                        return {
+                            centerDelta: Math.abs(
+                                (controlRect.left + (controlRect.width / 2))
+                                - (ownerRect.left + (ownerRect.width / 2)),
+                            ),
+                            compact: controlRect.width < ownerRect.width - 1,
+                            horizontalOverflow: document.documentElement.scrollWidth
+                                - document.documentElement.clientWidth,
+                            optionWidths,
+                        };
+                    }""",
+                    {"controlSelector": control_selector, "ownerSelector": owner_selector},
+                )
+                assert geometry is not None, (width, route)
+                assert geometry["compact"], (width, route, geometry)
+                assert geometry["centerDelta"] <= 1, (width, route, geometry)
+                assert len(geometry["optionWidths"]) > 1, (width, route, geometry)
+                assert (
+                    max(geometry["optionWidths"]) - min(geometry["optionWidths"])
+                ) <= 1, (width, route, geometry)
+                assert geometry["horizontalOverflow"] <= 1, (width, route, geometry)
+        finally:
+            context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.parametrize("page_source", ("chatgpt", "gemini", "grok", "x"))
 def test_cache_source_switcher_click_matrix_stays_within_expected_destinations(
     disposable_browser: Browser,
@@ -1158,6 +1231,10 @@ def test_agent_prompt_composer_stays_compact_until_expanded(
         )
         assert control_heights == {"model": 32, "effort": 32}
 
+        effort_label = page.locator(".agent-effort-trigger-label")
+        expect(effort_label).to_have_count(1)
+        assert effort_label.evaluate("element => getComputedStyle(element).fontSize") == "15px"
+
         effort = page.locator(".agent-effort-trigger")
         effort_menu = page.locator(".agent-effort-dropdown")
         effort.click()
@@ -1220,6 +1297,123 @@ def test_agent_prompt_composer_stays_compact_until_expanded(
         expect(toggle).to_have_attribute("aria-expanded", "false")
         final_height = prompt.evaluate("element => element.clientHeight")
         assert final_height == compact["height"]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("width", "height", "touch"),
+    ((1_008, 1_085, False), (390, 844, True), (320, 844, True)),
+)
+def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    width: int,
+    height: int,
+    touch: bool,
+) -> None:
+    """Keep the visible ChatGPT effort selector clear without widening other providers."""
+    catalog_payload = _chatgpt_catalog_sessions()
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": catalog_payload,
+    }
+    context = disposable_browser.new_context(
+        viewport={"width": width, "height": height},
+        has_touch=touch,
+        is_mobile=touch,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route(
+        "**/api/agent/status",
+        lambda route: route.fulfill(json=_finished_chatgpt_agent_payload()),
+    )
+    page.route(
+        "**/api/browser-session**",
+        lambda route: route.fulfill(json=browser_status),
+    )
+    page.route(
+        "**/api/agent/sources**",
+        lambda route: route.fulfill(json=catalog_payload),
+    )
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        effort = page.locator(".agent-effort-trigger")
+        model = page.locator(".agent-model-trigger")
+        submit = page.locator("#agent_ask_button")
+        expect(effort).to_be_visible()
+        expect(model).to_be_visible()
+        expect(submit).to_be_visible()
+        geometry = page.evaluate(
+            """() => {
+                const rect = selector => {
+                    const element = document.querySelector(selector);
+                    const value = element?.getBoundingClientRect();
+                    return value && {
+                        left: value.left,
+                        right: value.right,
+                        top: value.top,
+                        bottom: value.bottom,
+                        height: value.height,
+                    };
+                };
+                const label = document.querySelector('.agent-effort-trigger-label');
+                const labelRect = label?.getBoundingClientRect();
+                const labelStyle = label && getComputedStyle(label);
+                return {
+                    effort: rect('.agent-effort-trigger'),
+                    model: rect('.agent-model-trigger'),
+                    submit: rect('#agent_ask_button'),
+                    labelFontSize: labelStyle?.fontSize,
+                    labelLineHeight: labelStyle?.lineHeight,
+                    labelWhiteSpace: labelStyle?.whiteSpace,
+                    labelHeight: labelRect?.height,
+                    horizontalOverflow: Math.max(
+                        document.documentElement.scrollWidth,
+                        document.body.scrollWidth,
+                    ) - document.documentElement.clientWidth,
+                };
+            }"""
+        )
+        assert geometry["labelFontSize"] == "15px"
+        assert geometry["labelWhiteSpace"] == "nowrap"
+        assert geometry["labelHeight"] <= float(geometry["labelLineHeight"][:-2]) + 1
+        assert geometry["effort"]["height"] == 32
+        assert geometry["model"]["height"] == 32
+        assert geometry["submit"]["height"] == 32
+        assert geometry["horizontalOverflow"] <= 1
+        if width <= 560:
+            assert geometry["model"]["bottom"] <= geometry["effort"]["top"]
+            assert geometry["effort"]["right"] <= geometry["submit"]["left"]
+            non_chatgpt = page.evaluate(
+                """() => {
+                    const effortField = document.querySelector('[data-agent-effort-field]');
+                    const footer = document.querySelector('.agent-composer-footer');
+                    const model = document.querySelector('.agent-model-trigger');
+                    const submit = document.querySelector('#agent_ask_button');
+                    if (!(effortField instanceof HTMLElement)) return null;
+                    effortField.hidden = true;
+                    return {
+                        footerDisplay: getComputedStyle(footer).display,
+                        modelTop: model.getBoundingClientRect().top,
+                        submitTop: submit.getBoundingClientRect().top,
+                    };
+                }"""
+            )
+            assert non_chatgpt is not None
+            assert non_chatgpt["footerDisplay"] == "flex"
+            assert abs(non_chatgpt["modelTop"] - non_chatgpt["submitTop"]) <= 1
+        else:
+            assert abs(geometry["model"]["top"] - geometry["effort"]["top"]) <= 1
     finally:
         context.close()
 
@@ -2256,7 +2450,8 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
         assert scroll_metrics["scrollbarWidth"] == "none"
         assert scroll_metrics["scrollbarGutter"] == "auto"
         assert scroll_metrics["renderedDockGap"] is not None
-        assert abs(scroll_metrics["renderedDockGap"] - scroll_metrics["dockGap"]) <= 1
+        # Short catalogs may shrink-wrap, so require the Dock clearance as a minimum.
+        assert scroll_metrics["renderedDockGap"] >= scroll_metrics["dockGap"] - 1
         expect(recent_option).to_be_visible()
         recent_option.click()
 
@@ -2344,10 +2539,16 @@ def test_chatgpt_edge_recent_sessions_are_a_direct_scrollable_keyboard_list(
                 if (!(menu instanceof HTMLElement) || !(dock instanceof HTMLElement)) return false;
                 const menuBox = menu.getBoundingClientRect();
                 const dockBox = dock.getBoundingClientRect();
+                const style = getComputedStyle(menu);
+                const dockGap = Number.parseFloat(
+                    style.getPropertyValue('--agent-session-list-dock-gap'),
+                ) || 0;
                 return menuBox.width > 0
                     && menuBox.height > 0
                     && dockBox.width > 0
                     && dockBox.height > 0
+                    && menuBox.bottom <= dockBox.top + 1
+                    && dockBox.top - menuBox.bottom >= dockGap - 1
                     && Number.parseFloat(
                         menu.style.getPropertyValue('--agent-session-list-menu-available-height'),
                     ) > 0;
@@ -2882,6 +3083,7 @@ def _finished_chatgpt_agent_payload() -> dict[str, object]:
             "session_mode": "recent",
             "platform": "chatgpt",
             "browser": "edge",
+            "workspace_path": load_computer_use_settings().workspace_path,
             "model": "gpt-5.6-sol",
             "model_verified": True,
             "actual_model": "GPT-5.6 Sol",
@@ -5106,6 +5308,270 @@ def test_incomplete_chatgpt_effort_catalog_hides_stale_snapshot_options(
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.parametrize(
+    ("freshness_kind", "expect_provider_options"),
+    (
+        ("server_cache", False),
+        ("stale_cache", False),
+        ("unknown", False),
+        ("live_browser", True),
+    ),
+)
+def test_complete_chatgpt_effort_catalog_requires_live_browser_provenance(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    freshness_kind: str,
+    expect_provider_options: bool,
+) -> None:
+    """Expose provider labels only for the current browser probe, never its cache."""
+    agent_payload = _finished_chatgpt_agent_payload()
+    agent_payload["agent"].update(
+        {
+            "available_efforts": ["Saved snapshot label"],
+            "thinking_effort": "Saved snapshot label",
+        }
+    )
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": _chatgpt_catalog_sessions(),
+        "available_efforts": ["Live first", "Live maximum"],
+        "thinking_effort": "Live maximum",
+        "effort_catalog_complete": True,
+        "browser_session_freshness": {
+            "kind": freshness_kind,
+            "cache_status": "refreshed" if freshness_kind == "live_browser" else "hit",
+            "cached_at": "2026-08-31T00:00:00Z",
+            "age_seconds": 0 if freshness_kind == "live_browser" else 30,
+        },
+    }
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=agent_payload))
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        effort_options = page.locator(
+            ".agent-effort-dropdown [data-agent-combobox-option]"
+        )
+        expected_values = (
+            ["highest_available", "Live first", "Live maximum"]
+            if expect_provider_options
+            else ["highest_available"]
+        )
+        expect(effort_options).to_have_count(len(expected_values))
+        assert effort_options.evaluate_all(
+            "options => options.map((option) => option.dataset.agentComboboxOption)"
+        ) == expected_values
+        assert "Saved snapshot label" not in effort_options.all_text_contents()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_client_cached_chatgpt_effort_catalog_stays_policy_only_until_explicit_refresh(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """A client cache stays policy-only until one user-requested live refresh."""
+    browser_status_requests: list[str] = []
+    cached_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Cached but formerly live ChatGPT status.",
+        "agent_sources": _chatgpt_catalog_sessions(),
+        "available_efforts": ["Old live maximum"],
+        "thinking_effort": "Old live maximum",
+        "effort_catalog_complete": True,
+        "browser_session_freshness": {
+            "kind": "live_browser",
+            "cache_status": "refreshed",
+            "cached_at": "2026-08-31T00:00:00Z",
+            "age_seconds": 0,
+        },
+    }
+    refreshed_status = {
+        **cached_status,
+        "message": "Fresh ChatGPT effort catalog.",
+        "available_efforts": ["Fresh first", "Fresh maximum"],
+        "thinking_effort": "Fresh maximum",
+        "browser_session_freshness": {
+            "kind": "live_browser",
+            "cache_status": "refreshed",
+            "cached_at": "2026-08-31T00:00:01Z",
+            "age_seconds": 0,
+        },
+    }
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    cache_key = "cachelikes:browser-session:v6:agent:chatgpt:edge"
+    page.add_init_script(
+        f"sessionStorage.setItem({json.dumps(cache_key)}, JSON.stringify({{"
+        f"cached_at: Date.now(), payload: {json.dumps(cached_status)}}}));"
+    )
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=_finished_chatgpt_agent_payload()))
+    def fulfill_browser_status(route) -> None:
+        browser_status_requests.append(route.request.url)
+        assert "refresh=1" in route.request.url
+        route.fulfill(json=refreshed_status)
+
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        effort_options = page.locator(
+            ".agent-effort-dropdown [data-agent-combobox-option]"
+        )
+        expect(effort_options).to_have_count(1)
+        expect(effort_options).to_have_attribute(
+            "data-agent-combobox-option", "highest_available"
+        )
+        assert browser_status_requests == []
+
+        with page.expect_request(
+            lambda request: "/api/browser-session" in request.url
+            and "refresh=1" in request.url,
+        ):
+            page.locator("[data-agent-effort-refresh]").click()
+        expect(effort_options).to_have_count(3)
+        assert effort_options.evaluate_all(
+            "options => options.map((option) => option.dataset.agentComboboxOption)"
+        ) == ["highest_available", "Fresh first", "Fresh maximum"]
+        assert len(browser_status_requests) == 1
+        assert "refresh=1" in browser_status_requests[0]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_foreign_running_agent_poll_keeps_only_neutral_stop_state(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """A later global running snapshot cannot leak another project's task data."""
+    foreign_workspace = "/tmp/foreign-agent-workspace"
+    sentinels = (
+        "FOREIGN_AGENT_PROMPT_SENTINEL",
+        "FOREIGN_AGENT_RESPONSE_SENTINEL",
+        "FOREIGN_AGENT_ERROR_SENTINEL",
+        "FOREIGN_AGENT_ACTIVITY_SENTINEL",
+        foreign_workspace,
+    )
+    payload = _finished_chatgpt_agent_payload()
+    payload["agent"] = {
+        **payload["agent"],
+        "running": True,
+        "paused": False,
+        "phase": "running",
+        "workspace_path": foreign_workspace,
+        "prompt": sentinels[0],
+        "response": sentinels[1],
+        "response_html": f"<p>{sentinels[1]}</p>",
+        "last_error": sentinels[2],
+        "error_traceback": sentinels[2],
+        "activity": [
+            {
+                "status": "running",
+                "label": "Read",
+                "detail": sentinels[3],
+                "meta": "Turn 1",
+            }
+        ],
+        "history": [
+            {
+                "prompt": sentinels[0],
+                "response": sentinels[1],
+                "response_html": f"<p>{sentinels[1]}</p>",
+            }
+        ],
+        "message": "FOREIGN_AGENT_MESSAGE_SENTINEL",
+        "conversation_url": "https://chatgpt.com/c/foreign-agent-sentinel",
+    }
+    status_requests = 0
+
+    def fulfill_agent_status(route) -> None:
+        nonlocal status_requests
+        status_requests += 1
+        route.fulfill(json=payload)
+
+    def fulfill_browser_status(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "chatgpt",
+                "browser": "edge",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "ChatGPT account",
+                "message": "Edge is ready for ChatGPT Web.",
+            }
+        )
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').some((entry) =>
+                String(entry.name || '').includes('/api/agent/status')
+            )"""
+        )
+        assert status_requests >= 1
+        expect(page.locator("#agent_ask_button")).to_have_attribute(
+            "data-agent-action", "stop"
+        )
+        expect(page.locator("#agent_ask_button")).to_have_attribute(
+            "aria-label", "Stop Agent task"
+        )
+        expect(page.locator("#agent_response_status")).to_have_attribute(
+            "data-status", "running"
+        )
+        expect(page.locator("#agent_response_status")).to_contain_text(
+            "An Agent task is running in another project."
+        )
+        expect(page.locator("#agent_response_output")).to_be_hidden()
+        expect(page.locator("#agent_activity_panel")).to_be_hidden()
+        expect(page.locator("#agent_error_record")).to_be_hidden()
+        expect(page.locator("[data-agent-workspace-input]")).not_to_have_value(
+            foreign_workspace
+        )
+        body_text = page.locator("body").inner_text()
+        for sentinel in sentinels:
+            assert sentinel not in body_text
+        assert "FOREIGN_AGENT_MESSAGE_SENTINEL" not in body_text
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
 def test_agent_response_copy_uses_raw_history_text_and_the_global_action_rail(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -5279,7 +5745,7 @@ def test_agent_browser_status_retries_a_fresh_negative_cache_and_force_refreshes
         reduced_motion="reduce",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v5:agent:gemini:edge"
+    cache_key = "cachelikes:browser-session:v6:agent:gemini:edge"
     page.add_init_script(
         f"sessionStorage.setItem({json.dumps(cache_key)}, JSON.stringify({{"
         f"cached_at: Date.now(), payload: {json.dumps(negative_status)}}}));"
@@ -5373,7 +5839,7 @@ def test_agent_bootstrap_replaces_ready_cache_without_catalog(
         reduced_motion="reduce",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v5:agent:chatgpt:edge"
+    cache_key = "cachelikes:browser-session:v6:agent:chatgpt:edge"
     cached_status = {
         "platform": "chatgpt",
         "browser": "edge",
@@ -5460,7 +5926,7 @@ def test_fresh_grok_bootstrap_supersedes_a_stale_cached_catalog_error(
         reduced_motion="reduce",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v5:agent:grok:edge"
+    cache_key = "cachelikes:browser-session:v6:agent:grok:edge"
     cache_entry = json.dumps(
         {"cached_at": 0, "payload": stale_status},
         ensure_ascii=False,
@@ -5658,6 +6124,661 @@ def test_observed_agent_completion_refreshes_sources_exactly_once(
         expect(response_status).to_have_attribute("data-status", "finished")
         expect(response_status).to_contain_text("Finished")
         expect(response_status_spinner).to_be_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_successful_agent_completion_collapses_activity_without_erasing_a_new_draft(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep completed tool turns available on demand while returning focus to the answer."""
+    completed_prompt = " ".join(
+        [
+            "Review the Agent implementation and report the completed verification.",
+            "Preserve the exact source evidence, current tests, and known limitations.",
+        ]
+        * 12
+    )
+    activity = [
+        {
+            "status": "complete",
+            "label": ("Read", "Replace", "Run")[(turn - 1) % 3],
+            "detail": f"tests/e2e/critical-flows-{turn}.spec.mjs",
+            "meta": f"Turn {turn}",
+        }
+        for turn in range(1, 70)
+    ]
+    finished_payload = _finished_chatgpt_agent_payload()
+    finished_agent = {
+        **finished_payload["agent"],
+        "run_id": "run-hydrated-finished",
+        "run_revision": 7,
+        "prompt": completed_prompt,
+        "response": "Completed Agent answer.",
+        "response_html": "<p>Completed Agent answer.</p>",
+        "history": [
+            {
+                "prompt": completed_prompt,
+                "response": "Completed Agent answer.",
+                "response_html": "<p>Completed Agent answer.</p>",
+            }
+        ],
+        "activity": activity,
+    }
+    finished_payload["agent"] = finished_agent
+    running_payload = {
+        **finished_payload,
+        "agent": {
+            **finished_agent,
+            "running": True,
+            "phase": "running",
+            "finished_at": "",
+            "conversation_url": "",
+        },
+    }
+    catalog_payload = _chatgpt_catalog_sessions()
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": catalog_payload,
+    }
+    status_requests = 0
+
+    def fulfill_agent_status(route) -> None:
+        nonlocal status_requests
+        status_requests += 1
+        route.fulfill(json=running_payload if status_requests == 1 else finished_payload)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_008, "height": 1_085},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route(
+        "**/api/browser-session**",
+        lambda route: route.fulfill(json=browser_status),
+    )
+    page.route(
+        "**/api/agent/sources**",
+        lambda route: route.fulfill(json=catalog_payload),
+    )
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        activity_panel = page.locator("#agent_activity_panel")
+        prompt = page.locator("#agent_prompt_input")
+        expect(activity_panel).to_have_count(1)
+        expect(activity_panel).to_have_js_property("open", True)
+        expect(page.locator("#agent_activity_list > .agent-activity-item")).to_have_count(69)
+        page.evaluate(
+            """value => {
+                document.querySelector('#agent_prompt_input').value = value;
+            }""",
+            completed_prompt,
+        )
+
+        page.wait_for_function(
+            """expectedPrompt => {
+                const panel = document.querySelector('#agent_activity_panel');
+                const prompt = document.querySelector('#agent_prompt_input');
+                const question = document.querySelector('[data-agent-response-question]');
+                return panel instanceof HTMLDetailsElement
+                    && !panel.open
+                    && prompt instanceof HTMLTextAreaElement
+                    && prompt.value === ''
+                    && question?.textContent === expectedPrompt;
+            }""",
+            arg=completed_prompt,
+        )
+        expect(page.locator("#agent_activity_list")).to_be_hidden()
+
+        question_layout = page.evaluate(
+            """() => {
+                const header = document.querySelector('#agent_response_question_header');
+                const question = document.querySelector('[data-agent-response-question]');
+                const output = document.querySelector('#agent_response_output');
+                const composer = document.querySelector('#agent_prompt_form');
+                const headerRect = header?.getBoundingClientRect();
+                const outputRect = output?.getBoundingClientRect();
+                const composerRect = composer?.getBoundingClientRect();
+                return {
+                    headerClientHeight: header?.clientHeight,
+                    headerScrollHeight: header?.scrollHeight,
+                    questionClientWidth: question?.clientWidth,
+                    questionScrollWidth: question?.scrollWidth,
+                    outputBottom: outputRect?.bottom,
+                    composerTop: composerRect?.top,
+                    headerBottom: headerRect?.bottom,
+                    horizontalOverflow: Math.max(
+                        document.documentElement.scrollWidth,
+                        document.body.scrollWidth,
+                    ) - document.documentElement.clientWidth,
+                };
+            }"""
+        )
+        assert question_layout["headerScrollHeight"] > question_layout["headerClientHeight"]
+        assert question_layout["questionScrollWidth"] <= question_layout["questionClientWidth"] + 1
+        assert question_layout["outputBottom"] <= question_layout["composerTop"] + 1
+        assert question_layout["horizontalOverflow"] <= 1
+
+        activity_panel.locator("summary").click()
+        expect(activity_panel).to_have_js_property("open", True)
+        expect(page.locator("#agent_activity_list")).to_be_visible()
+        prompt.fill("A new task draft")
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').filter((entry) =>
+                String(entry.name || '').includes('/api/agent/status')
+            ).length >= 3"""
+        )
+        assert status_requests >= 3
+        expect(activity_panel).to_have_js_property("open", True)
+        expect(prompt).to_have_value("A new task draft")
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("edit_same_text", (False, True))
+def test_hydrated_running_agent_handles_the_first_finished_status_without_losing_a_same_text_draft(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    edit_same_text: bool,
+) -> None:
+    """Use the SSR run identity when the first client status already reports completion."""
+    completed_prompt = "Verify the first completed Agent status after hydration."
+    finished_payload = _finished_chatgpt_agent_payload()
+    finished_agent = {
+        **finished_payload["agent"],
+        "run_id": "run-hydrated-finished",
+        "run_revision": 7,
+        "prompt": completed_prompt,
+        "response": "Hydrated completion answer.",
+        "response_html": "<p>Hydrated completion answer.</p>",
+        "history": [
+            {
+                "prompt": completed_prompt,
+                "response": "Hydrated completion answer.",
+                "response_html": "<p>Hydrated completion answer.</p>",
+            }
+        ],
+        "activity": [
+            {
+                "status": "complete",
+                "label": "Read",
+                "detail": "tests/test_sidebar_e2e.py",
+                "meta": "Turn 1",
+            }
+        ],
+    }
+    finished_payload["agent"] = finished_agent
+    run_identity = str(finished_agent["run_id"])
+    catalog_payload = _chatgpt_catalog_sessions()
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": catalog_payload,
+    }
+    pending_status_routes = []
+
+    def hydrate_running_markup(route) -> None:
+        response = route.fetch()
+        body = response.text()
+        body, running_replacements = re.subn(
+            (
+                r'data-agent-running="[^"]*" data-agent-run-id="[^"]*" '
+                r'data-agent-run-revision="[^"]*" data-agent-started-at="[^"]*"'
+            ),
+            (
+                f'data-agent-running="true" data-agent-run-id="{run_identity}" '
+                f'data-agent-run-revision="{finished_agent["run_revision"]}" '
+                f'data-agent-started-at="{finished_agent["started_at"]}"'
+            ),
+            body,
+            count=1,
+        )
+        assert running_replacements == 1
+        body = body.replace(
+            'data-agent-prompt-input required></textarea>',
+            f'data-agent-prompt-input required>{completed_prompt}</textarea>',
+            1,
+        )
+        body = body.replace(
+            '<details class="agent-activity-panel" id="agent_activity_panel" hidden>',
+            '<details class="agent-activity-panel" id="agent_activity_panel" open>',
+            1,
+        )
+        route.fulfill(response=response, body=body)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_008, "height": 1_085},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/agent/edge/chatgpt", hydrate_running_markup)
+    page.route("**/api/agent/status", lambda route: pending_status_routes.append(route))
+    page.route(
+        "**/api/browser-session**",
+        lambda route: route.fulfill(json=browser_status),
+    )
+    page.route(
+        "**/api/agent/sources**",
+        lambda route: route.fulfill(json=catalog_payload),
+    )
+    try:
+        with page.expect_request(
+            lambda request: "/api/agent/status" in request.url,
+        ):
+            page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        prompt = page.locator("#agent_prompt_input")
+        activity_panel = page.locator("#agent_activity_panel")
+        expect(prompt).to_have_value(completed_prompt)
+        expect(activity_panel).to_have_js_property("open", True)
+        assert len(pending_status_routes) == 1
+        if edit_same_text:
+            prompt.fill(completed_prompt)
+        pending_status_routes[0].fulfill(json=finished_payload)
+
+        expected_prompt = completed_prompt if edit_same_text else ""
+        page.wait_for_function(
+            """expected => {
+                const page = document.querySelector('[data-agent-route-prefix]');
+                const panel = document.querySelector('#agent_activity_panel');
+                const prompt = document.querySelector('#agent_prompt_input');
+                const question = document.querySelector('[data-agent-response-question]');
+                return page?.dataset.agentRunning === 'false'
+                    && panel instanceof HTMLDetailsElement
+                    && !panel.open
+                    && prompt instanceof HTMLTextAreaElement
+                    && prompt.value === expected.prompt
+                    && question?.textContent === expected.question;
+            }""",
+            arg={"prompt": expected_prompt, "question": completed_prompt},
+        )
+        expect(page.locator("#agent_activity_list > .agent-activity-item")).to_have_count(1)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_late_prior_run_status_cannot_overwrite_the_new_running_agent_draft(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Reject a delayed terminal snapshot from a prior Agent run."""
+    base_payload = _finished_chatgpt_agent_payload()
+    prior_agent = {
+        **base_payload["agent"],
+        "run_id": "run-prior",
+        "run_revision": 41,
+        "started_at": "2026-08-26T10:00:00Z",
+        "finished_at": "",
+        "running": True,
+        "phase": "running",
+        "prompt": "Prior run prompt.",
+        "response": "",
+        "response_html": "",
+        "activity": [{"status": "running", "label": "Prior running event", "detail": "", "meta": ""}],
+    }
+    current_agent = {
+        **prior_agent,
+        "run_id": "run-current",
+        "run_revision": 42,
+        "prompt": "Current run prompt.",
+        "response": "",
+        "response_html": "",
+        "activity": [{"status": "running", "label": "Current running event", "detail": "", "meta": ""}],
+    }
+    prior_payload = {**base_payload, "agent": prior_agent}
+    prior_terminal_payload = {
+        **base_payload,
+        "agent": {
+            **prior_agent,
+            "running": False,
+            "phase": "finished",
+            "finished_at": "2026-08-26T10:00:01Z",
+            "response": "Prior terminal answer.",
+            "response_html": "<p>Prior terminal answer.</p>",
+            "activity": [{"status": "complete", "label": "Prior terminal event", "detail": "", "meta": ""}],
+        },
+    }
+    current_payload = {**base_payload, "agent": current_agent}
+    catalog_payload = _chatgpt_catalog_sessions()
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": catalog_payload,
+    }
+    status_requests = 0
+
+    def fulfill_agent_status(route) -> None:
+        nonlocal status_requests
+        status_requests += 1
+        route.fulfill(
+            json=(
+                prior_payload
+                if status_requests == 1
+                else current_payload
+                if status_requests == 2
+                else prior_terminal_payload
+            )
+        )
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_008, "height": 1_085},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    page.route("**/api/agent/sources**", lambda route: route.fulfill(json=catalog_payload))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        prompt = page.locator("#agent_prompt_input")
+        activity_panel = page.locator("#agent_activity_panel")
+        page.wait_for_function(
+            """() => document.querySelector('[data-agent-route-prefix]')?.dataset.agentRunId === 'run-prior'"""
+        )
+        expect(activity_panel).to_have_js_property("open", True)
+        expect(page.locator("#agent_activity_list")).to_contain_text("Prior running event")
+
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').filter((entry) =>
+                String(entry.name || '').includes('/api/agent/status')
+            ).length >= 2"""
+        )
+        expect(page.locator("[data-agent-route-prefix]")).to_have_attribute("data-agent-run-id", "run-current")
+        expect(page.locator("[data-agent-route-prefix]")).to_have_attribute("data-agent-run-revision", "42")
+        expect(page.locator("#agent_activity_list")).to_contain_text("Current running event")
+        prompt.fill("Keep this current-run draft.")
+
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').filter((entry) =>
+                String(entry.name || '').includes('/api/agent/status')
+            ).length >= 3"""
+        )
+        assert status_requests >= 3
+        expect(page.locator("[data-agent-route-prefix]")).to_have_attribute("data-agent-run-id", "run-current")
+        expect(page.locator("[data-agent-route-prefix]")).to_have_attribute("data-agent-running", "true")
+        expect(activity_panel).to_have_js_property("open", True)
+        expect(page.locator("#agent_activity_list")).to_contain_text("Current running event")
+        expect(prompt).to_have_value("Keep this current-run draft.")
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').filter((entry) =>
+                String(entry.name || '').includes('/api/agent/status')
+            ).length >= 4""",
+            timeout=1_800,
+        )
+        assert status_requests >= 4
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_superseding_finished_run_never_clears_an_idle_local_draft(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """A terminal snapshot from another run must not mutate an unsent draft."""
+    idle_draft = "Keep this unsent idle draft."
+    base_payload = _finished_chatgpt_agent_payload()
+    prior_agent = {
+        **base_payload["agent"],
+        "run_id": "run-prior",
+        "started_at": "2026-08-26T09:00:00Z",
+        "finished_at": "2026-08-26T09:01:00Z",
+        "prompt": "Prior completed prompt.",
+        "response": "Prior completed answer.",
+        "response_html": "<p>Prior completed answer.</p>",
+    }
+    later_agent = {
+        **prior_agent,
+        "run_id": "run-later",
+        "started_at": "2026-08-26T10:00:00Z",
+        "finished_at": "2026-08-26T10:01:00Z",
+        "prompt": idle_draft,
+        "response": "Later completed answer.",
+        "response_html": "<p>Later completed answer.</p>",
+    }
+    later_running_agent = {
+        **later_agent,
+        "running": True,
+        "phase": "running",
+        "finished_at": "",
+    }
+    prior_payload = {**base_payload, "agent": prior_agent}
+    later_running_payload = {**base_payload, "agent": later_running_agent}
+    later_payload = {**base_payload, "agent": later_agent}
+    catalog_payload = _chatgpt_catalog_sessions()
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": catalog_payload,
+    }
+    status_requests = 0
+
+    def fulfill_agent_status(route) -> None:
+        nonlocal status_requests
+        status_requests += 1
+        route.fulfill(
+            json=(
+                prior_payload
+                if status_requests == 1
+                else later_running_payload
+                if status_requests == 2
+                else later_payload
+            )
+        )
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_008, "height": 1_085},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    page.route("**/api/agent/sources**", lambda route: route.fulfill(json=catalog_payload))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        prompt = page.locator("#agent_prompt_input")
+        page.wait_for_function(
+            """() => document.querySelector('[data-agent-route-prefix]')?.dataset.agentRunId === 'run-prior'"""
+        )
+        prompt.fill(idle_draft)
+
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').filter((entry) =>
+                String(entry.name || '').includes('/api/agent/status')
+            ).length >= 3"""
+        )
+        assert status_requests >= 3
+        expect(page.locator("[data-agent-route-prefix]")).to_have_attribute("data-agent-run-id", "run-later")
+        expect(prompt).to_have_value(idle_draft)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_rejected_ask_keeps_the_draft_when_an_old_finished_status_arrives(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """A failed Ask must clear its pending marker before the next status poll."""
+    rejected_prompt = "Keep this draft after the rejected Ask request."
+    finished_payload = _finished_chatgpt_agent_payload()
+    finished_payload["agent"] = {
+        **finished_payload["agent"],
+        "run_id": "run-old-finished",
+        "prompt": "Old finished prompt.",
+        "response": "Old finished answer.",
+        "response_html": "<p>Old finished answer.</p>",
+    }
+    catalog_payload = _chatgpt_catalog_sessions()
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": catalog_payload,
+    }
+    status_requests = 0
+
+    def fulfill_agent_status(route) -> None:
+        nonlocal status_requests
+        status_requests += 1
+        route.fulfill(json=finished_payload)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_008, "height": 1_085},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    page.route("**/api/agent/sources**", lambda route: route.fulfill(json=catalog_payload))
+    page.route(
+        "**/api/agent/ask",
+        lambda route: route.fulfill(status=409, json={"error": "Ask request was rejected."}),
+    )
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        prompt = page.locator("#agent_prompt_input")
+        ask = page.locator("#agent_ask_button")
+        expect(ask).to_be_enabled()
+        prompt.fill(rejected_prompt)
+        with page.expect_response(
+            lambda response: "/api/agent/ask" in response.url and response.status == 409
+        ):
+            ask.click()
+
+        page.wait_for_function(
+            """() => window.performance.getEntriesByType('resource').filter((entry) =>
+                String(entry.name || '').includes('/api/agent/status')
+            ).length >= 2"""
+        )
+        assert status_requests >= 2
+        expect(prompt).to_have_value(rejected_prompt)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_successful_ask_acknowledges_a_distinct_same_second_run_id(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """The Ask response is authoritative when two run starts share one second."""
+    submitted_prompt = "Accept this same-second Agent run acknowledgement."
+    base_payload = _finished_chatgpt_agent_payload()
+    prior_agent = {
+        **base_payload["agent"],
+        "run_id": "run-prior-same-second",
+        "started_at": "2026-08-26T10:00:00Z",
+        "finished_at": "2026-08-26T10:00:01Z",
+        "prompt": "Prior completed prompt.",
+        "response": "Prior completed answer.",
+        "response_html": "<p>Prior completed answer.</p>",
+    }
+    acknowledged_agent = {
+        **prior_agent,
+        "run_id": "run-acknowledged-same-second",
+        "finished_at": "2026-08-26T10:00:02Z",
+        "prompt": submitted_prompt,
+        "response": "Acknowledged current answer.",
+        "response_html": "<p>Acknowledged current answer.</p>",
+    }
+    prior_payload = {**base_payload, "agent": prior_agent}
+    acknowledged_payload = {**base_payload, "agent": acknowledged_agent}
+    catalog_payload = _chatgpt_catalog_sessions()
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": catalog_payload,
+    }
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_008, "height": 1_085},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=prior_payload))
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    page.route("**/api/agent/sources**", lambda route: route.fulfill(json=catalog_payload))
+    page.route("**/api/agent/ask", lambda route: route.fulfill(json=acknowledged_payload))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        page.wait_for_function(
+            """() => document.querySelector('[data-agent-route-prefix]')?.dataset.agentRunId === 'run-prior-same-second'"""
+        )
+        prompt = page.locator("#agent_prompt_input")
+        ask = page.locator("#agent_ask_button")
+        expect(ask).to_be_enabled()
+        prompt.fill(submitted_prompt)
+        with page.expect_response(
+            lambda response: "/api/agent/ask" in response.url and response.status == 200
+        ):
+            ask.click()
+
+        page.wait_for_function(
+            """expected => {
+                const agentPage = document.querySelector('[data-agent-route-prefix]');
+                const prompt = document.querySelector('#agent_prompt_input');
+                const question = document.querySelector('[data-agent-response-question]');
+                return agentPage?.dataset.agentRunId === expected.runId
+                    && agentPage.dataset.agentRunning === 'false'
+                    && prompt instanceof HTMLTextAreaElement
+                    && prompt.value === ''
+                    && question?.textContent === expected.prompt;
+            }""",
+            arg={"runId": "run-acknowledged-same-second", "prompt": submitted_prompt},
+        )
     finally:
         context.close()
 

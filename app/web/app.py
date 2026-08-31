@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.54.0-codex.1
+# Code version: v1.54.4-codex.1
 
 from __future__ import annotations
 
@@ -1045,21 +1045,37 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         snapshot: dict[str, Any],
         browser: str,
         platform: str,
+        workspace_path: str,
     ) -> dict[str, Any]:
-        """Hide a completed snapshot that belongs to another Agent route."""
+        """Hide a foreign snapshot while retaining only the global stop state."""
         snapshot_browser = str(snapshot.get("browser", "")).strip().lower()
         snapshot_platform = str(snapshot.get("platform", "")).strip().lower()
-        if snapshot.get("running") or (
-            snapshot_browser == browser and snapshot_platform == platform
+        snapshot_workspace = str(snapshot.get("workspace_path", "")).strip()
+        route_workspace = str(workspace_path or "").strip()
+        if (
+            snapshot_browser == browser
+            and snapshot_platform == platform
+            and snapshot_workspace == route_workspace
         ):
             return snapshot
+        foreign_run_active = bool(snapshot.get("running"))
         isolated = dict(snapshot)
         isolated.update(
             {
                 "activity": [],
+                "actual_model": "",
                 "bodycheck_passed": False,
+                "browser": "",
+                "catalog_error": "",
+                "catalog_state": "idle",
+                "chatgpt_effort": "",
                 "verification_passed": False,
                 "conversation_url": "",
+                "conversation_bound": False,
+                "context_attached": False,
+                "context_bytes": 0,
+                "context_file": "",
+                "engine": "",
                 "event_chain": {
                     "version": "1.0.0",
                     "run_id": "",
@@ -1070,24 +1086,44 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 },
                 "event_chain_state": "idle",
                 "event_count": 0,
+                "error_traceback": "",
                 "finished_at": "",
                 "history": [],
-                "message": "",
+                "last_error": "",
                 "model_verified": False,
+                "model": "",
                 "last_action_id": "",
                 "last_event_kind": "",
                 "paused": False,
-                "phase": "idle",
+                "pause_reason": "",
+                "phase": "running" if foreign_run_active else "idle",
+                "message": (
+                    "An Agent task is running in another project. Stop remains available here."
+                    if foreign_run_active
+                    else ""
+                ),
+                "operating_system": "",
+                "platform": "",
                 "project_url": "",
                 "prompt": "",
+                "read_only": False,
                 "response": "",
                 "response_html": "",
                 "run_id": "",
+                "run_revision": 0,
                 "started_at": "",
+                "session_mode": "new",
+                "session_title": "",
+                "session_type": "",
+                "thinking_effort": "",
+                "available_efforts": [],
+                "effort_catalog_complete": False,
                 "traditional_handoff_available": False,
                 "traditional_handoff_message": "",
                 "traditional_handoff_opened": False,
                 "turn_count": 0,
+                "workspace_path": "",
+                "running": foreign_run_active,
             }
         )
         return isolated
@@ -1100,6 +1136,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
             build_agent_snapshot(),
             browser,
             platform,
+            agent_settings.workspace_path,
         )
         return render_template(
             "agent.html",
@@ -1178,10 +1215,35 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     @app.get("/api/agent/status")
     def agent_status():
         require_local_agent_request()
+        runtime_snapshot = computer_use_settings.snapshot()
+        selected_browser = str(
+            request.headers.get("X-CacheLikes-Agent-Browser")
+            or runtime_snapshot.get("browser")
+            or ""
+        ).strip().lower()
+        selected_platform = str(
+            request.headers.get("X-CacheLikes-Agent-Platform")
+            or runtime_snapshot.get("platform")
+            or ""
+        ).strip().lower()
+        selected_workspace = str(
+            request.headers.get("X-CacheLikes-Agent-Workspace")
+            or runtime_snapshot.get("workspace_path")
+            or ""
+        ).strip()
+        if not is_supported_agent_selection(selected_browser, selected_platform):
+            selected_browser = str(runtime_snapshot.get("browser") or "edge").strip().lower()
+            selected_platform = str(runtime_snapshot.get("platform") or "chatgpt").strip().lower()
+            selected_workspace = str(runtime_snapshot.get("workspace_path") or "").strip()
         return jsonify(
             {
-                "runtime": computer_use_settings.snapshot(),
-                "agent": build_agent_snapshot(),
+                "runtime": runtime_snapshot,
+                "agent": agent_snapshot_for_route(
+                    build_agent_snapshot(),
+                    selected_browser,
+                    selected_platform,
+                    selected_workspace,
+                ),
             }
         )
 
@@ -2129,7 +2191,25 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 )
             except ValueError as exc:
                 return browser_session_response({"error": str(exc)}, 400)
-            payload.pop("cache", None)
+            cache = payload.pop("cache", {})
+            cache_status = str(cache.get("status", "")).strip().lower() if isinstance(cache, dict) else ""
+            freshness_kind = {
+                "miss": "live_browser",
+                "refreshed": "live_browser",
+                "hit": "server_cache",
+                "stale": "stale_cache",
+            }.get(cache_status, "unknown")
+            payload["browser_session_freshness"] = {
+                "kind": freshness_kind,
+                "cache_status": cache_status,
+                "cached_at": str(cache.get("cached_at", "")) if isinstance(cache, dict) else "",
+                "age_seconds": (
+                    max(0, int(cache.get("age_seconds", 0)))
+                    if isinstance(cache, dict)
+                    and str(cache.get("age_seconds", "")).strip().lstrip("-").isdigit()
+                    else 0
+                ),
+            }
             return browser_session_response(payload)
         try:
             payload = probe_browser_session(

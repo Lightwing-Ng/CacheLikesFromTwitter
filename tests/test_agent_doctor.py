@@ -1,6 +1,6 @@
 """Route and service tests for Agent doctor recovery UX.
 
-Code version: v1.4.1-codex.1
+Code version: v1.4.2-codex.1
 """
 
 from __future__ import annotations
@@ -121,6 +121,51 @@ def test_completed_run_persists_event_chain_and_doctor_can_report_healthy(
     assert doctor["status"] == "healthy"
     assert doctor["run_id"] == snapshot["run_id"]
     assert doctor["events"][-1]["kind"] == "run.completed"
+
+
+def test_run_revision_is_monotonic_across_a_persisted_service_restart(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    """Persist an opaque run order even when wall-clock starts share one second."""
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings_path = tmp_path / "settings.json"
+    runtime_root = tmp_path / "runtime"
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._start_macos_idle_sleep_assertion",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "app.core.computer_use_agent._stop_macos_idle_sleep_assertion",
+        lambda _process: None,
+    )
+
+    def runner(**_kwargs):
+        return "Verified result", "https://chatgpt.com/c/example", 1, True
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(settings_path),
+        runner=runner,
+        runtime_root=runtime_root,
+    )
+    service.start("Inspect the project", str(workspace), CrawlConfig())
+    first_snapshot = _wait_for_completion(service)
+    assert first_snapshot["run_revision"] == 1
+
+    persisted_path = runtime_root / "last-run.json"
+    assert json.loads(persisted_path.read_text(encoding="utf-8"))["run_revision"] == 1
+
+    restarted = ComputerUseAgentService(
+        ComputerUseSettingsStore(settings_path),
+        runner=runner,
+        runtime_root=runtime_root,
+    )
+    assert restarted.snapshot()["run_revision"] == 1
+    restarted.start("Inspect the project again", str(workspace), CrawlConfig())
+    second_snapshot = _wait_for_completion(restarted)
+    assert second_snapshot["run_revision"] == 2
+    assert json.loads(persisted_path.read_text(encoding="utf-8"))["run_revision"] == 2
 
 
 def test_capability_and_doctor_routes_are_local_and_bounded(client) -> None:

@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.3-codex.1
+Code version: v1.51.6-codex.1
 """
 
 from pathlib import Path
@@ -1326,6 +1326,12 @@ def test_segmented_control_uses_the_sibling_generic_pill_contract() -> None:
     option_rule = stylesheet[option_start:stylesheet.index("\n}", option_start)]
     selected_start = stylesheet.index(".segmented-control-option input:checked + span,")
     selected_rule = stylesheet[selected_start:stylesheet.index("\n}", selected_start)]
+    control_start = stylesheet.index(".segmented-control,\n.range-mode-shell {")
+    control_rule = stylesheet[control_start:stylesheet.index("\n}", control_start)]
+    browser_start = stylesheet.index(".browser-content-mode-control {")
+    browser_rule = stylesheet[browser_start:stylesheet.index("\n}", browser_start)]
+    style_token_start = stylesheet.index(".style-token-page .range-mode-shell {")
+    style_token_rule = stylesheet[style_token_start:stylesheet.index("\n}", style_token_start)]
 
     for token in (
         ".segmented-control,\n.range-mode-shell {",
@@ -1382,6 +1388,11 @@ def test_segmented_control_uses_the_sibling_generic_pill_contract() -> None:
     assert "font-weight: var(--font-weight-regular);" in option_rule
     assert "font-weight: var(--font-weight-bold);" not in option_rule
     assert "font-weight: var(--font-weight-bold);" in selected_rule
+    for token in ("width: fit-content;", "max-width: 100%;", "margin-inline: auto;"):
+        assert token in control_rule
+    for token in ("width: fit-content;", "max-width: 100%;", "justify-self: center;"):
+        assert token in browser_rule
+        assert token in style_token_rule
 
 
 def test_browser_session_safari_drawer_icon_uses_two_theme_accents() -> None:
@@ -1758,7 +1769,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.90.4-codex.1 */",
+        "/* Code version: v2.90.7-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1883,6 +1894,32 @@ def test_agent_model_trigger_uses_fifteen_pixel_type_token() -> None:
     selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
 
     assert "font-size: var(--font-size-5);" in selector_rule
+
+
+def test_agent_effort_trigger_uses_fifteen_pixel_type_token_without_wrapping() -> None:
+    """Keep the visible ChatGPT effort label readable at every viewport width."""
+    stylesheet = _stylesheet()
+    selector = ".agent-effort-trigger .trade-strategy-trigger-label {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "font-size: var(--font-size-5);" in selector_rule
+    assert "white-space: nowrap;" in selector_rule
+
+
+def test_visible_chatgpt_effort_uses_a_two_row_compact_composer_footer() -> None:
+    """Keep the 15px effort control and submit action inside narrow ChatGPT composers."""
+    stylesheet = _stylesheet()
+    selector = ".agent-composer-footer:has(.agent-effort-controls:not([hidden])) {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    for token in (
+        "display: grid;",
+        "grid-template-columns: minmax(0, 1fr) auto;",
+        "gap: 8px 12px;",
+    ):
+        assert token in selector_rule
 
 
 def test_agent_prompt_uses_the_dedicated_sixteen_pixel_type_token() -> None:

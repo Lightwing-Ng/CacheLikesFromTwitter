@@ -1,4 +1,4 @@
-/* Code version: v3.27.2-codex.1 */
+/* Code version: v3.27.14-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -42,6 +42,7 @@
         effortField: promptForm.querySelector("[data-agent-effort-field]"),
         effortCombobox: promptForm.querySelector(".agent-effort-combobox"),
         effortInput: promptForm.querySelector("[data-agent-effort-input]"),
+        effortRefresh: promptForm.querySelector("[data-agent-effort-refresh]"),
         promptSessionMode: promptForm.querySelector("[data-agent-prompt-session-mode]"),
         promptConversationUrl: promptForm.querySelector("[data-agent-prompt-conversation-url]"),
         promptProjectUrl: promptForm.querySelector("[data-agent-prompt-project-url]"),
@@ -74,6 +75,7 @@
     let lastPayload = {};
     let lastBrowserStatus = null;
     let browserStatusController = null;
+    let effortRefreshInFlight = false;
     let preferenceTimer = null;
     let activitySignature = "";
     let sourceBrowser = "";
@@ -92,7 +94,17 @@
     let projectSessions = [];
     let sessionTitleOverride = "";
     let boundAgentSessionSignature = "";
-    let lastRenderedAgentRunning = null;
+    let lastRenderedAgentRunning = elements.agentPage?.dataset.agentRunning === "true";
+    let lastRenderedAgentRunIdentity = elements.agentPage?.dataset.agentRunId || "";
+    let lastRenderedAgentRunRevision = normalizeAgentRunRevision(
+        elements.agentPage?.dataset.agentRunRevision,
+    );
+    let lastRenderedAgentStartedAt = elements.agentPage?.dataset.agentStartedAt || "";
+    let promptHasLocalDraft = false;
+    let promptSubmissionPending = false;
+    let pendingSubmissionPreviousRunIdentity = "";
+    let pendingSubmissionPreviousRunRevision = 0;
+    let pendingSubmissionPreviousRunStartedAt = "";
     let responseHistory = [];
     let responseHistoryPage = 1;
     let responseHistorySignature = "";
@@ -146,6 +158,41 @@
         return selectedValue(".agent-platform-combobox", "chatgpt");
     }
 
+    function agentRunIdentity(agent) {
+        return String(agent?.run_id || agent?.started_at || "");
+    }
+
+    function normalizeAgentRunRevision(value) {
+        const revision = Number(value);
+        return Number.isSafeInteger(revision) && revision > 0 ? revision : 0;
+    }
+
+    function agentRunRevision(agent) {
+        return normalizeAgentRunRevision(agent?.run_revision);
+    }
+
+    function agentRunStartedAt(agent) {
+        return String(agent?.started_at || "");
+    }
+
+    function runSupersedes(
+        runIdentity,
+        runRevision,
+        startedAt,
+        previousIdentity,
+        previousRevision,
+        previousStartedAt,
+    ) {
+        if (!runIdentity) return false;
+        if (!previousIdentity) return true;
+        if (runIdentity === previousIdentity) return false;
+        if (runRevision && previousRevision) return runRevision > previousRevision;
+        if (runRevision) return true;
+        if (previousRevision || !startedAt) return false;
+        if (!previousStartedAt) return true;
+        return startedAt > previousStartedAt;
+    }
+
     function normalizeAgentSelection() {
         if (selectedPlatform() === "chatgpt" || selectedBrowser() !== "safari") return;
         const browserCombobox = document.querySelector(".agent-browser-combobox");
@@ -193,9 +240,36 @@
     function agentSnapshotMatchesSelection(agent) {
         const platform = String(agent?.platform || "").trim().toLowerCase();
         const browser = String(agent?.browser || "").trim().toLowerCase();
+        const workspacePath = String(agent?.workspace_path || "").trim();
+        const selectedWorkspacePath = String(elements.workspacePath?.value || "").trim();
         return Boolean(platform && browser)
             && platform === selectedPlatform()
-            && browser === selectedBrowser();
+            && browser === selectedBrowser()
+            && Boolean(workspacePath && selectedWorkspacePath)
+            && workspacePath === selectedWorkspacePath;
+    }
+
+    function isolatedForeignRunningAgent(agent) {
+        if (!agent?.running) return {};
+        // A task is global enough that the user must still be able to stop it,
+        // but its project-specific prompt, response, activity, and errors must
+        // never flow into a page for a different workspace or provider route.
+        return {
+            running: true,
+            paused: false,
+            phase: "running",
+            message: "An Agent task is running in another project. Stop remains available here.",
+            activity: [],
+            history: [],
+            prompt: "",
+            response: "",
+            response_html: "",
+            error_traceback: "",
+            last_error: "",
+            conversation_url: "",
+            project_url: "",
+            workspace_path: "",
+        };
     }
 
     function selectedSessionMode() {
@@ -352,9 +426,11 @@
         const statusMatchesSelection = lastBrowserStatus?.platform === "chatgpt"
             && lastBrowserStatus?.browser === selectedBrowser();
         const statusCatalogComplete = statusMatchesSelection
-            && Boolean(lastBrowserStatus?.effort_catalog_complete);
-        // Only a complete, current browser probe may populate provider effort options.
-        // Persisted snapshots and saved selections are diagnostic state, not a live catalog.
+            && Boolean(lastBrowserStatus?.effort_catalog_complete)
+            && lastBrowserStatus?.browser_session_freshness?.kind === "live_browser";
+        // Only a complete fresh browser probe may populate provider effort options.
+        // Server and client cache entries, persisted snapshots, and saved selections
+        // are diagnostic state, not a live provider catalog.
         const liveLabels = statusCatalogComplete && Array.isArray(lastBrowserStatus?.available_efforts)
             ? lastBrowserStatus.available_efforts
             : [];
@@ -1413,7 +1489,7 @@
         });
     }
 
-    function renderActivity(events, running) {
+    function renderActivity(events, running, finishedTransition = false) {
         if (!elements.activityPanel || !elements.activityList || !elements.activityCount) return;
         const safeEvents = Array.isArray(events) ? events : [];
         const signature = JSON.stringify(safeEvents);
@@ -1451,6 +1527,8 @@
         if (running && safeEvents.length) {
             elements.activityPanel.open = true;
             if (changed) elements.activityList.scrollTop = elements.activityList.scrollHeight;
+        } else if (finishedTransition) {
+            elements.activityPanel.open = false;
         }
     }
 
@@ -2058,21 +2136,81 @@
         if (elements.terminalExecutionCheckmark) elements.terminalExecutionCheckmark.hidden = !ready;
     }
 
-    function render(payload) {
-        lastPayload = payload || {};
-        const persistedAgent = lastPayload.agent || {};
-        const readiness = readinessState(lastPayload);
-        const running = Boolean(persistedAgent.running);
-        const agent = running || agentSnapshotMatchesSelection(persistedAgent)
+    function render(payload, {fromAsk = false} = {}) {
+        const nextPayload = payload || {};
+        const hasPersistedAgent = Object.prototype.hasOwnProperty.call(nextPayload, "agent");
+        if (!hasPersistedAgent) return;
+        const persistedAgent = nextPayload.agent || {};
+        const readiness = readinessState(nextPayload);
+        const selectionMatchesAgent = agentSnapshotMatchesSelection(persistedAgent);
+        const agent = selectionMatchesAgent
             ? persistedAgent
-            : {};
+            : isolatedForeignRunningAgent(persistedAgent);
+        const running = Boolean(agent.running);
         const paused = Boolean(agent.paused);
         const platformLabel = selectedPlatformLabel();
-        const completedTransition = lastRenderedAgentRunning === true && !running;
+        const phase = String(agent.phase || "").trim().toLowerCase();
+        const runIdentity = agentRunIdentity(agent);
+        const runRevision = agentRunRevision(agent);
+        const startedAt = agentRunStartedAt(agent);
+        const acknowledgedNewRun = fromAsk
+            && promptSubmissionPending
+            && Boolean(runIdentity)
+            && runIdentity !== pendingSubmissionPreviousRunIdentity;
+        const incomingRunIsStale = Boolean(lastRenderedAgentRunIdentity)
+            && Boolean(runIdentity)
+            && runIdentity !== lastRenderedAgentRunIdentity
+            && !acknowledgedNewRun
+            && !runSupersedes(
+                runIdentity,
+                runRevision,
+                startedAt,
+                lastRenderedAgentRunIdentity,
+                lastRenderedAgentRunRevision,
+                lastRenderedAgentStartedAt,
+        );
+        if (incomingRunIsStale) return;
+        lastPayload = {...nextPayload, agent};
+        const pendingRunConfirmed = promptSubmissionPending && (
+            acknowledgedNewRun || runSupersedes(
+                runIdentity,
+                runRevision,
+                startedAt,
+                pendingSubmissionPreviousRunIdentity,
+                pendingSubmissionPreviousRunRevision,
+                pendingSubmissionPreviousRunStartedAt,
+            )
+        );
+        const sameRenderedRun = Boolean(runIdentity)
+            && runIdentity === lastRenderedAgentRunIdentity;
+        const completedTransition = !running && (
+            (lastRenderedAgentRunning === true && sameRenderedRun)
+            || pendingRunConfirmed
+        );
+        const finishedTransition = completedTransition
+            && phase === "finished";
+        const shouldCollapseActivity = finishedTransition;
+        if (running || fromAsk || pendingRunConfirmed) {
+            promptSubmissionPending = false;
+            pendingSubmissionPreviousRunIdentity = "";
+            pendingSubmissionPreviousRunRevision = 0;
+            pendingSubmissionPreviousRunStartedAt = "";
+        }
         syncExecutionChoices();
         syncPlatformState(agent);
-        bindCompletedAgentSession(persistedAgent, completedTransition);
+        bindCompletedAgentSession(agent, completedTransition);
         lastRenderedAgentRunning = running;
+        if (elements.agentPage) {
+            elements.agentPage.dataset.agentRunning = String(running);
+            if (runIdentity) elements.agentPage.dataset.agentRunId = runIdentity;
+            else delete elements.agentPage.dataset.agentRunId;
+            elements.agentPage.dataset.agentRunRevision = String(runRevision);
+            if (startedAt) elements.agentPage.dataset.agentStartedAt = startedAt;
+            else delete elements.agentPage.dataset.agentStartedAt;
+        }
+        if (runIdentity) lastRenderedAgentRunIdentity = runIdentity;
+        lastRenderedAgentRunRevision = runRevision;
+        if (startedAt) lastRenderedAgentStartedAt = startedAt;
         syncConversationLink(agent);
 
         const heading = document.querySelector("[data-agent-heading]");
@@ -2082,8 +2220,9 @@
         }
 
         renderAgentResponse(agent);
+        clearCompletedPromptIfUnchanged(agent, shouldCollapseActivity);
         renderErrorRecord(agent);
-        if (agentNeedsDoctor(persistedAgent)) {
+        if (agentNeedsDoctor(agent)) {
             if (!doctorPayload) loadDoctor();
             else renderDoctor();
         } else if (doctorPayload) {
@@ -2093,7 +2232,7 @@
         }
         renderResponseStatus(agent, readiness);
         renderTerminalExecution(lastPayload.runtime);
-        renderActivity(agent.activity, running);
+        renderActivity(agent.activity, running, shouldCollapseActivity);
         updateSessionChoiceInputs();
         if (readiness.ready && !running) loadAgentSources();
 
@@ -2108,6 +2247,11 @@
             const label = running ? "Stop Agent task" : `Ask ${platformLabel} Web`;
             elements.ask.setAttribute("aria-label", label);
             elements.ask.setAttribute("title", label);
+        }
+        if (elements.effortRefresh) {
+            elements.effortRefresh.disabled = running
+                || selectedPlatform() !== "chatgpt"
+                || effortRefreshInFlight;
         }
         if (elements.projectChoose) elements.projectChoose.disabled = running;
         elements.comboboxTriggers.forEach((trigger) => {
@@ -2130,8 +2274,14 @@
                 body: JSON.stringify(payload),
             });
             if (response.doctor) doctorPayload = response.doctor;
-            render(response);
+            render(response, {fromAsk: url === "/api/agent/ask"});
         } catch (error) {
+            if (url === "/api/agent/ask") {
+                promptSubmissionPending = false;
+                pendingSubmissionPreviousRunIdentity = "";
+                pendingSubmissionPreviousRunRevision = 0;
+                pendingSubmissionPreviousRunStartedAt = "";
+            }
             setResponseStatusFallback(error.message);
             if (elements.errorRecord && elements.errorRecordContent) {
                 elements.errorRecordContent.textContent = error.message;
@@ -2204,11 +2354,31 @@
         resizePrompt();
     }
 
+    function clearCompletedPromptIfUnchanged(agent, shouldClear) {
+        if (!shouldClear || !(elements.promptInput instanceof HTMLTextAreaElement)) return;
+        const completedPrompt = String(agent?.prompt || "");
+        if (promptHasLocalDraft) return;
+        if (!completedPrompt || elements.promptInput.value !== completedPrompt) return;
+        elements.promptInput.value = "";
+        promptHasLocalDraft = false;
+        setPromptExpanded(false);
+    }
+
     promptForm.addEventListener("submit", (event) => {
         event.preventDefault();
         if (elements.ask?.disabled || lastPayload.agent?.running || elements.ask?.classList.contains("is-stop")) return;
         updateSessionChoiceInputs();
         schedulePreferenceSave();
+        promptHasLocalDraft = false;
+        promptSubmissionPending = true;
+        pendingSubmissionPreviousRunIdentity = agentRunIdentity(lastPayload.agent)
+            || elements.agentPage?.dataset.agentRunId
+            || "";
+        pendingSubmissionPreviousRunRevision = agentRunRevision(lastPayload.agent)
+            || normalizeAgentRunRevision(elements.agentPage?.dataset.agentRunRevision);
+        pendingSubmissionPreviousRunStartedAt = agentRunStartedAt(lastPayload.agent)
+            || elements.agentPage?.dataset.agentStartedAt
+            || "";
         mutate("/api/agent/ask", formPayload(promptForm));
     });
     elements.resume?.addEventListener("click", () => {
@@ -2221,10 +2391,26 @@
         }
         if (!elements.ask.disabled) promptForm.requestSubmit();
     });
-    elements.promptInput?.addEventListener("input", resizePrompt);
+    elements.promptInput?.addEventListener("input", () => {
+        promptHasLocalDraft = true;
+        resizePrompt();
+    });
     elements.promptOverflowToggle?.addEventListener("click", () => {
         setPromptExpanded(!isPromptExpanded());
         elements.promptInput?.focus();
+    });
+    elements.effortRefresh?.addEventListener("click", () => {
+        if (selectedPlatform() !== "chatgpt" || !browserStatusController) return;
+        effortRefreshInFlight = true;
+        elements.effortRefresh.disabled = true;
+        Promise.resolve(browserStatusController.refresh())
+            .catch((error) => {
+                setResponseStatusFallback(error.message || "Could not refresh live ChatGPT efforts.");
+            })
+            .finally(() => {
+                effortRefreshInFlight = false;
+                render(lastPayload);
+            });
     });
     elements.responseCopy?.addEventListener("click", async () => {
         const value = responseCopyValue;
@@ -2291,7 +2477,13 @@
 
     async function pollStatus() {
         try {
-            render(await requestJson("/api/agent/status"));
+            render(await requestJson("/api/agent/status", {
+                headers: {
+                    "X-CacheLikes-Agent-Browser": selectedBrowser(),
+                    "X-CacheLikes-Agent-Platform": selectedPlatform(),
+                    "X-CacheLikes-Agent-Workspace": String(elements.workspacePath?.value || ""),
+                },
+            }));
         } catch (_error) {
         } finally {
             window.setTimeout(pollStatus, lastPayload.agent?.running ? 800 : 2_500);

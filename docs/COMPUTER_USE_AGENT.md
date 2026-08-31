@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.51.6-codex.1`
+Documentation version: `v3.51.9-codex.1`
 
 ## Purpose
 
@@ -42,6 +42,11 @@ context verifies the actual Web composer and collects Recent sessions and Projec
 For Edge or Chrome with ChatGPT, that same launch also discovers the complete live Sol effort
 slider before the user submits a task, so the first-run selector is not limited to a hard-coded
 default.
+The selector always starts with the local `Highest available` policy. Provider labels appear only
+after a complete fresh browser probe marked `live_browser`; server-cache, stale-cache, and
+session-storage payloads retain the policy item only. The adjacent `Refresh live ChatGPT thinking
+efforts` control makes one explicit `refresh=1` probe when the user wants to inspect current
+subscription labels. It does not submit a prompt or start an Agent task.
 When `Recent sessions` is selected, the catalog is rendered directly as a bounded, vertically
 scrollable list in the sidebar rather than a second dropdown. A ready Agent status cached without
 its bootstrap catalog is treated as incomplete and refreshed once, so the status probe and source
@@ -98,8 +103,8 @@ older task cannot be submitted accidentally through a different Web session.
    validation.
 4. Before attaching project data or submitting a prompt, every provider must expose a compatible
    model control and visibly read back the configured model. ChatGPT must prove `GPT-5.6 Sol`
-   or `5.6 Sol`; when the subscription exposes a thinking-effort slider, the controller reads
-   its live ARIA range and rendered labels instead of assuming a fixed effort vocabulary. Gemini must prove
+   or `5.6 Sol` and a trusted live thinking-effort slider; the controller reads its live ARIA
+   range and rendered labels instead of assuming a fixed effort vocabulary. Gemini must prove
    `Gemini 3.1 Pro`, Grok must prove `Build`, and Claude must prove
    `Auto`. A missing,
    changed, localized, or ambiguous selector fails closed without attaching context or sending a
@@ -137,9 +142,16 @@ older task cannot be submitted accidentally through a different Web session.
    remain diagnostic state and never become selectable options.
    A checked `GPT-5.6 Sol` / `5.6 Sol` model item remains the required model proof, even when a
    thinking-effort radio such as `Medium` is also selected in the same menu. `Highest available`
-   without a readable integer ARIA slider is not a missing-model failure. The bounded
+   is a local policy rather than a provider label, but a verified live integer reasoning-effort
+   slider is a prerequisite for execution. Missing, ambiguous, unrelated, or incomplete slider
+   evidence fails closed before context attachment or prompt submission. The bounded
    `available_efforts`, selected `thinking_effort`, and `effort_catalog_complete` evidence are
    persisted with the run, so a subscription rename or additional tier needs no hard-coded update.
+   When a Chromium model trigger exposes an active `aria-controls` surface, a menu slider is
+   accepted only from that exact controlled surface; a redraw that changes its identity fails
+   closed. A model-looking option in another menu cannot preempt a uniquely trusted composer
+   slider. If the trigger cannot prove its controlled surface, only the uniquely bound composer
+   slider remains eligible.
    If that trusted visible trigger is clicked but ChatGPT's Radix menu does not render, the
    controller closes any partial state and retries the control up to three times. A readable menu
    that proves a different model still fails immediately; the retry applies only to an unreadable
@@ -313,8 +325,10 @@ handler, so the Web loop validates it against that same registry before verifica
 gates, rendering, or publication. A provider message therefore cannot create a more permissive
 execution path.
 
-Every run receives a `run-<hex>` identifier. The service persists an owner-only JSONL event
-chain at the runtime root under `events/<run_id>.jsonl`. A valid chain starts at `run.started`,
+Every run receives a `run-<hex>` identifier and a persisted monotonic `run_revision`. The revision
+increments once for each new run and lets a client reject out-of-order snapshots even when two
+starts share the same second; it contains no task or provider content. The service persists an
+owner-only JSONL event chain at the runtime root under `events/<run_id>.jsonl`. A valid chain starts at `run.started`,
 then links each parsed Action to `action.requested`, its bounded controller observation, and the
 relevant `verification` or `bodycheck` event before one terminal event. The real loop also emits
 registered `agent_status`, `browser_session`, `provider_turn`, `browser_interruption`, and
@@ -424,7 +438,7 @@ actions.
   temporary context cleanup path and byte count while a run is active or cleanup recovery is pending. It does not persist prompt
   bodies, responses, conversation history, source text, or error stacks in that snapshot. The
   runtime directory and each task directory are owner-only, and context and snapshot files use mode
-  `0600`. Its run identifier, event-chain state, event count, last action, last event kind, and
+  `0600`. Its run identifier, monotonic run revision, event-chain state, event count, last action, last event kind, and
   verification state and confirmed-conversation-binding flag are also bounded metadata. If a persisted run was
   still marked active when the service exited, the next process restores it as `interrupted`
   instead of claiming that it is still running or completed.

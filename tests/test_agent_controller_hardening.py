@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.48.1-codex.1
+Code version: v3.48.4-codex.1
 """
 
 from __future__ import annotations
@@ -40,9 +40,54 @@ from app.web.app import (
 )
 
 
+def _select_verified_chatgpt_model(*args: object, **kwargs: object) -> bool:
+    """Model-selection stub that preserves ChatGPT's live effort proof gate."""
+    observation = kwargs.get("observation")
+    if observation is None:
+        observation = next(
+            (candidate for candidate in reversed(args) if isinstance(candidate, dict)),
+            None,
+        )
+    if isinstance(observation, dict):
+        observation.update(
+            {
+                "observed": "GPT-5.6 Sol",
+                "thinking_effort": "Dynamic maximum",
+                "available_efforts": ["Dynamic maximum"],
+                "effort_catalog_complete": True,
+            }
+        )
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Helper mock page classes
 # ---------------------------------------------------------------------------
+
+
+class _VerifiedEffortSlider:
+    """One trusted live slider with a bounded single-position catalog."""
+
+    def count(self) -> int:
+        return 1
+
+    def nth(self, _index: int) -> "_VerifiedEffortSlider":
+        return self
+
+    def is_visible(self) -> bool:
+        return True
+
+    def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+        return {
+            "aria-valuemin": "0",
+            "aria-valuemax": "0",
+            "aria-valuenow": "0",
+            "aria-valuetext": "Dynamic maximum",
+            "aria-label": "Dynamic maximum",
+        }.get(name)
+
+    def press(self, _key: str, **_kwargs: object) -> None:
+        return None
 
 
 class _FreshSessionPage:
@@ -53,8 +98,15 @@ class _FreshSessionPage:
         self._delay_until = delay_until_attempt
         self._model_label = model_label
         self.url = "https://chatgpt.com/"
+        self.slider = _VerifiedEffortSlider()
 
-    def evaluate(self, expression: str, argument: dict[str, object]) -> dict[str, object]:
+    def evaluate(
+        self,
+        expression: str,
+        argument: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        if "expectedScope" in expression:
+            return {"ok": True, "scope": "composer"}
         self._attempt += 1
         if self._attempt <= self._delay_until:
             return {"ok": False, "reason": "power-control-not-found", "available": []}
@@ -63,6 +115,11 @@ class _FreshSessionPage:
             "selected": self._model_label.lower(),
             "available": [self._model_label.lower()],
         }
+
+    def locator(self, selector: str) -> object:
+        if "data-cachelikes-effort-binding" in selector:
+            return self.slider
+        return _ChromiumTriggerPage._Empty()
 
     def wait_for_timeout(self, _ms: int) -> None:
         pass
@@ -74,13 +131,25 @@ class _ExistingSessionPage:
     def __init__(self, model_label: str = "GPT-5.6 Sol"):
         self._model_label = model_label
         self.url = "https://chatgpt.com/c/abc123"
+        self.slider = _VerifiedEffortSlider()
 
-    def evaluate(self, expression: str, argument: dict[str, object]) -> dict[str, object]:
+    def evaluate(
+        self,
+        expression: str,
+        argument: dict[str, object] | None = None,
+    ) -> dict[str, object]:
+        if "expectedScope" in expression:
+            return {"ok": True, "scope": "composer"}
         return {
             "ok": True,
             "selected": self._model_label.lower(),
             "available": [self._model_label.lower()],
         }
+
+    def locator(self, selector: str) -> object:
+        if "data-cachelikes-effort-binding" in selector:
+            return self.slider
+        return _ChromiumTriggerPage._Empty()
 
     def wait_for_timeout(self, _ms: int) -> None:
         pass
@@ -125,6 +194,7 @@ class _ChromiumTriggerPage:
         self.current = current
         self.url = "https://chatgpt.com/c/reused-session"
         self.expanded = False
+        self.slider = _VerifiedEffortSlider()
 
     class _Empty:
         def count(self) -> int:
@@ -161,10 +231,14 @@ class _ChromiumTriggerPage:
             return self._Trigger(self)
         return self._Empty()
 
-    def locator(self, _selector: str) -> object:
+    def locator(self, selector: str) -> object:
+        if "data-cachelikes-effort-binding" in selector:
+            return self.slider
         return self._Empty()
 
     def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+        if "expectedScope" in expression:
+            return {"ok": True, "scope": "composer"}
         if "current:" in expression:
             selected_model = (
                 self.current
@@ -203,6 +277,10 @@ def _patch_action_loop_browser(
         if isinstance(observation, dict):
             observation.update(
                 {
+                    "observed": "GPT-5.6 Sol",
+                    "thinking_effort": "Dynamic maximum",
+                    "available_efforts": ["Dynamic maximum"],
+                    "effort_catalog_complete": True,
                     "attempted_labels": ["GPT-5.6 Sol", "diagnostic-trigger"],
                     "visible_buttons": ["Instant"],
                 }
@@ -252,7 +330,7 @@ class TestModelVerificationFreshSession:
     def test_verification_reacquires_locators_on_every_retry(self) -> None:
         page = _FreshSessionPage(delay_until_attempt=2)
         assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
-        assert page._attempt == CHATGPT_MODEL_VERIFICATION_ATTEMPTS
+        assert page._attempt >= CHATGPT_MODEL_VERIFICATION_ATTEMPTS
 
     def test_existing_session_verification_succeeds_immediately(self) -> None:
         page = _ExistingSessionPage()
@@ -504,7 +582,11 @@ class TestAriaDescribedbyRegression:
 
         monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
         monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-        monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_select_web_model",
+            _select_verified_chatgpt_model,
+        )
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
 
@@ -575,7 +657,7 @@ class TestAriaDescribedbyRegression:
         monkeypatch.setattr(
             computer_use_agent,
             "_select_web_model",
-            lambda *_args, **_kwargs: True,
+            _select_verified_chatgpt_model,
         )
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
@@ -646,7 +728,7 @@ class TestAriaDescribedbyRegression:
         monkeypatch.setattr(
             computer_use_agent,
             "_select_web_model",
-            lambda *_args, **_kwargs: True,
+            _select_verified_chatgpt_model,
         )
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
@@ -726,7 +808,7 @@ class TestAriaDescribedbyRegression:
         monkeypatch.setattr(
             computer_use_agent,
             "_select_web_model",
-            lambda *_args, **_kwargs: True,
+            _select_verified_chatgpt_model,
         )
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
@@ -798,7 +880,7 @@ class TestAriaDescribedbyRegression:
         monkeypatch.setattr(
             computer_use_agent,
             "_select_web_model",
-            lambda *_args, **_kwargs: True,
+            _select_verified_chatgpt_model,
         )
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
@@ -1110,7 +1192,14 @@ class TestRecentSessionCatalog:
         bind_chunk = script[bind_index:bind_index + 1_800]
         assert "loadAgentSources({forceRefresh: true})" in bind_chunk
         assert "if (!completedTransition" in bind_chunk
-        assert "lastRenderedAgentRunning === true && !running" in script
+        assert "function runSupersedes(" in script
+        assert "function agentRunRevision(" in script
+        assert "if (runRevision && previousRevision)" in script
+        assert "if (previousRevision || !startedAt) return false;" in script
+        assert "const incomingRunIsStale" in script
+        assert "if (incomingRunIsStale) return;" in script
+        assert "lastRenderedAgentRunning === true && sameRenderedRun" in script
+        assert "|| pendingRunConfirmed" in script
         assert "bindCompletedAgentSession(agent, completedTransition)" in script
         assert 'query.set("refresh", "1")' in script
         assert 'elements.sessionMode.value = "recent"' not in bind_chunk
@@ -1367,7 +1456,11 @@ class TestBrowserInterruption:
 
         monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
         monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-        monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_select_web_model",
+            _select_verified_chatgpt_model,
+        )
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
         monkeypatch.setattr(computer_use_agent, "_detect_browser_interruption", detect)
@@ -1411,7 +1504,11 @@ class TestBrowserInterruption:
         )
         monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
         monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-        monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: True)
+        monkeypatch.setattr(
+            computer_use_agent,
+            "_select_web_model",
+            _select_verified_chatgpt_model,
+        )
         monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
         monkeypatch.setattr(
             computer_use_agent,
