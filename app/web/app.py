@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.54.4-codex.1
+# Code version: v1.54.5-codex.1
 
 from __future__ import annotations
 
@@ -456,7 +456,13 @@ def validate_local_directory_path(raw_path: str) -> tuple[bool, str, str]:
     return True, "", str(resolved)
 
 
-def create_app(local_store_root: Path | str | None = None) -> Flask:
+def create_app(
+    local_store_root: Path | str | None = None,
+    *,
+    computer_use_settings_path: Path | None = None,
+    computer_use_runtime_root: Path | None = None,
+    agent_external_operations_enabled: bool = True,
+) -> Flask:
     """Build and configure the Flask app."""
     configure_logging(APP_VERSION)
     app = Flask(
@@ -469,6 +475,7 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         or secrets.token_urlsafe(32),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
+        AGENT_EXTERNAL_OPERATIONS_ENABLED=bool(agent_external_operations_enabled),
     )
 
     media_catalog = LocalMediaCatalog(local_store_root or LOCAL_STORE_ROOT)
@@ -510,10 +517,15 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     )
     app.extensions["gemini_service"] = gemini_service
     saved_config = load_saved_config()
-    computer_use_settings = ComputerUseSettingsStore()
+    computer_use_settings = ComputerUseSettingsStore(computer_use_settings_path)
+    agent_service_kwargs: dict[str, Any] = {
+        "config_provider": lambda: saved_config,
+    }
+    if computer_use_runtime_root is not None:
+        agent_service_kwargs["runtime_root"] = computer_use_runtime_root
     computer_use_agent_service = ComputerUseAgentService(
         computer_use_settings,
-        config_provider=lambda: saved_config,
+        **agent_service_kwargs,
     )
     app.extensions["computer_use_settings"] = computer_use_settings
     app.extensions["computer_use_agent_service"] = computer_use_agent_service
@@ -956,6 +968,41 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
         if not allow_locked and not is_agent_access_unlocked():
             abort(401)
 
+    def external_agent_operations_enabled() -> bool:
+        """Return whether this app instance may contact a browser or start an Agent worker."""
+        return bool(app.config["AGENT_EXTERNAL_OPERATIONS_ENABLED"])
+
+    def reject_external_agent_operation():
+        """Fail closed when an isolated app instance must not touch host browser state."""
+        return jsonify(
+            {
+                "error": (
+                    "External Agent operations are disabled for this isolated application."
+                )
+            }
+        ), 409
+
+    def disabled_browser_session_payload(
+        platform_name: str,
+        browser_name: str,
+    ) -> dict[str, Any]:
+        """Provide a deterministic no-browser status for an explicit isolated app."""
+        return {
+            "platform": platform_name,
+            "browser": browser_name,
+            "browser_label": browser_name.title(),
+            "logged_in": False,
+            "can_download": False,
+            "account_name": "",
+            "message": "Browser session probing is disabled for this isolated application.",
+            "browser_session_freshness": {
+                "kind": "disabled",
+                "cache_status": "disabled",
+                "cached_at": "",
+                "age_seconds": 0,
+            },
+        }
+
     def load_agent_source_catalog(
         *,
         platform: str,
@@ -1263,6 +1310,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def recover_agent_from_doctor():
         """Run one explicit local recovery action selected by the doctor UI."""
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         payload = request.get_json(silent=True) or {}
         try:
             recovery = computer_use_agent_service.recover(str(payload.get("action", "")))
@@ -1309,6 +1358,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def open_agent_terminal_authorization():
         """Open the host-native authorization surface for Terminal or PowerShell."""
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         payload = request.get_json(silent=True) or {}
         try:
             result = launch_terminal_authorization(
@@ -1324,6 +1375,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def open_agent_conversation():
         """Open the current Agent Web target in the browser selected for the task."""
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         snapshot = computer_use_agent_service.snapshot()
         try:
             platform = str(snapshot.get("platform", computer_use_settings.settings.platform))
@@ -1342,6 +1395,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     @app.post("/api/agent/ask")
     def ask_agent():
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         payload = request.get_json(silent=True) or {}
         try:
             computer_use_agent_service.start(
@@ -1376,6 +1431,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def agent_chatgpt_sources():
         """Load recent ChatGPT sessions and projects for the selected browser."""
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         browser_name = request.args.get("browser", "").strip().lower()
         try:
             payload = load_agent_source_catalog(
@@ -1395,6 +1452,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def agent_sources():
         """Load recent sessions for any selected Web Agent provider."""
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         platform = request.args.get("platform", computer_use_settings.settings.platform).strip().lower()
         browser_name = request.args.get("browser", "").strip().lower()
         try:
@@ -1417,6 +1476,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def agent_chatgpt_project_sessions():
         """Load recent sessions for one selected ChatGPT project."""
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         browser_name = request.args.get("browser", "").strip().lower()
         project_url = request.args.get("project_url", "").strip()
         try:
@@ -1444,6 +1505,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def agent_project_sessions():
         """Load recent sessions inside one provider-neutral Agent Project."""
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         platform = request.args.get("platform", computer_use_settings.settings.platform).strip().lower()
         browser_name = request.args.get("browser", "").strip().lower()
         project_url = request.args.get("project_url", "").strip()
@@ -1470,6 +1533,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     def agent_chatgpt_session_history():
         """Load one selected ChatGPT conversation without persisting remote messages."""
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         browser_name = request.args.get("browser", "").strip().lower()
         conversation_url = normalize_chatgpt_conversation_url(
             request.args.get("conversation_url", "").strip()
@@ -1504,6 +1569,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     @app.post("/api/agent/stop")
     def stop_agent():
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         return jsonify(
             {
                 "stop_requested": computer_use_agent_service.request_stop(),
@@ -1788,6 +1855,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     @app.post("/api/browser/chatgpt/session/refresh")
     def refresh_browser_chatgpt_session():
         """Start a targeted ChatGPT refresh for one valid conversation URL."""
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         payload = request.get_json(silent=True) or {}
         conversation_url = str(payload.get("conversation_url") or "").strip()
         if not is_chatgpt_conversation_url(conversation_url):
@@ -2119,6 +2188,8 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
     @app.post("/api/agent/resume")
     def resume_agent():
         require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
         return jsonify(
             {
                 "resume_requested": computer_use_agent_service.request_resume(),
@@ -2172,6 +2243,11 @@ def create_app(local_store_root: Path | str | None = None) -> Flask:
                 response.headers["Pragma"] = "no-cache"
                 response.headers["Expires"] = "0"
             return response
+
+        if not external_agent_operations_enabled():
+            return browser_session_response(
+                disabled_browser_session_payload(platform_name, browser_name)
+            )
 
         agent_bootstrap_collectors = {
             "chatgpt": probe_and_collect_chatgpt_sources,
