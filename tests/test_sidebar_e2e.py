@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.5-codex.1
+Code version: v1.26.6-codex.1
 """
 
 from __future__ import annotations
@@ -122,6 +122,27 @@ def _open_page(
         page.add_init_script(init_script)
     page.goto(url, wait_until="domcontentloaded")
     return page, context
+
+
+def _wait_for_global_title_rail(page: Page, title_selector: str) -> None:
+    page.wait_for_function(
+        """selector => {
+            const centerY = element => {
+                if (!(element instanceof HTMLElement)) return null;
+                const rect = element.getBoundingClientRect();
+                return rect.top + (rect.height / 2);
+            };
+            const title = centerY(document.querySelector(selector));
+            const toggle = centerY(document.querySelector("#sidebar_toggle"));
+            const theme = centerY(document.querySelector("#global_theme_toggle"));
+            return title !== null
+                && toggle !== null
+                && theme !== null
+                && Math.abs(title - toggle) <= 1
+                && Math.abs(title - theme) <= 1;
+        }""",
+        arg=title_selector,
+    )
 
 
 def _assert_hidden_backdrop(page: Page) -> None:
@@ -421,6 +442,7 @@ def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
         )
 
     try:
+        _wait_for_global_title_rail(page, "[data-agent-heading]")
         desktop = read_geometry()
         assert desktop is not None
         assert abs(desktop["headingCenterY"] - desktop["toggleCenterY"]) <= 1
@@ -436,6 +458,7 @@ def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
         page.wait_for_function(
             "() => window.matchMedia('(max-width: 560px)').matches"
         )
+        _wait_for_global_title_rail(page, "[data-agent-heading]")
         narrow = read_geometry()
         assert narrow is not None
         assert abs(narrow["headingCenterY"] - narrow["toggleCenterY"]) <= 1
@@ -493,6 +516,7 @@ def test_browser_title_rail_stays_aligned_with_global_anchors_across_viewports(
         )
 
     try:
+        _wait_for_global_title_rail(page, ".browser-heading-copy")
         desktop = read_geometry()
         assert desktop is not None
         assert abs(desktop["titleCenterY"] - desktop["sidebarCenterY"]) <= 1
@@ -504,6 +528,7 @@ def test_browser_title_rail_stays_aligned_with_global_anchors_across_viewports(
 
         page.set_viewport_size({"width": 390, "height": 844})
         page.wait_for_function("() => window.matchMedia('(max-width: 560px)').matches")
+        _wait_for_global_title_rail(page, ".browser-heading-copy")
         narrow = read_geometry()
         assert narrow is not None
         assert abs(narrow["titleCenterY"] - narrow["toggleCenterY"]) <= 1
@@ -994,8 +1019,11 @@ def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
                 const originalFetch = window.fetch.bind(window);
                 window.fetch = (input, init) => {
                     const requestUrl = typeof input === "string" ? input : input?.url;
-                    if (requestUrl && new URL(requestUrl, window.location.href).pathname === "/api/agent/status") {
-                        return Promise.reject(new Error("Agent status polling is disabled for this layout test."));
+                    if (requestUrl) {
+                        const pathname = new URL(requestUrl, window.location.href).pathname;
+                        if (pathname === "/api/agent/status" || pathname === "/api/browser-session") {
+                            return Promise.reject(new Error("Live status polling is disabled for this layout test."));
+                        }
                     }
                     return originalFetch(input, init);
                 };
@@ -5168,6 +5196,24 @@ def test_agent_response_copy_uses_raw_history_text_and_the_global_action_rail(
                 """() => new Promise(resolve => {
                     requestAnimationFrame(() => requestAnimationFrame(resolve));
                 })"""
+            )
+            page.wait_for_function(
+                """() => {
+                    const copy = document.querySelector("[data-agent-response-copy]");
+                    const theme = document.querySelector("#global_theme_toggle");
+                    const answer = document.querySelector("[data-agent-response-answer]");
+                    if (!(copy instanceof HTMLElement)
+                        || !(theme instanceof HTMLElement)
+                        || !(answer instanceof HTMLElement)) return false;
+                    const copyRect = copy.getBoundingClientRect();
+                    const themeRect = theme.getBoundingClientRect();
+                    const answerRect = answer.getBoundingClientRect();
+                    return Math.abs(copyRect.right - themeRect.right) <= 1
+                        && copyRect.top >= answerRect.top
+                        && copyRect.left >= answerRect.left
+                        && copyRect.right <= answerRect.right + 1
+                        && document.documentElement.scrollWidth <= window.innerWidth;
+                }"""
             )
             rail = page.evaluate(
                 """() => {

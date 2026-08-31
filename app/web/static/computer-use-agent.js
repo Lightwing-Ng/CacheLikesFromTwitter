@@ -1,4 +1,4 @@
-/* Code version: v3.27.1-codex.1 */
+/* Code version: v3.27.2-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -562,6 +562,24 @@
         );
     }
 
+    function applyAgentSessionListViewport(menu, dock) {
+        if (elements.recentSessionField?.hidden) {
+            menu.style.removeProperty("--agent-session-list-menu-available-height");
+            return;
+        }
+        const menuBox = menu.getBoundingClientRect();
+        const dockBox = dock.getBoundingClientRect();
+        if (menuBox.width <= 0 || dockBox.width <= 0) return;
+        const gap = Number.parseFloat(
+            getComputedStyle(menu).getPropertyValue("--agent-session-list-dock-gap"),
+        ) || 0;
+        const availableHeight = dockBox.top - menuBox.top - gap;
+        menu.style.setProperty(
+            "--agent-session-list-menu-available-height",
+            `${availableHeight}px`,
+        );
+    }
+
     function syncAgentSessionListViewport() {
         const menu = elements.recentSessionCombobox?.querySelector(
             ".agent-session-list-menu-direct",
@@ -569,26 +587,15 @@
         const dock = document.querySelector(".sidebar-dock");
         if (!menu || !dock) return;
         bindAgentSessionListViewportDock(dock);
+
+        // Apply current geometry before the next frame so viewport changes cannot reuse stale height.
+        applyAgentSessionListViewport(menu, dock);
         if (agentSessionListViewportFrame) {
             window.cancelAnimationFrame(agentSessionListViewportFrame);
         }
         agentSessionListViewportFrame = window.requestAnimationFrame(() => {
             agentSessionListViewportFrame = 0;
-            if (elements.recentSessionField?.hidden) {
-                menu.style.removeProperty("--agent-session-list-menu-available-height");
-                return;
-            }
-            const menuBox = menu.getBoundingClientRect();
-            const dockBox = dock.getBoundingClientRect();
-            if (menuBox.width <= 0 || dockBox.width <= 0) return;
-            const gap = Number.parseFloat(
-                getComputedStyle(menu).getPropertyValue("--agent-session-list-dock-gap"),
-            ) || 0;
-            const availableHeight = dockBox.top - menuBox.top - gap;
-            menu.style.setProperty(
-                "--agent-session-list-menu-available-height",
-                `${availableHeight}px`,
-            );
+            applyAgentSessionListViewport(menu, dock);
         });
     }
 
