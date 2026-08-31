@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.52.0-codex.1
+Code version: v3.52.1-codex.1
 """
 
 from __future__ import annotations
@@ -8955,10 +8955,15 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             const modelOptionTexts = modelChoices.map((item) => normalize(
                 item.innerText || item.textContent || ''
             )).filter(Boolean);
-            const sliders = Array.from(menu?.querySelectorAll('[role="slider"]') || [])
+            const pageSliders = Array.from(document.querySelectorAll(
+                '[data-model-reasoning-effort-slider] [role="slider"], [role="slider"][aria-valuemax]'
+            )).filter(visible);
+            const menuSliders = Array.from(menu?.querySelectorAll('[role="slider"]') || [])
                 .filter(visible);
-            const slider = sliders.find((item) => item.closest('[data-model-reasoning-effort-slider]'))
-                || sliders[0];
+            const slider = menuSliders.find((item) => item.closest('[data-model-reasoning-effort-slider]'))
+                || pageSliders.find((item) => item.closest('[data-model-reasoning-effort-slider]'))
+                || menuSliders[0]
+                || pageSliders[0];
             const sliderContainer = slider?.closest('[data-model-reasoning-effort-slider]');
             const sliderOwner = sliderContainer?.closest('[role="menuitem"], [role="group"]')
                 || slider?.closest('[role="menuitem"], [role="group"]');
@@ -8977,6 +8982,7 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
                 .replace(/,\s*\d+\s+of\s+\d+\.?$/i, '')
                 .trim();
             const effortCandidates = [
+                normalizeEffort(slider?.getAttribute('aria-valuetext') || ''),
                 normalizeEffort(slider?.getAttribute('aria-label') || ''),
                 ...effortToggleLines,
                 ...sliderOwnerLines,
@@ -9133,7 +9139,7 @@ def _click_chatgpt_control(control: Any) -> bool:
 
 
 def _chatgpt_find_effort_slider(page: Any) -> Any | None:
-    """Find the subscription-backed thinking-effort slider in the open menu."""
+    """Find the subscription-backed thinking-effort slider in the menu or composer."""
     locator_fn = getattr(page, "locator", None)
     if not callable(locator_fn):
         return None
@@ -9224,6 +9230,60 @@ def _chatgpt_effort_label(result: dict[str, Any] | None) -> str:
     return ""
 
 
+_CHATGPT_MODEL_TEXT_PATTERN = re.compile(
+    r"^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)",
+    re.IGNORECASE,
+)
+
+
+def _chatgpt_normalize_effort_label(value: Any) -> str:
+    """Keep one live provider effort label without assuming a subscription vocabulary."""
+    normalized = " ".join(str(value or "").replace("\x00", "").split())
+    normalized = re.sub(
+        r",\s*\d+\s+of\s+\d+\.?$",
+        "",
+        normalized,
+        flags=re.IGNORECASE,
+    ).strip()
+    if not normalized or len(normalized) > MAX_CHATGPT_EFFORT_LABEL_LENGTH:
+        return ""
+    if re.fullmatch(r"thinking(?:\s+effort)?", normalized, flags=re.IGNORECASE):
+        return ""
+    if re.fullmatch(r"\d+\s+of\s+\d+\.?", normalized, flags=re.IGNORECASE):
+        return ""
+    if re.match(r"^use\s+(?:left|right)\s+arrow", normalized, flags=re.IGNORECASE):
+        return ""
+    if _CHATGPT_MODEL_TEXT_PATTERN.match(normalized):
+        return ""
+    return normalized
+
+
+def _chatgpt_slider_effort_label(slider: Any) -> str:
+    """Read the live slider label when the model menu omits thinking-effort payload."""
+    if slider is None:
+        return ""
+    get_attribute = getattr(slider, "get_attribute", None)
+    if not callable(get_attribute):
+        return ""
+    for name in ("aria-valuetext", "aria-label"):
+        try:
+            try:
+                raw_value = get_attribute(
+                    name,
+                    timeout=CHATGPT_MODEL_LOCATOR_TIMEOUT_MILLISECONDS,
+                )
+            except TypeError:
+                raw_value = get_attribute(name)
+        except Exception as exc:
+            if _is_composer_wait_timeout(exc):
+                continue
+            raise
+        label = _chatgpt_normalize_effort_label(raw_value)
+        if label:
+            return label
+    return ""
+
+
 def _chatgpt_select_subscription_effort(
     page: Any,
     result: dict[str, Any],
@@ -9235,6 +9295,8 @@ def _chatgpt_select_subscription_effort(
     The provider owns both labels and range. We never infer a plan from names:
     the bounded ARIA slider is traversed position-by-position, then the desired
     position is selected and read back before project context can be attached.
+    The slider may live in the open model menu or beside the composer; a missing
+    menu payload is not treated as a missing slider when the live control exists.
     """
     requested = normalize_chatgpt_effort(requested_effort)
     labels: list[str] = []
@@ -9248,12 +9310,12 @@ def _chatgpt_select_subscription_effort(
             result.pop("effort_selection_error", None)
         return result, labels, complete
 
+    slider = _chatgpt_find_effort_slider(page)
     thinking_payload = result.get("thinking_effort")
-    if not isinstance(thinking_payload, dict):
+    if slider is None and not isinstance(thinking_payload, dict):
         if requested != CHATGPT_EFFORT_POLICY_HIGHEST:
             return finish(complete=False, error="requested-effort-control-not-found")
         return finish(complete=False)
-    slider = _chatgpt_find_effort_slider(page)
     if slider is None:
         if requested != CHATGPT_EFFORT_POLICY_HIGHEST:
             return finish(complete=False, error="effort-slider-not-found")
@@ -9292,10 +9354,11 @@ def _chatgpt_select_subscription_effort(
         if current_state["now"] != position:
             return finish(complete=False, error="effort-position-readback-mismatch")
         reread = _read_chatgpt_model_menu(page)
-        if not reread.get("ok"):
+        if reread.get("ok"):
+            result = reread
+        elif not _chatgpt_slider_effort_label(slider):
             return finish(complete=False, error="effort-menu-unreadable")
-        result = reread
-        label = _chatgpt_effort_label(reread)
+        label = _chatgpt_effort_label(result) or _chatgpt_slider_effort_label(slider)
         if not label:
             return finish(complete=False, error="effort-label-unreadable")
         labels_by_position[position] = label
@@ -9344,9 +9407,8 @@ def _chatgpt_select_subscription_effort(
                 return finish(complete=False, error="effort-selection-readback-mismatch")
 
     reread = _read_chatgpt_model_menu(page)
-    if not reread.get("ok"):
-        return finish(complete=False, error="effort-menu-unreadable")
-    result = reread
+    if reread.get("ok"):
+        result = reread
     post_menu_slider = _chatgpt_find_effort_slider(page)
     post_menu_state = (
         _chatgpt_effort_slider_state(post_menu_slider)
@@ -9357,9 +9419,11 @@ def _chatgpt_select_subscription_effort(
         return finish(complete=False, error="effort-range-changed")
     if post_menu_state["now"] != target_position:
         return finish(complete=False, error="effort-selection-readback-mismatch")
-    final_label = _chatgpt_effort_label(result)
+    final_label = _chatgpt_effort_label(result) or _chatgpt_slider_effort_label(
+        post_menu_slider
+    )
     expected_label = labels_by_position[target_position]
-    if final_label.casefold() != expected_label.casefold():
+    if not final_label or final_label.casefold() != expected_label.casefold():
         return finish(complete=False, error="effort-selection-label-mismatch")
     return finish(complete=True)
 

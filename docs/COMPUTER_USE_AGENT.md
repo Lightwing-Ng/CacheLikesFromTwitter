@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.51.5-codex.1`
+Documentation version: `v3.51.6-codex.1`
 
 ## Purpose
 
@@ -124,9 +124,11 @@ older task cannot be submitted accidentally through a different Web session.
    ChatGPT may expose the thinking-effort trigger under any subscription-provided label, an
    unlabeled composer pill, or a `model-switcher` control. The controller therefore resolves the
    live menu-semantic trigger by its rendered DOM structure and composer relationship; it does not
-   use a plan-specific effort vocabulary. Once the menu is open, the controller reads the slider's
-   `aria-valuemin`, `aria-valuemax`, and current rendered label, then visits every exposed position.
-   `Highest available` is the default policy; after discovery, the Agent selector exposes every
+   use a plan-specific effort vocabulary. The live ARIA slider may appear inside the open model
+   menu or beside the composer. The controller reads `aria-valuemin`, `aria-valuemax`,
+   `aria-valuetext` or the rendered label, then visits every exposed position. `Highest available`
+   selects the live maximum position rather than a hard-coded name such as `Pro` or `Extra High`.
+   After discovery, the Agent selector exposes every
    subscription label and can request any exact label. Both the final integer `aria-valuenow` and
    rendered label must match. Missing controls, fractional or out-of-range values, incomplete
    catalogs, and unavailable requested labels fail closed before context attachment or submission.
@@ -501,7 +503,7 @@ The model selector is provider-specific: ChatGPT exposes the local option `5.6 S
 exposes `Build Beta`, and Claude exposes `Auto`. Each provider is fail-closed: the controller must select or observe
 and then visibly read back the exact configured model before any attachment or send. ChatGPT proves that local option
 through a checked `GPT-5.6 Sol` / `5.6 Sol` model item after opening the live menu-semantic trigger. For subscriptions that
-expose a thinking-effort slider, the controller reads the complete ARIA range at runtime, records every rendered
+expose a thinking-effort slider in the model menu or beside the composer, the controller reads the complete ARIA range at runtime, records every rendered
 position, and selects either `Highest available` or one exact observed label without assuming fixed names. The final
 integer position and visible label must both verify. A localized or changed menu that cannot prove the model and effort
 stops the run without transferring project data.
@@ -544,10 +546,13 @@ probe was not possible because the selected account is currently restricted. The
 send project content. Any live signed-in browser run must be treated as an external data transfer;
 confirm the target and data scope before sending a real project task.
 
-The local `demo_flight` controller acceptance treats the named Demo as immutable input. It snapshots
-the SHA-256 digest of every `DEMO_FLIGHT_FILES` member, copies only that allowlist into a temporary
-workspace, exercises controller CRUD and cold verification in the copy, and recomputes every
-original allowlisted digest before returning. It never modifies the original Demo project.
+The local `demo_flight` controller acceptance treats the named Demo as immutable test input. It
+snapshots the SHA-256 digest of every `DEMO_FLIGHT_FILES` member, copies only that allowlist into a
+temporary workspace, exercises controller CRUD and cold verification in the copy, and recomputes
+every original allowlisted digest before returning. The automated test never modifies the original
+Demo project. A live `/agent/edge/chatgpt` task may edit that folder when it is selected as the
+current project; `demo_flight/README.md` documents that token-pool fallback, including
+`Highest available` Sol effort discovery rather than a hard-coded provider label.
 
 On 27 Aug 2026, delayed Gemini hydration, Stop interruption, strict model proof, bounded diagnostic
 privacy, localized region gating, and transient navigation retry coverage passed 307 controller

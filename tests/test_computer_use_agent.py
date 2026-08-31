@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.52.0-codex.1
+Code version: v3.52.1-codex.1
 """
 
 from __future__ import annotations
@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import asdict
 import hashlib
 from io import BytesIO, StringIO, TextIOWrapper
+import inspect
 import json
 import os
 from pathlib import Path
@@ -46,6 +47,7 @@ from app.core.computer_use_agent import (
     _chatgpt_response_snapshot,
     _chatgpt_effort_slider_state,
     _chatgpt_select_subscription_effort,
+    _read_chatgpt_model_menu,
     _chatgpt_visible_model_controls,
     _detect_browser_interruption,
     default_model_for_platform,
@@ -1140,6 +1142,92 @@ def test_chatgpt_highest_available_without_slider_does_not_fail_closed() -> None
 
     assert complete is False
     assert labels == []
+    assert "effort_selection_error" not in updated
+
+
+def test_chatgpt_menu_reader_discovers_effort_slider_outside_the_open_menu() -> None:
+    source = inspect.getsource(_read_chatgpt_model_menu)
+    assert 'document.querySelectorAll(' in source
+    assert '[data-model-reasoning-effort-slider] [role="slider"]' in source
+    assert "aria-valuetext" in source
+
+
+def test_chatgpt_highest_available_uses_live_slider_when_menu_omits_effort() -> None:
+    class _Empty:
+        def count(self) -> int:
+            return 0
+
+    class _Slider:
+        labels = ("Instant", "Medium", "High", "Extra High", "Pro")
+
+        def __init__(self) -> None:
+            self.value = 0
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_Slider":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            return {
+                "aria-valuenow": str(self.value),
+                "aria-valuemin": "0",
+                "aria-valuemax": "4",
+                "aria-valuetext": self.labels[self.value],
+                "aria-label": self.labels[self.value],
+            }.get(name)
+
+        def press(self, key: str, **_kwargs: object) -> None:
+            if key == "Home":
+                self.value = 0
+            elif key == "End":
+                self.value = 4
+            elif key == "ArrowRight":
+                self.value = min(self.value + 1, 4)
+
+    class _Page:
+        def __init__(self) -> None:
+            self.slider = _Slider()
+
+        def locator(self, selector: str) -> object:
+            if '[role="slider"]' in selector:
+                return self.slider
+            return _Empty()
+
+        def evaluate(self, _expression: str, *_args: object) -> dict[str, object]:
+            return {
+                "ok": True,
+                "current": "GPT-5.6 Sol",
+                "selected_model": "GPT-5.6 Sol",
+                "available": ["GPT-5.6 Sol"],
+                "thinking_effort": None,
+            }
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    updated, labels, complete = _chatgpt_select_subscription_effort(
+        page,
+        {
+            "ok": True,
+            "current": "GPT-5.6 Sol",
+            "selected_model": "GPT-5.6 Sol",
+            "available": ["GPT-5.6 Sol"],
+            "thinking_effort": None,
+        },
+        lambda _milliseconds: None,
+    )
+
+    assert complete is True
+    assert page.slider.value == 4
+    assert labels == ["Instant", "Medium", "High", "Extra High", "Pro"]
+    assert updated["effort_catalog_complete"] is True
     assert "effort_selection_error" not in updated
 
 
