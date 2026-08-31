@@ -836,7 +836,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.2-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.17-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.27.18-codex.1', local_body)
         self.assertIn('data-agent-effort-field', local_body)
         self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
@@ -1610,7 +1610,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.27.17-codex.1',
+            'computer-use-agent-v3.27.18-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'agent-effort-refresh-label">Refresh options</span>',
@@ -1647,6 +1647,33 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("function setAgentReadiness", script)
         self.assertNotIn("agentReadinessCopy", script)
         self.assertNotIn("elements.readiness", script)
+
+    def test_agent_page_fail_closed_effort_bootstrap_preserves_saved_preference(self) -> None:
+        """Keep the first frame on the local policy until the live catalog is verified."""
+        script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
+        with patch(
+            "app.core.computer_use_agent.load_computer_use_settings",
+            return_value=ComputerUseSettings(
+                browser="edge",
+                platform="chatgpt",
+                chatgpt_effort="Medium",
+            ),
+        ):
+            app = create_app()
+
+        with app.test_client() as client:
+            body = client.get("/agent/edge/chatgpt").get_data(as_text=True)
+
+        self.assertIn(
+            'name="chatgpt_effort" value="highest_available" '
+            'data-agent-combobox-input data-agent-effort-input '
+            'data-agent-effort-preference="Medium"',
+            body,
+        )
+        self.assertIn(
+            'const persistedPreference = String(input.dataset.agentEffortPreference || "").trim();',
+            script,
+        )
 
     def test_agent_page_exposes_a_collapsed_two_line_composer_control(self) -> None:
         app = create_app()

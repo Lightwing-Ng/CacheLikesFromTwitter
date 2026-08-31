@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.6.3-codex.1`
+Documentation version: `v1.6.4-codex.1`
 
 ## Launch
 
@@ -83,7 +83,8 @@ to override it. A successful unlock is stored in the signed Flask session for th
   the same bounded initial check verifies readiness, collects the root session/project catalog,
   returns it to the selector, and seeds the memory/Parquet cache. Cache reuse and task completion
   do not add a browser launch. A later browser launch is reserved for an explicit refresh, task
-  submission, or later Project-session selection. Restricted Claude accounts remain unavailable
+  submission, or later Project-session selection; an expired keyed Project-session read may serve
+  stale rows while one coalesced quiet refresh runs. Restricted Claude accounts remain unavailable
   and are not sent through a login-bypass flow.
 
 ## Local data

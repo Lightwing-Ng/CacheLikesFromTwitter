@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.10.3-codex.1`
+Documentation version: `v1.10.4-codex.1`
 
 ## Runtime flow
 
@@ -271,10 +271,11 @@ Source discovery is persisted separately from message history through a three-le
 path: process memory, the shared Parquet catalog, and the authenticated browser collector. The
 `/agent` source routes reuse a 15-minute entry by default and coalesce concurrent explicit refreshes
 by cache key. Expired passive reads retain the last known entry without starting a background
-collector; a first Agent bootstrap cache miss performs one bounded check. The visible Agent refresh
-control uses `refresh=1` for an explicit synchronous browser re-check. A failed refresh falls back
-to the last known entry and marks the response as stale; no remote conversation messages are written
-by this catalog.
+collector; a first Agent bootstrap cache miss performs one bounded check. Project-session selection
+is an explicit later operation and may serve an expired keyed entry while one coalesced quiet refresh
+runs. The visible Agent refresh control uses `refresh=1` for an explicit synchronous browser
+re-check. A failed refresh falls back to the last known entry and marks the response as stale; no
+remote conversation messages are written by this catalog.
 The ChatGPT `/agent` status route performs the account probe, complete live Sol effort discovery,
 and root source collection together in one Chromium browser launch, returns both catalogs to the
 page, and seeds the same source cache through its explicit `store` path. This keeps the status,

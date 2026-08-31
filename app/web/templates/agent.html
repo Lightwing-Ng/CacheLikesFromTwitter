@@ -1,4 +1,4 @@
-<!-- Code version: v3.27.21-codex.1 -->
+<!-- Code version: v3.27.22-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -422,7 +422,7 @@
                                     </span>
                                     <span class="agent-effort-controls" data-agent-effort-field{% if settings.platform != 'chatgpt' %} hidden{% endif %}>
                                         <span class="trade-strategy-combobox agent-combobox agent-effort-combobox" data-agent-combobox>
-                                            <input type="hidden" name="chatgpt_effort" value="{{ settings.chatgpt_effort }}" data-agent-combobox-input data-agent-effort-input>
+                                            <input type="hidden" name="chatgpt_effort" value="{{ 'highest_available' if settings.platform == 'chatgpt' else settings.chatgpt_effort }}" data-agent-combobox-input data-agent-effort-input data-agent-effort-preference="{{ settings.chatgpt_effort }}">
                                             <button
                                                 type="button"
                                                 class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger agent-effort-trigger"
@@ -480,6 +480,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.2-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.27.17-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.27.18-codex.1') }}"></script>
 </body>
 </html>

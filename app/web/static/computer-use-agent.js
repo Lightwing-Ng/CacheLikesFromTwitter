@@ -1,4 +1,4 @@
-/* Code version: v3.27.17-codex.1 */
+/* Code version: v3.27.18-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -109,6 +109,7 @@
     let lastRenderedAgentStartedAt = elements.agentPage?.dataset.agentStartedAt || "";
     let promptHasLocalDraft = false;
     let promptSubmissionPending = false;
+    let effortSelectionTouched = false;
     let pendingSubmissionPreviousRunIdentity = "";
     let pendingSubmissionPreviousRunRevision = 0;
     let pendingSubmissionPreviousRunStartedAt = "";
@@ -471,12 +472,16 @@
         if (catalog) field.dataset.agentEffortCatalogFreshness = catalog.freshnessKind;
         else delete field.dataset.agentEffortCatalogFreshness;
         const current = selectedChatgptEffort();
+        const persistedPreference = String(input.dataset.agentEffortPreference || "").trim();
+        const preferred = effortSelectionTouched
+            ? current
+            : (catalog ? (persistedPreference || current) : HIGHEST_CHATGPT_EFFORT);
         (catalog?.labels || []).forEach((label) => {
             menu.append(createChatgptEffortOption(label, label));
         });
 
         const options = Array.from(menu.querySelectorAll("[data-agent-combobox-option]"));
-        const selected = options.find((option) => option.dataset.agentComboboxOption === current)
+        const selected = options.find((option) => option.dataset.agentComboboxOption === preferred)
             || options.find((option) => option.dataset.agentComboboxOption === HIGHEST_CHATGPT_EFFORT)
             || null;
         if (!selected) return;
@@ -1017,6 +1022,7 @@
             const selectOption = (option) => {
                 const previousValue = input.value;
                 input.value = option.dataset.agentComboboxOption || "";
+                if (combobox === elements.effortCombobox) effortSelectionTouched = true;
                 syncComboboxTriggerFromOption(combobox, option);
                 closeComboboxForSelection();
                 normalizeAgentSelection();

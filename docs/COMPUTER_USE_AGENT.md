@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.53.3-codex.1`
+Documentation version: `v3.53.4-codex.1`
 
 ## Purpose
 
@@ -48,6 +48,9 @@ including its server, stale, or session cache record; the UI identifies it as th
 result rather than implying that a passive render is a new probe. The adjacent `Refresh options`
 control makes one explicit `refresh=1` probe when the user wants the current subscription labels.
 It does not submit a prompt or start an Agent task.
+The server-rendered first frame also writes `highest_available` into the hidden effort field until a
+matching complete catalog is verified. A persisted provider label is retained as data-only
+preference state and restored only when that verified catalog still exposes the label.
 When `Recent sessions` is selected, the catalog is rendered directly as a bounded, vertically
 scrollable list in the sidebar rather than a second dropdown. A ready Agent status cached without
 its bootstrap catalog is treated as incomplete and refreshed once, so the status probe and source
@@ -60,7 +63,9 @@ catalog directly to the selector and seeds the shared L1 and Parquet L2 cache. A
 supersedes older in-memory or session-storage catalog state before loaded/loading guards run,
 aborting and invalidating any older request. The page therefore does not open a second browser for
 the Recent sessions step. Loading sessions inside a selected Project remains a later, separately
-keyed operation. Grok's DOM fallback exposes only same-Project `?chat=<id>` sessions.
+keyed operation; an expired Project-session entry may return stale rows while one coalesced quiet
+refresh runs because this request is explicitly user-initiated, unlike passive status polling.
+Grok's DOM fallback exposes only same-Project `?chat=<id>` sessions.
 
 This route uses no provider developer API, command-line coding-agent runtime, MCP connection, or
 third-party agent bridge. Readiness and catalog discovery may call the provider's own authenticated
