@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.7.1-codex.1`
+Documentation version: `v1.8.1-codex.1`
 
 ## Launch
 
@@ -72,6 +72,8 @@ to override it. A successful unlock is stored in the signed Flask session for th
 - Sending a task transmits the generated context and requested source excerpts to the selected Web
   account. Review that provider's data controls before using private or regulated source code.
 - Stop requests end current web generation and terminate the active local command process group.
+  They do not stop a detached durable compute job; use its dedicated `Stop job` control or
+  `job_stop` with the exact `job_id`.
 - Agent source discovery is cached in `local_store/agent/agent_source_catalog.parquet` for 15
   minutes per provider/browser/Project key. Fresh reads use process memory; the first read after a
   restart hydrates memory from Parquet. Expired passive reads retain the previous catalog and never
@@ -86,6 +88,51 @@ to override it. A successful unlock is stored in the signed Flask session for th
   submission, or later Project-session selection; an expired keyed Project-session read may serve
   stale rows while one coalesced quiet refresh runs. Restricted Claude accounts remain unavailable
   and are not sent through a login-bypass flow.
+
+### Durable optimization jobs
+
+Before `job_start`, create a reviewed workspace-root `.cachelikes-compute.json` file. It must pin
+the exact approved entrypoint bytes, for example:
+
+```json
+{
+  "schema_version": 1,
+  "entrypoints": [
+    {
+      "id": "optimizer",
+      "path": "scripts/optimizer.py",
+      "sha256": "64-lowercase-hex-characters",
+      "max_runtime_seconds": 43200
+    }
+  ]
+}
+```
+
+The runtime must be between 43,200 and 86,400 seconds. Recalculate and deliberately review the
+digest after every entrypoint change; a stale digest fails closed. The optimizer receives only
+`--config <runtime-copy> --job-runtime <task-directory>` and, for an explicit resume,
+`--resume <prior-checkpoint>`. Its config is a workspace-relative regular JSON file no larger than
+1 MiB. Shell operators, redirects, executable names, environment enumeration, download commands,
+and arbitrary argument vectors are not part of the action protocol.
+On macOS the worker also runs through `/usr/bin/sandbox-exec` with `network*` denied. Optimizers
+must therefore use only local datasets and must not depend on license servers, remote telemetry,
+distributed network workers, or localhost sockets during the job.
+
+Publish heartbeat data atomically to `progress.json`. Supported fields are generation or iteration,
+completed and total evaluations, best objective, elapsed time, optional reliable ETA, and a bounded
+summary. Publish the final export to `result.json`. Logs roll in place at 5 MiB; `job_status` returns
+only the latest 4,000 characters.
+
+Use `write_optimizer_checkpoint_atomic()` for `checkpoint.json`. Schema version 1 requires the
+optimizer version, iteration, population or optimizer state, RNG state, seed, best objective, best
+parameters, and evaluation count. A restart marks a missing worker interrupted. Resume is always an
+explicit new `job_start` with a new idempotency key and the prior `resume_job_id`; the service never
+duplicates an expensive run automatically.
+
+Closing or refreshing the Agent page, finishing one provider turn, or reaching a Web Agent final
+response does not stop the worker. Normal idle sleep is inhibited while it runs on macOS. Closing
+the lid, explicit Sleep, logout, reboot, power loss, service-host failure, or hardware failure can
+still interrupt it, so the optimizer must checkpoint frequently enough for the workload.
 
 ## Local data
 

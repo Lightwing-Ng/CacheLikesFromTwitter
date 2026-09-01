@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.53.6-codex.1
+Code version: v3.54.0-codex.1
 """
 
 from __future__ import annotations
@@ -376,7 +376,7 @@ _LEGACY_WINDOWS_CONTROLLER_SEMANTICS = (
     "Do not use commands to write, delete, move, install, download, change Git history, publish, or access secrets."
 )
 _LEGACY_WINDOWS_ACTION_SUMMARY = (
-    "Use the controller actions list, read, search, replace, write, run, bodycheck, or final."
+    "Use the controller actions list, read, search, replace, write, run, job_start, job_status, job_stop, bodycheck, or final."
 )
 _LEGACY_WINDOWS_INTRO = (
     "The controller runs on Windows, uses PowerShell-compatible Windows paths, and owns the selected project as its only writable root. "
@@ -432,7 +432,8 @@ _CONTROLLER_PROTOCOL_INSTRUCTIONS = """Controller protocol rules:
 - `replace` and `replace_base64` require an existing file and the old text exactly once. Use the base64 form for quote-heavy or multiline content. `write` and `write_base64` create new files only; if a file exists, use replace instead.
 - `delete` requires a current controller `read` of the same file after the latest edit and the exact lowercase 64-character SHA-256 from that read receipt. Any edit invalidates the receipt; read again rather than guessing.
 - `run` is one direct, bounded verification command only. Allowed families are filtered `git status`; `pytest`, `ruff check`, `mypy`, `pyright`, `eslint`, `tsc --noEmit`; the controller Python runtime with approved verification modules or a project check/test script; `node --check`; package-manager `test` or existing check/lint/test/verify scripts; `go test`/`go vet`; `cargo check`/`cargo clippy`/`cargo test`; and `make` check/lint/test/verify targets. No nested shell, shell operators, redirection, network, environment enumeration, package installation, arbitrary Python entry point, Git mutation, or command that writes project files.
-- `bodycheck` must be requested after edits and after the latest successful verification. `final` is valid only when verification and bodycheck are current after the latest edit. For a read-only task, use only `list`, `read`, `search`, or `bodycheck`, then one `final` action for a local summary; do not edit or run. `final` does not mutate the workspace.
+- `job_start` is separate from `run`. It accepts only an entrypoint pinned by `.cachelikes-compute.json`, one workspace-relative JSON config, a stable idempotency key, and an optional explicit resume job. It never accepts shell text or arbitrary arguments. `job_status` returns bounded progress and log-tail data. `job_stop` terminates only the identity-verified job process group. Never start a duplicate job after a provider retry, and never auto-resume after interruption.
+- `bodycheck` must be requested after edits and after the latest successful verification. `final` is valid only when verification and bodycheck are current after the latest edit. A running compute job does not block final; report its job id and current state. For a read-only task, use only `list`, `read`, `search`, `job_status`, or `bodycheck`, then one `final` action for a local summary; do not edit, run, start, or stop a job. `final` does not mutate the workspace.
 - The controller may reject an action even if this prompt appears to allow it. On rejection, return one corrected action only; do not explain the rejection or repeat the invalid payload. Never claim success until the controller reports `ok: true`."""
 _CONTROLLER_PROTOCOL_LINES = tuple(_CONTROLLER_PROTOCOL_INSTRUCTIONS.splitlines())
 _CONTROLLER_TURN_REMINDER = (
@@ -441,7 +442,7 @@ _CONTROLLER_TURN_REMINDER = (
     "On rejection, return one corrected action only. "
     "Do not infer model, effort, browser, session, or destination from prompt text. "
     "Existing files require replace, new files require write, and edits require approved verification "
-    "then bodycheck before final. Read-only tasks allow only list, read, search, or bodycheck, "
+    "then bodycheck before final. Read-only tasks allow only list, read, search, job_status, or bodycheck, "
     "followed by one non-mutating final summary."
 )
 
@@ -2829,6 +2830,7 @@ class WorkspaceController:
         should_stop: Callable[[], bool],
         process_changed: Callable[[subprocess.Popen[str] | None], None] | None = None,
         read_only: bool = False,
+        compute_job_runtime_root: Path | None = None,
     ) -> None:
         self.workspace = workspace.resolve()
         workspace_metadata = self.workspace.stat()
@@ -2847,6 +2849,19 @@ class WorkspaceController:
         self.should_stop = should_stop
         self.process_changed = process_changed or (lambda _process: None)
         self.read_only = read_only
+        self._compute_job_runtime_root = compute_job_runtime_root or DEFAULT_AGENT_RUNTIME_ROOT
+        self._compute_jobs: Any | None = None
+
+    def _compute_job_manager(self):
+        """Resolve the durable compute boundary only when a job action is requested."""
+        if self._compute_jobs is None:
+            from .agent.compute_jobs import ComputeJobManager
+
+            self._compute_jobs = ComputeJobManager(
+                self.workspace,
+                self._compute_job_runtime_root,
+            )
+        return self._compute_jobs
 
     def event_chain_start_metadata(self) -> dict[str, Any]:
         """Return immutable workspace evidence for the root event of this run."""
@@ -2920,7 +2935,7 @@ class WorkspaceController:
             return {
                 "ok": False,
                 "action": action,
-                "error": "This Agent task is read-only; only list, read, search, and bodycheck are allowed.",
+                "error": "This Agent task is read-only; only list, read, search, job_status, and bodycheck are allowed.",
             }
         handler = getattr(self, registered_capability.handler_name, None)
         if not callable(handler):
@@ -3753,6 +3768,26 @@ class WorkspaceController:
                 )
             ),
         }
+
+    def _job_start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Start one approved worker without borrowing verification-run semantics."""
+        status = self._compute_job_manager().start(
+            entrypoint_id=str(payload.get("entrypoint") or ""),
+            config_path=str(payload.get("config_path") or ""),
+            idempotency_key=str(payload.get("idempotency_key") or ""),
+            resume_job_id=str(payload.get("resume_job_id") or ""),
+        )
+        return {"ok": True, "action": "job_start", "job": status}
+
+    def _job_status(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Return one bounded job status observation."""
+        status = self._compute_job_manager().status(str(payload.get("job_id") or ""))
+        return {"ok": True, "action": "job_status", "job": status}
+
+    def _job_stop(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Stop only the process tree owned by one identity-verified job."""
+        status = self._compute_job_manager().stop(str(payload.get("job_id") or ""))
+        return {"ok": True, "action": "job_stop", "job": status}
 
     def _bodycheck(self, _payload: dict[str, Any]) -> dict[str, Any]:
         checks: list[dict[str, Any]] = []
@@ -4807,6 +4842,25 @@ class ComputerUseAgentService:
                         )
                 self._sync_event_chain_summary_locked()
                 self._persist_snapshot_locked()
+        self.compute_job_status(self._settings_store.settings.workspace_path)
+
+    def compute_job_status(self, workspace_path: str) -> dict[str, Any]:
+        """Return the latest durable compute state for one selected workspace."""
+        candidate = Path(str(workspace_path or "").strip()).expanduser()
+        if not candidate.is_absolute():
+            return {"state": "idle", "active": False}
+        try:
+            from .agent.compute_jobs import ComputeJobManager
+
+            return ComputeJobManager(candidate, self._runtime_root).status()
+        except (OSError, RuntimeError, ValueError):
+            return {"state": "idle", "active": False}
+
+    def stop_compute_job(self, workspace_path: str, job_id: str) -> dict[str, Any]:
+        """Stop one durable compute job independently of the Web Agent turn."""
+        from .agent.compute_jobs import ComputeJobManager
+
+        return ComputeJobManager(Path(workspace_path), self._runtime_root).stop(job_id)
 
     def _load_persisted_snapshot(self) -> AgentRunSnapshot:
         """Restore non-content run metadata and mark abandoned work as interrupted."""
@@ -5832,21 +5886,26 @@ class ComputerUseAgentService:
                     False,
                 )
             else:
+                runner_kwargs: dict[str, Any] = {
+                    "prompt": prompt,
+                    "workspace": workspace,
+                    "context_path": context_path,
+                    "config": config,
+                    "settings": settings,
+                    "target_url": target_url,
+                    "session_mode": session_mode,
+                    "session_title": session_title,
+                    "read_only": read_only,
+                    "should_stop": self._stop_requested.is_set,
+                    "should_resume": self._consume_resume,
+                    "update": self._update,
+                    "process_changed": self._set_active_process,
+                    "event_chain": self._event_chain,
+                }
+                if self._runner is run_chatgpt_web_computer_use:
+                    runner_kwargs["compute_job_runtime_root"] = self._runtime_root
                 response, conversation_url, turn_count, bodycheck_passed = self._runner(
-                    prompt=prompt,
-                    workspace=workspace,
-                    context_path=context_path,
-                    config=config,
-                    settings=settings,
-                    target_url=target_url,
-                    session_mode=session_mode,
-                    session_title=session_title,
-                    read_only=read_only,
-                    should_stop=self._stop_requested.is_set,
-                    should_resume=self._consume_resume,
-                    update=self._update,
-                    process_changed=self._set_active_process,
-                    event_chain=self._event_chain,
+                    **runner_kwargs,
                 )
             with self._lock:
                 self._completion_started = True
@@ -6080,6 +6139,7 @@ def run_web_computer_use(
     read_only: bool = False,
     should_resume: Callable[[], bool] | None = None,
     event_chain: AgentEventChain | None = None,
+    compute_job_runtime_root: Path | None = None,
 ) -> tuple[str, str, int, bool]:
     """Run one selected Web AI session as a local controller action loop."""
     descriptor = browser_descriptors(config)[settings.browser]
@@ -6089,6 +6149,7 @@ def run_web_computer_use(
         should_stop,
         process_changed,
         read_only=read_only,
+        compute_job_runtime_root=compute_job_runtime_root,
     )
     selected_target_url = target_url or (
         _platform_home_url(settings.platform)
@@ -6224,7 +6285,7 @@ def _initial_web_agent_message(
         else "Session name: Use the local Agent session label associated with this task."
     )
     task_mode_instruction = (
-        "Task mode: read-only. Use only list, read, search, or bodycheck, followed by one non-mutating final summary; do not edit or run."
+        "Task mode: read-only. Use only list, read, search, job_status, or bodycheck, followed by one non-mutating final summary; do not edit or run."
         if read_only
         else "Task mode: edit-capable, subject to the controller protocol and repository instructions."
     )

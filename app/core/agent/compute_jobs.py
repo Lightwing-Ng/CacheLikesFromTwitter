@@ -1,11 +1,10 @@
 """Durable local compute jobs for approved optimization entrypoints.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
 
-from collections import deque
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -13,13 +12,12 @@ import os
 from pathlib import Path
 import re
 import secrets
-import shlex
 import signal
 import stat
 import subprocess
 import sys
 import time
-from typing import Any, Callable
+from typing import Any
 
 
 APPROVAL_FILENAME = ".cachelikes-compute.json"
@@ -31,6 +29,20 @@ MAX_LOG_BYTES = 5 * 1024 * 1024
 MAX_LOG_TAIL_CHARS = 4_000
 MAX_PROGRESS_BYTES = 64 * 1024
 MAX_STATUS_TEXT_CHARS = 1_000
+MACOS_SANDBOX_EXECUTABLE = Path("/usr/bin/sandbox-exec")
+MACOS_NETWORK_DENY_PROFILE = "(version 1) (allow default) (deny network*)"
+PROGRESS_FIELDS = frozenset(
+    {
+        "generation",
+        "iteration",
+        "evaluations_completed",
+        "evaluations_total",
+        "best_objective",
+        "elapsed_seconds",
+        "eta_seconds",
+        "summary",
+    }
+)
 TERMINAL_STATES = frozenset({"succeeded", "failed", "stopped", "interrupted"})
 ACTIVE_STATES = frozenset({"starting", "running", "stopping"})
 _ENTRYPOINT_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}\Z")
@@ -95,7 +107,10 @@ def _confined_regular_file(workspace: Path, raw_path: str, *, suffix: str) -> Pa
         current /= part
         if current.is_symlink():
             raise ComputeJobError("Compute-job paths cannot traverse symbolic links.")
-    resolved = (workspace / candidate).resolve(strict=True)
+    try:
+        resolved = (workspace / candidate).resolve(strict=True)
+    except OSError as exc:
+        raise ComputeJobError("Compute-job path does not name an existing approved file.") from exc
     try:
         resolved.relative_to(workspace)
     except ValueError as exc:
@@ -222,17 +237,7 @@ def write_compute_progress_atomic(job_runtime: Path, payload: dict[str, Any]) ->
     """Publish one bounded progress heartbeat for job_status."""
     if not isinstance(payload, dict):
         raise ComputeJobError("Compute progress must be one JSON object.")
-    allowed = {
-        "generation",
-        "iteration",
-        "evaluations_completed",
-        "evaluations_total",
-        "best_objective",
-        "elapsed_seconds",
-        "eta_seconds",
-        "summary",
-    }
-    unknown = sorted(set(payload).difference(allowed))
+    unknown = sorted(set(payload).difference(PROGRESS_FIELDS))
     if unknown:
         raise ComputeJobError("Compute progress contains unsupported fields: " + ", ".join(unknown))
     normalized = dict(payload)
@@ -250,13 +255,20 @@ def write_compute_progress_atomic(job_runtime: Path, payload: dict[str, Any]) ->
 class ComputeJobManager:
     """Create, reconcile, inspect, and stop durable local compute workers."""
 
-    def __init__(self, workspace: Path, runtime_root: Path) -> None:
+    def __init__(
+        self,
+        workspace: Path,
+        runtime_root: Path,
+        *,
+        caffeinate_executable: Path = Path("/usr/bin/caffeinate"),
+    ) -> None:
         self.workspace = Path(workspace).resolve(strict=True)
         if not self.workspace.is_dir():
             raise ComputeJobError("Compute-job workspace must be a directory.")
         self.runtime_root = Path(runtime_root).expanduser().resolve(strict=False) / COMPUTE_JOBS_DIRNAME
         self.workspace_key = hashlib.sha256(str(self.workspace).encode("utf-8")).hexdigest()[:24]
         self.jobs_root = self.runtime_root / self.workspace_key
+        self._caffeinate_executable = caffeinate_executable
         self.jobs_root.mkdir(parents=True, exist_ok=True)
         self.reconcile()
 
@@ -317,6 +329,16 @@ class ComputeJobManager:
                     metadata["state"] = "running"
                     metadata["updated_at"] = _utc_now()
                     self._save_metadata(metadata)
+                continue
+            updated_at = str(metadata.get("updated_at") or "")
+            try:
+                age_seconds = (
+                    datetime.now(timezone.utc)
+                    - datetime.fromisoformat(updated_at)
+                ).total_seconds()
+            except ValueError:
+                age_seconds = 10.0
+            if age_seconds < 2.0:
                 continue
             metadata["state"] = "interrupted"
             metadata["updated_at"] = _utc_now()
@@ -465,11 +487,17 @@ class ComputeJobManager:
             self._save_metadata(metadata)
             raise ComputeJobError("Approved compute worker could not start.") from exc
         identity = ""
-        for _ in range(20):
-            identity = _process_identity(process.pid)
-            if identity:
+        previous_identity = ""
+        for _ in range(50):
+            current_identity = _process_identity(process.pid)
+            if current_identity and current_identity == previous_identity:
+                identity = current_identity
                 break
-            time.sleep(0.01)
+            previous_identity = current_identity
+            time.sleep(0.02)
+        current_metadata = self._load_metadata(job_id)
+        if current_metadata.get("state") in TERMINAL_STATES:
+            return self.status(job_id)
         if not identity:
             _terminate_process_group(process.pid, timeout=1)
             metadata["state"] = "failed"
@@ -478,6 +506,7 @@ class ComputeJobManager:
             metadata["message"] = "Compute worker identity could not be verified."
             self._save_metadata(metadata)
             raise ComputeJobError("Compute worker identity could not be verified.")
+        metadata = current_metadata
         metadata["pid"] = process.pid
         metadata["process_identity"] = identity
         metadata["state"] = "running"
@@ -488,11 +517,11 @@ class ComputeJobManager:
         return self.status(job_id)
 
     def _start_sleep_assertion(self, metadata: dict[str, Any]) -> None:
-        if sys.platform != "darwin" or not Path("/usr/bin/caffeinate").is_file():
+        if sys.platform != "darwin" or not self._caffeinate_executable.is_file():
             return
         try:
             process = subprocess.Popen(
-                ["/usr/bin/caffeinate", "-i", "-w", str(metadata["pid"])],
+                [str(self._caffeinate_executable), "-i", "-w", str(metadata["pid"])],
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -522,7 +551,19 @@ class ComputeJobManager:
         progress_path = job_root / "progress.json"
         if progress_path.exists():
             try:
-                progress = _read_json_object(progress_path, maximum_bytes=MAX_PROGRESS_BYTES)
+                raw_progress = _read_json_object(
+                    progress_path,
+                    maximum_bytes=MAX_PROGRESS_BYTES,
+                )
+                progress = {
+                    key: value
+                    for key, value in raw_progress.items()
+                    if key in PROGRESS_FIELDS
+                }
+                if "summary" in progress:
+                    progress["summary"] = str(progress["summary"])[
+                        :MAX_STATUS_TEXT_CHARS
+                    ]
             except ComputeJobError:
                 progress = {"summary": "Latest progress heartbeat is invalid."}
         log_tail = ""
@@ -533,6 +574,16 @@ class ComputeJobManager:
                 log_tail = handle.read().decode("utf-8", errors="replace")[-MAX_LOG_TAIL_CHARS:]
         except OSError:
             pass
+        can_resume = False
+        checkpoint_path = job_root / "checkpoint.json"
+        if metadata.get("state") in TERMINAL_STATES and checkpoint_path.is_file():
+            try:
+                validate_optimizer_checkpoint(
+                    _read_json_object(checkpoint_path, maximum_bytes=MAX_CONFIG_BYTES)
+                )
+                can_resume = True
+            except ComputeJobError:
+                can_resume = False
         allowed = {
             key: metadata.get(key)
             for key in (
@@ -556,8 +607,7 @@ class ComputeJobManager:
                 "active": metadata.get("state") in ACTIVE_STATES,
                 "progress": progress,
                 "log_tail": log_tail,
-                "can_resume": metadata.get("state") in TERMINAL_STATES
-                and (job_root / "checkpoint.json").is_file(),
+                "can_resume": can_resume,
             }
         )
         return allowed
@@ -620,6 +670,13 @@ def _worker_main(arguments: list[str]) -> int:
     ]
     if checkpoint is not None:
         command.extend(["--resume", str(checkpoint)])
+    if sys.platform == "darwin" and MACOS_SANDBOX_EXECUTABLE.is_file():
+        command = [
+            str(MACOS_SANDBOX_EXECUTABLE),
+            "-p",
+            MACOS_NETWORK_DENY_PROFILE,
+            *command,
+        ]
     environment = dict(os.environ)
     environment["CACHELIKES_COMPUTE_JOB_RUNTIME"] = str(job_root)
     log_path = job_root / "worker.log"

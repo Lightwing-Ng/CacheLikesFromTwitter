@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.6.4-codex.1`
+Documentation version: `v1.7.0-codex.1`
 
 ## Supported commands
 
@@ -36,6 +36,12 @@ Run the isolated local-compute benchmark:
 
 ```bash
 /usr/local/bin/python3.13 scripts/benchmark_compute.py
+```
+
+Run the durable optimization-job contract tests without a long-lived workload:
+
+```bash
+./scripts/test.sh tests/test_compute_jobs.py tests/test_agent_capability_registry.py
 ```
 
 When the quality gate fails, read the [CI Failure Playbook](CI_FAILURE_PLAYBOOK.md) before changing
@@ -137,6 +143,12 @@ Tests must follow these rules:
   discarded and recomputed in full on CPU. Payload-budget tests verify that the parent flushes before
   oversized files and analyzes them without queueing their bytes. No test treats a fake adapter,
   static inspection, or an HTTP response as GPU evidence.
+- Durable compute-job tests use short approved fake workers and temporary runtime roots. They pin
+  12-hour configuration without waiting 12 hours, verify provider-turn-independent survival,
+  idempotent start, atomic checkpoint and explicit resume, restart reconciliation, PID-reuse
+  refusal, owned process-tree stop, rolling logs, path and symlink rejection, and unchanged
+  workspace fingerprints. A test must never launch a long optimization or write below the
+  production Agent runtime root.
 
 ## Local-compute benchmark contract
 
@@ -168,6 +180,10 @@ environment assumption.
   without starting a web server.
 - Computer Use Agent tests build context packages in temporary projects, execute the controller
   through deterministic actions, and replace the signed-in browser runner with a fake.
+- Durable compute-job tests construct a temporary approval manifest whose entrypoint SHA-256
+  matches a short fake optimizer. Source, config, checkpoint, progress, result, metadata, log, and
+  process identities are asserted through public job operations; tests do not weaken the existing
+  verification-only `run` contract.
 - Style-token, template, and responsive-contract tests protect durable UI boundaries directly.
 - Sidebar E2E tests start an isolated local Flask server and a clean headless Chromium context.
   They cover touch input, backdrop dismissal, viewport transitions, real hit testing through

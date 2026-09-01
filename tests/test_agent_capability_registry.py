@@ -1,6 +1,6 @@
 """Contract tests for the unified Agent capability registry.
 
-Code version: v1.3.1-codex.1
+Code version: v1.4.0-codex.1
 """
 
 from __future__ import annotations
@@ -30,6 +30,9 @@ def test_registry_covers_agent_actions_page_observations_and_webmcp_tools() -> N
         "write_base64",
         "delete",
         "run",
+        "job_start",
+        "job_status",
+        "job_stop",
         "bodycheck",
         "final",
     }
@@ -58,7 +61,7 @@ def test_public_manifest_is_derived_from_the_registry_and_stays_bounded() -> Non
         "page_observation",
         "webmcp_tools",
     ]
-    assert "11 registered actions" in manifest["capabilities"][4]["description"]
+    assert "14 registered actions" in manifest["capabilities"][4]["description"]
     assert "5 registered observations" in manifest["capabilities"][5]["description"]
     assert "3 registered tools" in manifest["capabilities"][6]["description"]
     assert {target["path"] for target in manifest["navigation"]} == {
@@ -75,7 +78,7 @@ def test_public_manifest_is_derived_from_the_registry_and_stays_bounded() -> Non
 
 def test_internal_snapshot_contains_transport_schemas_but_no_runtime_content() -> None:
     snapshot = capability_registry_snapshot()
-    assert snapshot["version"] == "1.3.0"
+    assert snapshot["version"] == "1.4.0"
     records = {record["key"]: record for record in snapshot["capabilities"]}
     assert records["agent.action.replace"]["read_only"] is False
     assert records["agent.action.delete"]["handler_name"] == "_delete"
@@ -87,6 +90,14 @@ def test_internal_snapshot_contains_transport_schemas_but_no_runtime_content() -
     assert records["agent.action.run"]["read_only"] is True
     assert records["agent.action.run"]["handler_name"] == "_run"
     assert records["agent.action.run"]["input_schema"]["required"] == ["action", "command"]
+    assert records["agent.action.job_start"]["input_schema"]["required"] == [
+        "action",
+        "entrypoint",
+        "config_path",
+        "idempotency_key",
+    ]
+    assert records["agent.action.job_status"]["read_only"] is True
+    assert records["agent.action.job_stop"]["handler_name"] == "_job_stop"
     assert records["agent.action.final"]["handler_name"] == ""
     assert records["agent.action.final"]["input_schema"]["required"] == [
         "action",

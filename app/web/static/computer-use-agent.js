@@ -1,4 +1,4 @@
-/* Code version: v3.27.18-codex.1 */
+/* Code version: v3.28.0-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -56,6 +56,13 @@
         terminalExecutionStatus: document.querySelector("[data-agent-terminal-execution-status]"),
         terminalExecutionCopy: document.querySelector("[data-agent-terminal-execution-copy]"),
         terminalExecutionCheckmark: document.querySelector("[data-agent-terminal-execution-checkmark]"),
+        computeJob: document.querySelector("[data-agent-compute-job]"),
+        computeJobStatus: document.querySelector("[data-agent-compute-job-status]"),
+        computeJobState: document.querySelector("[data-agent-compute-job-state]"),
+        computeJobId: document.querySelector("[data-agent-compute-job-id]"),
+        computeJobProgress: document.querySelector("[data-agent-compute-job-progress]"),
+        computeJobHelp: document.querySelector("[data-agent-compute-job-help]"),
+        computeJobStop: document.querySelector("[data-agent-compute-job-stop]"),
         platformCombobox: document.querySelector(".agent-platform-combobox"),
         sessionSource: document.querySelector("[data-agent-session-source]"),
         sessionMode: document.querySelector("[data-agent-session-mode]"),
@@ -2205,6 +2212,33 @@
         if (elements.terminalExecutionCheckmark) elements.terminalExecutionCheckmark.hidden = !ready;
     }
 
+    function renderComputeJob(job) {
+        if (!elements.computeJob) return;
+        const state = String(job?.state || "idle");
+        const jobId = String(job?.job_id || "");
+        const active = Boolean(job?.active);
+        const progress = job?.progress || {};
+        const progressText = progress.summary
+            || (Number.isFinite(Number(progress.evaluations_completed))
+                ? `${Number(progress.evaluations_completed).toLocaleString()} evaluations completed`
+                : "Waiting for heartbeat");
+        elements.computeJob.hidden = state === "idle";
+        elements.computeJob.dataset.jobId = jobId;
+        if (elements.computeJobStatus) elements.computeJobStatus.textContent = job?.message || "Compute job status is available.";
+        if (elements.computeJobState) elements.computeJobState.textContent = state;
+        if (elements.computeJobId) elements.computeJobId.textContent = jobId || "—";
+        if (elements.computeJobProgress) elements.computeJobProgress.textContent = progressText;
+        if (elements.computeJobHelp) {
+            elements.computeJobHelp.textContent = job?.can_resume
+                ? "A complete checkpoint is available. Resume with job_start and this resume_job_id; it is never submitted automatically."
+                : "Start uses job_start. Resume appears only after a complete checkpoint is available.";
+        }
+        if (elements.computeJobStop) {
+            elements.computeJobStop.hidden = !active;
+            elements.computeJobStop.disabled = !active;
+        }
+    }
+
     function render(payload, {fromAsk = false} = {}) {
         const nextPayload = payload || {};
         const hasPersistedAgent = Object.prototype.hasOwnProperty.call(nextPayload, "agent");
@@ -2302,6 +2336,7 @@
         }
         renderResponseStatus(agent, readiness);
         renderTerminalExecution(lastPayload.runtime);
+        renderComputeJob(lastPayload.compute_job);
         renderActivity(agent.activity, running, shouldCollapseActivity);
         updateSessionChoiceInputs();
         if (
@@ -2459,6 +2494,25 @@
     elements.resume?.addEventListener("click", () => {
         mutate("/api/agent/resume");
     });
+    elements.computeJobStop?.addEventListener("click", async () => {
+        const jobId = String(elements.computeJob?.dataset.jobId || "");
+        if (!jobId || elements.computeJobStop.disabled) return;
+        elements.computeJobStop.disabled = true;
+        try {
+            const response = await requestJson("/api/agent/compute-job/stop", {
+                method: "POST",
+                body: JSON.stringify({
+                    job_id: jobId,
+                    workspace_path: String(elements.workspacePath?.value || ""),
+                }),
+            });
+            lastPayload = {...lastPayload, compute_job: response.compute_job || {}};
+            renderComputeJob(lastPayload.compute_job);
+        } catch (error) {
+            setResponseStatusFallback(error.message);
+            elements.computeJobStop.disabled = false;
+        }
+    });
     elements.ask?.addEventListener("click", () => {
         if (elements.ask?.classList.contains("is-stop")) {
             mutate("/api/agent/stop");
@@ -2563,7 +2617,10 @@
             }));
         } catch (_error) {
         } finally {
-            window.setTimeout(pollStatus, lastPayload.agent?.running ? 800 : 2_500);
+            window.setTimeout(
+                pollStatus,
+                lastPayload.agent?.running || lastPayload.compute_job?.active ? 800 : 2_500,
+            );
         }
     }
     pollStatus();

@@ -1,6 +1,6 @@
 # OpenAI Site tools and Agent Optimization
 
-Documentation version: `v1.2.3-codex.1`
+Documentation version: `v1.3.0-codex.1`
 
 This project implements the shared Agent Optimization contract at
 `/Users/lightwing/Desktop/SHARED_AGENT_OPTIMIZATION.md`. That file owns the cross-project naming,
@@ -42,6 +42,11 @@ The closed schema is also an execution boundary. `WorkspaceController` validates
 non-final Action against its registry-owned schema before dispatch, including the action constant,
 required fields, types, bounds, and undeclared fields. The Web loop validates `final` against the
 same schema before verification or bodycheck gates, rendering, and publication.
+
+The internal registry now also owns `job_start`, `job_status`, and `job_stop`. These durable local
+compute actions remain behind the Agent controller and password boundary; they are summarized in
+the public aggregate count but are not registered as WebMCP tools. Site tools therefore cannot
+approve an optimizer, start paid compute, inspect job logs, resume a checkpoint, or stop a process.
 
 ## v1 tools
 

@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.53.5-codex.1`
+Documentation version: `v3.54.1-codex.1`
 
 ## Purpose
 
@@ -323,6 +323,62 @@ older task cannot be submitted accidentally through a different Web session.
    trigger stays on `New session` after a completed run unless the user explicitly
    chooses a catalog session; the Open conversation link still targets the finished
    conversation.
+
+## Durable compute jobs
+
+The controller exposes three actions that are deliberately separate from verification `run`:
+
+- `job_start` accepts an approved entrypoint id, one workspace-relative JSON config path, a stable
+  idempotency key, and an optional prior `resume_job_id`.
+- `job_status` accepts an optional exact job id and returns bounded metadata, progress, and at most
+  4,000 log-tail characters.
+- `job_stop` accepts an exact job id and terminates only its identity-verified process group/tree.
+
+These actions are for genetic or mutation search, Bayesian or black-box optimization, and similar
+long CPU/GPU workloads. The provider plans the work and inspects progress; it must not participate
+in each generation or evaluation. The local optimizer loop remains ordered and fully local.
+
+`job_start` requires `.cachelikes-compute.json` in the selected workspace. One entry must uniquely
+match the requested id, name a regular non-linked `.py` file below that workspace, pin its exact
+SHA-256, and approve 43,200 through 86,400 seconds. The action accepts neither shell text nor an
+argument list. The runtime invokes only the current Python interpreter and the fixed optimizer
+protocol. A changed source digest, absolute path, traversal, linked path, non-JSON config, or a
+second active job fails closed. An idempotency key reused for the same request returns the existing
+job; reuse for different bytes or parameters is rejected.
+On macOS the fixed optimizer command runs through the system sandbox with all network operations
+denied. This converts the action-level ban on download commands into an operating-system network
+boundary for the approved worker as well.
+
+Each job has an unpredictable 32-hex-character `job_id` and an external task-owned directory. Its
+atomic metadata contains state, PID and birth identity, timestamps, approved entrypoint identity,
+config identity, exit status, relative checkpoint/result paths, progress summary, and the minimum
+resume lineage. It never stores environment variables, browser data, provider transcripts, prompts,
+or secrets. The source workspace remains the only source boundary; runtime output is excluded from
+verification fingerprints by location rather than by weakening fingerprint rules.
+
+The detached wrapper owns a fixed 12-hour default and 24-hour hard maximum instead of inheriting
+`command_timeout_seconds`. A provider turn, browser refresh, Web stream interruption, normal Agent
+final, or Web Agent Stop does not terminate it. On macOS its idle-sleep assertion watches the
+worker PID and remains independent of the Web task assertion. Worker completion, dedicated Stop,
+and stale terminal reconciliation release the assertion; `caffeinate -w` also self-releases when
+the worker exits.
+
+On service construction and every status read, active metadata is reconciled against the stored
+birth identity. A live match is rebound. A missing or mismatched identity becomes interrupted and
+is never signaled, preventing PID reuse from killing an unrelated process. Stop first rechecks that
+identity, then terminates the owned process group. The default active-job limit is one per workspace.
+
+Optimizers should import `write_compute_progress_atomic()` and
+`write_optimizer_checkpoint_atomic()` from `app.core.agent.compute_jobs`. Checkpoint schema 1
+requires `optimizer_version`, `iteration`, `population` or `optimizer_state`, `rng_state`, `seed`,
+`best_objective`, `best_parameters`, and `evaluation_count`. Resume accepts only a validated complete
+checkpoint from a terminal job and always creates a new job after an explicit request; it never
+automatically spends compute after a restart. Final export belongs in `result.json`. The status UI
+shows the latest job state, id, heartbeat, Stop control, and whether explicit resume is available.
+
+An Agent final response remains valid while the job is still running, after the ordinary source-edit
+verification and bodycheck gates are current. It should report the job id and current bounded state
+instead of waiting hours for completion.
 
 ## Capability registry, event chain, and Doctor
 

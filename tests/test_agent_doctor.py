@@ -1,6 +1,6 @@
 """Route and service tests for Agent doctor recovery UX.
 
-Code version: v1.4.2-codex.1
+Code version: v1.4.3-codex.1
 """
 
 from __future__ import annotations
@@ -192,9 +192,9 @@ def test_capability_and_doctor_routes_are_local_and_bounded(client) -> None:
     assert remote_response.status_code == 403
     capabilities = capabilities_response.get_json()
     doctor = doctor_response.get_json()
-    assert capabilities["version"] == "1.3.0"
-    assert len(capabilities["capabilities"]) == 25
-    assert doctor["capability_registry_version"] == "1.3.0"
+    assert capabilities["version"] == "1.4.0"
+    assert len(capabilities["capabilities"]) == 28
+    assert doctor["capability_registry_version"] == "1.4.0"
     assert "prompt" not in doctor
     assert "response" not in doctor
 

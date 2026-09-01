@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.11.1-codex.1`
+Documentation version: `v1.12.1-codex.1`
 
 ## Runtime flow
 
@@ -125,6 +125,36 @@ bounded metadata rather than prompt, provider response, source, command, or page
 to offer an event timeline and explicit recovery actions. Recovery never retries the original
 external prompt implicitly; a user-selected continuation may send only the fixed continuation
 request after a persisted conversation-binding proof succeeds.
+
+## Durable compute-job boundary
+
+`app/core/agent/compute_jobs.py` is a separate execution plane for 12-hour-class genetic,
+evolutionary, Bayesian, and other local optimization workers. `job_start`, `job_status`, and
+`job_stop` are registry-owned Agent Actions, but they do not pass through `run`, its 1,800-second
+verification timeout, its allowlist, or its workspace fingerprint. The existing verification and
+bodycheck gates remain authoritative for source edits.
+
+A job starts only when `.cachelikes-compute.json` uniquely names a workspace-relative regular
+Python entrypoint and pins its current SHA-256. The controller accepts no shell string or arbitrary
+argument vector. It invokes the approved file through the fixed `--config`, `--job-runtime`, and
+optional `--resume` protocol, copies the bounded JSON config into the task-owned runtime directory,
+and strips the inherited environment to a small non-secret allowlist. Approval is therefore a code
+review boundary: changing the entrypoint bytes invalidates approval before execution.
+On macOS, the detached optimizer is also launched through the system sandbox with `network*`
+denied, so even approved code cannot open a download or other network socket during the job.
+
+Runtime metadata, progress, checkpoints, results, and rolling logs live below the external Agent
+runtime root in `compute-jobs/<workspace-hash>/<job-id>/`; they never live in the selected source
+workspace. A 128-bit unpredictable `job_id`, stable idempotency key, request fingerprint, PID birth
+identity, process-group ownership, and a one-active-job limit prevent duplicate submission and
+PID-reuse termination. On startup or status inspection, active records are reconciled with the live
+process identity. Missing workers become `interrupted`; they are never resubmitted automatically.
+
+The detached worker owns the approved maximum runtime, capped at 24 hours, and remains alive after
+the provider turn or browser session ends. On macOS, a job-scoped `caffeinate -i -w <worker-pid>`
+assertion follows the worker rather than the Web Agent turn. It exits with the worker and is also
+identity-checked during terminal-state reconciliation. Service exit deliberately does not stop an
+active compute job.
 
 ## Responsive application-shell contract
 

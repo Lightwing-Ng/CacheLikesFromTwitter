@@ -1,4 +1,4 @@
-<!-- Code version: v3.27.24-codex.1 -->
+<!-- Code version: v3.28.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.90.16-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -283,6 +283,34 @@
                                 <span class="agent-conversation-link-label" data-agent-conversation-link-label hidden>Continue in Edge</span>
                             </a>
                         </div>
+                        <section
+                            class="agent-compute-job"
+                            data-agent-compute-job
+                            data-job-id="{{ compute_job_snapshot.job_id or '' }}"
+                            {% if compute_job_snapshot.state == 'idle' %}hidden{% endif %}
+                            aria-labelledby="agent_compute_job_title"
+                        >
+                            <div class="agent-compute-job-header">
+                                <div>
+                                    <h3 id="agent_compute_job_title">Durable compute job</h3>
+                                    <p data-agent-compute-job-status>{{ compute_job_snapshot.message or 'No compute job has been started.' }}</p>
+                                </div>
+                                <button
+                                    type="button"
+                                    class="secondary-button agent-compute-job-stop"
+                                    data-agent-compute-job-stop
+                                    {% if not compute_job_snapshot.active %}hidden disabled{% endif %}
+                                >Stop job</button>
+                            </div>
+                            <dl class="agent-compute-job-facts">
+                                <div><dt>State</dt><dd data-agent-compute-job-state>{{ compute_job_snapshot.state or 'idle' }}</dd></div>
+                                <div><dt>Job ID</dt><dd data-agent-compute-job-id>{{ compute_job_snapshot.job_id or '—' }}</dd></div>
+                                <div><dt>Progress</dt><dd data-agent-compute-job-progress>{{ (compute_job_snapshot.get('progress') or {}).get('summary') or 'Waiting for heartbeat' }}</dd></div>
+                            </dl>
+                            <p class="agent-compute-job-help" data-agent-compute-job-help>
+                                Start uses <code>job_start</code>. Resume requires a complete checkpoint and an explicit <code>resume_job_id</code>.
+                            </p>
+                        </section>
                         <details class="agent-activity-panel" id="agent_activity_panel"{% if agent_snapshot.running %} open{% endif %}{% if not agent_snapshot.activity %} hidden{% endif %}>
                             <summary>
                                 <span>Activity</span>
@@ -480,6 +508,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.3-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.27.18-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.28.0-codex.1') }}"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.55.0-codex.1
+# Code version: v1.56.0-codex.1
 
 from __future__ import annotations
 
@@ -1201,11 +1201,15 @@ def create_app(
             platform,
             agent_settings.workspace_path,
         )
+        compute_job_snapshot = computer_use_agent_service.compute_job_status(
+            agent_settings.workspace_path
+        )
         return render_template(
             "agent.html",
             version=APP_VERSION,
             runtime_snapshot=runtime_snapshot,
             agent_snapshot=agent_snapshot,
+            compute_job_snapshot=compute_job_snapshot,
             settings=agent_settings,
             agent_project_name=(
                 Path(agent_settings.workspace_path).name or agent_settings.workspace_path
@@ -1307,8 +1311,32 @@ def create_app(
                     selected_platform,
                     selected_workspace,
                 ),
+                "compute_job": computer_use_agent_service.compute_job_status(
+                    selected_workspace
+                ),
             }
         )
+
+    @app.post("/api/agent/compute-job/stop")
+    def stop_agent_compute_job():
+        """Stop one durable job without stopping or resuming the Web Agent turn."""
+        require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
+        payload = request.get_json(silent=True) or {}
+        workspace_path = str(
+            payload.get("workspace_path")
+            or computer_use_settings.settings.workspace_path
+            or ""
+        ).strip()
+        try:
+            job = computer_use_agent_service.stop_compute_job(
+                workspace_path,
+                str(payload.get("job_id") or ""),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify({"compute_job": job})
 
     @app.get("/api/agent/capabilities")
     def agent_capabilities():

@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.53.6-codex.1
+Code version: v3.54.0-codex.1
 """
 
 from __future__ import annotations
@@ -3272,12 +3272,12 @@ def test_non_regular_settings_file_returns_without_blocking(tmp_path: Path) -> N
 def test_default_prompts_share_the_complete_controller_action_schema() -> None:
     expected_prompt_fingerprints = {
         DEFAULT_MACOS_SYSTEM_PROMPT: (
-            6_458,
-            "c6b91f3a00df433ff6445ffb9e47df575113550aab4c5e89ccc26623db08d6b3",
+            7_291,
+            "dfa849d0c484e0518eebb7aa6c4776e69c611f6321894d5856d6e62867ee0511",
         ),
         DEFAULT_WINDOWS_SYSTEM_PROMPT: (
-            6_127,
-            "c61ffb0ce2decf38dc648b230bb1eadd4803be10869303ebe800fdc66e9d0d74",
+            6_960,
+            "529dc90d515caed7eb7611c9878bda1a75add654a271970c0e239b0323a6d847",
         ),
     }
     for prompt, (expected_length, expected_sha256) in expected_prompt_fingerprints.items():
@@ -3300,7 +3300,10 @@ def test_default_prompts_share_the_complete_controller_action_schema() -> None:
         assert "Return exactly one action, then stop and wait" in prompt
         assert "`write` and `write_base64` create new files only" in prompt
         assert "`delete` requires a current controller `read`" in prompt
-        assert "For a read-only task, use only `list`, `read`, `search`, or `bodycheck`, then one `final` action" in prompt
+        assert (
+            "For a read-only task, use only `list`, `read`, `search`, `job_status`, "
+            "or `bodycheck`, then one `final` action"
+        ) in prompt
 
 
 def test_marker_complete_prompt_migration_collapses_repeated_action_catalogs(

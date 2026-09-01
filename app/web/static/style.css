@@ -1,4 +1,4 @@
-/* Code version: v2.90.16-codex.1 */
+/* Code version: v2.91.0-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -4276,6 +4276,78 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     flex-direction: column;
     min-height: 0;
     overflow: visible;
+}
+
+.agent-compute-job {
+    display: grid;
+    gap: 10px;
+    margin-top: 10px;
+    padding: 12px;
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-soft);
+    background: var(--glass-surface-background-soft);
+}
+
+.agent-compute-job[hidden] {
+    display: none;
+}
+
+.agent-compute-job-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.agent-compute-job-header h3,
+.agent-compute-job-header p,
+.agent-compute-job-help {
+    margin: 0;
+}
+
+.agent-compute-job-header h3 {
+    font-size: var(--font-ui-body);
+}
+
+.agent-compute-job-header p,
+.agent-compute-job-help {
+    color: var(--muted);
+    font-size: var(--font-table-body);
+}
+
+.agent-compute-job-facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px;
+    margin: 0;
+}
+
+.agent-compute-job-facts div {
+    min-width: 0;
+}
+
+.agent-compute-job-facts dt {
+    color: var(--muted);
+    font-size: var(--font-ui-xs);
+}
+
+.agent-compute-job-facts dd {
+    margin: 2px 0 0;
+    overflow-wrap: anywhere;
+    color: var(--text);
+    font-family: var(--font-family-mono);
+    font-size: var(--font-table-body);
+}
+
+@media (max-width: 600px) {
+    .agent-compute-job-header {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .agent-compute-job-facts {
+        grid-template-columns: 1fr;
+    }
 }
 
 .agent-conversation-link {
