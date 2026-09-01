@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.53.2-codex.1
+Code version: v3.53.4-codex.1
 """
 
 from __future__ import annotations
@@ -422,7 +422,7 @@ _CONTROLLER_PROTOCOL_INSTRUCTIONS = """Controller protocol rules:
 - Do not infer the selected Web model, thinking effort, browser, session, or destination from configuration text. Use controller observations as the only evidence and never claim a model or session is verified without them.
 - For a fresh root or Project session, the first action must read `AGENTS.md` when it exists; if it does not exist, list the project root and then read the applicable instruction files.
 - All paths are workspace-relative. Never use an absolute path, `..`, a symlink or junction, `.git`, `.computer-use-agent`, credentials, private keys, cookies, or environment files. Never request, copy, or expose secrets.
-- `list` accepts depth 1 through 6 and returns a bounded listing. `read` reads a bounded text range (default 240 lines) and returns the current SHA-256; use the returned content and digest as evidence, not memory.
+- `list` accepts depth 1 through 6 and returns a bounded listing. `read` reads a bounded text range (default 240 lines) and returns the current SHA-256; use the returned content and digest as evidence, not memory. If `read` reports that a file is too large for a text read, treat it as a binary or large asset, do not retry the same read, and use a controller-readable manifest or an approved verification script instead.
 - `search` is literal fixed-string search, never a regular expression. Its glob is inclusive and supports only literals, path separators, `*`, `?`, and `**`; keep `max_results` from 1 through 300.
 - `replace` and `replace_base64` require an existing file and the old text exactly once. Use the base64 form for quote-heavy or multiline content. `write` and `write_base64` create new files only; if a file exists, use replace instead.
 - `delete` requires a current controller `read` of the same file after the latest edit and the exact lowercase 64-character SHA-256 from that read receipt. Any edit invalidates the receipt; read again rather than guessing.
@@ -3156,7 +3156,11 @@ class WorkspaceController:
         if not path.is_file():
             raise ValueError("The read action requires a regular file.")
         if path.stat().st_size > MAX_CONTROLLER_DELETE_BYTES:
-            raise ValueError("The requested file is too large for a text read.")
+            raise ValueError(
+                "The requested file is too large for a text read. Treat it as a binary or large asset; "
+                "do not retry the same read. Use a controller-readable manifest or an approved verification "
+                "script instead."
+            )
         content_bytes, sha256, _file_bytes, identity = self._current_file_snapshot(path)
         text = content_bytes.decode("utf-8", errors="replace").splitlines()
         start = max(1, int(payload.get("start_line", 1)))
@@ -6219,6 +6223,12 @@ def _initial_web_agent_message(
         if read_only
         else "Task mode: edit-capable, subject to the controller protocol and repository instructions."
     )
+    run_budget_instruction = (
+        f"Run budget: at most {settings.max_turns:,} controller turns; the context Markdown budget is "
+        f"{settings.context_limit_mib:,} MiB; each verification command is limited to "
+        f"{settings.command_timeout_seconds:,} seconds. Keep reads, searches, and command output bounded, "
+        "prioritize the smallest useful evidence, and reach verification plus bodycheck before the turn limit."
+    )
     first_action_instruction = (
         "For this fresh root or Project session, the first action must read `AGENTS.md` when it exists; "
         "if it does not exist, list the project root and then read applicable instruction files."
@@ -6236,6 +6246,7 @@ def _initial_web_agent_message(
         f"Session source: {session_instruction}\n"
         f"{title_instruction}\n"
         f"{task_mode_instruction}\n"
+        f"{run_budget_instruction}\n"
         f"{first_action_instruction}\n"
         f"User request: {prompt}\n\n"
         "Begin with the smallest useful read, search, or list JSON action."

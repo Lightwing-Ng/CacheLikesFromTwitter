@@ -1,6 +1,6 @@
 """Controller integration coverage against a copied Global Flight Atlas workspace.
 
-Code version: v1.1.0-codex.1
+Code version: v1.1.0-codex.3
 """
 
 from __future__ import annotations
@@ -20,11 +20,15 @@ DEMO_FLIGHT_ROOT = Path("/Users/lightwing/Desktop/demo_flight")
 DEMO_FLIGHT_FILES = (
     "README.md",
     "app.js",
+    "geometry-worker.js",
+    "favicon.svg",
     "index.html",
     "serve.py",
     "styles.css",
     "test_verify.py",
     "verify.py",
+    "assets/blender/Season2026.blend",
+    "assets/blender/Season2026.manifest.json",
 )
 
 
@@ -48,7 +52,9 @@ def test_copied_demo_flight_supports_safe_agentic_crud_and_cold_verification() -
         workspace = Path(raw_workspace) / "demo_flight"
         workspace.mkdir()
         for name in DEMO_FLIGHT_FILES:
-            shutil.copy2(DEMO_FLIGHT_ROOT / name, workspace / name)
+            target = workspace / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(DEMO_FLIGHT_ROOT / name, target)
         assert _demo_flight_hashes(workspace) == source_hashes
 
         controller = WorkspaceController(
@@ -60,7 +66,7 @@ def test_copied_demo_flight_supports_safe_agentic_crud_and_cold_verification() -
             lambda: False,
         )
 
-        listed = controller.execute({"action": "list", "path": ".", "depth": 1})
+        listed = controller.execute({"action": "list", "path": ".", "depth": 3})
         assert listed["ok"]
         assert set(DEMO_FLIGHT_FILES).issubset(set(listed["entries"]))
 

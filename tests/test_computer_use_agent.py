@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.53.2-codex.1
+Code version: v3.53.4-codex.1
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from app.core.computer_use_agent import (
     CHATGPT_MODEL_TRIGGER_LABELS,
     CHATGPT_SESSION_BIND_TIMEOUT_SECONDS,
     DEFAULT_CHATGPT_MODEL,
+    MAX_CONTROLLER_DELETE_BYTES,
     PROVIDER_SESSION_BIND_TIMEOUT_SECONDS,
     SEARCH_MAX_FILE_BYTES,
     ComputerUseAgentService,
@@ -3106,11 +3107,19 @@ def test_non_regular_settings_file_returns_without_blocking(tmp_path: Path) -> N
 
 
 def test_default_prompts_share_the_complete_controller_action_schema() -> None:
-    assert len(DEFAULT_MACOS_SYSTEM_PROMPT) == 6_250
-    assert hashlib.sha256(DEFAULT_MACOS_SYSTEM_PROMPT.encode()).hexdigest() == (
-        "d1bdb6374fb5a5fe117f6469fc665879f533e973279f0b5971debaee32863b60"
-    )
-    for prompt in (DEFAULT_MACOS_SYSTEM_PROMPT, DEFAULT_WINDOWS_SYSTEM_PROMPT):
+    expected_prompt_fingerprints = {
+        DEFAULT_MACOS_SYSTEM_PROMPT: (
+            6_458,
+            "c6b91f3a00df433ff6445ffb9e47df575113550aab4c5e89ccc26623db08d6b3",
+        ),
+        DEFAULT_WINDOWS_SYSTEM_PROMPT: (
+            6_127,
+            "c61ffb0ce2decf38dc648b230bb1eadd4803be10869303ebe800fdc66e9d0d74",
+        ),
+    }
+    for prompt, (expected_length, expected_sha256) in expected_prompt_fingerprints.items():
+        assert len(prompt) == expected_length
+        assert hashlib.sha256(prompt.encode()).hexdigest() == expected_sha256
         for marker in _CONTROLLER_ACTION_SCHEMA_MARKERS:
             assert marker in prompt
         assert '"old_base64":"base64-of-old"' in prompt
@@ -3305,6 +3314,52 @@ def test_initial_web_agent_message_states_fresh_and_read_only_contract() -> None
     assert "first action must read `AGENTS.md`" in message
     assert "Task mode: read-only." in message
     assert "followed by one non-mutating final summary; do not edit or run" in message
+
+
+def test_initial_web_agent_message_states_the_run_budget() -> None:
+    with TemporaryDirectory() as raw_root:
+        root = Path(raw_root)
+        workspace = root / "project"
+        workspace.mkdir()
+        message = _initial_web_agent_message(
+            "Run the focused checks",
+            workspace,
+            ComputerUseSettings(
+                workspace_path=str(workspace),
+                context_limit_mib=17,
+                max_turns=23,
+                command_timeout_seconds=41,
+            ),
+            root / "context.md",
+            "new",
+        )
+
+    assert "Run budget: at most 23 controller turns" in message
+    assert "context Markdown budget is 17 MiB" in message
+    assert "each verification command is limited to 41 seconds" in message
+    assert "reach verification plus bodycheck before the turn limit" in message
+
+
+def test_large_asset_read_rejection_explains_the_manifest_fallback(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    large_asset = workspace / "Season2026.blend"
+    with large_asset.open("wb") as handle:
+        handle.truncate(MAX_CONTROLLER_DELETE_BYTES + 1)
+
+    controller = WorkspaceController(
+        workspace,
+        ComputerUseSettings(workspace_path=str(workspace)),
+        should_stop=lambda: False,
+    )
+    observation = controller.execute({"action": "read", "path": large_asset.name})
+
+    assert observation["ok"] is False
+    assert "binary or large asset" in observation["error"]
+    assert "do not retry the same read" in observation["error"]
+    assert "controller-readable manifest" in observation["error"]
 
 
 def test_atomic_settings_replace_failure_preserves_the_previous_file(
