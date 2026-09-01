@@ -1,9 +1,9 @@
-{# Code version: v1.12.0-codex.2 #}
+{# Code version: v1.12.0-codex.3 #}
 {% extends "_cache_page.html" %}
 {% from "_cache_page_components.html" import render_metric, render_progress_metric %}
 
 {% block primary_metrics %}
-{{ render_metric("Assets discovered", "discovered_tweets", snapshot.discovered_tweets, "discovered_tweets") }}
+{{ render_metric("Sessions discovered", "discovered_tweets", snapshot.discovered_tweets, "discovered_tweets") }}
 {{ render_metric("Assets cached", "downloaded_posts", snapshot.downloaded_posts, "downloaded_posts") }}
 {{ render_metric("Images", "downloaded_images", snapshot.downloaded_images, "downloaded_images") }}
 {{ render_metric("Videos", "downloaded_videos", snapshot.downloaded_videos, "downloaded_videos") }}

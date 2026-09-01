@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.27-codex.1
+# Code version: v1.88.27-codex.2
 
 from __future__ import annotations
 
@@ -119,6 +119,21 @@ class WebAppTests(unittest.TestCase):
                 f'data-cache-source-switcher-path="{expected_path}"',
                 body,
             )
+
+    def test_cache_pages_use_sessions_discovered_metric_label(self) -> None:
+        app = create_app()
+
+        with app.test_client() as client:
+            bodies = {
+                source.key: client.get(f"/cache/{source.key}").get_data(as_text=True)
+                for source in CACHE_SOURCE_VIEWS
+            }
+
+        for source_key, body in bodies.items():
+            with self.subTest(source=source_key):
+                self.assertIn("Sessions discovered", body)
+                self.assertNotIn("Posts discovered", body)
+                self.assertNotIn("Assets discovered", body)
 
     def test_chatgpt_source_switcher_includes_gemini(self) -> None:
         app = create_app()
