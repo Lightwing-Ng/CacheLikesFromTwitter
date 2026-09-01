@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.10.4-codex.1`
+Documentation version: `v1.11.0-codex.1`
 
 ## Runtime flow
 
@@ -24,6 +24,11 @@ The application layer imports `app.core` through five domain façades instead of
 every implementation module:
 
 - `app/core/foundation/`: runtime configuration, logging, version, and task state.
+- `app/core/compute_resources.py`, `app/core/compute_backend.py`,
+  `app/core/compute_metrics.py`, and `app/core/compute_queue.py`: bounded local
+  compute budgets, pure image-analysis execution, privacy-safe stage metrics, and
+  deterministic backpressure/result publication. These modules do not receive
+  browser contexts, authentication data, task locks, catalogs, or open file handles.
 - `app/core/browser/`: browser descriptors, session probes, and provider-neutral X page identity.
 - `app/core/storage/`: local media, chat history, and shadow-backup operations.
 - `app/core/providers/`: X, Gemini, Grok, and ChatGPT workflows.
@@ -210,6 +215,15 @@ recoverable page failures receive one retry. Catalog claims and atomic writes pr
 workers from corrupting the local index. Only image payloads that pass signature validation are
 retained. The project name is sanitized before it becomes a cache path.
 
+The local visual-signature and dimension stage is separate from browser and network work. At
+ChatGPT sync startup, entries that need visual hydration are read into bounded immutable image
+payload batches. Batches below 64 images use the existing synchronous CPU path; larger batches
+may use a conservative process budget discovered from logical or reliable physical CPU counts
+and memory. Workers return analysis envelopes only, and the catalog remains the sole durable
+commit owner. A GPU adapter is optional and not installed by the base requirements; an injected
+adapter must return every expected identity, otherwise the whole batch is discarded and recomputed
+on CPU. GPU workers never write media, catalog, or Parquet state.
+
 ### Gemini Text cache
 
 ```text
@@ -321,6 +335,10 @@ user-owned locations above.
 ## Cross-workflow and safety invariants
 
 - Only one cache job may own the shared `CacheTaskLock` at once, regardless of source.
+- The shared `download_workers` setting is normalized to `1` through `8` at load, save, and direct
+  configuration construction. Provider-specific browser limits remain stricter where required.
+- Local compute process workers and in-flight image payload bytes are independently bounded; compute
+  workers never share browser state or mutable persistence objects, and result queues apply backpressure.
 - Account, project, and filename fragments are normalized before becoming local paths.
 - File-serving routes reject traversal, symlink escape, hidden-state paths, unreadable files, and
   unsupported media extensions.

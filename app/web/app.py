@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.54.6-codex.1
+# Code version: v1.55.0-codex.1
 
 from __future__ import annotations
 
@@ -53,6 +53,7 @@ from app.core.foundation import (
     LOCAL_STORE_ROOT,
     MAX_CHATGPT_SCAN_WAIT_SECONDS,
     MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    MAX_DOWNLOAD_WORKERS,
     MAX_MAX_MEDIA_FILE_SIZE_MIB,
     MIN_CHATGPT_SCAN_WAIT_SECONDS,
     MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
@@ -710,7 +711,10 @@ def create_app(
     ) -> int:
         """Parse one integer form field while tolerating display separators."""
         raw_value = (request.form.get(field_name, str(fallback)) or str(fallback)).replace(",", "").strip()
-        parsed = max(minimum, int(raw_value or fallback))
+        try:
+            parsed = max(minimum, int(raw_value or fallback))
+        except (TypeError, ValueError):
+            parsed = max(minimum, int(fallback))
         if maximum is not None:
             parsed = min(maximum, parsed)
         return parsed
@@ -745,7 +749,11 @@ def create_app(
         source = base or CrawlConfig()
         return CrawlConfig(
             headless=parse_checkbox_field("headless", source.headless, preserve_missing_booleans),
-            download_workers=parse_int_field("download_workers", source.download_workers),
+            download_workers=parse_int_field(
+                "download_workers",
+                source.download_workers,
+                maximum=MAX_DOWNLOAD_WORKERS,
+            ),
             max_media_file_size_mib=parse_int_field(
                 "max_media_file_size_mib",
                 source.max_media_file_size_mib,

@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.5.1-codex.1`
+Documentation version: `v1.6.1-codex.1`
 
 ## Supported commands
 
@@ -30,6 +30,12 @@ Run the complete quality gate:
 
 ```bash
 ./scripts/check.sh
+```
+
+Run the isolated local-compute benchmark:
+
+```bash
+/usr/local/bin/python3.13 scripts/benchmark_compute.py
 ```
 
 When the quality gate fails, read the [CI Failure Playbook](CI_FAILURE_PLAYBOOK.md) before changing
@@ -126,6 +132,21 @@ Tests must follow these rules:
   that a DOM update is synchronous.
 - Keep live, authenticated, and remote-service checks under `@pytest.mark.live`; they do not belong
   in the default quality gate.
+- CPU compute tests use synthetic image bytes and temporary paths. GPU tests inject a fake adapter
+  and verify that partial, failed, or initialization-failed batches are discarded and recomputed in
+  full on CPU. No test treats a fake adapter, static inspection, or an HTTP response as GPU evidence.
+
+## Local-compute benchmark contract
+
+The benchmark uses a deterministic `1,024 × 1,024` PNG fixture, one warmup run, five measured runs,
+and reports the full wall-time and parent CPU-time samples plus medians. On this host, the 32-image
+fixture measured a legacy sequential wall-time median of approximately `0.306 s`; the process
+backend was intentionally not selected for that size because process startup made it slower. With
+the same fixture expanded to 128 images, the legacy median was approximately `1.246 s` and the
+bounded CPU backend median was approximately `0.432 s`. These figures are local synthetic evidence,
+not a claim about browser, network, or GPU throughput. Remote discovery, browser automation,
+downloads, Safari, Parquet commit, and backup stages remain outside GPU acceleration unless a
+separate live profile proves otherwise.
 
 When a gate fails on GitHub, reproduce the exact failing node first with `TZ=UTC`, then run the
 complete `./scripts/check.sh`. Do not weaken an assertion, skip a platform branch, lower coverage,

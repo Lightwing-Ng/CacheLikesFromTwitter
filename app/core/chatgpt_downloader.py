@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.42.1-codex.1
+# Code version: v1.43.0-codex.1
 
 from __future__ import annotations
 
@@ -21,9 +21,11 @@ from threading import Event, RLock, Thread
 from typing import Callable, Iterable, Iterator
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image, UnidentifiedImageError
 
 from .browser_sessions import browser_descriptors, launch_chromium_context
+from .compute_backend import analyze_image_paths, analyze_image_payload
+from .compute_metrics import PerformanceMetrics
 from .config import (
     DEFAULT_CHATGPT_SCAN_WAIT_SECONDS,
     DEFAULT_CHATGPT_PROJECT_NAME,
@@ -79,6 +81,8 @@ CHATGPT_PROJECT_SCAN_WAIT_SECONDS = 2.0
 CHATGPT_SCROLL_STEP_RATIO = 0.8
 CHATGPT_PAGE_RECYCLE_INTERVAL = 25
 CHATGPT_MAX_CONVERSATION_WORKERS = 3
+CHATGPT_RESULT_QUEUE_SIZE = CHATGPT_MAX_CONVERSATION_WORKERS * 4
+CHATGPT_PROMPT_METADATA_QUEUE_SIZE = CHATGPT_MAX_CONVERSATION_WORKERS * 4
 CHATGPT_CONVERSATION_RESPONSE_WAIT_MS = 5_000
 CHATGPT_RENDERED_IMAGE_WAIT_MS = 5_500
 CHATGPT_RENDERED_IMAGE_POLL_MS = 250
@@ -607,24 +611,10 @@ def should_cache_chatgpt_candidate(candidate: ChatGPTImageCandidate) -> bool:
 def chatgpt_visual_properties(path: Path) -> tuple[str, int, int] | None:
     """Return a stable visual signature and decoded dimensions for one image file."""
     try:
-        with Image.open(path) as source:
-            image = ImageOps.exif_transpose(source)
-            width, height = image.size
-            grayscale = image.convert("L").resize(
-                (CHATGPT_VISUAL_HASH_WIDTH + 1, CHATGPT_VISUAL_HASH_HEIGHT),
-                Image.Resampling.LANCZOS,
-            )
-            pixels = grayscale.tobytes()
-    except (OSError, SyntaxError, UnidentifiedImageError, ValueError):
+        payload = path.read_bytes()
+    except OSError:
         return None
-
-    signature = 0
-    row_width = CHATGPT_VISUAL_HASH_WIDTH + 1
-    for row in range(CHATGPT_VISUAL_HASH_HEIGHT):
-        row_start = row * row_width
-        for column in range(CHATGPT_VISUAL_HASH_WIDTH):
-            signature = (signature << 1) | int(pixels[row_start + column + 1] > pixels[row_start + column])
-    return f"{signature:0{(CHATGPT_VISUAL_HASH_WIDTH * CHATGPT_VISUAL_HASH_HEIGHT) // 4}x}", width, height
+    return analyze_image_payload(payload)
 
 
 def _visual_signatures_match(left: str, right: str) -> bool:
@@ -934,10 +924,20 @@ class ChatGPTImageCatalog:
                 reclaimed_bytes=reclaimed_bytes,
             )
 
-    def deduplicate_visual_duplicates(self, *, dry_run: bool = False) -> ChatGPTDuplicateCleanupResult:
+    def deduplicate_visual_duplicates(
+        self,
+        *,
+        dry_run: bool = False,
+        analysis_workers: int | None = None,
+        metrics: PerformanceMetrics | None = None,
+    ) -> ChatGPTDuplicateCleanupResult:
         """Remove lower-quality copies of the same image from one ChatGPT conversation."""
         with self._lock:
-            result, changed = self._deduplicate_visual_duplicates_unlocked(dry_run=dry_run)
+            result, changed = self._deduplicate_visual_duplicates_unlocked(
+                dry_run=dry_run,
+                analysis_workers=analysis_workers,
+                metrics=metrics,
+            )
             if changed and not dry_run:
                 self.save()
             return result
@@ -1015,11 +1015,13 @@ class ChatGPTImageCatalog:
         self,
         file_id: str,
         entry: ChatGPTCatalogEntry,
+        visual_properties: tuple[str, int, int] | None | object = None,
     ) -> tuple[str, ChatGPTCatalogEntry, int, int] | None:
         """Return one entry with its persisted visual signature hydrated when necessary."""
         if entry.visual_signature and entry.width > 0 and entry.height > 0:
             return file_id, entry, entry.width, entry.height
-        visual_properties = chatgpt_visual_properties(self.target_dir / entry.relative_path)
+        if visual_properties is None:
+            visual_properties = chatgpt_visual_properties(self.target_dir / entry.relative_path)
         if visual_properties is None:
             return None
         signature, width, height = visual_properties
@@ -1032,10 +1034,22 @@ class ChatGPTImageCatalog:
         self,
         *,
         dry_run: bool = False,
+        analysis_workers: int | None = None,
+        metrics: PerformanceMetrics | None = None,
     ) -> tuple[ChatGPTDuplicateCleanupResult, bool]:
         """Select the best local copy in every same-conversation duplicate group."""
         entries_by_conversation: dict[str, list[tuple[str, ChatGPTCatalogEntry, int, int]]] = {}
         changed = False
+        paths_needing_analysis = {
+            file_id: self.target_dir / entry.relative_path
+            for file_id, entry in self.entries_by_file_id.items()
+            if not (entry.visual_signature and entry.width > 0 and entry.height > 0)
+        }
+        visual_properties_by_file_id = analyze_image_paths(
+            paths_needing_analysis,
+            workers=analysis_workers,
+            metrics=metrics,
+        )
         for file_id, entry in self.entries_by_file_id.items():
             conversation_key = entry.conversation_url.strip().rstrip("/")
             if not conversation_key:
@@ -1043,7 +1057,14 @@ class ChatGPTImageCatalog:
             previous_visual_signature = entry.visual_signature
             previous_width = entry.width
             previous_height = entry.height
-            visual_record = self._entry_visual_record_unlocked(file_id, entry)
+            if file_id in visual_properties_by_file_id:
+                visual_record = self._entry_visual_record_unlocked(
+                    file_id,
+                    entry,
+                    visual_properties_by_file_id[file_id],
+                )
+            else:
+                visual_record = self._entry_visual_record_unlocked(file_id, entry)
             if visual_record is None:
                 continue
             _record_file_id, _record_entry, width, height = visual_record
@@ -1633,7 +1654,9 @@ def _iter_parallel_safari_prompt_metadata_results(
             indexed_urls[worker_index::resolved_worker_count]
             for worker_index in range(resolved_worker_count)
         ]
-        result_queue: Queue[ChatGPTPromptMetadataWorkResult | None] = Queue()
+        result_queue: Queue[ChatGPTPromptMetadataWorkResult | None] = Queue(
+            maxsize=CHATGPT_PROMPT_METADATA_QUEUE_SIZE
+        )
         rate_limited = Event()
         workers = [
             Thread(
@@ -2989,7 +3012,7 @@ def _iter_chatgpt_conversation_results(
         list(enumerate(conversation_urls, start=1))[worker_index::worker_count]
         for worker_index in range(worker_count)
     ]
-    result_queue: Queue[ChatGPTConversationWorkResult] = Queue()
+    result_queue: Queue[ChatGPTConversationWorkResult] = Queue(maxsize=CHATGPT_RESULT_QUEUE_SIZE)
     optional_worker_args = (
         (max_file_size_bytes, True)
         if assistant_only
@@ -3182,7 +3205,7 @@ def _iter_chatgpt_index_image_results(
         pending_candidates[worker_index::worker_count]
         for worker_index in range(worker_count)
     ]
-    result_queue: Queue[ChatGPTImageDownloadWorkResult] = Queue()
+    result_queue: Queue[ChatGPTImageDownloadWorkResult] = Queue(maxsize=CHATGPT_RESULT_QUEUE_SIZE)
     workers = [
         Thread(
             target=_chatgpt_index_image_worker,
@@ -3588,7 +3611,8 @@ def sync_chatgpt_images(
     history_store = ChatGPTHistoryStore(chatgpt_history_path(resolved_target_dir.parent.parent))
     catalog = ChatGPTImageCatalog.build(resolved_target_dir)
     repair_result = catalog.repair_result
-    cleanup_result = catalog.deduplicate_visual_duplicates()
+    performance_metrics = PerformanceMetrics()
+    cleanup_result = catalog.deduplicate_visual_duplicates(metrics=performance_metrics)
     cached_count = catalog.summarize()
     state.update(
         account_name=project_name,
@@ -3602,6 +3626,8 @@ def sync_chatgpt_images(
         processed_tweets=0,
         discovery_complete=False,
     )
+    if performance_metrics.has_data:
+        state.update(performance_metrics=performance_metrics.snapshot())
     state.append_event(f"Prepared ChatGPT cache with {cached_count:,} existing original images.")
     if repair_result.removed_count:
         state.append_event(

@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.13.1-codex.2
+# Code version: v1.14.0-codex.1
 
 from __future__ import annotations
 
@@ -86,6 +86,8 @@ DEFAULT_SHADOW_BACKUP_DESTINATION = (
     Path.home() / "AICaches"
 )
 DEFAULT_DOWNLOAD_WORKERS = 4
+MIN_DOWNLOAD_WORKERS = 1
+MAX_DOWNLOAD_WORKERS = 8
 DEFAULT_MAX_MEDIA_FILE_SIZE_MIB = 50
 MIN_MAX_MEDIA_FILE_SIZE_MIB = 1
 MAX_MAX_MEDIA_FILE_SIZE_MIB = 10_240
@@ -100,6 +102,15 @@ MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS = 1.0
 MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS = 600.0
 MIN_CHATGPT_SCAN_WAIT_SECONDS = 0.1
 MAX_CHATGPT_SCAN_WAIT_SECONDS = 5.0
+
+
+def normalize_download_workers(value: object, fallback: int = DEFAULT_DOWNLOAD_WORKERS) -> int:
+    """Keep the legacy shared worker setting inside the application hard limit."""
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = int(fallback)
+    return min(MAX_DOWNLOAD_WORKERS, max(MIN_DOWNLOAD_WORKERS, parsed))
 
 
 def default_settings_path() -> Path:
@@ -152,6 +163,10 @@ class CrawlConfig:
     shadow_backup_destination: Path = DEFAULT_SHADOW_BACKUP_DESTINATION
     max_media_file_size_mib: int = DEFAULT_MAX_MEDIA_FILE_SIZE_MIB
 
+    def __post_init__(self) -> None:
+        """Normalize concurrency even when a caller constructs config directly."""
+        self.download_workers = normalize_download_workers(self.download_workers)
+
     @property
     def max_media_file_size_bytes(self) -> int:
         """Return the universal media-file limit in bytes."""
@@ -187,7 +202,10 @@ def load_saved_config(settings_path: Path | None = None) -> CrawlConfig:
     defaults = CrawlConfig()
     return CrawlConfig(
         headless=bool(payload.get("headless", defaults.headless)),
-        download_workers=max(1, int(payload.get("download_workers", defaults.download_workers))),
+        download_workers=normalize_download_workers(
+            payload.get("download_workers", defaults.download_workers),
+            defaults.download_workers,
+        ),
         max_media_file_size_mib=_clamp_int_setting(
             payload.get("max_media_file_size_mib", defaults.max_media_file_size_mib),
             defaults.max_media_file_size_mib,
@@ -277,6 +295,7 @@ def save_config(config: CrawlConfig, settings_path: Path | None = None) -> None:
     """Persist crawler settings for future app restarts."""
     resolved_settings_path = settings_path if settings_path is not None else default_settings_path()
     payload = asdict(config)
+    payload["download_workers"] = normalize_download_workers(payload.get("download_workers"))
     payload["x_browser"] = config.x_browser
     payload["grok_browser"] = config.grok_browser
     payload["chatgpt_browser"] = config.chatgpt_browser

@@ -1,4 +1,4 @@
-{# Code version: v1.4.0-codex.1 #}
+{# Code version: v1.5.0-codex.1 #}
 {% from "_number_field.html" import render_number_field %}
 {% macro render_cache_common_config(
     saved_config,
@@ -20,7 +20,7 @@
         {% endif %}
     </div>
     <div class="field-grid compact-config-grid">
-        {{ render_number_field("Download workers", "download_workers", saved_config.download_workers, minimum="1") }}
+        {{ render_number_field("Download workers", "download_workers", saved_config.download_workers, minimum="1", maximum="8") }}
         {{ render_number_field(
             "Max cached file size (MiB)",
             "max_media_file_size_mib",
@@ -31,7 +31,7 @@
         ) }}
     </div>
     <p class="settings-field-help" id="{{ id_prefix }}_cache_common_config_help">
-        Shared by all cache sources. Existing files are kept; oversized new files are skipped.
+        Shared by all cache sources. Maximum 8 I/O workers; existing files are kept and oversized new files are skipped.
     </p>
 </section>
 {%- endmacro %}

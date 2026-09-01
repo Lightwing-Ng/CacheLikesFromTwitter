@@ -1,13 +1,13 @@
 """Tests for durable settings and thread-safe task state.
 
-Code version: v1.3.0-codex.1
+Code version: v1.4.0-codex.1
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from app.core.config import CrawlConfig, load_saved_config, save_config
+from app.core.config import MAX_DOWNLOAD_WORKERS, CrawlConfig, load_saved_config, save_config
 from app.core.state import TaskSnapshot, TaskState
 
 
@@ -76,6 +76,17 @@ def test_settings_clamp_workers_and_normalize_browser_names(tmp_path: Path) -> N
     assert loaded.download_workers == 1
     assert loaded.x_browser == "edge"
     assert loaded.grok_browser == CrawlConfig().grok_browser
+
+
+def test_download_workers_have_a_hard_cap_for_direct_and_legacy_config(tmp_path: Path) -> None:
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(
+        '{"download_workers": "not-a-number"}',
+        encoding="utf-8",
+    )
+
+    assert CrawlConfig(download_workers=10_000).download_workers == MAX_DOWNLOAD_WORKERS
+    assert load_saved_config(settings_path).download_workers == CrawlConfig().download_workers
 
 
 def test_settings_clamp_universal_media_file_size(tmp_path: Path) -> None:

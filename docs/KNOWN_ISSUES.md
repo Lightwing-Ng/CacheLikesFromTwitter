@@ -1,6 +1,28 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.18.1-codex.1`
+Documentation version: `v1.19.0-codex.1`
+
+## Bounded local compute rollout on 1 Sep 2026
+
+- ChatGPT catalog visual hydration now has a pure CPU backend with a 64-image parallel threshold,
+  conservative process and memory budgets, deterministic result validation, and privacy-safe stage
+  metrics. Browser contexts, authentication headers, catalogs, task state, and final files remain
+  outside process workers.
+- The base requirements intentionally contain no CUDA, MPS/Metal, ROCm, PyTorch, CuPy, or other
+  GPU framework. `detect_gpu_capability()` therefore reports GPU unavailable. The adapter contract
+  and failure tests are extensibility points only; this project has no live GPU hardware evidence
+  and must not report mock or static validation as GPU acceleration.
+- A failed or partial optional GPU batch is never committed. The complete batch is recomputed on a
+  clean CPU backend. A CPU process-worker failure follows the same safe parent-process recompute.
+- The shared `download_workers` setting is now bounded to `1` through `8` while preserving legacy
+  JSON readability. ChatGPT's maximum of three isolated Chromium contexts, Grok's maximum of four
+  media workers, Safari serialization, and the cross-workflow task lock are unchanged.
+- The ChatGPT conversation and project-index result queues now have finite capacity. Normal producer
+  blocking is intentional backpressure; queue capacity is independent from browser worker count.
+- The measured synthetic benchmark is not a universal speed guarantee. Small batches remain on the
+  parent CPU path because process startup cost can exceed the decode/signature work. Network,
+  browser, Safari, Parquet serialization/commit, backup, and Agent provider stages were not moved
+  to GPU because this rollout did not produce evidence that GPU execution would help them.
 
 ## Edge Gemini and Grok Agent parity hardening on 28 Aug 2026
 

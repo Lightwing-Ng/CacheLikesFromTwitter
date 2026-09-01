@@ -1,6 +1,6 @@
 """Stable foundation boundary for runtime configuration and task state."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.1.0-codex.1
 
 from ..config import (
     DEFAULT_HOST,
@@ -8,14 +8,17 @@ from ..config import (
     LOCAL_STORE_ROOT,
     MAX_CHATGPT_SCAN_WAIT_SECONDS,
     MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+    MAX_DOWNLOAD_WORKERS,
     MAX_MAX_MEDIA_FILE_SIZE_MIB,
     MIN_CHATGPT_SCAN_WAIT_SECONDS,
     MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
     MIN_MAX_MEDIA_FILE_SIZE_MIB,
+    MIN_DOWNLOAD_WORKERS,
     CrawlConfig,
     is_macos_host,
     is_windows_host,
     load_saved_config,
+    normalize_download_workers,
     save_config,
 )
 from ..logging_setup import configure_logging, get_log_file_path
@@ -29,10 +32,12 @@ __all__ = [
     "LOCAL_STORE_ROOT",
     "MAX_CHATGPT_SCAN_WAIT_SECONDS",
     "MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS",
+    "MAX_DOWNLOAD_WORKERS",
     "MAX_MAX_MEDIA_FILE_SIZE_MIB",
     "MIN_CHATGPT_SCAN_WAIT_SECONDS",
     "MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS",
     "MIN_MAX_MEDIA_FILE_SIZE_MIB",
+    "MIN_DOWNLOAD_WORKERS",
     "CrawlConfig",
     "TaskState",
     "build_initial_snapshot",
@@ -41,6 +46,7 @@ __all__ = [
     "is_macos_host",
     "is_windows_host",
     "load_saved_config",
+    "normalize_download_workers",
     "save_config",
     "utc_now",
 ]

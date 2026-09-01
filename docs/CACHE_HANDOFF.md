@@ -1,6 +1,6 @@
 # Cache handoff and operating runbook
 
-Documentation version: `v1.3.0-codex.1`
+Documentation version: `v1.4.0-codex.1`
 
 This is the authoritative handoff document for the second Dock item, `Cache`.
 Read it before changing Cache routes, source switching, Text/Media behavior, local
@@ -88,7 +88,17 @@ The response-node tree is important. A DOM scroll only exposes a partial, select
 branch and is not evidence that all history was discovered. The API list is paginated,
 and `load-responses` is required to recover the complete text payload.
 
-## 4. Durable local data
+## 4. Local compute boundary
+
+ChatGPT visual signatures and decoded dimensions are pure local work. Startup catalog hydration
+uses bounded immutable payload batches and may use conservative CPU processes only after the batch
+is large enough to amortize process startup. Workers return ordered analysis envelopes; the
+ChatGPT catalog remains the only owner of metadata, duplicate removal, and atomic Parquet writes.
+No browser context, authentication header, task lock, mutable catalog, or open file handle enters a
+compute worker. The base install has no GPU adapter. Any future optional adapter must discard a
+partial or failed GPU batch and recompute the complete batch on CPU before the catalog can observe it.
+
+## 5. Durable local data
 
 The current local store layout is:
 
@@ -112,7 +122,7 @@ Grok Text rows contain a stable `message_key` formed as
 preserves `first_seen_at`, updates `last_seen_at`, and writes through an atomic
 temporary Parquet file. Do not edit the Parquet file by hand during a sync.
 
-## 5. Verified Grok baseline
+## 6. Verified Grok baseline
 
 On `13 Aug 2026`, a live Edge-authenticated run completed through the Text pipeline:
 
@@ -129,7 +139,7 @@ The Local resources page was then opened with `source=grok` and showed `1,537`
 messages and `165` sessions. This baseline is a diagnostic reference, not a hardcoded
 expectation: Grok history changes whenever new conversations are created or removed.
 
-## 6. Safari cache-window contract
+## 7. Safari cache-window contract
 
 Safari-backed Cache tasks may own exactly one temporary Safari window at a time, and Safari
 is never the default browser for a new Gemini task. The window must remain a standard visible
@@ -164,7 +174,7 @@ this Mac. The Gemini bot-check selector is one JavaScript expression: adjacent s
 literals must be joined explicitly with `+`, because JavaScript does not concatenate
 them like Python.
 
-## 7. Edge Gemini Text contract
+## 8. Edge Gemini Text contract
 
 Edge is the preferred runtime for a long Gemini Text cache on this Mac. The worker
 clones the authenticated Edge `Default` profile into one headless, task-owned context;
@@ -199,7 +209,7 @@ detected, it stops and reports it to the operator; it must not attempt to solve 
 captcha automatically. Transient tunnel and network failures are retried with a
 cooldown, and the exact failure remains visible in the task event log.
 
-## 8. Safe operator workflow
+## 9. Safe operator workflow
 
 Use the local Terminal as the runtime control surface. The required project interpreter
 is `/usr/local/bin/python3.13`.
@@ -253,7 +263,7 @@ http://localhost:8666/browser?view=text&source=grok&session_view=1&q=&sort=newes
 The page should show Grok as the selected source, session rows, message counts, and
 original Grok conversation links.
 
-## 9. Troubleshooting decision tree
+## 10. Troubleshooting decision tree
 
 ### Safari reports an unreadable JavaScript result
 
@@ -334,7 +344,7 @@ Run the focused checks first:
 
 The second command requires the Agent module set to be internally consistent.
 
-## 10. Change map for future agents
+## 11. Change map for future agents
 
 Read these files together before changing Cache behavior:
 

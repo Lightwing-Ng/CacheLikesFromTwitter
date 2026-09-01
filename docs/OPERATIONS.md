@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.6.4-codex.1`
+Documentation version: `v1.7.0-codex.1`
 
 ## Launch
 
@@ -107,6 +107,30 @@ to override it. A successful unlock is stored in the signed Flask session for th
 
 All cache and log paths are ignored by Git. Back up local media before using any destructive reset
 operation.
+
+## Concurrency and local compute
+
+The shared `Download workers` setting accepts values from `1` through `8`. Older settings files
+remain readable; values below or above that range are normalized on load, and direct
+`CrawlConfig` construction applies the same limit. Grok remains capped at four download workers,
+ChatGPT remains capped at three isolated Chromium workers, and Safari remains serialized.
+
+ChatGPT visual-signature hydration is a separate local CPU stage. Small batches stay in the parent
+process, while larger batches may use the automatically discovered conservative process budget.
+The status snapshot exposes only numeric stage counts, durations, worker counts, queue depth, backend
+name, and fallback counts. It never records image bytes, prompts, browser data, cookies, URLs, or
+file paths. The base installation reports GPU unavailable because no optional GPU framework or
+adapter is installed.
+
+For a repeatable isolated measurement, run:
+
+```bash
+/usr/local/bin/python3.13 scripts/benchmark_compute.py
+```
+
+The benchmark creates a temporary synthetic fixture, performs one warmup and five measured runs,
+and reports distributions for the legacy sequential path and the bounded CPU backend. It does not
+read the local cache or launch a browser.
 
 ## Reset, deletion, and restoration
 

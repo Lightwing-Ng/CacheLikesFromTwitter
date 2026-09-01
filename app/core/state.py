@@ -1,6 +1,6 @@
 """Shared task state for the web UI and worker."""
 
-# Code version: v1.3.0-codex.1
+# Code version: v1.4.0-codex.1
 
 from __future__ import annotations
 
@@ -76,6 +76,7 @@ class TaskSnapshot:
     output_dir: str = DEFAULT_OUTPUT_DIR_TEMPLATE
     last_error: str = ""
     recent_events: list[str] = field(default_factory=list)
+    performance_metrics: dict[str, Any] = field(default_factory=dict)
 
 
 class TaskState:
