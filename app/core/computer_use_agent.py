@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.53.4-codex.1
+Code version: v3.53.5-codex.1
 """
 
 from __future__ import annotations
@@ -132,6 +132,11 @@ CHATGPT_MODEL_CONTROL_WAIT_ATTEMPTS = 61
 CHATGPT_MODEL_CONTROL_POLL_MILLISECONDS = 250
 CHATGPT_MODEL_VIEW_WAIT_ATTEMPTS = 20
 CHATGPT_MODEL_VIEW_POLL_MILLISECONDS = 100
+# ChatGPT can report a checked model before React mounts or replaces the
+# corresponding effort slider. Rebind only the already trusted semantic
+# control, with no context attachment or prompt submission during the wait.
+CHATGPT_EFFORT_SLIDER_BIND_WAIT_ATTEMPTS = CHATGPT_MODEL_VIEW_WAIT_ATTEMPTS
+CHATGPT_EFFORT_SLIDER_BIND_POLL_MILLISECONDS = CHATGPT_MODEL_VIEW_POLL_MILLISECONDS
 # Guard against a malformed page advertising an unbounded slider while still
 # covering any realistic subscription tier without a plan-specific list.
 CHATGPT_MAX_SUBSCRIPTION_EFFORT_POSITIONS = 64
@@ -7798,16 +7803,12 @@ def _run_web_action_loop(
             for item in recorded_attempted_labels
             if str(item).strip()
         ] or list(attempted_labels)
-        attempt_summary = (
-            f" after {CHATGPT_MODEL_VERIFICATION_ATTEMPTS} attempt(s)"
-            if platform == "chatgpt"
-            else ""
-        )
         raise RuntimeError(
-            f"{provider_label} Web could not verify {expected_label}{attempt_summary}. "
+            f"{provider_label} Web could not verify {expected_label}. "
             "No project context or prompt was sent. "
             f"URL={page_url}, session_mode={session_mode}, session_type={session_type}, "
-            f"expected_model={expected_label}, observed_model={observed}, "
+            f"expected_model={expected_label}, failure_reason="
+            f"{model_failure_reason or 'unavailable'}, observed_model={observed}, "
             f"menu_text={available_text}, "
             f"visible_buttons={model_observation.get('visible_buttons') or []}, "
             f"menu_roles={model_observation.get('menu_roles') or []}, "
@@ -9881,18 +9882,61 @@ def _chatgpt_effort_slider_binding(
         raise
 
 
+def _chatgpt_wait_for_effort_slider_binding(
+    page: Any,
+    wait_for_timeout: Callable[[int], Any],
+    *,
+    expected_scope: str = "",
+    trusted_model_menu_scope: str | None = None,
+    wait_budget: list[int] | None = None,
+) -> tuple[Any | None, str]:
+    """Rebind one trusted effort slider while ChatGPT finishes a menu redraw.
+
+    ``wait_budget`` is the remaining count of poll sleeps shared by one effort
+    discovery transaction.  It keeps a transient redraw recoverable without
+    multiplying the bounded wait by every slider-position readback.
+    """
+    for attempt in range(CHATGPT_EFFORT_SLIDER_BIND_WAIT_ATTEMPTS):
+        slider, scope = _chatgpt_effort_slider_binding(
+            page,
+            expected_scope=expected_scope,
+            trusted_model_menu_scope=trusted_model_menu_scope,
+        )
+        if slider is not None:
+            return slider, scope
+        if wait_budget is not None:
+            if not wait_budget or wait_budget[0] <= 0:
+                return None, ""
+            wait_budget[0] -= 1
+            wait_for_timeout(CHATGPT_EFFORT_SLIDER_BIND_POLL_MILLISECONDS)
+        elif attempt + 1 < CHATGPT_EFFORT_SLIDER_BIND_WAIT_ATTEMPTS:
+            wait_for_timeout(CHATGPT_EFFORT_SLIDER_BIND_POLL_MILLISECONDS)
+    return None, ""
+
+
 def _chatgpt_find_effort_slider_in_scope(
     page: Any,
     scope: str,
     *,
     trusted_model_menu_scope: str | None = None,
+    wait_for_timeout: Callable[[int], Any] | None = None,
+    wait_budget: list[int] | None = None,
 ) -> Any | None:
     """Reacquire the same trusted slider scope after a ChatGPT redraw."""
-    slider, rebound_scope = _chatgpt_effort_slider_binding(
-        page,
-        expected_scope=scope,
-        trusted_model_menu_scope=trusted_model_menu_scope,
-    )
+    if wait_for_timeout is None:
+        slider, rebound_scope = _chatgpt_effort_slider_binding(
+            page,
+            expected_scope=scope,
+            trusted_model_menu_scope=trusted_model_menu_scope,
+        )
+    else:
+        slider, rebound_scope = _chatgpt_wait_for_effort_slider_binding(
+            page,
+            wait_for_timeout,
+            expected_scope=scope,
+            trusted_model_menu_scope=trusted_model_menu_scope,
+            wait_budget=wait_budget,
+        )
     return slider if rebound_scope == scope else None
 
 
@@ -9931,6 +9975,8 @@ def _chatgpt_press_effort_key(
     *,
     scope: str,
     trusted_model_menu_scope: str | None = None,
+    wait_for_timeout: Callable[[int], Any] | None = None,
+    wait_budget: list[int] | None = None,
 ) -> bool:
     """Press one slider key, reacquiring the element once when ChatGPT redraws it."""
     candidate = slider
@@ -9940,6 +9986,8 @@ def _chatgpt_press_effort_key(
                 page,
                 scope,
                 trusted_model_menu_scope=trusted_model_menu_scope,
+                wait_for_timeout=wait_for_timeout,
+                wait_budget=wait_budget,
             )
         press = getattr(candidate, "press", None)
         if callable(press):
@@ -9956,6 +10004,8 @@ def _chatgpt_press_effort_key(
             page,
             scope,
             trusted_model_menu_scope=trusted_model_menu_scope,
+            wait_for_timeout=wait_for_timeout,
+            wait_budget=wait_budget,
         )
     return False
 
@@ -10086,6 +10136,12 @@ def _chatgpt_select_subscription_effort(
     """
     requested = normalize_chatgpt_effort(requested_effort)
     labels: list[str] = []
+    # Share one short wait across every binding in this discovery transaction.
+    # A React redraw can therefore settle after any keypress, but a repeated
+    # disappearance cannot add the same delay once per subscription tier.
+    slider_bind_wait_budget = [
+        CHATGPT_EFFORT_SLIDER_BIND_WAIT_ATTEMPTS - 1,
+    ]
 
     def finish(*, complete: bool, error: str = "") -> tuple[dict[str, Any], list[str], bool]:
         result["requested_thinking_effort"] = requested
@@ -10096,9 +10152,11 @@ def _chatgpt_select_subscription_effort(
             result.pop("effort_selection_error", None)
         return result, labels, complete
 
-    slider, slider_scope = _chatgpt_effort_slider_binding(
+    slider, slider_scope = _chatgpt_wait_for_effort_slider_binding(
         page,
+        wait_for_timeout,
         trusted_model_menu_scope=trusted_model_menu_scope,
+        wait_budget=slider_bind_wait_budget,
     )
     if slider is None:
         if requested != CHATGPT_EFFORT_POLICY_HIGHEST:
@@ -10125,6 +10183,8 @@ def _chatgpt_select_subscription_effort(
         "Home",
         scope=slider_scope,
         trusted_model_menu_scope=trusted_model_menu_scope,
+        wait_for_timeout=wait_for_timeout,
+        wait_budget=slider_bind_wait_budget,
     ):
         return finish(complete=False, error="effort-catalog-key-failed")
     wait_for_timeout(80)
@@ -10138,6 +10198,8 @@ def _chatgpt_select_subscription_effort(
                 "ArrowRight",
                 scope=slider_scope,
                 trusted_model_menu_scope=trusted_model_menu_scope,
+                wait_for_timeout=wait_for_timeout,
+                wait_budget=slider_bind_wait_budget,
             ):
                 return finish(complete=False, error="effort-catalog-key-failed")
             wait_for_timeout(80)
@@ -10145,6 +10207,8 @@ def _chatgpt_select_subscription_effort(
             page,
             slider_scope,
             trusted_model_menu_scope=trusted_model_menu_scope,
+            wait_for_timeout=wait_for_timeout,
+            wait_budget=slider_bind_wait_budget,
         )
         current_state = (
             _chatgpt_effort_slider_state(slider) if slider is not None else None
@@ -10191,6 +10255,8 @@ def _chatgpt_select_subscription_effort(
         page,
         slider_scope,
         trusted_model_menu_scope=trusted_model_menu_scope,
+        wait_for_timeout=wait_for_timeout,
+        wait_budget=slider_bind_wait_budget,
     )
     final_state = _chatgpt_effort_slider_state(slider) if slider is not None else None
     if final_state is None:
@@ -10204,6 +10270,8 @@ def _chatgpt_select_subscription_effort(
             "Home",
             scope=slider_scope,
             trusted_model_menu_scope=trusted_model_menu_scope,
+            wait_for_timeout=wait_for_timeout,
+            wait_budget=slider_bind_wait_budget,
         ):
             return finish(complete=False, error="effort-selection-key-failed")
         wait_for_timeout(80)
@@ -10211,6 +10279,8 @@ def _chatgpt_select_subscription_effort(
             page,
             slider_scope,
             trusted_model_menu_scope=trusted_model_menu_scope,
+            wait_for_timeout=wait_for_timeout,
+            wait_budget=slider_bind_wait_budget,
         )
         final_state = _chatgpt_effort_slider_state(slider) if slider is not None else None
         if not range_is_stable(final_state):
@@ -10224,6 +10294,8 @@ def _chatgpt_select_subscription_effort(
                 "ArrowRight",
                 scope=slider_scope,
                 trusted_model_menu_scope=trusted_model_menu_scope,
+                wait_for_timeout=wait_for_timeout,
+                wait_budget=slider_bind_wait_budget,
             ):
                 return finish(complete=False, error="effort-selection-key-failed")
             wait_for_timeout(80)
@@ -10231,6 +10303,8 @@ def _chatgpt_select_subscription_effort(
                 page,
                 slider_scope,
                 trusted_model_menu_scope=trusted_model_menu_scope,
+                wait_for_timeout=wait_for_timeout,
+                wait_budget=slider_bind_wait_budget,
             )
             final_state = (
                 _chatgpt_effort_slider_state(slider) if slider is not None else None
@@ -10247,6 +10321,8 @@ def _chatgpt_select_subscription_effort(
         page,
         slider_scope,
         trusted_model_menu_scope=trusted_model_menu_scope,
+        wait_for_timeout=wait_for_timeout,
+        wait_budget=slider_bind_wait_budget,
     )
     post_menu_state = (
         _chatgpt_effort_slider_state(post_menu_slider)

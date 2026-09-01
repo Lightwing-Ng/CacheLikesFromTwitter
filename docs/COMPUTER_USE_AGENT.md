@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.53.4-codex.1`
+Documentation version: `v3.53.5-codex.1`
 
 ## Purpose
 
@@ -158,7 +158,10 @@ older task cannot be submitted accidentally through a different Web session.
    accepted only from that exact controlled surface; a redraw that changes its identity fails
    closed. A model-looking option in another menu cannot preempt a uniquely trusted composer
    slider. If the trigger cannot prove its controlled surface, only the uniquely bound composer
-   slider remains eligible.
+   slider remains eligible. ChatGPT can report the selected model before React mounts or replaces
+   that trusted slider. The controller therefore shares one roughly two-second retry budget across
+   only the same bounded semantic slider binding; a still missing, ambiguous, or unreadable
+   control remains a pre-transfer failure.
    ChatGPT's combined composer pill can expose the checked model in a separate `Select model`
    view while keeping the live effort slider in its simple view. The controller enters that
    exact controlled view for model readback, then closes and reopens the same trigger to return

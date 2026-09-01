@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.53.4-codex.1
+Code version: v3.53.5-codex.1
 """
 
 from __future__ import annotations
@@ -485,8 +485,9 @@ def test_chromium_model_selector_rejects_readback_without_live_effort_proof() ->
     assert ("button", "Subscription power", True) in page.role_calls
     assert "#prompt-textarea" in page.locator_calls
     assert any("model-switcher" in selector for selector in page.locator_calls)
-    assert page.waits == [200]
-    assert len(page.evaluate_scripts) == 3
+    assert page.waits[0] == 200
+    assert page.waits[1:] == [100] * 19
+    assert len(page.evaluate_scripts) >= 3
     assert any("expectedScope" in script for script in page.evaluate_scripts)
     assert all(".click(" not in expression for expression in page.evaluate_scripts)
     assert any("current:" in expression for expression in page.evaluate_scripts)
@@ -612,6 +613,168 @@ def test_chromium_explicit_effort_fails_closed_without_a_live_slider() -> None:
     ) is False
     assert observation["reason"] == "requested-effort-control-not-found"
     assert observation["effort_catalog_complete"] is False
+
+
+def test_chatgpt_effort_catalog_waits_for_a_delayed_trusted_slider(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Slider:
+        labels = ("Instant", "Medium", "High", "Extra High")
+
+        def __init__(self) -> None:
+            self.value = 0
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            return {
+                "aria-valuenow": str(self.value),
+                "aria-valuemin": "0",
+                "aria-valuemax": "3",
+                "aria-valuetext": self.labels[self.value],
+            }.get(name)
+
+        def press(self, key: str, **_kwargs: object) -> None:
+            if key == "Home":
+                self.value = 0
+            elif key == "ArrowRight":
+                self.value = min(self.value + 1, 3)
+
+    class _Page:
+        def evaluate(self, *_args: object) -> dict[str, object]:
+            return {"ok": False, "diagnostic": {}}
+
+    slider = _Slider()
+    binding_calls: list[str] = []
+
+    def delayed_binding(
+        _page: object,
+        *,
+        expected_scope: str = "",
+        trusted_model_menu_scope: str | None = None,
+    ) -> tuple[object | None, str]:
+        binding_calls.append(expected_scope)
+        assert trusted_model_menu_scope == "menu:model"
+        if len(binding_calls) in {1, 2, 4, 5}:
+            return None, ""
+        return slider, "composer"
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_chatgpt_effort_slider_binding",
+        delayed_binding,
+    )
+    waits: list[int] = []
+
+    updated, labels, complete = _chatgpt_select_subscription_effort(
+        _Page(),
+        {
+            "ok": True,
+            "current": "GPT-5.6 Sol",
+            "selected_model": "GPT-5.6 Sol",
+            "available": ["GPT-5.6 Sol"],
+        },
+        waits.append,
+        "Extra High",
+        trusted_model_menu_scope="menu:model",
+    )
+
+    assert complete is True
+    assert labels == ["Instant", "Medium", "High", "Extra High"]
+    assert updated["thinking_effort"]["label"] == "Extra High"
+    assert waits[:2] == [
+        computer_use_agent.CHATGPT_EFFORT_SLIDER_BIND_POLL_MILLISECONDS,
+        computer_use_agent.CHATGPT_EFFORT_SLIDER_BIND_POLL_MILLISECONDS,
+    ]
+    assert waits.count(computer_use_agent.CHATGPT_EFFORT_SLIDER_BIND_POLL_MILLISECONDS) == 4
+    assert binding_calls[:3] == ["", "", ""]
+
+
+def test_chatgpt_delayed_effort_rebind_rejects_a_different_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    binding_calls: list[str] = []
+
+    def delayed_wrong_scope(
+        _page: object,
+        *,
+        expected_scope: str = "",
+        trusted_model_menu_scope: str | None = None,
+    ) -> tuple[object | None, str]:
+        assert trusted_model_menu_scope == "menu:model"
+        binding_calls.append(expected_scope)
+        if len(binding_calls) <= 2:
+            return None, ""
+        return object(), "unrelated-menu"
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_chatgpt_effort_slider_binding",
+        delayed_wrong_scope,
+    )
+    waits: list[int] = []
+
+    assert _chatgpt_find_effort_slider_in_scope(
+        object(),
+        "composer",
+        trusted_model_menu_scope="menu:model",
+        wait_for_timeout=waits.append,
+    ) is None
+    assert binding_calls == ["composer"] * 3
+    assert waits == [
+        computer_use_agent.CHATGPT_EFFORT_SLIDER_BIND_POLL_MILLISECONDS,
+    ] * 2
+
+
+def test_chatgpt_effort_slider_binding_shares_one_poll_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    binding_calls: list[str] = []
+
+    def missing_binding(
+        _page: object,
+        *,
+        expected_scope: str = "",
+        trusted_model_menu_scope: str | None = None,
+    ) -> tuple[object | None, str]:
+        assert trusted_model_menu_scope == "menu:model"
+        binding_calls.append(expected_scope)
+        return None, ""
+
+    monkeypatch.setattr(
+        computer_use_agent,
+        "_chatgpt_effort_slider_binding",
+        missing_binding,
+    )
+    waits: list[int] = []
+    wait_budget = [2]
+
+    assert computer_use_agent._chatgpt_wait_for_effort_slider_binding(
+        object(),
+        waits.append,
+        expected_scope="composer",
+        trusted_model_menu_scope="menu:model",
+        wait_budget=wait_budget,
+    ) == (None, "")
+    assert binding_calls == ["composer"] * 3
+    assert waits == [
+        computer_use_agent.CHATGPT_EFFORT_SLIDER_BIND_POLL_MILLISECONDS,
+    ] * 2
+    assert wait_budget == [0]
+
+    assert computer_use_agent._chatgpt_wait_for_effort_slider_binding(
+        object(),
+        waits.append,
+        expected_scope="composer",
+        trusted_model_menu_scope="menu:model",
+        wait_budget=wait_budget,
+    ) == (None, "")
+    assert binding_calls == ["composer"] * 4
+    assert len(waits) == 2
 
 
 @pytest.mark.parametrize(
@@ -5819,7 +5982,12 @@ def test_web_action_loop_fails_closed_before_context_or_prompt_when_model_is_unv
 
     monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
     monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
-    monkeypatch.setattr(computer_use_agent, "_select_web_model", lambda *_args, **_kwargs: False)
+    def reject_model(*args: object, **_kwargs: object) -> bool:
+        if platform == "chatgpt" and len(args) > 4 and isinstance(args[4], dict):
+            args[4]["reason"] = "requested-effort-control-not-found"
+        return False
+
+    monkeypatch.setattr(computer_use_agent, "_select_web_model", reject_model)
     monkeypatch.setattr(computer_use_agent, "_attach_context_file", attach)
     monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
 
@@ -5843,6 +6011,8 @@ def test_web_action_loop_fails_closed_before_context_or_prompt_when_model_is_unv
 
     assert calls == {"attach": 0, "submit": 0}
     assert "No project context or prompt was sent." in str(error.value)
+    if platform == "chatgpt":
+        assert "failure_reason=requested-effort-control-not-found" in str(error.value)
 
 
 def test_gemini_action_loop_reports_an_anonymous_model_menu_before_transfer(
