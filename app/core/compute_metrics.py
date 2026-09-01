@@ -1,12 +1,16 @@
 """Bounded, privacy-safe metrics for local compute stages."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.1.0-codex.1
 
 from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass, field
 from threading import Lock
+
+
+_ALLOWED_STAGES = frozenset({"image_analysis"})
+_ALLOWED_BACKENDS = frozenset({"cpu", "gpu"})
 
 
 @dataclass(slots=True)
@@ -42,14 +46,20 @@ class PerformanceMetrics:
         worker_recovery: bool = False,
     ) -> None:
         """Add one bounded numeric observation to a stage accumulator."""
+        stage_key = str(stage)
+        backend_key = str(backend)
+        if stage_key not in _ALLOWED_STAGES:
+            raise ValueError("Unsupported performance-metrics stage.")
+        if backend_key not in _ALLOWED_BACKENDS:
+            raise ValueError("Unsupported performance-metrics backend.")
         with self._lock:
-            accumulator = self._stages.setdefault(stage, _StageAccumulator())
+            accumulator = self._stages.setdefault(stage_key, _StageAccumulator())
             accumulator.count += max(0, int(count))
             accumulator.wall_seconds += max(0.0, float(wall_seconds))
             accumulator.cpu_seconds += max(0.0, float(cpu_seconds))
             accumulator.max_workers = max(accumulator.max_workers, max(1, int(workers)))
             accumulator.max_queue_depth = max(accumulator.max_queue_depth, max(0, int(queue_depth)))
-            accumulator.backend_counts[str(backend)] += 1
+            accumulator.backend_counts[backend_key] += 1
             accumulator.gpu_fallback_batches += int(bool(gpu_fallback))
             accumulator.worker_recovery_batches += int(bool(worker_recovery))
 

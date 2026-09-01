@@ -1,6 +1,6 @@
 # Cache handoff and operating runbook
 
-Documentation version: `v1.4.0-codex.1`
+Documentation version: `v1.4.1-codex.1`
 
 This is the authoritative handoff document for the second Dock item, `Cache`.
 Read it before changing Cache routes, source switching, Text/Media behavior, local
@@ -92,8 +92,10 @@ and `load-responses` is required to recover the complete text payload.
 
 ChatGPT visual signatures and decoded dimensions are pure local work. Startup catalog hydration
 uses bounded immutable payload batches and may use conservative CPU processes only after the batch
-is large enough to amortize process startup. Workers return ordered analysis envelopes; the
-ChatGPT catalog remains the only owner of metadata, duplicate removal, and atomic Parquet writes.
+is large enough to amortize process startup. The parent checks file size before reading, flushes
+before a file would exceed the payload budget, and analyzes an oversized or concurrently changed
+file directly in the parent. Workers return ordered analysis envelopes; the ChatGPT catalog remains
+the only owner of metadata, duplicate removal, and atomic Parquet writes.
 No browser context, authentication header, task lock, mutable catalog, or open file handle enters a
 compute worker. The base install has no GPU adapter. Any future optional adapter must discard a
 partial or failed GPU batch and recompute the complete batch on CPU before the catalog can observe it.

@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.6.1-codex.1`
+Documentation version: `v1.6.4-codex.1`
 
 ## Supported commands
 
@@ -133,17 +133,22 @@ Tests must follow these rules:
 - Keep live, authenticated, and remote-service checks under `@pytest.mark.live`; they do not belong
   in the default quality gate.
 - CPU compute tests use synthetic image bytes and temporary paths. GPU tests inject a fake adapter
-  and verify that partial, failed, or initialization-failed batches are discarded and recomputed in
-  full on CPU. No test treats a fake adapter, static inspection, or an HTTP response as GPU evidence.
+  and verify that partial, duplicate, unknown, OOM, failed, or initialization-failed batches are
+  discarded and recomputed in full on CPU. Payload-budget tests verify that the parent flushes before
+  oversized files and analyzes them without queueing their bytes. No test treats a fake adapter,
+  static inspection, or an HTTP response as GPU evidence.
 
 ## Local-compute benchmark contract
 
 The benchmark uses a deterministic `1,024 × 1,024` PNG fixture, one warmup run, five measured runs,
-and reports the full wall-time and parent CPU-time samples plus medians. On this host, the 32-image
-fixture measured a legacy sequential wall-time median of approximately `0.306 s`; the process
+and reports the full wall-time and parent CPU-time samples plus medians, together with numeric
+backend metrics from the final optimized run. On this host, the 32-image
+fixture measured a legacy sequential wall-time median of approximately `0.310 s`, while the
+bounded CPU path measured approximately `0.307 s`; the process
 backend was intentionally not selected for that size because process startup made it slower. With
 the same fixture expanded to 128 images, the legacy median was approximately `1.246 s` and the
-bounded CPU backend median was approximately `0.432 s`. These figures are local synthetic evidence,
+bounded CPU backend median was approximately `0.510 s`. These latest recorded values are local
+synthetic evidence,
 not a claim about browser, network, or GPU throughput. Remote discovery, browser automation,
 downloads, Safari, Parquet commit, and backup stages remain outside GPU acceleration unless a
 separate live profile proves otherwise.

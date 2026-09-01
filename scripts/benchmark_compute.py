@@ -1,6 +1,6 @@
 """Repeatable synthetic benchmark for the local image-analysis stage.
 
-Code version: v1.0.1-codex.1
+Code version: v1.0.2-codex.1
 """
 
 from __future__ import annotations
@@ -64,13 +64,22 @@ def main() -> None:
     """Run before/after-compatible measurements without production paths."""
     from app.core.chatgpt_downloader import chatgpt_visual_properties
     from app.core.compute_backend import analyze_image_paths
+    from app.core.compute_metrics import PerformanceMetrics
     from app.core.compute_resources import discover_compute_resources
 
     with tempfile.TemporaryDirectory(prefix="cachelikes-compute-benchmark-") as temporary_root:
         paths = _build_fixture(Path(temporary_root))
         before = _measure(lambda: [chatgpt_visual_properties(path) for path in paths])
         path_map = {str(index): path for index, path in enumerate(paths)}
-        after = _measure(lambda: analyze_image_paths(path_map))
+        last_after_metrics: dict[str, dict[str, object]] = {}
+
+        def measure_bounded_backend() -> None:
+            metrics = PerformanceMetrics()
+            analyze_image_paths(path_map, metrics=metrics)
+            last_after_metrics.clear()
+            last_after_metrics.update(metrics.snapshot())
+
+        after = _measure(measure_bounded_backend)
     print(
         json.dumps(
             {
@@ -85,6 +94,7 @@ def main() -> None:
                 },
                 "before_legacy_sequential": before,
                 "after_bounded_cpu_backend": after,
+                "after_backend_metrics": last_after_metrics,
             },
             sort_keys=True,
         )

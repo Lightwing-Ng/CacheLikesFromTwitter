@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.11.0-codex.1`
+Documentation version: `v1.11.1-codex.1`
 
 ## Runtime flow
 
@@ -217,12 +217,16 @@ retained. The project name is sanitized before it becomes a cache path.
 
 The local visual-signature and dimension stage is separate from browser and network work. At
 ChatGPT sync startup, entries that need visual hydration are read into bounded immutable image
-payload batches. Batches below 64 images use the existing synchronous CPU path; larger batches
-may use a conservative process budget discovered from logical or reliable physical CPU counts
-and memory. Workers return analysis envelopes only, and the catalog remains the sole durable
-commit owner. A GPU adapter is optional and not installed by the base requirements; an injected
-adapter must return every expected identity, otherwise the whole batch is discarded and recomputed
-on CPU. GPU workers never write media, catalog, or Parquet state.
+payload batches. File sizes are checked before each read, and the parent flushes an existing batch
+before reading a file that would exceed the payload budget. A file larger than the budget, or one
+that changes during the bounded read, is analyzed directly by the parent and never enters a payload
+batch. This is a hard bound on queued input payload bytes, not a claim about decoded-image RSS.
+Batches below 64 images use the existing synchronous CPU path; larger batches may use a conservative
+process budget discovered from logical or reliable physical CPU counts and memory. Workers return
+analysis envelopes only, and the catalog remains the sole durable commit owner. A GPU adapter is
+optional and not installed by the base requirements; an injected adapter must return every expected
+identity, otherwise the whole batch is discarded and recomputed on CPU. GPU workers never write
+media, catalog, or Parquet state.
 
 ### Gemini Text cache
 

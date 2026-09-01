@@ -1,6 +1,6 @@
 """Bounded compute queues and deterministic result publication."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.1.0-codex.1
 
 from __future__ import annotations
 
@@ -49,6 +49,10 @@ class BoundedWorkQueue(Generic[T]):
     def qsize(self) -> int:
         """Return the approximate current queue depth."""
         return self._queue.qsize()
+
+    def empty(self) -> bool:
+        """Return whether the queue is currently empty."""
+        return self._queue.empty()
 
 
 class DeterministicCommitCoordinator(Generic[T]):

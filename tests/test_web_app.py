@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.88.26-codex.1
+# Code version: v1.88.27-codex.1
 
 from __future__ import annotations
 
@@ -635,6 +635,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('name="chatgpt_startup_timeout_seconds"', settings_body)
         self.assertIn('name="chatgpt_scan_wait_seconds"', settings_body)
         self.assertIn('name="max_media_file_size_mib"', settings_body)
+        self.assertIn('data-number-max="8"', settings_body)
         self.assertIn("Max cached file size (MiB)", settings_body)
         self.assertIn('name="shadow_backup_enabled"', settings_body)
         self.assertIn('name="shadow_backup_auto_sync"', settings_body)

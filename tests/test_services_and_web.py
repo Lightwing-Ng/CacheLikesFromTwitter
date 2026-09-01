@@ -1,6 +1,6 @@
 """Service orchestration and Flask contract tests.
 
-Code version: v1.8.1-codex.3
+Code version: v1.8.2-codex.1
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from app.core.config import CrawlConfig
+from app.core.config import MAX_DOWNLOAD_WORKERS, CrawlConfig
 from app.core.downloader import DownloadResult
 from app.core.grok_downloader import GrokResetResult
 from app.core.grok_service import summarize_error_for_status
@@ -149,6 +149,7 @@ def test_settings_and_grok_reset_routes_redirect_without_external_work(client, t
     assert settings_response.status_code == 302
     save_config.assert_called_once()
     saved_config = save_config.call_args.args[0]
+    assert saved_config.download_workers == MAX_DOWNLOAD_WORKERS
     assert saved_config.chatgpt_startup_timeout_seconds == 45.0
     assert saved_config.chatgpt_scan_wait_seconds == 0.25
 

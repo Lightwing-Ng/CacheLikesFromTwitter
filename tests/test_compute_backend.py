@@ -8,8 +8,10 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 
+import pytest
 from PIL import Image
 
+import app.core.compute_backend as compute_backend
 from app.core.compute_backend import (
     GPUCapability,
     ImageAnalysisJob,
@@ -22,6 +24,7 @@ from app.core.compute_backend import (
 from app.core.compute_metrics import PerformanceMetrics
 from app.core.compute_queue import BoundedWorkQueue, DeterministicCommitCoordinator
 from app.core.compute_resources import (
+    ComputeResourceSnapshot,
     MAX_CPU_PROCESS_WORKERS,
     discover_compute_resources,
     resolve_cpu_process_workers,
@@ -121,6 +124,54 @@ def test_gpu_initialization_failure_uses_a_clean_cpu_recompute() -> None:
     assert len(result.results) == len(jobs)
 
 
+@pytest.mark.parametrize("failure", ["duplicate", "unknown", "oom"])
+def test_gpu_batch_integrity_failures_always_recompute_the_complete_batch(failure: str) -> None:
+    jobs = tuple(
+        ImageAnalysisJob(f"file-{index}", _image_payload((index, 20, 40)))
+        for index in range(16)
+    )
+
+    class BrokenGPU:
+        def capability(self) -> GPUCapability:
+            return GPUCapability(available=True, backend="test")
+
+        def analyze(self, submitted_jobs):
+            if failure == "oom":
+                raise MemoryError("simulated GPU OOM")
+            if failure == "duplicate":
+                return (
+                    ImageAnalysisResult(submitted_jobs[0].identity, analyze_image_payload(submitted_jobs[0].payload)),
+                    ImageAnalysisResult(submitted_jobs[0].identity, analyze_image_payload(submitted_jobs[0].payload)),
+                )
+            return (
+                ImageAnalysisResult("unknown-file", analyze_image_payload(submitted_jobs[0].payload)),
+            )
+
+    class RecordingCPU:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, ...]] = []
+
+        def analyze(self, submitted_jobs, *, workers=None):
+            self.calls.append(tuple(job.identity for job in submitted_jobs))
+            return tuple(
+                ImageAnalysisResult(job.identity, analyze_image_payload(job.payload))
+                for job in submitted_jobs
+            )
+
+    cpu = RecordingCPU()
+    result = analyze_image_batch(
+        jobs,
+        backend_preference="auto",
+        cpu_backend=cpu,
+        gpu_backend=BrokenGPU(),
+    )
+
+    assert result.backend == "cpu"
+    assert result.gpu_fallback is True
+    assert [item.identity for item in result.results] == [job.identity for job in jobs]
+    assert cpu.calls == [tuple(job.identity for job in jobs)]
+
+
 def test_cpu_worker_failure_recomputes_the_complete_batch_in_parent() -> None:
     jobs = tuple(
         ImageAnalysisJob(f"file-{index}", _image_payload((index, 20, 40)))
@@ -144,6 +195,26 @@ def test_gpu_capability_is_unavailable_in_the_base_install() -> None:
     assert "optional" in capability.reason.lower()
 
 
+def test_metrics_reject_unbounded_stage_and_backend_labels() -> None:
+    metrics = PerformanceMetrics()
+
+    with pytest.raises(ValueError, match="stage"):
+        metrics.record_stage(
+            "/private/path",
+            count=1,
+            wall_seconds=0,
+            cpu_seconds=0,
+        )
+    with pytest.raises(ValueError, match="backend"):
+        metrics.record_stage(
+            "image_analysis",
+            count=1,
+            wall_seconds=0,
+            cpu_seconds=0,
+            backend="provider-response",
+        )
+
+
 def test_resource_discovery_and_worker_resolution_have_hard_limits() -> None:
     resources = discover_compute_resources(
         logical_cpu_count=64,
@@ -164,6 +235,48 @@ def test_bounded_queue_applies_capacity_and_stop() -> None:
     assert queue.qsize() == 1
     assert queue.put("second", should_stop=lambda: True) is False
     assert queue.get_nowait() == "first"
+
+
+def test_in_flight_payload_budget_flushes_before_oversized_parent_analysis(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    resources = ComputeResourceSnapshot(
+        logical_cpu_count=1,
+        physical_cpu_count=1,
+        memory_bytes=1,
+        cpu_process_workers=1,
+        max_in_flight_bytes=8,
+    )
+    small_path = tmp_path / "small.bin"
+    oversized_path = tmp_path / "oversized.bin"
+    small_path.write_bytes(b"small")
+    oversized_path.write_bytes(b"oversized")
+    submitted_batches: list[tuple[str, ...]] = []
+    parent_paths: list[Path] = []
+
+    def fake_batch(jobs, **_kwargs):
+        submitted_batches.append(tuple(job.identity for job in jobs))
+        return compute_backend.ImageBatchResult(
+            tuple(ImageAnalysisResult(job.identity, None) for job in jobs),
+            "cpu",
+        )
+
+    monkeypatch.setattr(compute_backend, "analyze_image_batch", fake_batch)
+    monkeypatch.setattr(
+        compute_backend,
+        "analyze_image_path",
+        lambda path: parent_paths.append(path) or ("parent", 1, 1),
+    )
+
+    result = analyze_image_paths(
+        {"small": small_path, "oversized": oversized_path},
+        resources=resources,
+    )
+
+    assert submitted_batches == [("small",)]
+    assert parent_paths == [oversized_path]
+    assert result == {"small": None, "oversized": ("parent", 1, 1)}
 
 
 def test_commit_coordinator_deduplicates_and_releases_in_stable_order() -> None:

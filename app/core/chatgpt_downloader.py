@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.43.0-codex.1
+# Code version: v1.44.0-codex.1
 
 from __future__ import annotations
 
@@ -16,9 +16,9 @@ import time
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
-from queue import Empty, Queue
+from queue import Empty
 from threading import Event, RLock, Thread
-from typing import Callable, Iterable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from PIL import Image, UnidentifiedImageError
@@ -26,6 +26,7 @@ from PIL import Image, UnidentifiedImageError
 from .browser_sessions import browser_descriptors, launch_chromium_context
 from .compute_backend import analyze_image_paths, analyze_image_payload
 from .compute_metrics import PerformanceMetrics
+from .compute_queue import BoundedWorkQueue
 from .config import (
     DEFAULT_CHATGPT_SCAN_WAIT_SECONDS,
     DEFAULT_CHATGPT_PROJECT_NAME,
@@ -133,6 +134,20 @@ CHATGPT_GIZMO_PROJECT_ID_PATTERN = re.compile(r"^(g-p-[0-9a-f]{32})(?:-|$)", re.
 
 
 logger = logging.getLogger(__name__)
+
+
+def _put_chatgpt_result(
+    result_queue: Any,
+    result: Any,
+    should_stop: Callable[[], bool],
+) -> bool:
+    """Publish one browser-worker result with bounded, Stop-aware backpressure."""
+    if isinstance(result_queue, BoundedWorkQueue):
+        return result_queue.put(result, should_stop=should_stop)
+    # Preserve compatibility for focused tests and private callers that inject a
+    # standard Queue; all production queues are constructed as BoundedWorkQueue.
+    result_queue.put(result)
+    return True
 
 
 class ChatGPTRateLimitError(RuntimeError):
@@ -1591,7 +1606,7 @@ def _chatgpt_prompt_metadata_worker(
     request_headers: dict[str, str],
     should_stop,
     rate_limited: Event,
-    result_queue: Queue[ChatGPTPromptMetadataWorkResult | None],
+    result_queue: BoundedWorkQueue[ChatGPTPromptMetadataWorkResult | None],
 ) -> None:
     """Fetch one partition of conversation mappings through an isolated Safari page."""
     try:
@@ -1607,23 +1622,27 @@ def _chatgpt_prompt_metadata_worker(
                 error = str(exc)
                 if "HTTP 429" in error:
                     rate_limited.set()
-                result_queue.put(
+                _put_chatgpt_result(
+                    result_queue,
                     ChatGPTPromptMetadataWorkResult(
                         conversation_index=conversation_index,
                         conversation_url=conversation_url,
                         error=error,
-                    )
+                    ),
+                    should_stop,
                 )
             else:
-                result_queue.put(
+                _put_chatgpt_result(
+                    result_queue,
                     ChatGPTPromptMetadataWorkResult(
                         conversation_index=conversation_index,
                         conversation_url=conversation_url,
                         payload=payload,
-                    )
+                    ),
+                    should_stop,
                 )
     finally:
-        result_queue.put(None)
+        _put_chatgpt_result(result_queue, None, should_stop)
 
 
 def _iter_parallel_safari_prompt_metadata_results(
@@ -1654,8 +1673,8 @@ def _iter_parallel_safari_prompt_metadata_results(
             indexed_urls[worker_index::resolved_worker_count]
             for worker_index in range(resolved_worker_count)
         ]
-        result_queue: Queue[ChatGPTPromptMetadataWorkResult | None] = Queue(
-            maxsize=CHATGPT_PROMPT_METADATA_QUEUE_SIZE
+        result_queue: BoundedWorkQueue[ChatGPTPromptMetadataWorkResult | None] = BoundedWorkQueue(
+            CHATGPT_PROMPT_METADATA_QUEUE_SIZE
         )
         rate_limited = Event()
         workers = [
@@ -2886,7 +2905,7 @@ def _chatgpt_conversation_worker(
     startup_timeout_seconds: float,
     scan_wait_seconds: float,
     should_stop,
-    result_queue: Queue[ChatGPTConversationWorkResult],
+    result_queue: BoundedWorkQueue[ChatGPTConversationWorkResult],
     max_file_size_bytes: int = 0,
     assistant_only: bool = False,
 ) -> None:
@@ -2915,13 +2934,15 @@ def _chatgpt_conversation_worker(
                         scan_wait_seconds,
                     )
                     if conversation_error is not None:
-                        result_queue.put(
+                        _put_chatgpt_result(
+                            result_queue,
                             ChatGPTConversationWorkResult(
                                 conversation_index=conversation_index,
                                 conversation_url=conversation_url,
                                 failed_count=1,
                                 error=str(conversation_error),
-                            )
+                            ),
+                            should_stop,
                         )
                         next_assignment = assignment_position + 1
                         continue
@@ -2964,7 +2985,8 @@ def _chatgpt_conversation_worker(
                         else:
                             skipped_known += 1
 
-                    result_queue.put(
+                    _put_chatgpt_result(
+                        result_queue,
                         ChatGPTConversationWorkResult(
                             conversation_index=conversation_index,
                             conversation_url=conversation_url,
@@ -2974,18 +2996,21 @@ def _chatgpt_conversation_worker(
                             failed_count=len(image_errors),
                             oversized_count=oversized_count,
                             image_errors=tuple(image_errors),
-                        )
+                        ),
+                        should_stop,
                     )
                     next_assignment = assignment_position + 1
     except Exception as exc:  # pragma: no cover - depends on live browser startup
         for conversation_index, conversation_url in assignments[next_assignment:]:
-            result_queue.put(
+            _put_chatgpt_result(
+                result_queue,
                 ChatGPTConversationWorkResult(
                     conversation_index=conversation_index,
                     conversation_url=conversation_url,
                     failed_count=1,
                     error=str(exc),
-                )
+                ),
+                should_stop,
             )
     finally:
         _close_chatgpt_page(page)
@@ -3012,7 +3037,9 @@ def _iter_chatgpt_conversation_results(
         list(enumerate(conversation_urls, start=1))[worker_index::worker_count]
         for worker_index in range(worker_count)
     ]
-    result_queue: Queue[ChatGPTConversationWorkResult] = Queue(maxsize=CHATGPT_RESULT_QUEUE_SIZE)
+    result_queue: BoundedWorkQueue[ChatGPTConversationWorkResult] = BoundedWorkQueue(
+        CHATGPT_RESULT_QUEUE_SIZE
+    )
     optional_worker_args = (
         (max_file_size_bytes, True)
         if assistant_only
@@ -3060,7 +3087,7 @@ def _chatgpt_index_image_worker(
     catalog: ChatGPTImageCatalog,
     target_dir: Path,
     should_stop,
-    result_queue: Queue[ChatGPTImageDownloadWorkResult],
+    result_queue: BoundedWorkQueue[ChatGPTImageDownloadWorkResult],
     max_file_size_bytes: int = 0,
 ) -> None:
     """Download one partition of signed project-index originals in an isolated browser context."""
@@ -3107,39 +3134,47 @@ def _chatgpt_index_image_worker(
                             max_file_size_bytes=max_file_size_bytes,
                         )
                     except ChatGPTImageSizeLimitError:
-                        result_queue.put(
+                        _put_chatgpt_result(
+                            result_queue,
                             ChatGPTImageDownloadWorkResult(
                                 candidate_file_id=candidate.file_id,
                                 skipped=True,
                                 skipped_size=True,
-                            )
+                            ),
+                            should_stop,
                         )
                         next_candidate_index = candidate_index + 1
                         continue
                     except Exception as exc:  # pragma: no cover - depends on live ChatGPT responses
                         if _is_unavailable_chatgpt_image_error(candidate, exc):
                             catalog.mark_unavailable(candidate.file_id)
-                            result_queue.put(
+                            _put_chatgpt_result(
+                                result_queue,
                                 ChatGPTImageDownloadWorkResult(
                                     candidate_file_id=candidate.file_id,
                                     skipped=True,
-                                )
+                                ),
+                                should_stop,
                             )
                             next_candidate_index = candidate_index + 1
                             continue
-                        result_queue.put(
+                        _put_chatgpt_result(
+                            result_queue,
                             ChatGPTImageDownloadWorkResult(
                                 candidate_file_id=candidate.file_id,
                                 error=str(exc),
-                            )
+                            ),
+                            should_stop,
                         )
                     else:
-                        result_queue.put(
+                        _put_chatgpt_result(
+                            result_queue,
                             ChatGPTImageDownloadWorkResult(
                                 candidate_file_id=candidate.file_id,
                                 downloaded=downloaded,
                                 skipped=not downloaded,
-                            )
+                            ),
+                            should_stop,
                         )
                     next_candidate_index = candidate_index + 1
                 return
@@ -3166,11 +3201,13 @@ def _chatgpt_index_image_worker(
         return
     worker_error = final_start_error or RuntimeError("ChatGPT image worker startup failed.")
     for candidate in candidates[next_candidate_index:]:
-        result_queue.put(
+        _put_chatgpt_result(
+            result_queue,
             ChatGPTImageDownloadWorkResult(
                 candidate_file_id=candidate.file_id,
                 error=str(worker_error),
-            )
+            ),
+            should_stop,
         )
 
 
@@ -3205,7 +3242,9 @@ def _iter_chatgpt_index_image_results(
         pending_candidates[worker_index::worker_count]
         for worker_index in range(worker_count)
     ]
-    result_queue: Queue[ChatGPTImageDownloadWorkResult] = Queue(maxsize=CHATGPT_RESULT_QUEUE_SIZE)
+    result_queue: BoundedWorkQueue[ChatGPTImageDownloadWorkResult] = BoundedWorkQueue(
+        CHATGPT_RESULT_QUEUE_SIZE
+    )
     workers = [
         Thread(
             target=_chatgpt_index_image_worker,

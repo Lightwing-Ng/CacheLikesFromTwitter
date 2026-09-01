@@ -1,6 +1,6 @@
 """Pure local image-analysis backends with optional GPU fallback routing."""
 
-# Code version: v1.0.1-codex.1
+# Code version: v1.1.0-codex.1
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import io
 import logging
 from multiprocessing import get_context
+import os
 from pathlib import Path
 import time
 from collections.abc import Iterable, Mapping, Sequence
@@ -77,6 +78,7 @@ class ImageBatchResult:
     backend: str
     gpu_fallback: bool = False
     worker_recovery: bool = False
+    workers_used: int = 1
 
 
 def detect_gpu_capability() -> GPUCapability:
@@ -91,20 +93,15 @@ def detect_gpu_capability() -> GPUCapability:
     )
 
 
-def analyze_image_payload(payload: bytes) -> tuple[str, int, int] | None:
-    """Decode one image payload and calculate the same stable dHash as ChatGPT."""
-    try:
-        with Image.open(io.BytesIO(payload)) as source:
-            image = ImageOps.exif_transpose(source)
-            width, height = image.size
-            grayscale = image.convert("L").resize(
-                (VISUAL_HASH_WIDTH + 1, VISUAL_HASH_HEIGHT),
-                Image.Resampling.LANCZOS,
-            )
-            pixels = grayscale.tobytes()
-    except (OSError, SyntaxError, UnidentifiedImageError, ValueError):
-        return None
-
+def _visual_properties_from_source(source: Image.Image) -> tuple[str, int, int]:
+    """Calculate visual properties from an already opened image source."""
+    image = ImageOps.exif_transpose(source)
+    width, height = image.size
+    grayscale = image.convert("L").resize(
+        (VISUAL_HASH_WIDTH + 1, VISUAL_HASH_HEIGHT),
+        Image.Resampling.LANCZOS,
+    )
+    pixels = grayscale.tobytes()
     signature = 0
     row_width = VISUAL_HASH_WIDTH + 1
     for row in range(VISUAL_HASH_HEIGHT):
@@ -114,6 +111,24 @@ def analyze_image_payload(payload: bytes) -> tuple[str, int, int] | None:
                 pixels[row_start + column + 1] > pixels[row_start + column]
             )
     return f"{signature:0{(VISUAL_HASH_WIDTH * VISUAL_HASH_HEIGHT) // 4}x}", width, height
+
+
+def analyze_image_payload(payload: bytes) -> tuple[str, int, int] | None:
+    """Decode one image payload and calculate the same stable dHash as ChatGPT."""
+    try:
+        with Image.open(io.BytesIO(payload)) as source:
+            return _visual_properties_from_source(source)
+    except (OSError, SyntaxError, UnidentifiedImageError, ValueError):
+        return None
+
+
+def analyze_image_path(path: Path) -> tuple[str, int, int] | None:
+    """Analyze one parent-owned path without materializing an oversized payload."""
+    try:
+        with Image.open(path) as source:
+            return _visual_properties_from_source(source)
+    except (OSError, SyntaxError, UnidentifiedImageError, ValueError):
+        return None
 
 
 def _analyze_image_job(job: ImageAnalysisJob) -> ImageAnalysisResult:
@@ -212,6 +227,20 @@ def analyze_image_batch(
                 return ImageBatchResult(gpu_results, "gpu")
 
     worker_recovery = False
+    cpu_worker_count = (
+        resolve_cpu_process_workers(
+            workers,
+            workload_size=len(materialized),
+            resources=cpu.resources,
+        )
+        if isinstance(cpu, CPUImageAnalysisBackend)
+        else 1
+    )
+    cpu_workers_used = (
+        cpu_worker_count
+        if cpu_worker_count > 1 and len(materialized) >= MIN_PARALLEL_IMAGE_JOBS
+        else 1
+    )
     try:
         cpu_results = cpu.analyze(materialized, workers=workers)
         ordered_cpu_results = _ordered_complete_results(
@@ -228,9 +257,11 @@ def analyze_image_batch(
             (job.identity for job in materialized),
             tuple(_analyze_image_job(job) for job in materialized),
         )
+        cpu_workers_used = 1
     return ImageBatchResult(
         ordered_cpu_results,
         "cpu",
+        workers_used=cpu_workers_used,
         gpu_fallback=gpu_fallback,
         worker_recovery=worker_recovery,
     )
@@ -245,12 +276,27 @@ def analyze_image_paths(
     resources: ComputeResourceSnapshot | None = None,
     metrics: PerformanceMetrics | None = None,
 ) -> dict[str, tuple[str, int, int] | None]:
-    """Read bounded payload batches in the parent and return pure analysis values."""
+    """Read bounded payload batches and stream oversized files through the parent."""
     resource_snapshot = resources or discover_compute_resources()
     cpu_backend = CPUImageAnalysisBackend(resource_snapshot)
     results: dict[str, tuple[str, int, int] | None] = {}
     batch: list[ImageAnalysisJob] = []
     batch_bytes = 0
+
+    def record_single_path(identity: str, path: Path) -> None:
+        """Analyze an oversized or concurrently changed file without a payload batch."""
+        wall_start = time.perf_counter()
+        cpu_start = time.process_time()
+        results[identity] = analyze_image_path(path)
+        if metrics is not None:
+            metrics.record_stage(
+                "image_analysis",
+                count=1,
+                wall_seconds=time.perf_counter() - wall_start,
+                cpu_seconds=time.process_time() - cpu_start,
+                workers=1,
+                backend="cpu",
+            )
 
     def flush() -> None:
         nonlocal batch, batch_bytes
@@ -266,21 +312,12 @@ def analyze_image_paths(
             gpu_backend=gpu_backend,
         )
         if metrics is not None:
-            actual_workers = (
-                resolve_cpu_process_workers(
-                    workers,
-                    workload_size=len(batch),
-                    resources=resource_snapshot,
-                )
-                if len(batch) >= MIN_PARALLEL_IMAGE_JOBS
-                else 1
-            )
             metrics.record_stage(
                 "image_analysis",
                 count=len(batch_result.results),
                 wall_seconds=time.perf_counter() - wall_start,
                 cpu_seconds=time.process_time() - cpu_start,
-                workers=actual_workers,
+                workers=batch_result.workers_used,
                 backend=batch_result.backend,
                 gpu_fallback=batch_result.gpu_fallback,
                 worker_recovery=batch_result.worker_recovery,
@@ -290,14 +327,34 @@ def analyze_image_paths(
         batch_bytes = 0
 
     for identity, path in sorted(paths_by_identity.items(), key=lambda item: str(item[0])):
+        identity = str(identity)
+        resolved_path = Path(path)
         try:
-            payload = Path(path).read_bytes()
+            with resolved_path.open("rb") as handle:
+                file_size = os.fstat(handle.fileno()).st_size
         except (OSError, ValueError):
-            results[str(identity)] = None
+            results[identity] = None
             continue
-        if batch and batch_bytes + len(payload) > resource_snapshot.max_in_flight_bytes:
+        if file_size < 0:
+            results[identity] = None
+            continue
+        if batch and batch_bytes + file_size > resource_snapshot.max_in_flight_bytes:
             flush()
-        batch.append(ImageAnalysisJob(str(identity), payload))
+        if file_size > resource_snapshot.max_in_flight_bytes:
+            record_single_path(identity, resolved_path)
+            continue
+        try:
+            with resolved_path.open("rb") as handle:
+                payload = handle.read(file_size)
+        except OSError:
+            flush()
+            record_single_path(identity, resolved_path)
+            continue
+        if len(payload) != file_size:
+            flush()
+            record_single_path(identity, resolved_path)
+            continue
+        batch.append(ImageAnalysisJob(identity, payload))
         batch_bytes += len(payload)
         if len(batch) >= MAX_IMAGE_BATCH_JOBS:
             flush()
@@ -313,6 +370,7 @@ __all__ = [
     "ImageAnalysisResult",
     "ImageBatchResult",
     "analyze_image_batch",
+    "analyze_image_path",
     "analyze_image_paths",
     "analyze_image_payload",
     "detect_gpu_capability",

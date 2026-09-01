@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.7.0-codex.1`
+Documentation version: `v1.7.1-codex.1`
 
 ## Launch
 
@@ -117,6 +117,8 @@ ChatGPT remains capped at three isolated Chromium workers, and Safari remains se
 
 ChatGPT visual-signature hydration is a separate local CPU stage. Small batches stay in the parent
 process, while larger batches may use the automatically discovered conservative process budget.
+The payload budget is enforced before reads; oversized files are decoded directly by the parent
+instead of being queued or sent to a process worker.
 The status snapshot exposes only numeric stage counts, durations, worker counts, queue depth, backend
 name, and fallback counts. It never records image bytes, prompts, browser data, cookies, URLs, or
 file paths. The base installation reports GPU unavailable because no optional GPU framework or

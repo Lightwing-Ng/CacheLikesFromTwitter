@@ -1,6 +1,6 @@
 # Test Suite
 
-Test-suite version: `v1.3.0-codex.1`
+Test-suite version: `v1.3.1-codex.1`
 
 The authoritative test workflow, coverage baseline, isolation contract, and CI behavior are
 documented in [TESTING.md](TESTING.md). Use `./scripts/test.sh` for the normal
@@ -19,6 +19,9 @@ offline suite and `./scripts/check.sh` for the full quality gate.
 - `test_grok_downloader*.py` and `test_grok_storage.py`: media signature validation,
   catalog deduplication, timestamp recovery, manifest recovery, and durable Grok queue
   transitions.
+- `test_compute_backend.py`: bounded local image-analysis batches, resource limits, GPU/CPU
+  recovery, deterministic result publication, metrics privacy, and parent streaming for oversized
+  payloads.
 - `test_service.py` and `test_services_and_web.py`: concurrent download orchestration,
   emergency-stop semantics, status summaries, Flask pages, APIs, settings, and reset routes.
 - `test_logging_setup.py`: structured logging setup, JSON line output, file permissions,

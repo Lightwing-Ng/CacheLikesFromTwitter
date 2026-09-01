@@ -1,6 +1,6 @@
 """Tests for durable settings and thread-safe task state.
 
-Code version: v1.4.0-codex.1
+Code version: v1.4.1-codex.1
 """
 
 from __future__ import annotations
@@ -85,8 +85,12 @@ def test_download_workers_have_a_hard_cap_for_direct_and_legacy_config(tmp_path:
         encoding="utf-8",
     )
 
+    assert CrawlConfig(download_workers=-10).download_workers == 1
     assert CrawlConfig(download_workers=10_000).download_workers == MAX_DOWNLOAD_WORKERS
     assert load_saved_config(settings_path).download_workers == CrawlConfig().download_workers
+
+    settings_path.write_text('{"download_workers": 10000}', encoding="utf-8")
+    assert load_saved_config(settings_path).download_workers == MAX_DOWNLOAD_WORKERS
 
 
 def test_settings_clamp_universal_media_file_size(tmp_path: Path) -> None:
