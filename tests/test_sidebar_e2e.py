@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.23-codex.1
+Code version: v1.26.25-codex.1
 """
 
 from __future__ import annotations
@@ -1401,7 +1401,7 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
     height: int,
     touch: bool,
 ) -> None:
-    """Keep the visible ChatGPT effort selector clear without widening other providers."""
+    """Keep the ChatGPT effort controls compact, styled, and readable."""
     catalog_payload = _chatgpt_catalog_sessions()
     browser_status = {
         "platform": "chatgpt",
@@ -1436,10 +1436,30 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
         page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
         effort = page.locator(".agent-effort-trigger")
         model = page.locator(".agent-model-trigger")
+        refresh = page.locator("[data-agent-effort-refresh]")
         submit = page.locator("#agent_ask_button")
         expect(effort).to_be_visible()
         expect(model).to_be_visible()
+        expect(refresh).to_be_visible()
         expect(submit).to_be_visible()
+        assert model.locator(".agent-model-trigger-label").text_content().strip() == "GPT-5.6 Sol"
+        refresh_style = refresh.evaluate(
+            """element => {
+                const style = getComputedStyle(element);
+                const icon = element.querySelector('.agent-effort-refresh-icon');
+                const iconStyle = icon && getComputedStyle(icon);
+                return {
+                    background: style.backgroundColor,
+                    color: style.color,
+                    padding: style.padding,
+                    maskImage: iconStyle?.maskImage,
+                };
+            }"""
+        )
+        assert refresh_style["background"] == "rgba(255, 255, 255, 0.82)"
+        assert refresh_style["color"] == "rgb(0, 85, 204)"
+        assert refresh_style["padding"] == "8px 12px"
+        assert "arrow.trianglehead.2.clockwise.svg" in refresh_style["maskImage"]
         geometry = page.evaluate(
             """() => {
                 const rect = selector => {
@@ -1450,6 +1470,7 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
                         right: value.right,
                         top: value.top,
                         bottom: value.bottom,
+                        width: value.width,
                         height: value.height,
                     };
                 };
@@ -1476,8 +1497,34 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
         assert geometry["labelHeight"] <= float(geometry["labelLineHeight"][:-2]) + 1
         assert geometry["effort"]["height"] == 32
         assert geometry["model"]["height"] == 32
+        assert geometry["model"]["width"] < 190
         assert geometry["submit"]["height"] == 32
         assert geometry["horizontalOverflow"] <= 1
+        effort.click()
+        effort_menu = page.locator(".agent-effort-dropdown")
+        expect(effort_menu).to_be_visible()
+        menu_geometry = page.evaluate(
+            """() => {
+                const menu = document.querySelector('.agent-effort-dropdown')?.getBoundingClientRect();
+                const trigger = document.querySelector('.agent-effort-trigger')?.getBoundingClientRect();
+                const options = [...document.querySelectorAll('.agent-effort-dropdown .trade-strategy-dropdown-text')].map(text => ({
+                    label: text.textContent.trim(),
+                    clientWidth: text.clientWidth,
+                    scrollWidth: text.scrollWidth,
+                }));
+                return {
+                    menuBottom: menu?.bottom,
+                    menuRight: menu?.right,
+                    triggerTop: trigger?.top,
+                    options,
+                };
+            }"""
+        )
+        assert menu_geometry["menuBottom"] <= geometry["effort"]["top"] + 1
+        assert menu_geometry["menuRight"] <= width + 1
+        assert all(option["scrollWidth"] <= option["clientWidth"] + 1 for option in menu_geometry["options"])
+        effort.click()
+        expect(effort_menu).to_be_hidden()
         if width <= 560:
             assert geometry["model"]["bottom"] <= geometry["effort"]["top"]
             assert geometry["effort"]["right"] <= geometry["submit"]["left"]

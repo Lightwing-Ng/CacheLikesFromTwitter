@@ -1,4 +1,4 @@
-/* Code version: v2.90.14-codex.1 */
+/* Code version: v2.90.16-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -4063,12 +4063,15 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-model-combobox {
     display: block;
     position: relative;
-    width: min(190px, 100%);
+    width: fit-content;
+    max-width: 100%;
     min-width: 0;
 }
 
 .agent-model-trigger,
 .agent-effort-trigger {
+    width: max-content;
+    max-width: 100%;
     height: var(--agent-composer-control-height);
     min-height: var(--agent-composer-control-height);
     padding: 4px 10px;
@@ -4127,23 +4130,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     min-width: var(--agent-composer-control-height);
     height: var(--agent-composer-control-height);
     min-height: var(--agent-composer-control-height);
-    padding: 0 9px;
-    border: var(--frosted-glass-border);
-    border-radius: var(--radius-control);
-    background: var(--glass-surface-background);
-    box-shadow: var(--frosted-glass-shadow);
-    color: var(--theme-muted);
-    cursor: pointer;
-    transition: background 160ms var(--motion-standard), box-shadow 160ms var(--motion-standard), color 160ms var(--motion-standard), transform 160ms var(--motion-press);
-}
-
-.agent-effort-refresh:hover,
-.agent-effort-refresh:focus-visible {
-    outline: none;
-    background: var(--frosted-glass-background-hover);
-    box-shadow: var(--frosted-glass-shadow-hover);
-    color: var(--theme-text);
-    transform: translateY(-1px);
+    padding: 8px 12px;
 }
 
 .agent-effort-refresh:disabled {
@@ -4153,11 +4140,11 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-effort-refresh-icon {
-    width: 14px;
-    height: 14px;
+    width: var(--settings-round-icon-button-icon-size);
+    height: var(--settings-round-icon-button-icon-size);
     background-color: currentColor;
-    mask: url("/static/images/arrow.trianglehead.clockwise.svg") center/contain no-repeat;
-    -webkit-mask: url("/static/images/arrow.trianglehead.clockwise.svg") center/contain no-repeat;
+    mask: url("/static/images/arrow.trianglehead.2.clockwise.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/arrow.trianglehead.2.clockwise.svg") center/contain no-repeat;
 }
 
 .agent-effort-refresh-label {
@@ -4180,6 +4167,13 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     min-width: 100%;
     width: max-content;
     max-width: min(280px, 80vw);
+}
+
+.agent-model-dropdown .trade-strategy-dropdown-text,
+.agent-effort-dropdown .trade-strategy-dropdown-text {
+    min-width: max-content;
+    overflow: visible;
+    text-overflow: clip;
 }
 
 .agent-model-dropdown .agent-combobox-option {

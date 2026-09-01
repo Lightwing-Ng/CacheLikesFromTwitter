@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.53.5-codex.1
+Code version: v3.53.6-codex.1
 """
 
 from __future__ import annotations
@@ -265,7 +265,7 @@ def test_windows_inspection_commands_remove_outer_quotes_from_path_arguments(
 
 def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None:
     assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok", "claude"]
-    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "5.6 Sol"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "GPT-5.6 Sol"
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["remote_labels"] == (
         "GPT-5.6 Sol",
         "5.6 Sol",

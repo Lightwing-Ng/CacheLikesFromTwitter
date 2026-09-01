@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.53.5-codex.1
+Code version: v3.53.6-codex.1
 """
 
 from __future__ import annotations
@@ -195,7 +195,7 @@ CHATGPT_MODEL_OPTIONS = (
     {
         "key": "gpt-5.6-sol",
         "label": "GPT-5.6 Sol",
-        "ui_label": "5.6 Sol",
+        "ui_label": "GPT-5.6 Sol",
         "remote_label": "GPT-5.6 Sol",
         "remote_model_labels": ("GPT-5.6 Sol", "5.6 Sol"),
         "remote_labels": ("GPT-5.6 Sol", "5.6 Sol"),

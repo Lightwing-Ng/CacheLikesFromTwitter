@@ -1,6 +1,6 @@
 """One registry for Agent actions, page observations, and WebMCP tools.
 
-Code version: v1.3.0-codex.1
+Code version: v1.4.0-codex.1
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 
-CAPABILITY_REGISTRY_VERSION = "1.3.0"
+CAPABILITY_REGISTRY_VERSION = "1.4.0"
 AGENT_OPTIMIZATION_CONTRACT_VERSION = "1.1.0"
 AGENT_OPTIMIZATION_PROFILE = "openai-site-tools-2026-08-28"
 
@@ -564,6 +564,78 @@ CAPABILITY_REGISTRY: tuple[CapabilityDefinition, ...] = (
         ),
     ),
     _action(
+        "job_start",
+        "Start compute job",
+        "Start one approved durable optimization worker outside the provider-turn and verification timeout lifecycles.",
+        read_only=False,
+        handler_name="_job_start",
+        prompt_example='{"action":"job_start","entrypoint":"optimizer","config_path":"optimizer-config.json","idempotency_key":"stable-request-key"}',
+        input_schema=_action_schema(
+            "job_start",
+            {
+                "entrypoint": _string_property(
+                    "Approved entrypoint id from .cachelikes-compute.json.",
+                    maximum=64,
+                    minimum=1,
+                ),
+                "config_path": _string_property(
+                    "Workspace-relative JSON configuration path.",
+                    maximum=1_000,
+                    minimum=1,
+                ),
+                "idempotency_key": _string_property(
+                    "Stable retry key for this exact compute request.",
+                    maximum=128,
+                    minimum=8,
+                ),
+                "resume_job_id": _string_property(
+                    "Optional terminal job id whose complete checkpoint should be resumed.",
+                    maximum=32,
+                    minimum=32,
+                ),
+            },
+            required=("entrypoint", "config_path", "idempotency_key"),
+        ),
+    ),
+    _action(
+        "job_status",
+        "Inspect compute job",
+        "Read bounded durable job metadata, progress, and the rolling log tail.",
+        read_only=True,
+        handler_name="_job_status",
+        read_only_task_allowed=True,
+        prompt_example='{"action":"job_status","job_id":"optional-32-character-job-id"}',
+        input_schema=_action_schema(
+            "job_status",
+            {
+                "job_id": _string_property(
+                    "Optional exact compute job id; omission selects the latest job.",
+                    maximum=32,
+                    minimum=32,
+                ),
+            },
+        ),
+    ),
+    _action(
+        "job_stop",
+        "Stop compute job",
+        "Stop only the identity-verified process group owned by one durable compute job.",
+        read_only=False,
+        handler_name="_job_stop",
+        prompt_example='{"action":"job_stop","job_id":"32-character-job-id"}',
+        input_schema=_action_schema(
+            "job_stop",
+            {
+                "job_id": _string_property(
+                    "Exact compute job id to stop.",
+                    maximum=32,
+                    minimum=32,
+                ),
+            },
+            required=("job_id",),
+        ),
+    ),
+    _action(
         "bodycheck",
         "Run bodycheck",
         "Check the current bounded diff and repository instruction files before final publication.",
@@ -758,7 +830,7 @@ def public_manifest_capabilities() -> list[dict[str, str]]:
                 "label": "Agent actions",
                 "description": (
                     f"The bounded local Agent Action protocol ({len(AGENT_ACTIONS)} registered actions) "
-                    "for reading, editing, verification, bodycheck, and final publication."
+                    "for reading, editing, verification, durable compute jobs, bodycheck, and final publication."
                 ),
             },
             {

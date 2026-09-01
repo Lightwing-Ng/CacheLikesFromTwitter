@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.10-codex.1
+Code version: v1.51.12-codex.1
 """
 
 from pathlib import Path
@@ -1769,7 +1769,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.90.14-codex.1 */",
+        "/* Code version: v2.90.16-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1917,13 +1917,17 @@ def test_agent_effort_refresh_is_a_visible_labeled_action() -> None:
     label_selector = ".agent-effort-refresh-label {"
     label_start = stylesheet.index(label_selector)
     label_rule = stylesheet[label_start:stylesheet.index("\n}", label_start)]
+    icon_selector = ".agent-effort-refresh-icon {"
+    icon_start = stylesheet.index(icon_selector)
+    icon_rule = stylesheet[icon_start:stylesheet.index("\n}", icon_start)]
 
     for token in (
         "display: inline-flex;",
         "gap: 6px;",
-        "padding: 0 9px;",
+        "padding: 8px 12px;",
     ):
         assert token in selector_rule
+    assert 'mask: url("/static/images/arrow.trianglehead.2.clockwise.svg") center/contain no-repeat;' in icon_rule
     for token in (
         "font-size: var(--font-size-4);",
         "white-space: nowrap;",
