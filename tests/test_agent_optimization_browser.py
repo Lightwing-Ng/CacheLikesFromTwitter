@@ -1,6 +1,6 @@
 """Disposable-browser verification for OpenAI Site tools registration.
 
-Code version: v1.0.1-codex.1
+Code version: v1.0.2-codex.1
 """
 
 from __future__ import annotations
@@ -107,7 +107,7 @@ def test_site_tools_register_execute_and_navigate_in_a_disposable_browser(
             }"""
         )
         assert page_context["ok"] is True
-        assert page_context["data"]["siteId"] == "cache-likes-from-twitter"
+        assert page_context["data"]["siteId"] == "agentic-context"
         assert page_context["data"]["route"] == "/settings"
         assert page_context["data"]["matchingTarget"]["id"] == "settings"
         assert page_context["verification"]["contentFieldsRead"] == 0

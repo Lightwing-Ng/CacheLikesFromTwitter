@@ -1,11 +1,13 @@
 """Presentation registry for cache source pages."""
 
-# Code version: v1.3.9-codex.1
+# Code version: v1.4.4-codex.1
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
+
+from app.core.foundation import PRODUCT_NAME
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,7 +33,6 @@ class CacheSourceView:
     stop_wait_copy: str
     progress_strategy: str
     progress_aria_label: str
-    banner_storage_key: str
     group_key: str = "media"
     group_label: str = "Cache"
     include_in_llm_switcher: bool = False
@@ -65,7 +66,7 @@ _CACHE_SOURCE_VIEWS = (
         view_endpoint="gemini",
         template_name="gemini.html",
         icon_filename="images/Google_Gemini_logo_2025_symbol.svg",
-        document_title="CacheLikesFromTwitter Gemini",
+        document_title=f"{PRODUCT_NAME} Gemini",
         overview_title="Gemini history cache overview",
         browser_panel_label="Authorized browser",
         browser_empty_message="No authorized Gemini account detected",
@@ -79,7 +80,6 @@ _CACHE_SOURCE_VIEWS = (
         stop_wait_copy="Requesting a safe stop after the current Gemini session.",
         progress_strategy="queue",
         progress_aria_label="Gemini history sync progress",
-        banner_storage_key="cachelikes:gemini-status-banner-dismissed",
         group_key="llm",
         group_label="Chats",
         preserve_icon_color=True,
@@ -93,7 +93,7 @@ _CACHE_SOURCE_VIEWS = (
         view_endpoint="index",
         template_name="index.html",
         icon_filename="images/x.svg",
-        document_title="CacheLikesFromTwitter",
+        document_title=PRODUCT_NAME,
         overview_title="Execution overview",
         browser_panel_label="Browser",
         browser_empty_message="No signed-in account detected",
@@ -107,7 +107,6 @@ _CACHE_SOURCE_VIEWS = (
         stop_wait_copy="Requesting a safe stop for the active X cache task.",
         progress_strategy="discovery",
         progress_aria_label="Download progress",
-        banner_storage_key="cachelikes:status-banner-dismissed",
     ),
     CacheSourceView(
         key="grok",
@@ -115,7 +114,7 @@ _CACHE_SOURCE_VIEWS = (
         view_endpoint="grok",
         template_name="grok.html",
         icon_filename="images/grok.svg",
-        document_title="CacheLikesFromTwitter Grok",
+        document_title=f"{PRODUCT_NAME} Grok",
         overview_title="Grok library overview",
         browser_panel_label="Authorized browser",
         browser_empty_message="No signed-in account detected",
@@ -129,7 +128,6 @@ _CACHE_SOURCE_VIEWS = (
         stop_wait_copy="Requesting a safe stop for the active Grok sync.",
         progress_strategy="grok-audit",
         progress_aria_label="Grok sync progress",
-        banner_storage_key="cachelikes:grok-status-banner-dismissed",
         include_in_llm_switcher=True,
         show_content_mode=True,
         show_progress_audit=True,
@@ -141,7 +139,7 @@ _CACHE_SOURCE_VIEWS = (
         view_endpoint="chatgpt",
         template_name="chatgpt.html",
         icon_filename="images/ChatGPT-Logo.svg",
-        document_title="CacheLikesFromTwitter ChatGPT",
+        document_title=f"{PRODUCT_NAME} ChatGPT",
         overview_title="ChatGPT cache overview",
         browser_panel_label="Authorized browser",
         browser_empty_message="The ChatGPT account in the selected browser is ready.",
@@ -155,7 +153,6 @@ _CACHE_SOURCE_VIEWS = (
         stop_wait_copy="Requesting a safe stop for the active ChatGPT sync.",
         progress_strategy="queue",
         progress_aria_label="ChatGPT sync progress",
-        banner_storage_key="cachelikes:chatgpt-status-banner-dismissed",
         include_in_llm_switcher=True,
         show_content_mode=True,
         show_progress_audit=True,

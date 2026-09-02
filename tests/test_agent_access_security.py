@@ -1,6 +1,6 @@
 """Focused tests for the LAN Agent password gate."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.0.1-codex.1
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from app.core.agent_access_security import (
 def test_agent_password_uses_requested_default_and_constant_time_validation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("AGENTIC_CONTEXT_AGENT_PASSWORD", raising=False)
     monkeypatch.delenv("CACHELIKES_AGENT_PASSWORD", raising=False)
 
     assert resolve_agent_access_password() == DEFAULT_AGENT_ACCESS_PASSWORD
@@ -29,11 +30,20 @@ def test_agent_password_uses_requested_default_and_constant_time_validation(
 def test_agent_password_can_be_overridden_without_changing_the_ui_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("CACHELIKES_AGENT_PASSWORD", "246810")
+    monkeypatch.setenv("AGENTIC_CONTEXT_AGENT_PASSWORD", "246810")
 
     assert resolve_agent_access_password() == "246810"
     assert validate_agent_access_password("246810")
     assert not validate_agent_access_password("195135")
+
+
+def test_agent_password_keeps_the_legacy_environment_alias(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AGENTIC_CONTEXT_AGENT_PASSWORD", raising=False)
+    monkeypatch.setenv("CACHELIKES_AGENT_PASSWORD", "135790")
+
+    assert resolve_agent_access_password() == "135790"
 
 
 @pytest.mark.parametrize(

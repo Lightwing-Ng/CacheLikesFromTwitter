@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.44.0-codex.1
+# Code version: v1.44.1-codex.1
 
 from __future__ import annotations
 
@@ -374,7 +374,7 @@ class ChatGPTHistoryStore:
         )
 
     def conversation_needs_timestamp_refresh(self, conversation_url: str) -> bool:
-        """Return whether cached rows still use the pre-original-timestamp format."""
+        """Return whether cached rows lack a verified original message timestamp."""
         conversation_id = chatgpt_conversation_id(conversation_url)
         rows = [
             row
@@ -384,7 +384,8 @@ class ChatGPTHistoryStore:
         if not rows:
             return False
         return any(
-            str(row.get("first_seen_at") or "").strip()
+            not str(row.get("last_seen_at") or "").strip()
+            or str(row.get("first_seen_at") or "").strip()
             == str(row.get("last_seen_at") or "").strip()
             for row in rows
         )

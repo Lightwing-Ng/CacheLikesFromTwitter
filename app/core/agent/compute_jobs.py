@@ -1,6 +1,6 @@
 """Durable local compute jobs for approved optimization entrypoints.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -20,7 +20,8 @@ import time
 from typing import Any
 
 
-APPROVAL_FILENAME = ".cachelikes-compute.json"
+APPROVAL_FILENAME = ".agenticContext-compute.json"
+LEGACY_APPROVAL_FILENAME = ".cachelikes-compute.json"
 COMPUTE_JOBS_DIRNAME = "compute-jobs"
 DEFAULT_MAX_RUNTIME_SECONDS = 12 * 60 * 60
 MAX_MAX_RUNTIME_SECONDS = 24 * 60 * 60
@@ -298,7 +299,14 @@ class ComputeJobManager:
     def _approved_entrypoint(self, entrypoint_id: str) -> tuple[Path, dict[str, Any]]:
         if not _ENTRYPOINT_ID_RE.fullmatch(entrypoint_id):
             raise ComputeJobError("Compute entrypoint id is invalid.")
-        approval_path = self.workspace / APPROVAL_FILENAME
+        approval_paths = [
+            self.workspace / APPROVAL_FILENAME,
+            self.workspace / LEGACY_APPROVAL_FILENAME,
+        ]
+        approval_path = next(
+            (candidate for candidate in approval_paths if candidate.is_file()),
+            approval_paths[0],
+        )
         approval = _read_json_object(approval_path, maximum_bytes=128 * 1024)
         if approval.get("schema_version") != 1 or not isinstance(approval.get("entrypoints"), list):
             raise ComputeJobError("Compute approval manifest must use schema_version 1.")
@@ -467,7 +475,7 @@ class ComputeJobManager:
         package_root = Path(__file__).resolve().parents[3]
         environment["PYTHONPATH"] = str(package_root)
         environment["PYTHONUNBUFFERED"] = "1"
-        environment["CACHELIKES_COMPUTE_JOB"] = job_id
+        environment["AGENTIC_CONTEXT_COMPUTE_JOB"] = job_id
         try:
             process = subprocess.Popen(
                 command,
@@ -678,7 +686,7 @@ def _worker_main(arguments: list[str]) -> int:
             *command,
         ]
     environment = dict(os.environ)
-    environment["CACHELIKES_COMPUTE_JOB_RUNTIME"] = str(job_root)
+    environment["AGENTIC_CONTEXT_COMPUTE_JOB_RUNTIME"] = str(job_root)
     log_path = job_root / "worker.log"
     started = time.monotonic()
     child = subprocess.Popen(

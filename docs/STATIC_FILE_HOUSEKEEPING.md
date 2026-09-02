@@ -1,6 +1,6 @@
 # Static-file housekeeping project entrypoint
 
-Documentation version: `v1.0.0-codex.1`
+Documentation version: `v1.0.1-codex.1`
 
 This repository follows the canonical cross-project contract at
 [`../../SHARED_STATIC_FILE_HOUSEKEEPING.md`](../../SHARED_STATIC_FILE_HOUSEKEEPING.md). That
@@ -17,7 +17,7 @@ Never delete a file only because its name contains ` 2`, ` 3`, or another number
 untracked or reproducible duplicate may be moved to recoverable Trash/quarantine only after the
 primary-file, Git-state, active-process, protected-path, and final-rescan checks pass.
 
-## CacheLikesFromTwitter-specific boundary
+## agenticContext-specific boundary
 
 Preserve `local_store/`, `logs/`, authenticated Chrome, Edge, and Safari profiles, cookies,
 provider/session state, and any user-owned runtime or browser window. Do not interrupt the
@@ -27,4 +27,3 @@ and process-ownership checks from the shared contract.
 
 The shared contract is the only long-form source. Update this entrypoint and the root README
 whenever the cross-project housekeeping rule changes.
-

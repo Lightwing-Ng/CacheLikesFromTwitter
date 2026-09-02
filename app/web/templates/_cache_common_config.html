@@ -1,10 +1,9 @@
-{# Code version: v1.5.0-codex.1 #}
+{# Code version: v1.5.1-codex.1 #}
 {% from "_number_field.html" import render_number_field %}
 {% macro render_cache_common_config(
     saved_config,
     id_prefix,
     title="Shared cache configuration",
-    show_scope=true,
     physical_card=false
 ) -%}
 <section
@@ -15,9 +14,6 @@
         <p class="cache-common-config-title" id="{{ id_prefix }}_cache_common_config_heading">
             {{ title }}
         </p>
-        {% if show_scope %}
-        <span class="cache-common-config-scope">All cache sources</span>
-        {% endif %}
     </div>
     <div class="field-grid compact-config-grid">
         {{ render_number_field("Download workers", "download_workers", saved_config.download_workers, minimum="1", maximum="8") }}

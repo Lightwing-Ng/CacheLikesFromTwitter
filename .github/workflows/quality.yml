@@ -42,7 +42,7 @@ jobs:
           node-version: '22'
 
       - name: Run the quality gate
-        run: CACHELIKES_PYTHON="$(command -v python)" ./scripts/check.sh
+        run: AGENTIC_CONTEXT_PYTHON="$(command -v python)" ./scripts/check.sh
 
       - name: Upload coverage data
         if: always()

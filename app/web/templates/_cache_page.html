@@ -1,4 +1,4 @@
-{# Code version: v1.20.7-codex.1 #}
+{# Code version: v1.20.17-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,22 +8,20 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.25-codex.1') }}">
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='notice-banner.js', v='notice-banner-v0.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.3-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.4-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.8.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.8.0-codex.3') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.8.2-codex.1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
 {% from "_cache_page_components.html" import render_browser_session, render_metric, render_progress_metric %}
-{% from "_notice_banner.html" import render_notice_banner %}
 {% set current_phase = snapshot.phase or "idle" %}
 <main
     class="page"
@@ -35,20 +33,6 @@
 >
     <div class="ambient ambient-left" aria-hidden="true"></div>
     <div class="ambient ambient-right" aria-hidden="true"></div>
-
-    {% call render_notice_banner(
-        title="Task status",
-        icon_class="icon-modal-dialog-banner-default",
-        banner_class="notice-floating-banner-global cache-status-banner",
-        close_label="Dismiss status banner",
-        element_id="status_banner",
-        icon_id="status_banner_icon",
-        storage_key=cache_source.banner_storage_key,
-        role="status",
-        numbered=false
-    ) %}
-        <span id="banner_message">{{ snapshot.message }}</span>
-    {% endcall %}
 
     <button type="button" class="sidebar-toggle" id="sidebar_toggle" data-layout-role="sidebar-toggle" aria-label="Toggle sidebar" aria-expanded="false">
         <span class="icon sidebar-toggle-icon" aria-hidden="true"></span>
@@ -143,7 +127,7 @@
                                 id="cache_source_switcher_option_{{ source.key }}"
                                 class="trade-strategy-dropdown-option browser-source-filter-option{% if source.key == cache_source.key %} is-selected is-active{% endif %}"
                                 data-cache-source-switcher-option="{{ source.key }}"
-                                data-cache-source-switcher-path="{{ url_for('cache_source', source_key=cache_source.key) if source.key == cache_source.key else (url_for('cache_source', source_key='chatgpt') if source.key == 'chatgpt' else (url_for('browser', view='text', session_view='1', q='', source=source.key, sort='newest') if cache_source.group_key == 'llm' and (source.group_key == 'llm' or source.include_in_llm_switcher) else url_for('cache_source', source_key=source.key))) }}"
+                                data-cache-source-switcher-path="{{ cache_source_switcher_path(cache_source.key, source.key) }}"
                                 role="option"
                                 aria-selected="{{ 'true' if source.key == cache_source.key else 'false' }}"
                                 tabindex="-1"
@@ -188,10 +172,12 @@
                     {% block source_fields %}{% endblock %}
                 </form>
                 {% if cache_source.show_shared_settings_link %}
+                {% set settings_category = "llm" if cache_source.key in ("chatgpt", "grok", "gemini") else "downloads" %}
+                {% set settings_label = "Open LLM settings" if settings_category == "llm" else "Open shared cache settings" %}
                 <a
                     class="secondary-button cache-settings-link"
-                    href="{{ url_for('settings') }}#settings-downloads"
-                >Open shared cache settings</a>
+                    href="{{ url_for('settings') }}#settings-{{ settings_category }}"
+                >{{ settings_label }}</a>
                 {% endif %}
                 <div
                     class="sidebar-action-row cache-action-row"
@@ -287,7 +273,7 @@
                             <dd>
                                 <span class="shadow-backup-destination-control settings-directory-control settings-directory-control-readonly">
                                     <input
-                                        class="text-input-control settings-directory-input output-directory-input"
+                                        class="text-input-control settings-directory-input output-directory-input path-display-input"
                                         type="text"
                                         id="output_dir"
                                         data-status-field="output_dir"

@@ -1,6 +1,6 @@
 """Regression tests for the process-wide pytest runtime boundary.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -40,7 +40,9 @@ def test_runtime_helpers_preserve_production_defaults_when_unconfigured(monkeypa
     """Keep runtime injection opt-in outside pytest."""
     home_dir = tmp_path / "home"
     monkeypatch.delenv(config.RUNTIME_ROOT_ENV)
+    monkeypatch.delenv(config.LEGACY_RUNTIME_ROOT_ENV, raising=False)
     monkeypatch.delenv(config.SETTINGS_PATH_ENV)
+    monkeypatch.delenv(config.LEGACY_SETTINGS_PATH_ENV, raising=False)
     monkeypatch.setenv("HOME", str(home_dir))
     monkeypatch.setenv("USERPROFILE", str(home_dir))
     monkeypatch.setenv("APPDATA", str(home_dir / "AppData/Roaming"))
@@ -48,11 +50,11 @@ def test_runtime_helpers_preserve_production_defaults_when_unconfigured(monkeypa
 
     assert config.resolve_runtime_root() == config.PROJECT_ROOT
     if config.is_macos_host():
-        expected_path = home_dir / "Library/Application Support/CacheLikesFromTwitter/settings.json"
+        expected_path = home_dir / "Library/Application Support/agenticContext/settings.json"
     elif config.is_windows_host():
-        expected_path = home_dir / "AppData/Roaming/CacheLikesFromTwitter/settings.json"
+        expected_path = home_dir / "AppData/Roaming/agenticContext/settings.json"
     else:
-        expected_path = home_dir / ".config/CacheLikesFromTwitter/settings.json"
+        expected_path = home_dir / ".config/agenticContext/settings.json"
 
     assert config.default_settings_path() == expected_path
 

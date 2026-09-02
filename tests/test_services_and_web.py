@@ -229,7 +229,8 @@ def test_chatgpt_text_start_preserves_media_settings_and_selects_text_mode(
 
 def test_chatgpt_media_start_uses_safari_project_settings(tmp_path: Path, macos_host) -> None:
     project_url = "https://chatgpt.com/g/g-p-demo/project"
-    initial_config = CrawlConfig(chatgpt_project_url=project_url)
+    project_name = "Demo project"
+    initial_config = CrawlConfig(chatgpt_project_url=project_url, chatgpt_project_name=project_name)
 
     with patch("app.web.app.load_saved_config", return_value=initial_config), patch(
         "app.web.app.save_config"
@@ -243,6 +244,7 @@ def test_chatgpt_media_start_uses_safari_project_settings(tmp_path: Path, macos_
                     "chatgpt_browser": "safari",
                     "chatgpt_content_mode": "media",
                     "chatgpt_project_url": project_url,
+                    "chatgpt_project_name": project_name,
                 },
             )
 
@@ -250,6 +252,7 @@ def test_chatgpt_media_start_uses_safari_project_settings(tmp_path: Path, macos_
     runtime_config = start.call_args.args[0]
     assert runtime_config.chatgpt_browser == "safari"
     assert runtime_config.chatgpt_project_url == project_url
+    assert runtime_config.chatgpt_project_name == project_name
     assert start.call_args.kwargs["content_mode"] == "media"
 
 

@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.7.0-codex.1`
+Documentation version: `v1.7.1-codex.1`
 
 ## Supported commands
 
@@ -20,11 +20,11 @@ Run a focused test or marker selection:
 
 ```bash
 ./scripts/test.sh tests/test_local_media_browser.py
-CACHELIKES_TEST_MARK_EXPRESSION=integration ./scripts/test.sh
+AGENTIC_CONTEXT_TEST_MARK_EXPRESSION=integration ./scripts/test.sh
 ```
 
 The default marker expression is `not live`. Run an intentionally manual live check only with an
-explicit override, for example `CACHELIKES_TEST_MARK_EXPRESSION=live ./scripts/test.sh`.
+explicit override, for example `AGENTIC_CONTEXT_TEST_MARK_EXPRESSION=live ./scripts/test.sh`.
 
 Run the complete quality gate:
 
@@ -63,7 +63,7 @@ node --test tests/test_agent_optimization.mjs
   tests/test_agent_optimization_browser.py
 ```
 
-`CACHELIKES_PYTHON` may override the interpreter only when it resolves to Python 3.13 or 3.14.
+`AGENTIC_CONTEXT_PYTHON` may override the interpreter only when it resolves to Python 3.13 or 3.14.
 The resolver prefers a supported host `python3`, `python`, or Windows `py -3.13` launcher, then
 falls back to known platform-specific Python
 installations.
@@ -80,7 +80,7 @@ installations.
 
 The coverage report is written to `test-results/coverage.json`; all generated test artifacts are
 ignored by Git. The gate currently enforces a 55% combined statement-and-branch coverage floor.
-Override `CACHELIKES_COVERAGE_MINIMUM` only for an intentional local diagnostic, never to make a
+Override `AGENTIC_CONTEXT_COVERAGE_MINIMUM` only for an intentional local diagnostic, never to make a
 regression pass.
 
 Baseline remeasured on 28 Aug 2026 with Python 3.13.0, pytest 9.0.3,
@@ -103,14 +103,14 @@ developer's macOS workstation is not evidence of a passing project contract.
 Use this command to reproduce the CI timezone locally:
 
 ```bash
-TZ=UTC CACHELIKES_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh
+TZ=UTC AGENTIC_CONTEXT_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh
 ```
 
 Tests must follow these rules:
 
 - Do not hard-code local-time output such as `13:00`. Use UTC fixtures, the production formatter,
   or an explicit timezone in the assertion.
-- Settings read/write helpers must resolve `CACHELIKES_SETTINGS_PATH` at call time. Do not use a
+- Settings read/write helpers must resolve `AGENTIC_CONTEXT_SETTINGS_PATH` at call time. Do not use a
   module-import snapshot as a function default, because pytest and clean-room CI inject the
   process boundary before application startup.
 - Do not hard-code `Finder`, `open -R`, or macOS permission messages in a host-neutral test. Test
@@ -202,8 +202,8 @@ The current detailed module-to-behavior map is maintained in [TEST_COVERAGE.md](
 runtime locations to process-scoped temporary directories:
 
 - `HOME` keeps settings and browser-profile defaults away from the user account.
-- `CACHELIKES_RUNTIME_ROOT` moves default local caches and logs away from the repository.
-- `CACHELIKES_SETTINGS_PATH` redirects persisted settings.
+- `AGENTIC_CONTEXT_RUNTIME_ROOT` moves default local caches and logs away from the repository.
+- `AGENTIC_CONTEXT_SETTINGS_PATH` redirects persisted settings.
 
 Default tests must not:
 

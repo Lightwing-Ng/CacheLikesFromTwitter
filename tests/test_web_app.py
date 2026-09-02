@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.89.0-codex.1
+# Code version: v1.89.20-codex.1
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ from dataclasses import asdict
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -17,7 +18,11 @@ from app.core.config import CrawlConfig
 from app.core.chat_history_browser import query_chat_history
 from app.core.computer_use_agent import ComputerUseSettings
 from app.core.local_media_browser import LocalMediaCatalog, LocalMediaPage, local_file_manager_label, stable_media_id
-from app.core.resource_persistence import GEMINI_HISTORY_SCHEMA, write_parquet_rows_atomic
+from app.core.resource_persistence import (
+    CHATGPT_HISTORY_SCHEMA,
+    GEMINI_HISTORY_SCHEMA,
+    write_parquet_rows_atomic,
+)
 from app.web.app import (
     create_app,
     format_media_size,
@@ -148,6 +153,18 @@ class WebAppTests(unittest.TestCase):
         assert option_ids == sorted(option_ids)
         self.assertIn('data-cache-source-switcher-path="/cache/gemini"', body)
 
+    def test_cache_source_switcher_never_routes_to_an_agent_surface(self) -> None:
+        app = create_app()
+
+        with app.test_client() as client:
+            body = client.get("/cache/chatgpt").get_data(as_text=True)
+
+        paths = re.findall(r'data-cache-source-switcher-path="([^"]*)"', body)
+        self.assertTrue(paths)
+        self.assertTrue(all(path.startswith(("/cache/", "/browser?")) for path in paths))
+        self.assertTrue(all(not path.startswith("/agent/") for path in paths))
+        self.assertNotIn('id="cache_source_switcher_option_claude"', body)
+
     def test_gemini_logo_asset_is_square_symbol_only_and_full_color(self) -> None:
         markup = GEMINI_LOGO_ASSET_PATH.read_text(encoding="utf-8")
 
@@ -191,6 +208,24 @@ class WebAppTests(unittest.TestCase):
                 '<link rel="icon" type="image/svg+xml" href="/static/images/favicon.svg?v=',
                 body,
             )
+
+    def test_user_facing_page_titles_use_agentic_context_brand(self) -> None:
+        app = create_app()
+
+        with app.test_client() as client:
+            responses = (
+                client.get("/cache/x"),
+                client.get("/browser"),
+                client.get("/settings"),
+                client.get("/settings/style-tokens"),
+                client.get("/agent", follow_redirects=True),
+            )
+
+        for response in responses:
+            self.assertEqual(response.status_code, 200)
+            body = response.get_data(as_text=True)
+            self.assertIn("<title>agenticContext", body)
+            self.assertNotIn("CacheLikesFromTwitter", body)
 
     def test_pages_load_the_global_simplified_chinese_language_boundary(self) -> None:
         app = create_app()
@@ -328,10 +363,14 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('name="gemini_stale_round_limit"', gemini_body)
         self.assertIn('action="/cache/gemini/start"', gemini_body)
         self.assertNotIn('class="cache-common-config"', gemini_body)
-        for body in (index_body, grok_body, chatgpt_body):
-            self.assertIn('href="/settings#settings-downloads"', body)
+        self.assertIn('href="/settings#settings-downloads"', index_body)
+        self.assertIn(">Open shared cache settings</a>", index_body)
+        for body in (grok_body, chatgpt_body):
+            self.assertIn('href="/settings#settings-llm"', body)
+            self.assertIn(">Open LLM settings</a>", body)
             self.assertNotIn('class="cache-common-config', body)
-        self.assertIn('href="/settings#settings-downloads"', gemini_body)
+        self.assertIn('href="/settings#settings-llm"', gemini_body)
+        self.assertIn(">Open LLM settings</a>", gemini_body)
         self.assertIn("ChatGPT cache overview", chatgpt_body)
         self.assertIn("workspace-header cache-workspace-header", chatgpt_body)
         self.assertIn("cache-overview-title-card", chatgpt_body)
@@ -343,7 +382,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("Sessions discovered", chatgpt_body)
         self.assertGreaterEqual(chatgpt_body.count('href="/cache/chatgpt"'), 2)
         self.assertIn(
-            'chatgpt-page.js?v=chatgpt-page-v1.2.1-codex.1',
+            'chatgpt-page.js?v=chatgpt-page-v1.3.0-codex.1',
             chatgpt_body,
         )
         self.assertIn('data-browser-session-account-label="ChatGPT"', chatgpt_body)
@@ -352,36 +391,37 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("The ChatGPT account in the selected browser is ready.", chatgpt_body)
         self.assertIn('data-chatgpt-content-mode-input', chatgpt_body)
         self.assertIn('data-chatgpt-media-config', chatgpt_body)
+        self.assertIn('data-chatgpt-project-picker', chatgpt_body)
+        self.assertIn('data-chatgpt-project-trigger', chatgpt_body)
+        self.assertIn('data-chatgpt-project-menu', chatgpt_body)
+        self.assertIn('data-chatgpt-project-url', chatgpt_body)
+        self.assertIn('data-chatgpt-project-name', chatgpt_body)
+        self.assertIn('Choose a recent project', chatgpt_body)
+        self.assertIn('All generated media', chatgpt_body)
         self.assertIn('name="chatgpt_project_url"', chatgpt_body)
-        project_url_input_end = chatgpt_body.index(
-            ">",
-            chatgpt_body.index('name="chatgpt_project_url"'),
-        )
-        project_url_input_start = chatgpt_body.rfind("<input", 0, project_url_input_end)
-        project_url_input = chatgpt_body[project_url_input_start:project_url_input_end]
-        self.assertNotIn("required", project_url_input)
+        self.assertIn('name="chatgpt_project_name"', chatgpt_body)
+        self.assertNotIn('type="url"', chatgpt_body)
         self.assertIn('name="chatgpt_startup_timeout_seconds"', chatgpt_body)
         self.assertIn('name="chatgpt_scan_wait_seconds"', chatgpt_body)
-        self.assertIn("Project or chat URL", chatgpt_body)
+        self.assertNotIn("Project or chat URL", chatgpt_body)
         self.assertIn("Known images skipped this run", chatgpt_body)
         self.assertIn("Media failures this run", chatgpt_body)
         self.assertIn("Task failures", chatgpt_body)
         self.assertIn('data-status-field="task_failures"', chatgpt_body)
         self.assertIn('id="output_dir"', chatgpt_body)
         self.assertIn('data-status-field="output_dir"', chatgpt_body)
-        self.assertIn('class="text-input-control settings-directory-input output-directory-input"', chatgpt_body)
+        self.assertIn('class="text-input-control settings-directory-input output-directory-input path-display-input"', chatgpt_body)
         self.assertIn('aria-label="Output directory"', chatgpt_body)
         self.assertIn('data-output-directory-open', chatgpt_body)
         self.assertIn('class="icon settings-directory-choose-icon"', chatgpt_body)
         self.assertIn('output-directory-status', chatgpt_body)
-        self.assertNotIn('name="chatgpt_project_name"', chatgpt_body)
         self.assertIn('data-platform="chatgpt"', chatgpt_body)
         self.assertIn('action="/cache/chatgpt/start"', chatgpt_body)
         self.assertNotIn('class="status-copy chatgpt-sidebar-note"', chatgpt_body)
         self.assertIn('id="status_progress_value"', chatgpt_body)
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
-        self.assertIn('cache-page.js?v=cache-page-v1.8.0-codex.3', chatgpt_body)
+        self.assertIn('cache-page.js?v=cache-page-v1.8.2-codex.1', chatgpt_body)
         self.assertIn('segmented-control.js?v=segmented-control-v1.0.2-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
@@ -407,14 +447,15 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.3-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.4-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
         chatgpt_form_end = chatgpt_body.index("</form>", chatgpt_form_start)
         chatgpt_form = chatgpt_body[chatgpt_form_start:chatgpt_form_end]
-        self.assertEqual(chatgpt_form.count('class="field"'), 3)
-        self.assertEqual(chatgpt_form.count("text-input-control"), 3)
+        self.assertIn('class="field chatgpt-project-field"', chatgpt_form)
+        self.assertEqual(chatgpt_form.count('class="field"'), 2)
+        self.assertEqual(chatgpt_form.count("text-input-control"), 2)
         self.assertEqual(chatgpt_form.count('data-cache-number-field'), 2)
         self.assertEqual(chatgpt_form.count('data-cache-number-stepper="increment"'), 2)
         self.assertEqual(chatgpt_form.count('data-cache-number-stepper="decrement"'), 2)
@@ -453,7 +494,8 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('name="download_workers"', body)
                 self.assertNotIn('name="max_media_file_size_mib"', body)
                 self.assertNotIn(f'id="{source}_cache_common_config_help"', body)
-                self.assertIn('href="/settings#settings-downloads"', body)
+                settings_target = "/settings#settings-downloads" if source == "x" else "/settings#settings-llm"
+                self.assertIn(f'href="{settings_target}"', body)
 
         for page_source, body in (
             ("grok", grok_body),
@@ -507,7 +549,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.91.0-codex.1"
+                expected_style_version = "style-v2.91.25-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -590,7 +632,12 @@ class WebAppTests(unittest.TestCase):
                         "/cache/x",
                     )
                     if current_source == "gemini"
-                    else ("/cache/chatgpt", "/cache/gemini", "/cache/grok", "/cache/x")
+                    else (
+                        "/cache/chatgpt",
+                        "/cache/gemini",
+                        "/cache/grok",
+                        "/cache/x",
+                    )
                 )
                 for expected_path in expected_paths:
                     self.assertIn(f'data-cache-source-switcher-path="{expected_path}"', heading_markup)
@@ -632,6 +679,12 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("element instanceof HTMLInputElement", cache_page_script)
         for fragment in (
             'const contentModeStorageKey = "cachelikes:browser-content-mode:v1";',
+            'const projectPicker = document.querySelector("[data-chatgpt-project-picker]");',
+            'fetch(`/api/agent/chatgpt-sources?${query.toString()}`',
+            'query.set("refresh", "1")',
+            'option.dataset.chatgptProjectUrl = url;',
+            'option.dataset.chatgptProjectName = name;',
+            'textContent = name || "All generated media";',
             'mediaConfig.hidden = normalizedMode === "text";',
             'event.preventDefault();',
             'contentModeInput.value = normalizedMode;',
@@ -646,6 +699,10 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('name="chatgpt_startup_timeout_seconds"', settings_body)
         self.assertIn('name="chatgpt_scan_wait_seconds"', settings_body)
         self.assertIn('name="max_media_file_size_mib"', settings_body)
+        self.assertIn('class="path-display-input"', settings_body)
+        self.assertEqual(settings_body.count("path-display-input"), 3)
+        self.assertNotIn('class="cache-common-config-scope"', settings_body)
+        self.assertNotIn("All cache sources", settings_body)
         self.assertIn('data-number-max="8"', settings_body)
         self.assertIn("Max cached file size (MiB)", settings_body)
         self.assertIn('name="shadow_backup_enabled"', settings_body)
@@ -688,14 +745,24 @@ class WebAppTests(unittest.TestCase):
 
         expected_options = ("chatgpt", "gemini", "grok", "x")
         expected_paths_by_page = {
-            "chatgpt": ("/cache/chatgpt", "/cache/gemini", "/cache/grok", "/cache/x"),
+            "chatgpt": (
+                "/cache/chatgpt",
+                "/cache/gemini",
+                "/cache/grok",
+                "/cache/x",
+            ),
             "gemini": (
                 "/cache/chatgpt",
                 "/cache/gemini",
                 "/browser?view=text&amp;session_view=1&amp;q=&amp;source=grok&amp;sort=newest",
                 "/cache/x",
             ),
-            "grok": ("/cache/chatgpt", "/cache/gemini", "/cache/grok", "/cache/x"),
+            "grok": (
+                "/cache/chatgpt",
+                "/cache/gemini",
+                "/cache/grok",
+                "/cache/x",
+            ),
         }
         for page_source, body in bodies.items():
             with self.subTest(page_source=page_source):
@@ -725,7 +792,7 @@ class WebAppTests(unittest.TestCase):
 
         lan_environ = {"REMOTE_ADDR": "192.168.124.20"}
         lan_headers = {"Host": "192.168.124.10:8666"}
-        with patch.dict("os.environ", {"CACHELIKES_AGENT_PASSWORD": "195135"}):
+        with patch.dict("os.environ", {"AGENTIC_CONTEXT_AGENT_PASSWORD": "195135"}):
             with app.test_client() as client:
                 local_page = client.get("/agent", follow_redirects=True)
                 local_status = client.get("/api/agent/status")
@@ -814,6 +881,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-combobox-option="safari"', local_body)
         self.assertNotIn('name="port"', local_body)
         self.assertIn('id="agent_project_path"', local_body)
+        self.assertIn('class="text-input-control agent-monospace-input path-display-input"', local_body)
         self.assertIn('aria-describedby="agent_project_path_status"', local_body)
         self.assertIn('id="agent_project_path_status"', local_body)
         self.assertNotIn('aria-describedby="true"', local_body)
@@ -846,9 +914,9 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.3-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.4-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.28.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.28.7-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
         self.assertIn('data-agent-compute-job-stop', local_body)
         self.assertIn('data-agent-effort-field', local_body)
@@ -862,6 +930,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-terminal-execution-status', local_body)
         self.assertIn('data-agent-terminal-execution-copy', local_body)
         self.assertIn('data-agent-terminal-execution-checkmark', local_body)
+        self.assertIn('data-agent-terminal-execution-checkmark\n                    data-status-state="ready"', local_body)
         self.assertIn('<span class="agent-terminal-execution-label">Terminal permission</span>', local_body)
         self.assertNotIn('Terminal execution permission:', local_body)
         self.assertIn('data-agent-platform-input', local_body)
@@ -886,6 +955,10 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="agent_error_record"', local_body)
         self.assertIn('data-agent-error-record-content', local_body)
         self.assertIn('class="agent-error-record-scroll"', local_body)
+        self.assertIn('data-agent-llm-settings-link', local_body)
+        self.assertIn('class="secondary-button agent-llm-settings-link"', local_body)
+        self.assertIn('href="/settings#settings-llm"', local_body)
+        self.assertIn(">Open LLM settings</a>", local_body)
 
         self.assertIn('class="agent-response-output"', local_body)
         self.assertIn('class="agent-response-question-header', local_body)
@@ -1263,6 +1336,7 @@ class WebAppTests(unittest.TestCase):
                         "label": "STALE_ACTIVITY_SENTINEL",
                         "detail": "Old ChatGPT activity",
                         "meta": "Earlier run",
+                        "timestamp": "2026-09-02T08:00:00Z",
                     }
                 ],
                 "browser": "edge",
@@ -1296,6 +1370,7 @@ class WebAppTests(unittest.TestCase):
                     wrong_workspace_body = client.get("/agent/edge/chatgpt").get_data(as_text=True)
 
         self.assertIn("STALE_HISTORY_RESPONSE_SENTINEL", matching_body)
+        self.assertIn("Earlier run · 16:00:00", matching_body)
         self.assertIn('data-agent-running="false"', matching_body)
         self.assertIn('data-agent-run-revision="73"', matching_body)
         self.assertIn(
@@ -1620,12 +1695,13 @@ class WebAppTests(unittest.TestCase):
             'data-agent-session-list="recent"',
             'data-agent-session-list="projects"',
             'data-agent-session-list="project-sessions"',
+            'data-agent-new-session-icon="/static/images/plus.circle.svg"',
             'Choose a project first',
             'name="session_mode" value="new"',
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.28.0-codex.1',
+            'computer-use-agent-v3.28.7-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'agent-effort-refresh-label">Refresh options</span>',
@@ -1635,6 +1711,8 @@ class WebAppTests(unittest.TestCase):
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
             'src="/static/images/clock.fill.svg" alt="" aria-hidden="true">\n                                    <span class="trade-strategy-dropdown-text">Recent sessions</span>',
+            'data-agent-combobox-icon="/static/images/folder.fill.svg"',
+            'src="/static/images/folder.fill.svg" alt="" aria-hidden="true">\n                                    <span class="trade-strategy-dropdown-text">Recent projects</span>',
             'id="agent_response_status" role="status" aria-live="polite"',
             'data-agent-response-status-dot',
             'suggestion-loading-spinner agent-response-status-spinner',
@@ -1813,7 +1891,22 @@ class WebAppTests(unittest.TestCase):
                 )
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json()["agent_sources"], source_payload)
+        self.assertEqual(
+            response.get_json()["agent_sources"],
+            {
+                "platform": "grok",
+                "recent_sessions": [
+                    {
+                        "id": "grok-1",
+                        "title": "Untitled session",
+                        "url": "https://grok.com/c/grok-1",
+                        "updated_at": "",
+                    }
+                ],
+                "projects": [],
+                "limit": 20,
+            },
+        )
         probe.assert_called_once()
         legacy_probe.assert_not_called()
 
@@ -2127,13 +2220,17 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("agent_sources_error", refreshed_response.get_json())
         self.assertEqual(bootstrap.call_count, 2)
 
-    def test_agent_provider_source_route_keeps_cached_catalog_during_automatic_refresh(self) -> None:
+    def test_agent_provider_source_route_refreshes_when_requested_explicitly(self) -> None:
         first_payload = {
             "platform": "gemini",
             "browser_label": "Edge",
             "recent_sessions": [{"id": "first-session"}],
             "projects": [],
             "limit": 20,
+        }
+        refreshed_payload = {
+            **first_payload,
+            "recent_sessions": [{"id": "refreshed-session"}],
         }
         with TemporaryDirectory() as raw_root:
             app = create_app(Path(raw_root) / "local_store")
@@ -2144,7 +2241,10 @@ class WebAppTests(unittest.TestCase):
                 payload=first_payload,
                 now=datetime(2000, 1, 1, tzinfo=timezone.utc),
             )
-            with patch("app.web.app.list_agent_sources") as sources:
+            with patch(
+                "app.web.app.list_agent_sources",
+                return_value=refreshed_payload,
+            ) as sources:
                 with app.test_client() as client:
                     passive_response = client.get("/api/agent/sources?platform=gemini&browser=edge")
                     automatic_refresh_response = client.get(
@@ -2155,10 +2255,10 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(passive_response.get_json()["cache"]["status"], "stale")
         self.assertEqual(
             automatic_refresh_response.get_json()["recent_sessions"],
-            [{"id": "first-session"}],
+            [{"id": "refreshed-session"}],
         )
-        self.assertEqual(automatic_refresh_response.get_json()["cache"]["status"], "stale")
-        sources.assert_not_called()
+        self.assertEqual(automatic_refresh_response.get_json()["cache"]["status"], "refreshed")
+        sources.assert_called_once()
 
     def test_agent_source_route_filters_a_persisted_gemini_creation_alias(self) -> None:
         cached_payload = {
@@ -2240,6 +2340,62 @@ class WebAppTests(unittest.TestCase):
         sessions.assert_called_once()
         self.assertEqual(sessions.call_args.args[:3], ("grok", "edge", project_url))
 
+    def test_agent_project_route_refreshes_stale_sessions_on_explicit_request(self) -> None:
+        project_url = "https://grok.com/project/project-1?tab=conversations"
+        cached_payload = {
+            "platform": "grok",
+            "project_url": project_url,
+            "sessions": [
+                {
+                    "id": "old-session",
+                    "title": "Old title",
+                    "url": "https://grok.com/project/project-1?chat=old-session",
+                    "updated_at": "2026-08-13T10:00:00Z",
+                }
+            ],
+            "limit": 20,
+        }
+        refreshed_payload = {
+            **cached_payload,
+            "sessions": [
+                {
+                    "id": "new-session",
+                    "title": "Renamed session",
+                    "url": "https://grok.com/project/project-1?chat=new-session",
+                    "updated_at": "2026-09-02T01:00:00Z",
+                }
+            ],
+        }
+        with TemporaryDirectory() as raw_root:
+            app = create_app(Path(raw_root) / "local_store")
+            app.extensions["agent_source_cache"].store(
+                platform="grok",
+                browser="edge",
+                source_kind="project-sessions",
+                project_url=project_url,
+                payload=cached_payload,
+                now=datetime(2000, 1, 1, tzinfo=timezone.utc),
+            )
+            with patch(
+                "app.web.app.list_agent_project_sessions",
+                return_value=refreshed_payload,
+            ) as sessions:
+                with app.test_client() as client:
+                    stale_response = client.get(
+                        "/api/agent/project-sessions?platform=grok&browser=edge&project_url="
+                        "https://grok.com/project/project-1?tab=conversations"
+                    )
+                    refreshed_response = client.get(
+                        "/api/agent/project-sessions?platform=grok&browser=edge&refresh=1&project_url="
+                        "https://grok.com/project/project-1?tab=conversations"
+                    )
+
+        self.assertEqual(stale_response.get_json()["sessions"][0]["id"], "old-session")
+        self.assertEqual(stale_response.get_json()["cache"]["status"], "stale")
+        self.assertEqual(refreshed_response.get_json()["sessions"][0]["id"], "new-session")
+        self.assertEqual(refreshed_response.get_json()["cache"]["status"], "refreshed")
+        sessions.assert_called_once()
+
     def test_agent_session_history_route_rejects_non_chatgpt_urls(self) -> None:
         app = create_app()
 
@@ -2251,6 +2407,52 @@ class WebAppTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
         history.assert_not_called()
+
+    def test_agent_grok_session_history_route_renders_selected_project_session(self) -> None:
+        conversation_url = "https://grok.com/project/project-1?chat=session-1"
+        payload = {
+            "conversation_url": conversation_url,
+            "title": "Renamed project session",
+            "history": [{
+                "prompt": "What changed?",
+                "response": "The selected session is now visible.",
+                "started_at": "2026-09-02T01:00:00Z",
+                "finished_at": "2026-09-02T01:00:02Z",
+            }],
+            "limit": 100,
+        }
+        app = create_app()
+
+        with patch(
+            "app.web.app.fetch_grok_conversation_history",
+            return_value=payload,
+        ) as history:
+            with app.test_client() as client:
+                response = client.get(
+                    "/api/agent/grok-session-history?browser=edge&conversation_url="
+                    "https://grok.com/project/project-1?chat=session-1"
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()["title"], "Renamed project session")
+        self.assertEqual(response.get_json()["history"][0]["prompt"], "What changed?")
+        self.assertIn("The selected session is now visible.", response.get_json()["history"][0]["response_html"])
+        history.assert_called_once()
+
+    def test_agent_client_loads_grok_session_history_before_rendering_ready_state(self) -> None:
+        script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
+
+        for fragment in (
+            'remoteSessionHistoryPlatform === selectedPlatform()',
+            'platform === "grok" && isAgentConversationUrl(platform, selectedUrl)',
+            '"/api/agent/grok-session-history"',
+            'remoteSessionHistoryPlatform = platform',
+            'Loading the selected ${selectedPlatformLabel()} session history…',
+            'remoteSessionHistoryLoading = true',
+            'render(lastPayload);\n\n        try {',
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, script)
 
     def test_agent_client_uses_computer_use_readiness_activity_and_chat_keyboard_contract(self) -> None:
         script = COMPUTER_USE_AGENT_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -2299,7 +2501,14 @@ class WebAppTests(unittest.TestCase):
             "elements.errorRecord.hidden = !errorText",
             "renderAgentResponse(agent)",
             "renderTerminalExecution(lastPayload.runtime)",
+            'elements.terminalExecutionCheckmark.dataset.statusState = ready ? "ready" : "error"',
+            "elements.terminalExecutionCheckmark.hidden = false",
             "function readinessState(payload)",
+            'let browserStatusState = "cleared";',
+            "function browserVerificationPending()",
+            '["loading", "refreshing"].includes(browserStatusState)',
+            'browserStatusState = String(state || "cleared")',
+            'status = verificationPending ? "loading" : "failed"',
             "const readiness = readinessState(nextPayload);",
             "const message = sessionMessage",
             'elements.responseAnswer.innerHTML = entry?.response_html || ""',
@@ -2328,8 +2537,8 @@ class WebAppTests(unittest.TestCase):
             "sourceRequestId += 1",
             'const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"])',
             "loadSelectedSessionHistory(input.value)",
-            "/api/agent/chatgpt-session-history?",
-            "Loading the selected ChatGPT session history…",
+            '"/api/agent/chatgpt-session-history"',
+            "Loading the selected ${selectedPlatformLabel()} session history…",
             'statusMessageCopy: document.querySelector("[data-agent-response-status-copy]")',
             'statusDot: document.querySelector("[data-agent-response-status-dot]")',
             'statusSpinner: document.querySelector("[data-agent-response-status-spinner]")',
@@ -2341,6 +2550,15 @@ class WebAppTests(unittest.TestCase):
             'document.execCommand("copy")',
             'elements.responseCopy?.addEventListener("click", async () => {',
             "function responseStatusPresentation(agent, readiness)",
+            "function formatElapsedDuration(startedAt)",
+            "function runningResponseStatusCopy(agent, message)",
+            "function renderResponseStatusCopy(presentation)",
+            "summary.dataset.agentResponseStatusLeading = \"\"",
+            "detail.dataset.agentResponseStatusDetail = \"\"",
+            "function formatActivityTimestamp(timestamp)",
+            "function activityMeta(event)",
+            "responseStatusTimer",
+            'timeZone: "Asia/Hong_Kong"',
             "function renderResponseStatus(agent, readiness)",
             "elements.statusSpinner.hidden = !presentation.loading",
             "setResponseStatusFallback(error.message)",
@@ -2466,20 +2684,23 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("<h2>Configuration center</h2>", body)
         self.assertEqual(body.count('class="workspace-kicker"'), 0)
         self.assertIn(
-            'settings-navigation.js?v=settings-navigation-v1.1.1-codex.1',
+            'settings-navigation.js?v=settings-navigation-v1.1.2-codex.1',
             body,
         )
         self.assertIn('id="settings_form"', body)
         settings_form_start = body.index('id="settings_form"')
         settings_form_end = body.index("</form>", settings_form_start)
         self.assertGreater(settings_form_end, settings_form_start)
-        for category in ("downloads", "chatgpt", "agent", "cloud", "maintenance"):
+        for category in ("downloads", "llm", "agent", "cloud", "maintenance"):
             with self.subTest(category=category):
                 self.assertIn(f'data-settings-category="{category}"', body)
                 self.assertIn(f'data-settings-panel="{category}"', body)
                 self.assertIn(f'id="settings-{category}"', body)
 
         script = SETTINGS_NAVIGATION_SCRIPT_PATH.read_text(encoding="utf-8")
+        self.assertIn('new Map([["chatgpt", "llm"]])', script)
+        self.assertIn('<span class="settings-category-nav-label">LLM settings</span>', body)
+        self.assertIn('id="settings_llm_heading">LLM cache timing</h3>', body)
         for fragment in (
             'window.addEventListener("hashchange"',
             'link.setAttribute("aria-current", "page")',
@@ -2584,6 +2805,8 @@ class WebAppTests(unittest.TestCase):
             "targetUrl.origin !== window.location.origin",
             "targetUrl.href === window.location.href",
             "window.location.assign(targetUrl.href)",
+            'const normalizedActiveId = ["overview", sourceKey, "activity"].includes(activeId)',
+            '? "cache"',
         )
 
         for fragment in expected_fragments:
@@ -2700,6 +2923,8 @@ class WebAppTests(unittest.TestCase):
             'if (refresh) query.set("refresh", "1");',
             'async function load(browserId, options = {})',
             'const forceRefresh = options.force === true;',
+            'void load(String(browserId || "").trim().toLowerCase());',
+            'void load(activeBrowser, {force: true});',
             'requestBrowserStatus(requestPlatform, activeBrowser, scope, {refresh: forceRefresh})',
             'let statusRequestRevision = 0;',
             'requestRevision !== statusRequestRevision',
@@ -2997,7 +3222,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.91.0-codex.1", body)
+            self.assertIn("style-v2.91.25-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)
@@ -3046,7 +3271,7 @@ class WebAppTests(unittest.TestCase):
                         "content_sha256": "hash",
                         "source_links": [],
                         "model_label": "",
-                        "first_seen_at": "2026-08-12T05:00:00Z",
+                        "first_seen_at": "2026-08-12T04:59:00Z",
                         "last_seen_at": "2026-08-12T05:00:00Z",
                     },
                     {
@@ -3065,7 +3290,7 @@ class WebAppTests(unittest.TestCase):
                         "content_sha256": "hash-image",
                         "source_links": [],
                         "model_label": "",
-                        "first_seen_at": "2026-08-12T05:00:01Z",
+                        "first_seen_at": "2026-08-12T05:00:00Z",
                         "last_seen_at": "2026-08-12T05:00:01Z",
                     },
                 ],
@@ -3150,6 +3375,9 @@ class WebAppTests(unittest.TestCase):
             'format_chat_message_timestamp_label(message.last_seen_at)',
             browser_template,
         )
+        self.assertIn("browser-session-message-time", browser_template)
+        self.assertIn("browser-session-message-time-date", browser_template)
+        self.assertIn("browser-session-message-time-clock", browser_template)
         self.assertIn("No matching messages found.", browser_template)
         self.assertEqual(detail_response.status_code, 200)
         self.assertIn("<strong>Rich</strong> cached text message", detail_body)
@@ -3198,6 +3426,52 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('name="view" type="radio" value="media" checked', media_body)
         self.assertNotIn('class="browser-pagination', text_body)
         self.assertNotIn('class="browser-pagination', media_body)
+
+    def test_browser_chatgpt_detail_message_timestamp_has_two_rows(self) -> None:
+        with TemporaryDirectory() as raw_root:
+            root = Path(raw_root) / "local_store"
+            history_path = root / "llm" / "chatgpt" / "history.parquet"
+            write_parquet_rows_atomic(
+                history_path,
+                [
+                    {
+                        "schema_version": 1,
+                        "platform": "chatgpt",
+                        "conversation_id": "chatgpt-demo",
+                        "conversation_url": "https://chatgpt.com/c/chatgpt-demo",
+                        "conversation_title": "ChatGPT demo",
+                        "message_key": "chatgpt-demo:0:user",
+                        "turn_index": 0,
+                        "message_index": 0,
+                        "role": "user",
+                        "author_label": "You",
+                        "content_text": "A ChatGPT cached message",
+                        "content_html": "",
+                        "content_sha256": "chatgpt-demo-hash",
+                        "source_links": [],
+                        "model_label": "",
+                        "first_seen_at": "2026-08-12T04:59:00Z",
+                        "last_seen_at": "2026-08-12T05:00:00Z",
+                    }
+                ],
+                CHATGPT_HISTORY_SCHEMA,
+            )
+            app = create_app(root)
+            session_id = query_chat_history(
+                root,
+                source="chatgpt",
+                session_view=True,
+            ).sessions[0].stable_id
+            with app.test_client() as client:
+                response = client.get(
+                    f"/browser?source=chatgpt&view=text&session_view=1&sort=newest&session={session_id}"
+                )
+
+        body = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('class="browser-session-message-time"', body)
+        self.assertIn(">12/08/2026</span>", body)
+        self.assertIn(">13:00:00 (HKT)</span>", body)
 
     def test_browser_pagination_ellipses_render_accessible_range_menus(self) -> None:
         with TemporaryDirectory() as raw_root:
@@ -3637,7 +3911,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn("attributes: true", observer_options)
         self.assertNotIn("attributeFilter:", observer_options)
 
-    def test_text_browser_exposes_chatgpt_media_cache_entrypoint(self) -> None:
+    def test_text_browser_omits_redundant_chatgpt_media_cache_entrypoint(self) -> None:
         app = create_app()
 
         with app.test_client() as client:
@@ -3650,16 +3924,17 @@ class WebAppTests(unittest.TestCase):
             gemini_text_body = client.get(
                 "/browser?view=text&source=gemini&q=&sort=newest&session_view=1"
             ).get_data(as_text=True)
+            media_body = client.get(
+                "/browser?view=media&source=all&q=&sort=newest&session_view=1"
+            ).get_data(as_text=True)
 
         for body in (all_text_body, chatgpt_text_body):
-            self.assertIn("ChatGPT Media cache", body)
-            self.assertIn(
-                'href="/browser?view=media&amp;source=chatgpt&amp;q=&amp;sort=newest&amp;session_view=1"',
-                body,
-            )
+            self.assertNotIn("ChatGPT Media cache", body)
+            self.assertNotIn("browser-chatgpt-media-link", body)
         self.assertNotIn('data-media-cache-path=', chatgpt_text_body)
         self.assertNotIn('data-media-cache-path=', all_text_body)
         self.assertNotIn("ChatGPT Media cache", gemini_text_body)
+        self.assertIn('data-browser-source-filter-option="chatgpt"', media_body)
 
     def test_browser_session_refresh_starts_and_polls_one_chatgpt_session(self) -> None:
         script = LOCAL_MEDIA_BROWSER_SCRIPT_PATH.read_text(encoding="utf-8")

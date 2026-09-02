@@ -1,11 +1,12 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.25-codex.1
+Code version: v1.26.48-codex.1
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from io import BytesIO
 import json
 from pathlib import Path
@@ -35,6 +36,7 @@ from app.core.computer_use_agent import (
     parse_agent_action,
 )
 from app.core.gemini_downloader import inspect_gemini_session
+from app.core.resource_persistence import CHATGPT_HISTORY_SCHEMA, write_parquet_rows_atomic
 
 
 OVERLAY_VIEWPORTS = (
@@ -70,6 +72,54 @@ def sidebar_server_url(tmp_path_factory: pytest.TempPathFactory) -> Iterator[str
     assert application.extensions["computer_use_agent_service"]._runtime_root == runtime_root
     server: BaseWSGIServer = make_server("127.0.0.1", 0, application, threaded=True)
     assert server.server_port != 8666
+    server_thread = Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=5)
+
+
+@pytest.fixture()
+def seeded_chatgpt_browser_server_url(tmp_path: Path) -> Iterator[str]:
+    from app.web.app import create_app
+
+    root = tmp_path / "local-store"
+    write_parquet_rows_atomic(
+        root / "llm" / "chatgpt" / "history.parquet",
+        [
+            {
+                "schema_version": 1,
+                "platform": "chatgpt",
+                "conversation_id": "chatgpt-wrap-demo",
+                "conversation_url": "https://chatgpt.com/c/chatgpt-wrap-demo",
+                "conversation_title": "ChatGPT timestamp wrapping",
+                "message_key": "chatgpt-wrap-demo:0:user",
+                "turn_index": 0,
+                "message_index": 0,
+                "role": "user",
+                "author_label": "You",
+                "content_text": "A timestamp layout regression fixture.",
+                "content_html": "",
+                "content_sha256": "chatgpt-wrap-demo-hash",
+                "source_links": [],
+                "model_label": "",
+                "first_seen_at": "2026-08-12T04:59:00Z",
+                "last_seen_at": "2026-08-12T05:00:00Z",
+            }
+        ],
+        CHATGPT_HISTORY_SCHEMA,
+    )
+    application = create_app(
+        root,
+        computer_use_settings_path=tmp_path / "settings" / "computer-use-agent.json",
+        computer_use_runtime_root=tmp_path / "computer-use-runtime",
+        agent_external_operations_enabled=False,
+    )
+    application.config.update(TESTING=True)
+    server: BaseWSGIServer = make_server("127.0.0.1", 0, application, threaded=True)
     server_thread = Thread(target=server.serve_forever, daemon=True)
     server_thread.start()
     try:
@@ -260,6 +310,12 @@ def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
             assert options.evaluate_all(
                 "elements => elements.map(element => element.dataset.cacheSourceSwitcherOption)"
             ) == expected_sources
+            source_trigger = aside.locator("[data-cache-source-switcher-trigger]")
+            browser_trigger = aside.locator('[data-role="browser-picker-trigger"]')
+            assert source_trigger.evaluate("element => element.getBoundingClientRect().height") == 36
+            assert browser_trigger.evaluate("element => element.getBoundingClientRect().height") == 36
+            expect(page.locator('[data-dock-section="cache"]')).to_have_class(re.compile(r"\bis-active\b"))
+            expect(page.locator('[data-dock-section="agent"]')).not_to_have_class(re.compile(r"\bis-active\b"))
             expected_paths = (
                 [
                     "/cache/chatgpt",
@@ -268,11 +324,49 @@ def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
                     "/cache/x",
                 ]
                 if page_source == "gemini"
-                else ["/cache/chatgpt", "/cache/gemini", "/cache/grok", "/cache/x"]
+                else [
+                    "/cache/chatgpt",
+                    "/cache/gemini",
+                    "/cache/grok",
+                    "/cache/x",
+                ]
             )
             assert options.evaluate_all(
                 "elements => elements.map(element => element.dataset.cacheSourceSwitcherPath)"
             ) == expected_paths
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_cache_status_stays_in_the_progress_panel_without_a_floating_banner(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep Cache status in the existing progress panel without duplicating it as a banner."""
+    route = f"{sidebar_server_url}/cache/chatgpt"
+    page, context = _open_page(
+        disposable_browser,
+        route,
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        for width, height in ((1_280, 900), (715, 899), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(route, wait_until="domcontentloaded")
+            expect(page.locator("#status_banner")).to_have_count(0)
+            expect(page.locator('#message[data-status-field="message"]')).to_have_count(1)
+            expect(page.locator('#message[data-status-field="message"]')).to_be_visible()
+            status_card = page.locator(
+                '[data-browser-session-panel] .browser-session-status-card'
+            )
+            expect(status_card).to_have_count(1)
+            assert status_card.evaluate(
+                "element => getComputedStyle(element).borderWidth"
+            ) == "0px"
     finally:
         context.close()
 
@@ -584,6 +678,100 @@ def test_browser_title_rail_stays_aligned_with_global_anchors_across_viewports(
         assert narrow["summaryPaddingTop"] == "12px"
         assert narrow["summaryOverflow"] == "visible"
         assert not narrow["horizontalOverflow"]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_browser_filter_actions_stack_standard_buttons_across_viewports(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep the browser filter actions on separate rows at desktop and narrow widths."""
+    route = f"{sidebar_server_url}/browser?view=text&session_view=1&source=all&sort=newest&q="
+    page, context = _open_page(
+        disposable_browser,
+        route,
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        for width, height in ((1_280, 900), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(route, wait_until="domcontentloaded")
+            actions = page.locator(".browser-filter-actions > :is(a, button)")
+            expect(actions).to_have_count(2)
+            expect(page.locator(".browser-chatgpt-media-link")).to_have_count(0)
+            geometry = actions.evaluate_all(
+                "elements => elements.map(element => {"
+                "  const rect = element.getBoundingClientRect();"
+                "  return {top: rect.top, height: rect.height};"
+                "})"
+            )
+            assert geometry[1]["top"] >= geometry[0]["top"] + geometry[0]["height"] - 1, (
+                width,
+                geometry,
+            )
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_browser_message_timestamps_keep_two_rows_across_viewports(
+    disposable_browser: Browser,
+    seeded_chatgpt_browser_server_url: str,
+) -> None:
+    """Keep the date and clock on separate rendered rows at every supported width."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{seeded_chatgpt_browser_server_url}/browser?view=text&source=chatgpt&sort=newest&session_view=1",
+        1_280,
+        900,
+        touch=False,
+    )
+    try:
+        session = page.locator(".browser-session-index-table a").first
+        expect(session).to_be_visible()
+        detail_url = session.get_attribute("href")
+        assert detail_url
+
+        for width, height in ((1_280, 900), (715, 899), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(
+                f"{seeded_chatgpt_browser_server_url}{detail_url}",
+                wait_until="domcontentloaded",
+            )
+            timestamp = page.locator(
+                ".browser-session-detail-table time.browser-session-message-time"
+            )
+            expect(timestamp).to_have_count(1)
+            expect(timestamp).to_be_visible()
+            geometry = timestamp.evaluate(
+                "element => {"
+                "  const style = getComputedStyle(element);"
+                "  return {"
+                "    display: style.display,"
+                "    whiteSpace: style.whiteSpace,"
+                "    lines: [...element.children].map(child => {"
+                "      const rect = child.getBoundingClientRect();"
+                "      return {text: child.textContent.trim(), top: rect.top};"
+                "    }),"
+                "  };"
+                "}"
+            )
+            assert geometry["display"] == "inline-grid", (width, geometry)
+            assert geometry["whiteSpace"] == "normal", (width, geometry)
+            assert [line["text"] for line in geometry["lines"]] == [
+                "12/08/2026",
+                "13:00:00 (HKT)",
+            ], (width, geometry)
+            assert geometry["lines"][1]["top"] > geometry["lines"][0]["top"], (
+                width,
+                geometry,
+            )
     finally:
         context.close()
 
@@ -1273,6 +1461,119 @@ def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.parametrize(
+    ("width", "height", "touch"),
+    ((1_280, 900, False), (390, 844, True)),
+)
+def test_agent_doctor_actions_keep_spatial_effects_visible(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    width: int,
+    height: int,
+    touch: bool,
+) -> None:
+    """Verify Doctor action shadows escape the panel at desktop and narrow widths."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/agent/edge/chatgpt",
+        width,
+        height,
+        touch=touch,
+        init_script="""
+            (() => {
+                const originalFetch = window.fetch.bind(window);
+                window.fetch = (input, init) => {
+                    const requestUrl = typeof input === "string" ? input : input?.url;
+                    if (requestUrl) {
+                        const pathname = new URL(requestUrl, window.location.href).pathname;
+                        if (
+                            pathname === "/api/agent/status"
+                            || pathname === "/api/browser-session"
+                            || pathname === "/api/agent/doctor"
+                        ) {
+                            return Promise.reject(new Error("Live Agent polling is disabled for this layout test."));
+                        }
+                    }
+                    return originalFetch(input, init);
+                };
+            })();
+        """,
+    )
+    try:
+        contract = page.evaluate(
+            """() => {
+                const panel = document.querySelector("#agent_doctor_panel");
+                const content = document.querySelector("#agent_doctor_panel .agent-doctor-content");
+                const actions = document.querySelector("#agent_doctor_actions");
+                if (!panel || !content || !actions) return null;
+
+                panel.hidden = false;
+                panel.open = true;
+                actions.replaceChildren();
+                for (const label of [
+                    "Continue interrupted task",
+                    "Clean up temporary context",
+                    "Open provider conversation",
+                    "Start a new task",
+                ]) {
+                    const button = document.createElement("button");
+                    button.type = "button";
+                    button.className = "secondary-button agent-doctor-action";
+                    button.textContent = label;
+                    actions.append(button);
+                }
+
+                const read = element => {
+                    const style = getComputedStyle(element);
+                    const rect = element.getBoundingClientRect();
+                    return {
+                        overflow: style.overflow,
+                        overflowX: style.overflowX,
+                        overflowY: style.overflowY,
+                        boxShadow: style.boxShadow,
+                        rect: {
+                            left: rect.left,
+                            top: rect.top,
+                            right: rect.right,
+                            bottom: rect.bottom,
+                            width: rect.width,
+                            height: rect.height,
+                        },
+                    };
+                };
+                const ancestors = [];
+                for (let node = actions; node && node !== document.body; node = node.parentElement) {
+                    ancestors.push(read(node));
+                }
+                return {
+                    panel: read(panel),
+                    content: read(content),
+                    actions: read(actions),
+                    buttons: [...actions.children].map(read),
+                    ancestors,
+                    documentOverflow: document.documentElement.scrollWidth
+                        - document.documentElement.clientWidth,
+                };
+            }"""
+        )
+        assert contract is not None
+        assert contract["panel"]["overflow"] == "visible"
+        assert contract["content"]["overflow"] == "visible"
+        assert contract["actions"]["overflow"] == "visible"
+        assert len(contract["buttons"]) == 4
+        assert all(button["rect"]["width"] > 0 for button in contract["buttons"])
+        assert all(button["boxShadow"] != "none" for button in contract["buttons"])
+        assert all(
+            ancestor["overflowX"] == "visible" and ancestor["overflowY"] == "visible"
+            for ancestor in contract["ancestors"][:4]
+        ), contract["ancestors"]
+        assert contract["documentOverflow"] <= 1
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
 def test_agent_prompt_composer_stays_compact_until_expanded(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -1513,15 +1814,19 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
                     scrollWidth: text.scrollWidth,
                 }));
                 return {
+                    menuLeft: menu?.left,
                     menuBottom: menu?.bottom,
                     menuRight: menu?.right,
+                    menuWidth: menu?.width,
                     triggerTop: trigger?.top,
                     options,
                 };
             }"""
         )
         assert menu_geometry["menuBottom"] <= geometry["effort"]["top"] + 1
+        assert menu_geometry["menuLeft"] >= -1
         assert menu_geometry["menuRight"] <= width + 1
+        assert menu_geometry["menuWidth"] > geometry["effort"]["width"] + 1
         assert all(option["scrollWidth"] <= option["clientWidth"] + 1 for option in menu_geometry["options"])
         effort.click()
         expect(effort_menu).to_be_hidden()
@@ -1558,7 +1863,7 @@ def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
-    """Verify shared label metrics while preserving the model trigger's intended emphasis."""
+    """Verify shared label metrics while keeping the Current project name readable."""
     page, context = _open_page(
         disposable_browser,
         f"{sidebar_server_url}/agent",
@@ -1614,6 +1919,9 @@ def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
         assert sidebar_typography["lineHeight"] == "18.85px"
         assert main_typography["fontWeight"] == "500"
         assert sidebar_typography["fontWeight"] == "400"
+        project_name = page.locator("[data-agent-project-name]")
+        expect(project_name).to_be_visible()
+        assert project_name.evaluate("element => getComputedStyle(element).fontSize") == "17px"
     finally:
         context.close()
 
@@ -1729,7 +2037,7 @@ def test_settings_reuse_shared_primary_and_numeric_control_contracts(
     """Verify Settings controls share the annotated visual and layout contracts."""
     page, context = _open_page(
         disposable_browser,
-        f"{sidebar_server_url}/settings#settings-chatgpt",
+        f"{sidebar_server_url}/settings#settings-llm",
         width,
         height,
         touch=touch,
@@ -1955,6 +2263,11 @@ def test_cache_action_row_switches_stop_visibility_with_running_state(
         expect(stop_form).to_be_visible()
         stop_button = stop_form.locator("#stop_button")
         expect(stop_button).to_have_class(re.compile(r"\bdanger-button\b"))
+        stop_border = stop_button.evaluate(
+            "button => ({width: getComputedStyle(button).borderWidth, "
+            "color: getComputedStyle(button).borderColor})"
+        )
+        assert stop_border == {"width": "0px", "color": "rgba(0, 0, 0, 0)"}
         running_stop_right = stop_button.evaluate(
             "button => button.getBoundingClientRect().right"
         )
@@ -2437,6 +2750,7 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
     """Verify Gemini and Grok serialize a selected recent session into Agent execution."""
     captured_ask_payloads: list[dict[str, str]] = []
     source_requests: list[str] = []
+    history_requests: list[str] = []
 
     def agent_payload(selected_platform: str) -> dict[str, object]:
         return {
@@ -2521,6 +2835,21 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
         captured_ask_payloads.append(route.request.post_data_json or {})
         route.fulfill(json=agent_payload(platform))
 
+    def fulfill_grok_history(route) -> None:
+        history_requests.append(route.request.url)
+        route.fulfill(
+            json={
+                "conversation_url": session_url,
+                "title": f"{platform_label} selected session",
+                "history": [{
+                    "prompt": "What changed?",
+                    "response": "The selected recent session is now visible.",
+                    "response_html": "<p>The selected recent session is now visible.</p>",
+                }],
+                "limit": 100,
+            }
+        )
+
     context = disposable_browser.new_context(
         viewport={"width": 1_280, "height": 720},
         has_touch=False,
@@ -2533,6 +2862,8 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
     page.route("**/api/agent/preferences", fulfill_preferences)
     page.route("**/api/agent/sources**", fulfill_sources)
     page.route("**/api/agent/ask", fulfill_ask)
+    if platform == "grok":
+        page.route("**/api/agent/grok-session-history**", fulfill_grok_history)
     try:
         page.goto(f"{sidebar_server_url}/agent", wait_until="domcontentloaded")
         page.get_by_role("button", name="Web service: ChatGPT", exact=True).click()
@@ -2587,7 +2918,27 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
         # Short catalogs may shrink-wrap, so require the Dock clearance as a minimum.
         assert scroll_metrics["renderedDockGap"] >= scroll_metrics["dockGap"] - 1
         expect(recent_option).to_be_visible()
-        recent_option.click()
+        if platform == "grok":
+            immediate = recent_option.evaluate(
+                """option => {
+                    option.click();
+                    const status = document.querySelector('#agent_response_status');
+                    return {
+                        state: status?.dataset.status || '',
+                        copy: status?.textContent?.trim() || '',
+                    };
+                }"""
+            )
+            assert immediate["state"] == "loading"
+            assert "Loading the selected Grok session history" in immediate["copy"]
+            expect(page.locator("#agent_response_status")).to_have_attribute("data-status", "ready")
+            expect(page.locator("#agent_response_question")).to_have_text("What changed?")
+            expect(page.locator("[data-agent-response-answer-content]")).to_contain_text(
+                "The selected recent session is now visible."
+            )
+            assert len(history_requests) == 1
+        else:
+            recent_option.click()
 
         expect(page.locator('[data-agent-prompt-session-mode]')).to_have_value("recent")
         expect(page.locator('[data-agent-prompt-conversation-url]')).to_have_value(session_url)
@@ -2773,10 +3124,8 @@ def test_chatgpt_edge_recent_sessions_are_a_direct_scrollable_keyboard_list(
         expect(first_option).to_have_attribute("role", "option")
         expect(first_option).to_have_attribute("tabindex", "0")
         assert first_option.evaluate("element => element.tagName") == "BUTTON"
-        assert source_requests == [], (
-            "ChatGPT/Edge must consume the bootstrapped recent-session catalog instead of "
-            "starting an independent source request."
-        )
+        assert source_requests, "Selecting Recent sessions must request a fresh catalog."
+        assert all("refresh=1" in request_url for request_url in source_requests)
 
         assert_direct_list_geometry(1_280, 900)
 
@@ -2955,6 +3304,11 @@ def test_agent_provider_projects_submit_agentic_task_target(
         page.locator(
             '.agent-session-mode-combobox [data-agent-combobox-option="project"]'
         ).click()
+        expect(
+            page.locator(
+                ".agent-session-mode-combobox [data-agent-combobox-selected-icon]"
+            )
+        ).to_have_attribute("src", re.compile(r"/static/images/folder\.fill\.svg$"))
         project_option = page.locator(
             f'[data-agent-session-list="projects"] [data-agent-combobox-option="{project_url}"]'
         )
@@ -2978,6 +3332,182 @@ def test_agent_provider_projects_submit_agentic_task_target(
         assert captured_ask_payloads[0]["conversation_url"] == ""
         assert any(f"platform={platform}" in url for url in source_requests)
         assert any("project_url=" in url for url in project_session_requests)
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_project_session_selection_loads_grok_response_immediately(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Show loading immediately, then render the selected Grok project session."""
+    project_url = "https://grok.com/project/grok-project?tab=conversations"
+    session_url = "https://grok.com/project/grok-project?chat=grok-session"
+    history_requests: list[str] = []
+
+    def agent_payload() -> dict[str, object]:
+        return {
+            "runtime": {
+                "ready": True,
+                "host_operating_system": "macos",
+                "message": "Computer Use is ready on this Mac.",
+                "terminal_execution": {
+                    "ready": True,
+                    "status_label": "Granted",
+                    "message": "Terminal execution is available.",
+                },
+            },
+            "agent": {
+                "running": False,
+                "phase": "idle",
+                "message": "Ready to use a signed-in Web AI session.",
+                "prompt": "",
+                "response": "",
+                "response_html": "",
+                "history": [],
+                "activity": [],
+                "conversation_url": "",
+                "project_url": "",
+                "session_title": "",
+                "session_mode": "new",
+                "platform": "grok",
+                "model": "grok-build",
+                "finished_at": "",
+            },
+        }
+
+    def fulfill_agent_status(route) -> None:
+        route.fulfill(json=agent_payload())
+
+    def fulfill_browser_status(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "grok",
+                "browser": "edge",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "Grok account",
+                "message": "Edge is ready for Grok Web.",
+            }
+        )
+
+    def fulfill_preferences(route) -> None:
+        route.fulfill(json=agent_payload())
+
+    def fulfill_sources(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "grok",
+                "browser_label": "Edge",
+                "recent_sessions": [],
+                "projects": [{
+                    "id": "grok-project",
+                    "title": "Grok project",
+                    "url": project_url,
+                    "updated_at": "2026-09-02T01:00:00Z",
+                }],
+                "limit": 20,
+            }
+        )
+
+    def fulfill_project_sessions(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "grok",
+                "project_url": project_url,
+                "sessions": [{
+                    "id": "grok-session",
+                    "title": "Renamed project session",
+                    "url": session_url,
+                    "updated_at": "2026-09-02T01:05:00Z",
+                }],
+                "limit": 20,
+            }
+        )
+
+    def fulfill_history(route) -> None:
+        history_requests.append(route.request.url)
+        route.fulfill(
+            json={
+                "conversation_url": session_url,
+                "title": "Renamed project session",
+                "history": [{
+                    "prompt": "What changed?",
+                    "response": "The selected session is now visible.",
+                    "response_html": "<p>The selected session is now visible.</p>",
+                    "started_at": "2026-09-02T01:00:00Z",
+                    "finished_at": "2026-09-02T01:00:02Z",
+                }],
+                "limit": 100,
+            }
+        )
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 900},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/preferences", fulfill_preferences)
+    page.route("**/api/agent/sources**", fulfill_sources)
+    page.route("**/api/agent/project-sessions**", fulfill_project_sessions)
+    page.route("**/api/agent/grok-session-history**", fulfill_history)
+    try:
+        page.goto(f"{sidebar_server_url}/agent", wait_until="domcontentloaded")
+        page.get_by_role("button", name="Web service: ChatGPT", exact=True).click()
+        page.locator('.agent-platform-combobox [data-agent-combobox-option="grok"]').click()
+        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        page.locator('.agent-session-mode-combobox [data-agent-combobox-option="project"]').click()
+
+        project_option = page.locator(
+            f'[data-agent-session-list="projects"] [data-agent-combobox-option="{project_url}"]'
+        )
+        expect(project_option).to_have_count(1)
+        page.locator('[data-agent-session-list="projects"] [data-agent-combobox-trigger]').click()
+        project_option.click()
+        session_option = page.locator(
+            f'[data-agent-session-list="project-sessions"] [data-agent-combobox-option="{session_url}"]'
+        )
+        expect(session_option).to_have_count(1)
+        new_session_icon = page.locator(
+            '[data-agent-session-list="project-sessions"] '
+            '[data-agent-combobox-option="new"] .browser-picker-option-icon'
+        )
+        expect(new_session_icon).to_have_count(1)
+        expect(new_session_icon).to_have_attribute("src", re.compile(r"/static/images/plus\.circle\.svg$"))
+        selected_project_session_icon = page.locator(
+            '[data-agent-session-list="project-sessions"] [data-agent-combobox-selected-icon]'
+        )
+        expect(selected_project_session_icon).to_be_visible()
+        expect(selected_project_session_icon).to_have_attribute(
+            "src", re.compile(r"/static/images/plus\.circle\.svg$")
+        )
+
+        immediate = session_option.evaluate(
+            """option => {
+                option.click();
+                const status = document.querySelector('#agent_response_status');
+                return {
+                    state: status?.dataset.status || '',
+                    copy: status?.textContent?.trim() || '',
+                };
+            }"""
+        )
+        assert immediate["state"] == "loading"
+        assert "Loading the selected Grok session history" in immediate["copy"]
+        expect(page.locator("#agent_response_status")).to_have_attribute("data-status", "ready")
+        expect(page.locator("#agent_response_question")).to_have_text("What changed?")
+        expect(page.locator("[data-agent-response-answer-content]")).to_contain_text(
+            "The selected session is now visible."
+        )
+        assert len(history_requests) == 1
+        assert "conversation_url=" in history_requests[0]
     finally:
         context.close()
 
@@ -3111,6 +3641,72 @@ def test_cache_sidebar_text_media_switcher_defaults_to_text(
             expect(page).to_have_url(
                 re.compile(rf"/browser\?view=text.*session_view=1.*source={source_key}"),
             )
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("width", "height", "touch"),
+    ((1_280, 900, False), (390, 844, True)),
+)
+def test_chatgpt_media_uses_agent_recent_project_picker(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    width: int,
+    height: int,
+    touch: bool,
+) -> None:
+    """Choose a ChatGPT project from the live Agent source catalog contract."""
+    project_url = "https://chatgpt.com/g/g-p-demo-project/project"
+    catalog_payload = {
+        "platform": "chatgpt",
+        "browser_label": "Edge",
+        "recent_sessions": [],
+        "projects": [
+            {
+                "id": "demo-project",
+                "title": "Demo project",
+                "url": project_url,
+                "updated_at": "2026-09-02T00:00:00Z",
+            },
+        ],
+        "limit": 20,
+    }
+    context = disposable_browser.new_context(
+        viewport={"width": width, "height": height},
+        has_touch=touch,
+        is_mobile=touch,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route(
+        "**/api/agent/chatgpt-sources**",
+        lambda route: route.fulfill(json=catalog_payload),
+    )
+    try:
+        page.goto(f"{sidebar_server_url}/cache/chatgpt", wait_until="domcontentloaded")
+        expect(page.locator('input[name="chatgpt_project_url"][type="url"]')).to_have_count(0)
+        if touch:
+            page.locator("#sidebar_toggle").click()
+
+        page.locator('[data-cache-content-mode-option="media"]').click()
+        picker = page.locator("[data-chatgpt-project-picker]")
+        trigger = page.locator("[data-chatgpt-project-trigger]")
+        project_option = page.locator(
+            f'[data-chatgpt-project-option][data-chatgpt-project-url="{project_url}"]'
+        )
+        expect(picker).to_be_visible()
+        expect(project_option).to_have_count(1)
+
+        trigger.click()
+        expect(page.locator("[data-chatgpt-project-menu]")).to_be_visible()
+        project_option.click()
+        expect(page.locator('[name="chatgpt_project_url"]')).to_have_value(project_url)
+        expect(page.locator('[name="chatgpt_project_name"]')).to_have_value("Demo project")
+        expect(trigger).to_have_text("Demo project")
+        expect(project_option).to_have_attribute("aria-selected", "true")
     finally:
         context.close()
 
@@ -5872,6 +6468,149 @@ def test_agent_response_copy_uses_raw_history_text_and_the_global_action_rail(
 
 @pytest.mark.integration
 @pytest.mark.slow
+def test_agent_response_action_rail_survives_a_short_crowded_viewport(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep Safari, question expansion, and copy actions separated in a short view."""
+    payload = _finished_chatgpt_agent_payload()
+    payload["agent"].update(
+        {
+            "prompt": "请检查这个项目使用了哪些机器学习算法？" * 18,
+            "response": "回答内容。" * 160,
+            "response_html": f"<p>{'回答内容。' * 160}</p>",
+        }
+    )
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": _chatgpt_catalog_sessions(),
+    }
+    context = disposable_browser.new_context(
+        viewport={"width": 390, "height": 400},
+        has_touch=True,
+        is_mobile=True,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=payload))
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        question_toggle = page.locator(
+            ".agent-response-question-header .agent-response-overflow-toggle"
+        )
+        answer_toggle = page.locator(
+            "#agent_response_answer .agent-response-overflow-toggle"
+        )
+        expect(question_toggle).to_be_visible()
+        expect(answer_toggle).to_be_visible()
+        expect(page.locator("[data-agent-open-conversation]")).to_be_visible()
+        expect(page.locator("[data-agent-response-copy]")).to_be_visible()
+
+        layout = page.evaluate(
+            """() => {
+                const selector = {
+                    toolbar: '.agent-response-toolbar',
+                    header: '#agent_response_question_header',
+                    question: '[data-agent-response-question]',
+                    safari: '[data-agent-open-conversation]',
+                    expand: '.agent-response-question-header .agent-response-overflow-toggle',
+                    copy: '[data-agent-response-copy]',
+                    answerExpand: '#agent_response_answer .agent-response-overflow-toggle',
+                    theme: '#global_theme_toggle',
+                    };
+                const rect = value => {
+                    const element = document.querySelector(value);
+                    if (!(element instanceof HTMLElement)) return null;
+                    const box = element.getBoundingClientRect();
+                    return {left: box.left, right: box.right, top: box.top, bottom: box.bottom, height: box.height};
+                };
+                const boxes = Object.fromEntries(
+                    Object.entries(selector).map(([key, value]) => [key, rect(value)]),
+                );
+                const overlap = (left, right) => left && right
+                    && left.left < right.right
+                    && left.right > right.left
+                    && left.top < right.bottom
+                    && left.bottom > right.top;
+                return {
+                    boxes,
+                    headerClientHeight: document.querySelector('#agent_response_question_header')?.clientHeight,
+                    questionLineHeight: Number.parseFloat(getComputedStyle(
+                        document.querySelector('[data-agent-response-question]'),
+                    ).lineHeight),
+                    overlaps: {
+                        safariExpand: overlap(boxes.safari, boxes.expand),
+                        expandCopy: overlap(boxes.expand, boxes.copy),
+                        answerExpandCopy: overlap(boxes.answerExpand, boxes.copy),
+                        questionExpand: overlap(boxes.question, boxes.expand),
+                    },
+                    horizontalOverflow: Math.max(
+                        document.documentElement.scrollWidth,
+                        document.body.scrollWidth,
+                    ) - document.documentElement.clientWidth,
+                };
+            }"""
+        )
+        assert layout["headerClientHeight"] >= 36
+        assert layout["headerClientHeight"] >= layout["questionLineHeight"]
+        assert layout["boxes"]["toolbar"]["height"] >= layout["boxes"]["safari"]["height"]
+        assert not any(layout["overlaps"].values()), layout
+        assert layout["boxes"]["safari"]["right"] == pytest.approx(
+            layout["boxes"]["expand"]["right"], abs=1
+        )
+        assert layout["boxes"]["expand"]["right"] == pytest.approx(
+            layout["boxes"]["copy"]["right"], abs=1
+        )
+        for action in ("safari", "expand", "copy", "answerExpand"):
+            assert layout["boxes"][action]["right"] == pytest.approx(
+                layout["boxes"]["theme"]["right"], abs=1
+            ), layout
+        assert layout["horizontalOverflow"] <= 1
+
+        page.set_viewport_size({"width": 1_159, "height": 863})
+        page.evaluate(
+            """() => new Promise(resolve => {
+                requestAnimationFrame(() => requestAnimationFrame(resolve));
+            })"""
+        )
+        desktop_rail = page.evaluate(
+            """() => {
+                const selectors = {
+                    theme: '#global_theme_toggle',
+                    safari: '[data-agent-open-conversation]',
+                    expand: '.agent-response-question-header .agent-response-overflow-toggle',
+                    copy: '[data-agent-response-copy]',
+                    answerExpand: '#agent_response_answer .agent-response-overflow-toggle',
+                };
+                const rect = selector => {
+                    const element = document.querySelector(selector);
+                    if (!(element instanceof HTMLElement)) return null;
+                    const box = element.getBoundingClientRect();
+                    return {right: box.right, top: box.top, bottom: box.bottom};
+                };
+                return Object.fromEntries(
+                    Object.entries(selectors).map(([key, selector]) => [key, rect(selector)]),
+                );
+            }"""
+        )
+        assert all(desktop_rail[key] is not None for key in ("theme", "safari", "expand", "copy"))
+        for action in ("safari", "expand", "copy"):
+            assert desktop_rail[action]["right"] == pytest.approx(
+                desktop_rail["theme"]["right"], abs=1
+            ), desktop_rail
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
 def test_agent_response_scroll_stays_at_the_bottom_during_status_refresh(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -6038,6 +6777,123 @@ def test_agent_browser_status_retries_a_fresh_negative_cache_and_force_refreshes
             }"""
         )
         assert len(browser_status_requests) == 2
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_status_stays_objective_while_browser_verification_is_pending(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Show a neutral checking state until the browser probe has completed."""
+    pending_payload = _finished_chatgpt_agent_payload()
+    pending_payload["agent"] = {
+        **pending_payload["agent"],
+        "phase": "",
+        "message": "",
+        "response": "",
+        "response_html": "",
+        "conversation_url": "",
+        "started_at": "",
+        "finished_at": "",
+    }
+    browser_status_requests: list[str] = []
+
+    def hold_browser_status(route) -> None:
+        browser_status_requests.append(route.request.url)
+        # Keep the probe unresolved so the page remains in its verification state.
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=pending_payload))
+    page.route("**/api/browser-session**", hold_browser_status)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        response_status = page.locator("#agent_response_status")
+        response_status_copy = page.locator("[data-agent-response-status-copy]")
+        response_status_spinner = page.locator("[data-agent-response-status-spinner]")
+        expect(response_status).to_be_visible()
+        expect(response_status).to_have_attribute("data-status", "loading")
+        expect(response_status_spinner).to_be_visible()
+        expect(response_status_copy).to_contain_text("Checking")
+        expect(response_status_copy).not_to_contain_text("Unavailable")
+        assert len(browser_status_requests) == 1
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_project_path_prefers_trailing_directories_without_overflow(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep the useful end of a long project path visible in the current-project input."""
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+    }
+    long_path = "/Users/lightwing/Desktop/agenticContext/projects/ABC/DEF"
+    context = disposable_browser.new_context(
+        viewport={"width": 1_024, "height": 768},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route(
+        "**/api/agent/status",
+        lambda route: route.fulfill(json=_finished_chatgpt_agent_payload()),
+    )
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    page.route(
+        "**/api/agent/sources**",
+        lambda route: route.fulfill(
+            json={
+                "platform": "chatgpt",
+                "browser_label": "Edge",
+                "recent_sessions": [],
+                "projects": [],
+                "limit": 20,
+            }
+        ),
+    )
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        project_path = page.locator("#agent_project_path")
+        project_path.fill(long_path)
+        geometry = project_path.evaluate(
+            """input => {
+                const style = getComputedStyle(input);
+                return {
+                    direction: style.direction,
+                    textAlign: style.textAlign,
+                    textOverflow: style.textOverflow,
+                    value: input.value,
+                    documentOverflow: Math.max(
+                        document.documentElement.scrollWidth,
+                        document.body.scrollWidth,
+                    ) > document.documentElement.clientWidth,
+                };
+            }"""
+        )
+        assert geometry["value"] == long_path
+        assert geometry["direction"] == "rtl"
+        assert geometry["textAlign"] == "left"
+        assert geometry["textOverflow"] == "ellipsis"
+        assert not geometry["documentOverflow"]
     finally:
         context.close()
 
@@ -6300,6 +7156,103 @@ def test_stale_chatgpt_probe_failure_cannot_overwrite_grok_ready_state(
         expect(page.get_by_role("button", name="Web service: Grok", exact=True)).to_be_visible()
         expect(page.locator(".agent-readiness")).to_have_count(0)
         expect(page.locator("#agent_ask_button")).to_be_enabled()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_running_agent_status_shows_elapsed_turn_count_and_activity_time(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep live Agent telemetry readable with a two-line running status."""
+    started_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    payload = _finished_chatgpt_agent_payload()
+    payload["agent"] = {
+        **payload["agent"],
+        "running": True,
+        "phase": "running",
+        "finished_at": "",
+        "started_at": started_at,
+        "turn_count": 3,
+        "activity": [
+            {
+                "status": "running",
+                "label": "Read",
+                "detail": "app/services/very-long-agent-activity-path-that-must-wrap-cleanly.py",
+                "meta": "Turn 3",
+                "timestamp": "2026-09-02T08:00:00Z",
+            }
+        ],
+        "message": "Controller observation sent; waiting for the next ChatGPT action.",
+    }
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+    }
+    context = disposable_browser.new_context(
+        viewport={"width": 390, "height": 844},
+        has_touch=True,
+        is_mobile=True,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=payload))
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        status = page.locator("#agent_response_status")
+        status_copy = page.locator("[data-agent-response-status-copy]")
+        activity_meta = page.locator("#agent_activity_list .agent-activity-meta").first
+        expect(status).to_contain_text("Working")
+        expect(status).to_contain_text("3 turns")
+        expect(status_copy.locator("br")).to_have_count(1)
+        expect(status_copy.locator("[data-agent-response-status-leading]")).to_have_text(
+            re.compile(r"^Working · \d{2}:\d{2}:\d{2} · 3 turns$")
+        )
+        expect(status_copy.locator("[data-agent-response-status-detail]")).to_have_text(
+            "Controller observation sent; waiting for the next ChatGPT action."
+        )
+        expect(activity_meta).to_have_text("Turn 3 · 16:00:00")
+        status_text_before = status_copy.text_content()
+        page.wait_for_function(
+            """previous => document.querySelector('[data-agent-response-status-copy]')?.textContent !== previous""",
+            arg=status_text_before,
+        )
+        layout = page.evaluate(
+            """() => {
+                const copy = document.querySelector('[data-agent-response-status-copy]');
+                const leading = copy?.querySelector('[data-agent-response-status-leading]');
+                const statusDetail = copy?.querySelector('[data-agent-response-status-detail]');
+                const spinner = document.querySelector('[data-agent-response-status-spinner]');
+                const activityDetail = document.querySelector('#agent_activity_list .agent-activity-detail');
+                const read = element => element ? {
+                    clientHeight: element.clientHeight,
+                    clientWidth: element.clientWidth,
+                    lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+                    scrollWidth: element.scrollWidth,
+                } : null;
+                return {
+                    copy: read(copy),
+                    statusLeadingLeft: leading?.getBoundingClientRect().left || null,
+                    statusDetailLeft: statusDetail?.getBoundingClientRect().left || null,
+                    spinnerRight: spinner?.getBoundingClientRect().right || null,
+                    detail: read(activityDetail),
+                };
+            }"""
+        )
+        assert layout["statusLeadingLeft"] == pytest.approx(layout["statusDetailLeft"], abs=1)
+        assert layout["statusLeadingLeft"] >= layout["spinnerRight"]
+        assert layout["copy"]["clientHeight"] > layout["copy"]["lineHeight"]
+        assert layout["copy"]["clientHeight"] <= layout["copy"]["lineHeight"] * 2 + 2
+        assert layout["copy"]["scrollWidth"] <= layout["copy"]["clientWidth"] + 1
+        assert layout["detail"]["scrollWidth"] <= layout["detail"]["clientWidth"] + 1
     finally:
         context.close()
 

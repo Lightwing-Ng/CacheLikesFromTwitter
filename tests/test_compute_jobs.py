@@ -1,6 +1,6 @@
 """Durable compute-job lifecycle and safety contract tests.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ def _prepare_workspace(
             }
         ],
     }
-    (workspace / ".cachelikes-compute.json").write_text(
+    (workspace / ".agenticContext-compute.json").write_text(
         json.dumps(approval),
         encoding="utf-8",
     )

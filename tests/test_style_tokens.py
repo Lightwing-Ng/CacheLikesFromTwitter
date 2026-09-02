@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.13-codex.1
+Code version: v1.51.35-codex.1
 """
 
 from pathlib import Path
@@ -479,6 +479,21 @@ def test_sidebar_actions_consume_shared_semantic_tokens() -> None:
         assert token in stylesheet
 
 
+def test_cache_stop_button_is_borderless_in_every_interactive_state() -> None:
+    """Keep the Cache stop action on a borderless danger-button treatment."""
+    stylesheet = _stylesheet()
+    stop_start = stylesheet.index(".stop-button {")
+    stop_rule = stylesheet[stop_start:stylesheet.index("\n}", stop_start)]
+    stop_hover_start = stylesheet.index(".stop-button:hover,")
+    stop_hover_rule = stylesheet[
+        stop_hover_start:stylesheet.index("\n}", stop_hover_start)
+    ]
+
+    assert "border-width: 0;" in stop_rule
+    assert "border-color: transparent;" in stop_rule
+    assert "border-color: transparent;" in stop_hover_rule
+
+
 def test_sidebar_shell_and_dock_consume_frosted_glass_tokens() -> None:
     """Keep the sidebar shell and dock on the sibling frosted-glass surface system."""
     stylesheet = _stylesheet()
@@ -930,6 +945,9 @@ def test_browser_filter_actions_reuse_the_standard_secondary_button() -> None:
     ).read_text(encoding="utf-8")
     assert ".browser-filter-actions .ghost-link--compact {" not in stylesheet
     assert ".browser-filter-actions .secondary-button {" in stylesheet
+    actions_start = stylesheet.index(".browser-filter-actions {")
+    actions_rule = stylesheet[actions_start:stylesheet.index("\n}", actions_start)]
+    assert "grid-template-columns: minmax(0, 1fr);" in actions_rule
     refresh_container_start = stylesheet.index(".browser-filter-actions .secondary-button {")
     refresh_container_rule = stylesheet[
         refresh_container_start:stylesheet.index("\n}", refresh_container_start)
@@ -941,17 +959,14 @@ def test_browser_filter_actions_reuse_the_standard_secondary_button() -> None:
     ):
         assert token in refresh_container_rule
     assert "\n    width: 100%;" not in refresh_container_rule
-    media_start = stylesheet.index(".browser-chatgpt-media-link {")
-    media_rule = stylesheet[media_start:stylesheet.index("\n}", media_start)]
-    assert "width: fit-content;" in media_rule
-    assert "justify-self: center;" in media_rule
-    assert "width: 100%;" not in media_rule
     for markup in (
-        'class="ghost-link ghost-link--compact browser-chatgpt-media-link"',
-        'class="ghost-link ghost-link--compact browser-session-back-link"',
+        'class="secondary-button browser-session-back-link"',
         'class="secondary-button browser-clear-link"',
     ):
         assert markup in browser_template
+    assert 'class="ghost-link ghost-link--compact browser-session-back-link"' not in browser_template
+    assert "ChatGPT Media cache" not in browser_template
+    assert "browser-chatgpt-media-link" not in browser_template
     assert 'class="secondary-button browser-refresh-button"' in browser_template
 
 
@@ -977,6 +992,7 @@ def test_prompt_tag_specimen_reuses_the_saved_prompt_tag_contract() -> None:
     assert 'class="browser-prompt-tag-remove"' in template
     assert 'data-style-token-demo="type-specimen"' not in template
     assert 'aria-label="Frosted glass demo"' in template
+    assert "The Agent selector keeps the active browser visible" not in template
 
     cache_template = (
         STYLE_PATH.parents[1] / "templates/_cache_page.html"
@@ -1037,18 +1053,15 @@ def test_style_token_component_catalog_consumes_the_sibling_control_contracts() 
         assert fragment in stylesheet
 
 
-def test_browser_session_actions_use_the_13px_annotation_size() -> None:
-    """Keep the annotated Local resources actions on the shared text-size token."""
+def test_browser_refresh_action_uses_the_13px_annotation_size() -> None:
+    """Keep the remaining Local resources refresh action on the shared text-size token."""
     stylesheet = _stylesheet()
     compact_start = stylesheet.index(".ghost-link--compact {")
     compact_rule = stylesheet[compact_start:stylesheet.index("\n}", compact_start)]
-    media_start = stylesheet.index(".browser-chatgpt-media-link {")
-    media_rule = stylesheet[media_start:stylesheet.index("\n}", media_start)]
     refresh_start = stylesheet.index(".browser-refresh-button {")
     refresh_rule = stylesheet[refresh_start:stylesheet.index("\n}", refresh_start)]
 
     assert "font-size: var(--font-size-3);" in compact_rule
-    assert "font-size: var(--font-size-3);" not in media_rule
     assert "font-size: var(--font-size-3);" in refresh_rule
 
 
@@ -1407,6 +1420,37 @@ def test_browser_session_safari_drawer_icon_uses_two_theme_accents() -> None:
         '-webkit-mask: url("/static/images/safari.svg") center/contain no-repeat;',
     ):
         assert token in icon_rule
+
+
+def test_style_tokens_sidebar_icon_preserves_colorful_mark() -> None:
+    """Keep the Style tokens sidebar mark colorful in both Settings nav variants."""
+    stylesheet = _stylesheet()
+    category_icon_start = stylesheet.index(".settings-category-nav-icon {")
+    category_icon_rule = stylesheet[
+        category_icon_start:stylesheet.index("\n}", category_icon_start)
+    ]
+    settings_icon_start = stylesheet.index(".settings-nav-item .icon,")
+    settings_icon_rule = stylesheet[
+        settings_icon_start:stylesheet.index("\n}", settings_icon_start)
+    ]
+    style_token_start = stylesheet.index(".settings-category-nav-item-style-tokens {")
+    style_token_rule = stylesheet[
+        style_token_start:stylesheet.index("\n}", style_token_start)
+    ]
+    settings_style_token_start = stylesheet.index(".settings-nav-item-style-tokens {")
+    settings_style_token_rule = stylesheet[
+        settings_style_token_start:stylesheet.index("\n}", settings_style_token_start)
+    ]
+    active_rule_start = stylesheet.index(".settings-nav-item.is-active .icon {")
+    active_rule = stylesheet[
+        active_rule_start:stylesheet.index("\n}", active_rule_start)
+    ]
+
+    assert "background: var(--settings-icon-background, var(--settings-category-icon-tint, var(--theme-muted)));" in category_icon_rule
+    assert "background: var(--settings-icon-background, var(--settings-icon-tint, var(--theme-muted)));" in settings_icon_rule
+    assert "background: var(--settings-icon-background, var(--accent-fill));" in active_rule
+    for rule in (style_token_rule, settings_style_token_rule):
+        assert "--settings-icon-background: linear-gradient(90deg, var(--accent) 0%, var(--accent-secondary) 100%);" in rule
 
 
 def test_browser_session_title_reuses_regular_untagged_link_contract() -> None:
@@ -1769,14 +1813,14 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.91.0-codex.1 */",
+        "/* Code version: v2.91.25-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
         '.settings-category-nav-item-browser {\n    --settings-category-icon-url: url("/static/images/safari.svg");',
         '.settings-nav-item-browser { --settings-category-icon-url: url("/static/images/safari.svg"); }',
-        '.settings-category-nav-item-chatgpt {\n    --settings-category-icon-url: url("/static/images/ChatGPT-Logo.svg");',
-        '.settings-nav-item-chatgpt { --settings-category-icon-url: url("/static/images/ChatGPT-Logo.svg"); }',
+        '.settings-category-nav-item-llm {\n    --settings-category-icon-url: url("/static/images/wand.and.sparkles.inverse.svg");',
+        '.settings-nav-item-llm { --settings-category-icon-url: url("/static/images/wand.and.sparkles.inverse.svg"); }',
         '.settings-category-nav-item-agent {\n    --settings-category-icon-url: url("/static/images/arrow.uturn.up.circle.svg");',
         '.settings-nav-item-agent { --settings-category-icon-url: url("/static/images/arrow.uturn.up.circle.svg"); }',
         "width: 22px;",
@@ -2065,6 +2109,27 @@ def test_agent_response_toolbar_owns_the_compact_lifecycle_status() -> None:
     assert "gap: 12px;" in toolbar_rule
     assert "min-width: 0;" in status_rule
     assert "margin: 0;" in status_rule
+    assert "flex: 1 1 auto;" in status_rule
+    assert "align-items: flex-start;" in status_rule
+
+    status_copy_start = stylesheet.index(".agent-response-status-copy {")
+    status_copy_rule = stylesheet[status_copy_start:stylesheet.index("\n}", status_copy_start)]
+    for token in (
+        "-webkit-line-clamp: 2;",
+        "overflow-wrap: anywhere;",
+        "word-break: break-word;",
+        "white-space: normal;",
+    ):
+        assert token in status_copy_rule
+
+    detail_start = stylesheet.index(".agent-activity-detail {")
+    detail_rule = stylesheet[detail_start:stylesheet.index("\n}", detail_start)]
+    assert "overflow-wrap: anywhere;" in detail_rule
+    assert "white-space: normal;" in detail_rule
+
+    meta_start = stylesheet.index(".agent-activity-meta {")
+    meta_rule = stylesheet[meta_start:stylesheet.index("\n}", meta_start)]
+    assert "white-space: nowrap;" in meta_rule
 
 
 def test_agent_composer_triggers_use_the_compact_shared_height_token() -> None:
@@ -2093,9 +2158,49 @@ def test_agent_composer_dropdowns_open_above_the_bottom_composer() -> None:
     for token in (
         "top: auto;",
         "bottom: calc(100% + 4px);",
-        "right: auto;",
+        "left: auto;",
+        "right: 0;",
     ):
         assert token in selector_rule
+
+
+def test_agent_effort_dropdown_keeps_full_labels_inside_the_viewport() -> None:
+    """Size live effort menus to their labels while keeping them inside the viewport."""
+    stylesheet = _stylesheet()
+    selector = ".agent-model-dropdown,\n.agent-effort-dropdown {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+    text_start = stylesheet.index(
+        ".agent-model-dropdown .trade-strategy-dropdown-text,\n.agent-effort-dropdown .trade-strategy-dropdown-text {"
+    )
+    text_rule = stylesheet[text_start:stylesheet.index("\n}", text_start)]
+
+    assert "width: max-content;" in selector_rule
+    assert "max-width: min(360px, calc(100vw - 20px));" in selector_rule
+    assert "box-sizing: border-box;" in selector_rule
+    assert "white-space: normal;" in text_rule
+    assert "overflow-wrap: anywhere;" in text_rule
+
+
+def test_agent_session_list_triggers_use_the_requested_36px_height() -> None:
+    """Keep the Recent projects and Project session controls compact and aligned."""
+    stylesheet = _stylesheet()
+    selector = ".agent-session-list-combobox .agent-combobox-trigger {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "height: var(--control-form-height);" in selector_rule
+    assert "min-height: var(--control-form-height);" in selector_rule
+
+
+def test_agent_doctor_actions_stack_vertically() -> None:
+    """Keep recovery actions in one column while allowing their shadows to escape."""
+    stylesheet = _stylesheet()
+    selector_start = stylesheet.index(".agent-doctor-actions {")
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "display: grid;" in selector_rule
+    assert "grid-template-columns: minmax(0, 1fr);" in selector_rule
 
 
 def test_agent_session_lists_open_above_the_sidebar_trigger() -> None:
@@ -2189,8 +2294,15 @@ def test_browser_session_status_uses_the_same_leading_slot_for_loading_and_failu
     error_start = stylesheet.index('.browser-session-status-checkmark[data-status-state="error"] {')
     error_rule = stylesheet[error_start:stylesheet.index("\n}", error_start)]
     assert "background-color: var(--theme-error);" in error_rule
-    assert 'mask: url("/static/images/xmark.svg") center/contain no-repeat;' in error_rule
-    assert '-webkit-mask: url("/static/images/xmark.svg") center/contain no-repeat;' in error_rule
+    assert 'mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;' in error_rule
+    assert '-webkit-mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;' in error_rule
+
+    directory_error_start = stylesheet.index(".settings-directory-status.field-status--error::before {")
+    directory_error_rule = stylesheet[
+        directory_error_start:stylesheet.index("\n}", directory_error_start)
+    ]
+    assert 'mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;' in directory_error_rule
+    assert '-webkit-mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;' in directory_error_rule
 
 
 def test_agent_compact_status_card_has_no_border() -> None:
@@ -2200,6 +2312,32 @@ def test_agent_compact_status_card_has_no_border() -> None:
     card_start = stylesheet.index(".browser-session-status-card-compact {")
     card_rule = stylesheet[card_start:stylesheet.index("\n}", card_start)]
     assert "border-width: 0;" in card_rule
+
+
+def test_cache_browser_session_status_card_has_no_border() -> None:
+    """Keep the Cache browser-session status card borderless without changing its surface."""
+    stylesheet = _stylesheet()
+
+    card_start = stylesheet.index(".browser-session-panel .browser-session-status-card {")
+    card_rule = stylesheet[card_start:stylesheet.index("\n}", card_start)]
+    assert "border-width: 0;" in card_rule
+
+
+def test_browser_session_message_time_uses_explicit_two_line_layout() -> None:
+    """Keep detail-table message timestamps split into date and clock rows at every width."""
+    stylesheet = _stylesheet()
+
+    time_start = stylesheet.index(
+        ".browser-session-detail-table time.browser-session-message-time {"
+    )
+    time_rule = stylesheet[time_start:stylesheet.index("\n}", time_start)]
+    span_start = stylesheet.index(".browser-session-message-time > span {")
+    span_rule = stylesheet[span_start:stylesheet.index("\n}", span_start)]
+
+    for token in ("display: inline-grid;", "gap: 2px;", "white-space: normal;"):
+        assert token in time_rule
+    for token in ("display: block;", "white-space: nowrap;"):
+        assert token in span_rule
 
 
 def test_agent_runtime_labels_use_the_sidebar_label_type_contract() -> None:
@@ -2217,6 +2355,17 @@ def test_agent_runtime_labels_use_the_sidebar_label_type_contract() -> None:
     emphasis_start = stylesheet.index(emphasis_selector)
     emphasis_rule = stylesheet[emphasis_start:stylesheet.index("\n}", emphasis_start)]
     assert "font-weight: var(--font-weight-medium);" in emphasis_rule
+
+
+def test_path_inputs_prefer_trailing_directories_when_narrow() -> None:
+    """Keep the useful end of every long path visible in its input."""
+    stylesheet = _stylesheet()
+    selector_start = stylesheet.index(".path-display-input {")
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "direction: rtl;" in selector_rule
+    assert "text-align: left;" in selector_rule
+    assert "text-overflow: ellipsis;" in selector_rule
 
 
 def test_agent_response_pagination_keeps_spatial_effects_unclipped() -> None:
@@ -2238,6 +2387,19 @@ def test_agent_response_pagination_keeps_spatial_effects_unclipped() -> None:
     answer_rule = stylesheet[answer_start:stylesheet.index("\n}", answer_start)]
     assert "overflow-x: hidden;" in answer_rule
     assert "overflow-y: auto;" in answer_rule
+
+
+def test_agent_doctor_actions_keep_spatial_effects_unclipped() -> None:
+    """Keep Doctor recovery action effects outside the rounded panel boundary."""
+    stylesheet = _stylesheet()
+
+    panel_start = stylesheet.index(".agent-doctor-panel {")
+    panel_rule = stylesheet[panel_start:stylesheet.index("\n}", panel_start)]
+    events_start = stylesheet.index(".agent-doctor-events {")
+    events_rule = stylesheet[events_start:stylesheet.index("\n}", events_start)]
+
+    assert "overflow: visible;" in panel_rule
+    assert "overflow-y: auto;" in events_rule
 
 
 def test_agent_response_copy_uses_the_global_action_rail_without_consuming_scroll_space() -> None:
@@ -2269,6 +2431,44 @@ def test_agent_response_copy_uses_the_global_action_rail_without_consuming_scrol
         assert declaration in copy_rule
     assert ".agent-response-copy-feedback {" in stylesheet
     assert ".agent-response-copy.is-copied .agent-response-copy-icon {" in stylesheet
+
+
+def test_agent_response_actions_align_to_the_global_action_rail() -> None:
+    """Keep the response action rows on the same horizontal rail as the theme control."""
+    stylesheet = _stylesheet()
+
+    toolbar_start = stylesheet.rindex(".agent-response-toolbar {")
+    toolbar_rule = stylesheet[toolbar_start:stylesheet.index("\n}", toolbar_start)]
+    question_header_start = stylesheet.index(".agent-response-question-header {")
+    question_header_rule = stylesheet[
+        question_header_start:stylesheet.index("\n}", question_header_start)
+    ]
+    rail_bleed = "margin-inline-end: calc(-1 * (var(--workspace-article-pad-inline) - var(--layout-edge-gap)));"
+
+    assert rail_bleed in toolbar_rule
+    assert rail_bleed in question_header_rule
+
+
+def test_agent_current_project_name_uses_requested_type_size() -> None:
+    """Keep the Current project name readable without changing other field-help copy."""
+    stylesheet = _stylesheet()
+    selector = ".agent-runtime-form > label.field > .field-help[data-agent-project-name] {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "font-size: 17px;" in selector_rule
+
+
+def test_agent_response_answer_expansion_stays_on_the_global_action_rail() -> None:
+    """Keep the answer expansion affordance on the same rail as the theme control."""
+    stylesheet = _stylesheet()
+    answer_toggle_start = stylesheet.index(".agent-response-answer .agent-response-overflow-toggle {")
+    answer_toggle_rule = stylesheet[
+        answer_toggle_start:stylesheet.index("\n}", answer_toggle_start)
+    ]
+
+    assert "position: sticky;" in answer_toggle_rule
+    assert "right: 0;" in answer_toggle_rule
 
 
 def test_agent_response_question_and_answer_use_requested_type_sizes() -> None:
@@ -2320,6 +2520,8 @@ def test_agent_response_header_and_answer_pin_the_composer() -> None:
     """Keep both response regions independently scrollable without moving the composer."""
     stylesheet = _stylesheet()
 
+    toolbar_start = stylesheet.rfind(".agent-response-toolbar {")
+    toolbar_rule = stylesheet[toolbar_start:stylesheet.index("\n}", toolbar_start)]
     header_start = stylesheet.index(".agent-response-question-header {")
     header_rule = stylesheet[header_start:stylesheet.index("\n}", header_start)]
     answer_start = stylesheet.index(".agent-response-answer {")
@@ -2331,6 +2533,14 @@ def test_agent_response_header_and_answer_pin_the_composer() -> None:
         assert "overflow-y: auto;" in rule
         assert "scrollbar-gutter: stable;" in rule
         assert "overscroll-behavior: contain;" in rule
+    for declaration in (
+        "box-sizing: border-box;",
+        "flex: 0 0 auto;",
+    ):
+        assert declaration in toolbar_rule
+        assert declaration in header_rule
+    assert "min-height: var(--settings-round-icon-button-size);" in toolbar_rule
+    assert "min-height: var(--control-form-height);" in header_rule
     assert "overflow-anchor: none;" in answer_rule
     assert "position: sticky;" in composer_rule
     assert "bottom: 0;" in composer_rule

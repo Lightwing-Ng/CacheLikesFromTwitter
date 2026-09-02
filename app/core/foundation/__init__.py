@@ -1,7 +1,8 @@
-"""Stable foundation boundary for runtime configuration and task state."""
+"""Stable foundation boundary for runtime configuration, identity, and task state."""
 
-# Code version: v1.1.0-codex.1
+# Code version: v1.1.1-codex.1
 
+from ..brand import PRODUCT_NAME
 from ..config import (
     DEFAULT_HOST,
     DEFAULT_PORT,
@@ -38,6 +39,7 @@ __all__ = [
     "MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS",
     "MIN_MAX_MEDIA_FILE_SIZE_MIB",
     "MIN_DOWNLOAD_WORKERS",
+    "PRODUCT_NAME",
     "CrawlConfig",
     "TaskState",
     "build_initial_snapshot",

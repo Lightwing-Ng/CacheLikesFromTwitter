@@ -1,11 +1,11 @@
 # Visual Style Reference
 
-Documentation version: `v1.3.0-codex.1`
+Documentation version: `v1.3.1-codex.1`
 
 ## Authority
 
 `../../antigravity/app` is the sibling project and the visual source
-of truth for CacheLikesFromTwitter. When a UI decision is not explicitly constrained by
+of truth for agenticContext. When a UI decision is not explicitly constrained by
 this project, follow the current implementation in that sibling project.
 
 Before changing a shared UI component, also read
@@ -35,8 +35,8 @@ hex values or derive a separate palette in this project.
    its imports in `foundation/`, `layout/`, `components/`, and `views/`.
 2. Reuse the reference project's token names, font stack, spacing, corner radii, surface
    treatment, motion curves, and accessibility states where they apply to existing
-   CacheLikesFromTwitter markup.
-3. Keep CacheLikesFromTwitter-specific templates and interactions intact unless the
+   agenticContext markup.
+3. Keep agenticContext-specific templates and interactions intact unless the
    requested change explicitly modifies behavior.
 4. Verify the affected local page at `http://127.0.0.1:8666` at desktop and narrow
    viewport widths. Confirm the sidebar, dock, form controls, notices, and focus states

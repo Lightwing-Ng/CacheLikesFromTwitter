@@ -1,6 +1,6 @@
 """Tests for durable settings and thread-safe task state.
 
-Code version: v1.4.1-codex.1
+Code version: v1.5.0-codex.1
 """
 
 from __future__ import annotations
@@ -34,7 +34,28 @@ def test_windows_defaults_use_native_application_data_roots(
 
     assert config.default_chrome_user_data_dir() == local_app_data / "Google/Chrome/User Data"
     assert config.default_edge_user_data_dir() == local_app_data / "Microsoft/Edge/User Data"
-    assert config.default_settings_path() == roaming_app_data / "CacheLikesFromTwitter/settings.json"
+    assert config.default_settings_path() == roaming_app_data / "agenticContext/settings.json"
+
+
+def test_default_settings_read_legacy_application_data_without_writing_to_it(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    import app.core.config as config
+
+    home_dir = tmp_path / "home"
+    monkeypatch.setattr(config, "is_macos_host", lambda: True)
+    monkeypatch.setattr(config, "is_windows_host", lambda: False)
+    monkeypatch.setenv("HOME", str(home_dir))
+    monkeypatch.delenv(config.SETTINGS_PATH_ENV, raising=False)
+    monkeypatch.delenv(config.LEGACY_SETTINGS_PATH_ENV, raising=False)
+
+    legacy_path = config.legacy_default_settings_path()
+    legacy_path.parent.mkdir(parents=True)
+    save_config(CrawlConfig(account_name_override="legacy"), legacy_path)
+
+    assert config.default_settings_path() == home_dir / "Library/Application Support/agenticContext/settings.json"
+    assert load_saved_config().account_name_override == "legacy"
 
 
 def test_settings_round_trip_and_invalid_payload_fall_back_to_defaults(tmp_path: Path) -> None:

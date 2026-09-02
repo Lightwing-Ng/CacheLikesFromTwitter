@@ -1,15 +1,15 @@
-<!-- Code version: v1.61.9-codex.1 -->
+<!-- Code version: v1.61.19-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>CacheLikesFromTwitter Browser</title>
+    <title>{{ product_name }} Browser</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.25-codex.1') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.3.5-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -26,6 +26,20 @@
 {% include "_sidebar_bootstrap.html" %}
 {% from "_pagination.html" import render_browser_pagination %}
 {% from "_notice_banner.html" import render_notice_banner %}
+{% macro render_browser_message_time(value) %}
+    {% set timestamp_label = format_chat_message_timestamp_label(value) %}
+    <time datetime="{{ value }}" class="browser-session-message-time">
+        {% if timestamp_label == "Unknown time" %}
+        <span class="browser-session-message-time-unknown">{{ timestamp_label }}</span>
+        {% else %}
+        {% set timestamp_parts = timestamp_label.split(" ", 1) %}
+        <span class="browser-session-message-time-date">{{ timestamp_parts[0] }}</span>
+        {% if timestamp_parts|length > 1 %}
+        <span class="browser-session-message-time-clock">{{ timestamp_parts[1] }}</span>
+        {% endif %}
+        {% endif %}
+    </time>
+{% endmacro %}
 {% macro render_browser_media_previews(media_refs) %}
     {% if media_refs %}
     <div class="browser-media-preview-grid" aria-label="Cached media previews">
@@ -192,14 +206,6 @@
                             </div>
                         </div>
                     </label>
-                    {% if filters.view == "text" and filters.source in ["all", "chatgpt"] %}
-                    <a
-                        href="{{ url_for('browser', view='media', source='chatgpt', q='', sort=filters.sort, session_view='1') }}"
-                        class="ghost-link ghost-link--compact browser-chatgpt-media-link"
-                        data-wait-title="Opening ChatGPT Media cache"
-                        data-wait-copy="Loading the cached media files indexed from ChatGPT sessions."
-                    >ChatGPT Media cache</a>
-                    {% endif %}
                     {% if filters.view == "media" %}
                     <label class="field browser-filter-field">
                         <span>Media type</span>
@@ -306,7 +312,7 @@
                     <div class="browser-content-toolbar">
                         <div class="browser-session-detail-actions browser-local-resources-header-actions{% if filters.view == 'text' and text_page.session_detail %} browser-session-detail-actions--session{% endif %}" data-browser-local-resources-header-actions>
                             {% if filters.view == "text" and text_page.session_detail %}
-                            <a class="ghost-link ghost-link--compact browser-session-back-link" href="{{ url_for('browser', view='text', source=filters.source, q=filters.q, sort=filters.sort, session_view='1', page=filters.session_page) }}">Back to all sessions</a>
+                            <a class="secondary-button browser-session-back-link" href="{{ url_for('browser', view='text', source=filters.source, q=filters.q, sort=filters.sort, session_view='1', page=filters.session_page) }}">Back to all sessions</a>
                             <nav class="browser-session-neighbor-nav" aria-label="Session navigation">
                                 {% if text_page.previous_session %}
                                 <a
@@ -811,7 +817,7 @@
                                     {% endif %}
                                     <tr data-chat-session-id="{{ text_page.current_session.stable_id }}" data-chat-message-id="{{ message.stable_id }}">
                                         <td class="browser-session-table-number">{{ ((text_page.current_page - 1) * text_page.page_size) + loop.index }}</td>
-                                        <td><time datetime="{{ message.last_seen_at }}">{{ format_chat_message_timestamp_label(message.last_seen_at) }}</time></td>
+                                        <td>{{ render_browser_message_time(message.last_seen_at) }}</td>
                                         <td class="browser-session-table-role">
                                             {% if role_icon.filename %}
                                             <span class="browser-chat-role-mark">

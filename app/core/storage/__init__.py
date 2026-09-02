@@ -1,6 +1,6 @@
 """Durable local-resource boundary for catalogs, history, and backups."""
 
-# Code version: v1.2.0-codex.2
+# Code version: v1.2.1-codex.1
 
 from ..chat_history_browser import (
     attach_media_references,
@@ -9,6 +9,7 @@ from ..chat_history_browser import (
     query_chat_history,
 )
 from ..local_media_browser import (
+    DISPLAY_TIMEZONE,
     LocalMediaCatalog,
     format_captured_at_label,
     format_captured_at_timestamp_label,
@@ -41,6 +42,7 @@ __all__ = [
     "build_chat_history_markdown",
     "choose_settings_directory",
     "choose_shadow_backup_destination",
+    "DISPLAY_TIMEZONE",
     "file_manager_open_directory_command",
     "format_captured_at_label",
     "format_datetime_label",

@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.12.1-codex.1`
+Documentation version: `v1.12.2-codex.1`
 
 ## Runtime flow
 
@@ -134,7 +134,7 @@ evolutionary, Bayesian, and other local optimization workers. `job_start`, `job_
 verification timeout, its allowlist, or its workspace fingerprint. The existing verification and
 bodycheck gates remain authoritative for source edits.
 
-A job starts only when `.cachelikes-compute.json` uniquely names a workspace-relative regular
+A job starts only when `.agenticContext-compute.json` uniquely names a workspace-relative regular
 Python entrypoint and pins its current SHA-256. The controller accepts no shell string or arbitrary
 argument vector. It invokes the approved file through the fixed `--config`, `--job-runtime`, and
 optional `--resume` protocol, copies the bounded JSON config into the task-owned runtime directory,
@@ -359,10 +359,10 @@ cannot cause Doctor to send a continuation message to a merely selected recent-s
 | `local_store/` | User media, source catalogs, queues, manifests, and deletion previews | Ignored except `.gitkeep` |
 | `local_store/prompt/` | Snapshot-backed saved prompts retaining source pointers for traceability | Ignored except `.gitkeep` |
 | `logs/` | Local structured JSON-line logs | Ignored except `.gitkeep` |
-| Platform-native CacheLikesFromTwitter settings path (`~/Library/Application Support/...` on macOS; `%APPDATA%\CacheLikesFromTwitter\...` on Windows) | Device-local configuration | Outside the repository |
+| Platform-native agenticContext settings path (`~/Library/Application Support/agenticContext/...` on macOS; `%APPDATA%\agenticContext\...` on Windows) | Device-local configuration | Outside the repository |
 | `app/`, `tests/`, `docs/`, `scripts/` | Versioned source, contracts, and checks | Committed |
 
-`CACHELIKES_RUNTIME_ROOT` and `CACHELIKES_SETTINGS_PATH` are internal runtime-injection inputs.
+`AGENTIC_CONTEXT_RUNTIME_ROOT` and `AGENTIC_CONTEXT_SETTINGS_PATH` are the current runtime-injection inputs. The legacy `CACHELIKES_RUNTIME_ROOT` and `CACHELIKES_SETTINGS_PATH` aliases remain accepted for existing launchers and test environments.
 Production startup leaves them unset. Pytest sets both before imports so tests cannot resolve the
 user-owned locations above.
 

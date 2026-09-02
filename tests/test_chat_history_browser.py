@@ -1,6 +1,6 @@
 """Focused tests for the local text-history browser."""
 
-# Code version: v1.4.1-codex.3
+# Code version: v1.4.2-codex.1
 
 from datetime import datetime
 from pathlib import Path
@@ -141,6 +141,28 @@ def test_gemini_capture_fallback_is_unknown_and_sorts_after_source_time(tmp_path
     assert newest_page.sessions[1].last_seen_at == ""
     assert newest_page.sessions[2].last_seen_at == ""
     assert format_chat_message_timestamp_label(newest_page.sessions[2].last_seen_at) == "Unknown time"
+
+
+def test_chatgpt_capture_fallback_is_unknown_until_source_time_is_refreshed(tmp_path: Path) -> None:
+    history_path = tmp_path / "llm" / "chatgpt" / "history.parquet"
+    write_parquet_rows_atomic(
+        history_path,
+        [
+            _history_row(
+                "legacy-chatgpt",
+                "legacy-chatgpt:0",
+                "Legacy ChatGPT message",
+                first_seen_at="2026-08-14T02:27:07Z",
+                last_seen_at="2026-08-14T02:27:07Z",
+            )
+        ],
+        GEMINI_HISTORY_SCHEMA,
+    )
+
+    page = query_chat_history(tmp_path, source="chatgpt")
+
+    assert page.items[0].last_seen_at == ""
+    assert format_chat_message_timestamp_label(page.items[0].last_seen_at) == "Unknown time"
 
 
 def test_query_chatgpt_history_lists_sessions_on_the_home_page(tmp_path: Path) -> None:

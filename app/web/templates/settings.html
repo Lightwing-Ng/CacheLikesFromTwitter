@@ -1,18 +1,18 @@
-<!-- Code version: v1.29.7-codex.1 -->
+<!-- Code version: v1.29.15-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>CacheLikesFromTwitter Settings</title>
+    <title>{{ product_name }} Settings</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.25-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='settings-navigation.js', v='settings-navigation-v1.1.1-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-navigation.js', v='settings-navigation-v1.1.2-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.3.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='settings-auto-save.js', v='settings-auto-save-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='agent-settings.js', v='agent-settings-v1.0.0-codex.1') }}"></script>
@@ -90,6 +90,7 @@
                                         <span>Chrome user data dir</span>
                                         <span class="shadow-backup-destination-control settings-directory-control">
                                             <input
+                                                class="path-display-input"
                                                 type="text"
                                                 id="chrome_user_data_dir"
                                                 name="chrome_user_data_dir"
@@ -155,15 +156,15 @@
 
                             <section
                                 class="settings-category-panel"
-                                id="settings-chatgpt"
-                                data-settings-panel="chatgpt"
-                                aria-labelledby="settings_chatgpt_heading"
+                                id="settings-llm"
+                                data-settings-panel="llm"
+                                aria-labelledby="settings_llm_heading"
                             >
                                 <div class="settings-category-heading">
-                                    <h3 id="settings_chatgpt_heading">Project scan timing</h3>
-                                    <p>Fine-tune how long ChatGPT cache tasks wait for startup and newly rendered project images.</p>
+                                    <h3 id="settings_llm_heading">LLM cache timing</h3>
+                                    <p>Fine-tune startup and scan timing for browser-based LLM cache tasks.</p>
                                 </div>
-                                <div class="field-grid compact-config-grid settings-chatgpt-grid">
+                                <div class="field-grid compact-config-grid settings-llm-grid">
                                     {{ render_number_field("Startup timeout (s)", "chatgpt_startup_timeout_seconds", saved_config.chatgpt_startup_timeout_seconds, "decimal", "1", "1", "600") }}
                                     {{ render_number_field("Scan wait (s)", "chatgpt_scan_wait_seconds", saved_config.chatgpt_scan_wait_seconds, "decimal", "0.1", "0.1", "5") }}
                                 </div>
@@ -281,7 +282,7 @@
                                         <span>Source folder</span>
                                         <span class="shadow-backup-destination-control settings-directory-control settings-directory-control-readonly">
                                             <input
-                                                class="text-input-control settings-directory-input"
+                                                class="text-input-control settings-directory-input path-display-input"
                                                 type="text"
                                                 value="{{ local_store_root }}"
                                                 readonly
@@ -295,7 +296,7 @@
                                         <span>Cloud destination</span>
                                         <span class="shadow-backup-destination-control settings-directory-control">
                                             <input
-                                                class="text-input-control settings-directory-input"
+                                                class="text-input-control settings-directory-input path-display-input"
                                                 type="text"
                                                 id="shadow_backup_destination"
                                                 name="shadow_backup_destination"

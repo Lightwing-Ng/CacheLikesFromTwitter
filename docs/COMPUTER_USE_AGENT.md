@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.54.1-codex.1`
+Documentation version: `v3.54.2-codex.1`
 
 ## Purpose
 
@@ -338,7 +338,7 @@ These actions are for genetic or mutation search, Bayesian or black-box optimiza
 long CPU/GPU workloads. The provider plans the work and inspects progress; it must not participate
 in each generation or evaluation. The local optimizer loop remains ordered and fully local.
 
-`job_start` requires `.cachelikes-compute.json` in the selected workspace. One entry must uniquely
+`job_start` requires `.agenticContext-compute.json` in the selected workspace. One entry must uniquely
 match the requested id, name a regular non-linked `.py` file below that workspace, pin its exact
 SHA-256, and approve 43,200 through 86,400 seconds. The action accepts neither shell text nor an
 argument list. The runtime invokes only the current Python interpreter and the fixed optimizer
@@ -497,7 +497,7 @@ actions.
 - The Flask control routes accept host-loopback traffic directly. Private-network requests must
   first unlock `/agent` with the six-digit password gate; the successful signed session also
   authorizes same-origin `/api/agent/*` requests. Public and host-rebinding requests are rejected.
-  The default password is `195135`, and `CACHELIKES_AGENT_PASSWORD` overrides it before launch.
+  The default password is `195135`, and `AGENTIC_CONTEXT_AGENT_PASSWORD` overrides it before launch.
 - `/api/browser-session?...&scope=agent` uses that same network, Host, Origin, and password gate.
   Responses produced after admission carry `Cache-Control: no-store`, `Pragma: no-cache`, and an
   expired `Expires` value so Agent account-readiness data is not retained by browser caches.

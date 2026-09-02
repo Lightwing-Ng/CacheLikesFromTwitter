@@ -1,6 +1,6 @@
 # Shared UI workflow
 
-Documentation version: `v1.0.0`
+Documentation version: `v1.0.1`
 
 This is the short entrypoint for shared visual and interaction work. The only
 long-form synchronization state lives in:
@@ -12,12 +12,12 @@ long-form synchronization state lives in:
 1. Read this file.
 2. Read the central ledger's `Fast path for agents` section and the matching row.
 3. Read `docs/STYLE_REFERENCE.md` and inspect the named implementation in
-   `/Users/lightwing/Desktop/antigravity` before editing CacheLikesFromTwitter.
+   `/Users/lightwing/Desktop/antigravity` before editing agenticContext.
 
 ## Contract
 
 - `antigravity` is the canonical complete baseline and the final convergence target.
-- CacheLikesFromTwitter is an adapter: reuse the sibling's tokens, structure,
+- agenticContext is an adapter: reuse the sibling's tokens, structure,
   states, responsive behavior, and accessibility contract while preserving local
   routes and product-specific markup.
 - A Cache-first improvement is a `Candidate review`, not a finished synchronization.

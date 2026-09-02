@@ -1,10 +1,11 @@
 """Flask application for the local web console."""
 
-# Code version: v1.56.0-codex.1
+# Code version: v1.56.7-codex.1
 
 from __future__ import annotations
 
 import atexit
+from datetime import UTC, datetime
 import os
 import secrets
 from collections.abc import Callable, Iterable
@@ -32,11 +33,13 @@ from app.core.agent import (
     build_agent_optimization_manifest,
     capability_registry_snapshot,
     default_model_for_platform,
+    fetch_grok_conversation_history,
     is_allowed_agent_network_request,
     is_loopback_address,
     launch_terminal_authorization,
     list_agent_project_sessions,
     list_agent_sources,
+    normalize_agent_conversation_url,
     normalize_agent_source_catalog_payload,
     normalize_agent_project_url,
     open_agent_in_browser,
@@ -58,6 +61,7 @@ from app.core.foundation import (
     MIN_CHATGPT_SCAN_WAIT_SECONDS,
     MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
     MIN_MAX_MEDIA_FILE_SIZE_MIB,
+    PRODUCT_NAME,
     CrawlConfig,
     TaskState,
     build_initial_snapshot,
@@ -88,6 +92,7 @@ from app.core.providers import (
     reset_grok_state,
 )
 from app.core.storage import (
+    DISPLAY_TIMEZONE,
     LocalMediaCatalog,
     ShadowBackupError,
     ShadowBackupService,
@@ -121,6 +126,17 @@ from app.web.navigation import build_agent_path, is_supported_agent_selection
 from app.web.token_registry import (
     build_style_token_component_rows,
 )
+
+
+def format_agent_activity_time(value: str | None) -> str:
+    """Format one Agent activity timestamp as a 24-hour UI time."""
+    try:
+        parsed = datetime.fromisoformat(str(value or "").strip().replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return ""
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(DISPLAY_TIMEZONE).strftime("%H:%M:%S")
 
 
 CACHE_RECONCILE_PHASES = {"idle", "finished", "completed", "success", "stopped"}
@@ -472,7 +488,10 @@ def create_app(
         static_folder=str(Path(__file__).resolve().parent / "static"),
     )
     app.config.update(
-        SECRET_KEY=os.environ.get("CACHELIKES_SESSION_SECRET", "").strip()
+        SECRET_KEY=(
+            os.environ.get("AGENTIC_CONTEXT_SESSION_SECRET", "").strip()
+            or os.environ.get("CACHELIKES_SESSION_SECRET", "").strip()
+        )
         or secrets.token_urlsafe(32),
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
@@ -614,6 +633,32 @@ def create_app(
         ),
     }
 
+    @app.template_global("cache_source_switcher_path")
+    def cache_source_switcher_path(current_source_key: str, target_source_key: str) -> str:
+        """Return a destination owned by the Cache surface for one source option."""
+        current_source = get_cache_source_view(current_source_key)
+        target_source = get_cache_source_view(target_source_key)
+        if (
+            current_source is None
+            or target_source is None
+            or target_source.key not in cache_runtimes
+        ):
+            return ""
+        if target_source.key == current_source.key or target_source.key == "chatgpt":
+            return url_for("cache_source", source_key=target_source.key)
+        if current_source.group_key == "llm" and (
+            target_source.group_key == "llm" or target_source.include_in_llm_switcher
+        ):
+            return url_for(
+                "browser",
+                view="text",
+                session_view="1",
+                q="",
+                source=target_source.key,
+                sort="newest",
+            )
+        return url_for("cache_source", source_key=target_source.key)
+
     @app.context_processor
     def inject_cache_source_views() -> dict[str, Any]:
         """Expose the ordered cache registry to every dock instance."""
@@ -621,6 +666,7 @@ def create_app(
             "cache_sources": MEDIA_CACHE_SOURCE_VIEWS,
             "llm_cache_sources": LLM_CACHE_SOURCE_VIEWS,
             "chat_history_sources": LLM_SWITCHER_SOURCE_VIEWS,
+            "product_name": PRODUCT_NAME,
         }
 
     def serialize_media_item(item) -> dict[str, Any]:
@@ -857,7 +903,11 @@ def create_app(
         return render_template(
             cache_source.template_name,
             cache_source=cache_source,
-            cache_source_options=cache_source_views_for_page(source_key),
+            cache_source_options=tuple(
+                source
+                for source in cache_source_views_for_page(source_key)
+                if source.key in cache_runtimes
+            ),
             snapshot=build_reconciled_cache_snapshot(source_key),
             history_snapshot=(
                 build_reconciled_grok_history_snapshot() if source_key == "grok" else None
@@ -1023,7 +1073,7 @@ def create_app(
         requested_refresh = request.args.get("refresh", "").strip().lower() in {"1", "true", "yes"}
         is_browser_session = source_kind == "browser-session"
         is_passive_source_catalog = source_kind == "sources"
-        force_refresh = requested_refresh and is_browser_session
+        force_refresh = requested_refresh
         payload = agent_source_cache.get_or_collect(
             platform=platform,
             browser=browser,
@@ -1031,12 +1081,22 @@ def create_app(
             project_url=project_url,
             collector=collector,
             force_refresh=force_refresh,
-            stale_while_revalidate=not (is_browser_session or is_passive_source_catalog),
-            collect_on_miss=not is_passive_source_catalog,
+            stale_while_revalidate=not (
+                is_browser_session
+                or is_passive_source_catalog
+                or source_kind == "project-sessions"
+                or requested_refresh
+            ),
+            collect_on_miss=not is_passive_source_catalog or requested_refresh,
         )
         if source_kind == "sources":
             normalized = normalize_agent_source_catalog_payload(platform, payload)
             normalized.setdefault("recent_sessions", [])
+            normalized.setdefault("limit", 0)
+            return normalized
+        if source_kind == "project-sessions":
+            normalized = normalize_agent_source_catalog_payload(platform, payload)
+            normalized.setdefault("sessions", [])
             normalized.setdefault("limit", 0)
             return normalized
         return payload
@@ -1219,6 +1279,7 @@ def create_app(
             platform_options=AGENT_PLATFORM_OPTIONS,
             model_options_by_platform=AGENT_MODEL_OPTIONS_BY_PLATFORM,
             render_prompt_markdown=render_prompt_markdown,
+            format_agent_activity_time=format_agent_activity_time,
         )
 
     @app.get("/agent")
@@ -1605,6 +1666,44 @@ def create_app(
             {
                 "conversation_url": conversation_url,
                 "title": str(payload.get("title") or "Untitled session"),
+                "history": rendered_history,
+                "limit": int(payload.get("limit") or len(rendered_history)),
+            }
+        )
+
+    @app.get("/api/agent/grok-session-history")
+    def agent_grok_session_history():
+        """Load one selected Grok conversation without persisting remote messages."""
+        require_local_agent_request()
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
+        browser_name = request.args.get("browser", "").strip().lower()
+        conversation_url = normalize_agent_conversation_url(
+            "grok",
+            request.args.get("conversation_url", "").strip(),
+        )
+        if not conversation_url:
+            return jsonify({"error": "Choose a valid Grok conversation before loading its history."}), 400
+        try:
+            payload = fetch_grok_conversation_history(
+                browser_name,
+                conversation_url,
+                saved_config,
+                silent=True,
+            )
+        except (RuntimeError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        rendered_history: list[dict[str, Any]] = []
+        for raw_item in payload.get("history", []):
+            if not isinstance(raw_item, dict):
+                continue
+            item = dict(raw_item)
+            item["response_html"] = str(render_prompt_markdown(str(item.get("response", ""))))
+            rendered_history.append(item)
+        return jsonify(
+            {
+                "conversation_url": conversation_url,
+                "title": str(payload.get("title") or ""),
                 "history": rendered_history,
                 "limit": int(payload.get("limit") or len(rendered_history)),
             }

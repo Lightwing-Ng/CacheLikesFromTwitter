@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.37.0-codex.2
+# Code version: v1.37.1-codex.1
 
 from __future__ import annotations
 
@@ -38,7 +38,11 @@ from app.core.chatgpt_downloader import (
     should_cache_chatgpt_candidate,
     sync_chatgpt_images,
 )
-from app.core.resource_persistence import read_parquet_rows
+from app.core.resource_persistence import (
+    CHATGPT_HISTORY_SCHEMA,
+    read_parquet_rows,
+    write_parquet_rows_atomic,
+)
 from app.core.chatgpt_downloader import (
     ChatGPTConversationWorkResult,
     ChatGPTImageDownloadWorkResult,
@@ -241,6 +245,40 @@ def test_chatgpt_history_cache_refreshes_legacy_capture_times(tmp_path: Path) ->
     assert rows[0]["first_seen_at"] == captured_at
     assert rows[0]["last_seen_at"] == "2026-02-14T09:00:00Z"
     api_get.assert_called_once()
+
+
+def test_chatgpt_history_cache_refreshes_rows_without_source_timestamps(tmp_path: Path) -> None:
+    conversation_url = "https://chatgpt.com/c/session-missing-time"
+    history_path = tmp_path / "llm" / "chatgpt" / "history.parquet"
+    write_parquet_rows_atomic(
+        history_path,
+        [
+            {
+                "schema_version": 1,
+                "platform": "chatgpt",
+                "conversation_id": "session-missing-time",
+                "conversation_url": conversation_url,
+                "conversation_title": "Missing source time",
+                "message_key": "session-missing-time:user",
+                "turn_index": 0,
+                "message_index": 0,
+                "role": "user",
+                "author_label": "You",
+                "content_text": "Needs a source timestamp",
+                "content_html": "",
+                "content_sha256": "missing-time-hash",
+                "source_links": [],
+                "model_label": "",
+                "first_seen_at": "2026-08-12T08:00:00Z",
+                "last_seen_at": "",
+            }
+        ],
+        CHATGPT_HISTORY_SCHEMA,
+    )
+
+    history_store = ChatGPTHistoryStore(history_path)
+
+    assert history_store.conversation_needs_timestamp_refresh(conversation_url)
 
 
 class _FakeResponse:

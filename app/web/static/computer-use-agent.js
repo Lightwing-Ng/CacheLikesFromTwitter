@@ -1,4 +1,4 @@
-/* Code version: v3.28.0-codex.1 */
+/* Code version: v3.28.7-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -81,9 +81,11 @@
 
     let lastPayload = {};
     let lastBrowserStatus = null;
+    let browserStatusState = "cleared";
     let browserStatusController = null;
     let effortRefreshInFlight = false;
     let preferenceTimer = null;
+    let responseStatusTimer = null;
     let activitySignature = "";
     let sourceBrowser = "";
     let sourcePlatform = "";
@@ -129,6 +131,7 @@
     let responseCopyRevision = 0;
     let responseCopyFeedbackTimer = 0;
     let remoteSessionHistory = [];
+    let remoteSessionHistoryPlatform = "";
     let remoteSessionHistoryUrl = "";
     let remoteSessionHistoryBrowser = "";
     let remoteSessionHistoryLoading = false;
@@ -323,6 +326,7 @@
     function resetRemoteSessionHistory() {
         remoteSessionHistoryRequestId += 1;
         remoteSessionHistory = [];
+        remoteSessionHistoryPlatform = "";
         remoteSessionHistoryUrl = "";
         remoteSessionHistoryBrowser = "";
         remoteSessionHistoryLoading = false;
@@ -334,6 +338,7 @@
     function remoteHistoryMatchesSelection() {
         const selectedUrl = selectedConversationUrl();
         return Boolean(selectedUrl)
+            && remoteSessionHistoryPlatform === selectedPlatform()
             && historyUrlKey(remoteSessionHistoryUrl) === historyUrlKey(selectedUrl)
             && remoteSessionHistoryBrowser === selectedBrowser();
     }
@@ -606,9 +611,14 @@
         if (!combobox) return;
         const selectedLabel = combobox.querySelector("[data-agent-combobox-selected-label]");
         const selectedIcon = combobox.querySelector("[data-agent-combobox-selected-icon]");
+        const selectedIconShell = selectedIcon?.closest(".browser-picker-selected-icon-shell");
         const trigger = combobox.querySelector("[data-agent-combobox-trigger]");
         if (selectedLabel) selectedLabel.textContent = label || "";
-        if (selectedIcon instanceof HTMLImageElement && icon) selectedIcon.src = icon;
+        if (selectedIcon instanceof HTMLImageElement) {
+            selectedIcon.hidden = !icon;
+            if (icon) selectedIcon.src = icon;
+        }
+        if (selectedIconShell instanceof HTMLElement) selectedIconShell.hidden = !icon;
         if (trigger) {
             const fieldLabel = combobox.closest(".field")?.querySelector(".field-label")?.textContent?.trim() || "Option";
             trigger.setAttribute("aria-label", `${fieldLabel}: ${label || ""}`);
@@ -780,6 +790,10 @@
         return option;
     }
 
+    function projectNewSessionIcon() {
+        return elements.projectSessionCombobox?.dataset.agentNewSessionIcon || "";
+    }
+
     function setComboboxLoading(combobox, loading) {
         if (!combobox) return;
         const spinner = combobox.querySelector("[data-agent-combobox-spinner]");
@@ -867,9 +881,11 @@
         const menu = elements.projectSessionCombobox.querySelector("[data-agent-combobox-menu]");
         if (menu) {
             menu.replaceChildren();
-            if (allowNew) menu.append(sourceOptionButton("new", "New session in project", "", true));
+            if (allowNew) {
+                menu.append(sourceOptionButton("new", "New session in project", projectNewSessionIcon(), true));
+            }
         }
-        setComboboxValue(elements.projectSessionCombobox, "new", label);
+        setComboboxValue(elements.projectSessionCombobox, "new", label, allowNew ? projectNewSessionIcon() : "");
         setComboboxLoading(elements.projectSessionCombobox, loading);
         const trigger = elements.projectSessionCombobox.querySelector("[data-agent-combobox-trigger]");
         if (trigger) trigger.disabled = !allowNew;
@@ -888,7 +904,7 @@
         const newOption = sourceOptionButton(
             "new",
             "New session in project",
-            "",
+            projectNewSessionIcon(),
             selectedValue === "new",
         );
         if (selectedValue === "new") selectedOption = newOption;
@@ -903,6 +919,7 @@
                 Boolean(selectedValue && itemValue === selectedValue),
             );
             option.dataset.agentSourceId = item.id || "";
+            option.dataset.agentSourceUpdatedAt = item.updated_at || "";
             if (selectedValue && itemValue === selectedValue) selectedOption = option;
             menu.append(option);
         });
@@ -913,7 +930,12 @@
                 ? (selectedSessionMode() === "project" ? "" : sessionTitleOverride)
                 : selectedOption.dataset.agentComboboxLabel || "";
         } else {
-            setComboboxValue(elements.projectSessionCombobox, "new", "New session in project");
+            setComboboxValue(
+                elements.projectSessionCombobox,
+                "new",
+                "New session in project",
+                projectNewSessionIcon(),
+            );
         }
         setComboboxLoading(elements.projectSessionCombobox, false);
         trigger.disabled = false;
@@ -1018,10 +1040,7 @@
                 if (!isDirectList) closeCombobox(combobox);
             };
             trigger?.addEventListener("click", () => {
-                if (
-                    catalogState === "error"
-                    && (combobox === elements.recentSessionCombobox || combobox === elements.projectCombobox)
-                ) {
+                if (combobox === elements.recentSessionCombobox || combobox === elements.projectCombobox) {
                     loadAgentSources({forceRefresh: true});
                 }
                 toggleCombobox(combobox);
@@ -1097,13 +1116,13 @@
                         if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
                         setComboboxValue(elements.projectCombobox, "", "Choose a recent project");
                         clearProjectSessionChoice();
-                        if (!sourcesLoaded) loadAgentSources();
+                        loadAgentSources({forceRefresh: true});
                     } else if (input.value === "project") {
                         if (elements.recentSessionUrl instanceof HTMLInputElement) elements.recentSessionUrl.value = "";
                         if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
                         setComboboxValue(elements.recentSessionCombobox, "", "Choose a recent session");
                         clearProjectSessionChoice();
-                        if (!sourcesLoaded) loadAgentSources();
+                        loadAgentSources({forceRefresh: true});
                     }
                     updateSessionChoiceInputs();
                 }
@@ -1118,7 +1137,7 @@
                     resetRemoteSessionHistory();
                     if (elements.projectUrl instanceof HTMLInputElement) elements.projectUrl.value = input.value;
                     clearProjectSessionChoice("Project session", true, true);
-                    loadProjectSessions(input.value);
+                    loadProjectSessions(input.value, {forceRefresh: true});
                     updateSessionChoiceInputs();
                 }
                 if (combobox === elements.projectSessionCombobox) {
@@ -1151,7 +1170,7 @@
         });
     }
 
-    async function loadProjectSessions(projectUrl) {
+    async function loadProjectSessions(projectUrl, options = {}) {
         if (!projectUrl) return;
         const requestId = ++projectSessionRequestId;
         try {
@@ -1160,6 +1179,7 @@
                 browser: selectedBrowser(),
                 project_url: projectUrl,
             });
+            if (options.forceRefresh) query.set("refresh", "1");
             const payload = await requestJson(`/api/agent/project-sessions?${query.toString()}`);
             if (requestId !== projectSessionRequestId || projectUrl !== selectedProjectUrl()) return;
             populateProjectSessionChoices(payload.sessions || []);
@@ -1171,7 +1191,10 @@
 
     async function loadSelectedSessionHistory(conversationUrl) {
         const selectedUrl = String(conversationUrl || "").trim();
-        if (selectedPlatform() !== "chatgpt" || !isChatgptConversationUrl(selectedUrl)) {
+        const platform = selectedPlatform();
+        const supportsHistory = (platform === "chatgpt" && isChatgptConversationUrl(selectedUrl))
+            || (platform === "grok" && isAgentConversationUrl(platform, selectedUrl));
+        if (!supportsHistory) {
             resetRemoteSessionHistory();
             return;
         }
@@ -1186,6 +1209,7 @@
 
         const requestId = ++remoteSessionHistoryRequestId;
         remoteSessionHistory = [];
+        remoteSessionHistoryPlatform = platform;
         remoteSessionHistoryUrl = selectedUrl;
         remoteSessionHistoryBrowser = browserName;
         remoteSessionHistoryLoading = true;
@@ -1196,7 +1220,10 @@
 
         try {
             const query = new URLSearchParams({browser: browserName, conversation_url: selectedUrl});
-            const payload = await requestJson(`/api/agent/chatgpt-session-history?${query.toString()}`);
+            const historyEndpoint = platform === "grok"
+                ? "/api/agent/grok-session-history"
+                : "/api/agent/chatgpt-session-history";
+            const payload = await requestJson(`${historyEndpoint}?${query.toString()}`);
             if (requestId !== remoteSessionHistoryRequestId || !remoteHistoryMatchesSelection()) return;
             remoteSessionHistory = Array.isArray(payload.history)
                 ? payload.history.filter((item) => item && item.prompt && item.response)
@@ -1212,7 +1239,8 @@
         } catch (error) {
             if (requestId !== remoteSessionHistoryRequestId) return;
             remoteSessionHistoryLoading = false;
-            remoteSessionHistoryError = error.message || "Could not load the selected ChatGPT session history.";
+            remoteSessionHistoryError = error.message
+                || `Could not load the selected ${selectedPlatformLabel()} session history.`;
             responseHistorySignature = "";
             responseHistoryPage = 1;
             render(lastPayload);
@@ -1332,7 +1360,8 @@
         sourceBrowser = browserName;
         sourcePlatform = platform;
         if (catalogAbort) catalogAbort.abort();
-        catalogAbort = new AbortController();
+        const requestController = new AbortController();
+        catalogAbort = requestController;
         const requestId = ++sourceRequestId;
         catalogState = "loading";
         catalogError = "";
@@ -1355,13 +1384,13 @@
             }
             setComboboxLoading(elements.projectCombobox, true);
         }
-        const timeoutId = window.setTimeout(() => catalogAbort.abort(), CATALOG_TIMEOUT_MS);
+        const timeoutId = window.setTimeout(() => requestController.abort(), CATALOG_TIMEOUT_MS);
         try {
             const query = new URLSearchParams({platform, browser: browserName});
             if (forceRefresh) query.set("refresh", "1");
             const response = await fetch(`/api/agent/sources?${query.toString()}`, {
                 cache: "no-store",
-                signal: catalogAbort.signal,
+                signal: requestController.signal,
                 headers: {"Content-Type": "application/json", "Accept": "application/json"},
             });
             if (
@@ -1408,6 +1437,10 @@
         boundAgentSessionSignature = signature;
     }
 
+    function browserVerificationPending() {
+        return !lastBrowserStatus || ["loading", "refreshing"].includes(browserStatusState);
+    }
+
     function readinessState(payload) {
         const platformLabel = selectedPlatformLabel();
         const runtime = payload.runtime || {};
@@ -1422,7 +1455,7 @@
                 message: runtime.message || "Computer Use is not ready on this host.",
             };
         }
-        if (!lastBrowserStatus) {
+        if (browserVerificationPending()) {
             return {
                 ready: false,
                 message: `Checking the signed-in ${platformLabel} account in ${selectedBrowserLabel()}...`,
@@ -1450,7 +1483,7 @@
             || (Array.isArray(agent?.activity) && agent.activity.length > 0)
             || ["starting", "preparing", "submitting", "running", "finalizing", "paused"].includes(phase);
         const sessionMessage = remoteSessionHistoryLoading
-            ? "Loading the selected ChatGPT session history…"
+            ? `Loading the selected ${selectedPlatformLabel()} session history…`
             : remoteSessionHistoryError;
         const pauseCopy = agent?.paused
             ? (agent.pause_reason || agent.message || "The Web Agent is paused.")
@@ -1484,14 +1517,89 @@
             status = "interrupted";
             phaseLabel = "Interrupted";
         } else if (!readiness.ready) {
-            status = lastBrowserStatus ? "failed" : "loading";
-            phaseLabel = lastBrowserStatus ? "Unavailable" : "Checking";
+            const verificationPending = browserVerificationPending();
+            status = verificationPending ? "loading" : "failed";
+            phaseLabel = verificationPending ? "Checking" : "Unavailable";
         }
+        const runningCopy = status === "running"
+            ? runningResponseStatusCopy(agent, message)
+            : null;
+        const copy = runningCopy?.text || `${phaseLabel} · ${message}`;
         return {
             status,
-            copy: `${phaseLabel} · ${message}`,
+            copy,
+            lines: runningCopy?.lines || null,
             loading: status === "loading" || status === "running",
         };
+    }
+
+    function formatElapsedDuration(startedAt) {
+        const startMilliseconds = Date.parse(String(startedAt || ""));
+        if (!Number.isFinite(startMilliseconds)) return "";
+        const elapsedSeconds = Math.max(0, Math.floor((Date.now() - startMilliseconds) / 1000));
+        const hours = Math.floor(elapsedSeconds / 3_600);
+        const minutes = Math.floor((elapsedSeconds % 3_600) / 60);
+        const seconds = elapsedSeconds % 60;
+        return [hours, minutes, seconds]
+            .map((value) => String(value).padStart(2, "0"))
+            .join(":");
+    }
+
+    function agentTurnCount(agent) {
+        const rawCount = Number(agent?.turn_count);
+        if (Number.isFinite(rawCount) && rawCount >= 0) return Math.floor(rawCount);
+        const activity = Array.isArray(agent?.activity) ? agent.activity : [];
+        return activity.length || null;
+    }
+
+    function runningResponseStatusCopy(agent, message) {
+        const metrics = [];
+        const elapsed = formatElapsedDuration(agent?.started_at);
+        if (elapsed) metrics.push(elapsed);
+        const turnCount = agentTurnCount(agent);
+        if (turnCount !== null) metrics.push(`${turnCount.toLocaleString("en-US")} turns`);
+        const summary = ["Working", ...metrics].filter(Boolean).join(" · ");
+        const detail = String(message || "").trim();
+        return {
+            text: [summary, detail].filter(Boolean).join(" · "),
+            lines: [summary, detail].filter(Boolean),
+        };
+    }
+
+    function renderResponseStatusCopy(presentation) {
+        if (!elements.statusMessageCopy) return;
+        if (presentation.lines?.length === 2) {
+            const summary = document.createElement("span");
+            summary.dataset.agentResponseStatusLeading = "";
+            summary.textContent = presentation.lines[0];
+            const detail = document.createElement("span");
+            detail.dataset.agentResponseStatusDetail = "";
+            detail.textContent = presentation.lines[1];
+            elements.statusMessageCopy.replaceChildren(summary, document.createElement("br"), detail);
+            return;
+        }
+        elements.statusMessageCopy.textContent = presentation.copy;
+    }
+
+    function stopResponseStatusTimer() {
+        if (responseStatusTimer === null) return;
+        window.clearInterval(responseStatusTimer);
+        responseStatusTimer = null;
+    }
+
+    function syncResponseStatusTimer(agent, status) {
+        if (status !== "running" || !formatElapsedDuration(agent?.started_at)) {
+            stopResponseStatusTimer();
+            return;
+        }
+        if (responseStatusTimer !== null) return;
+        responseStatusTimer = window.setInterval(() => {
+            if (!lastPayload.agent?.running) {
+                stopResponseStatusTimer();
+                return;
+            }
+            renderResponseStatus(lastPayload.agent, readinessState(lastPayload));
+        }, 1_000);
     }
 
     function renderResponseStatus(agent, readiness) {
@@ -1501,13 +1609,15 @@
         elements.statusMessage.dataset.status = presentation.status;
         elements.statusMessage.setAttribute("aria-label", presentation.copy);
         elements.statusMessage.title = presentation.copy;
-        if (elements.statusMessageCopy) elements.statusMessageCopy.textContent = presentation.copy;
+        renderResponseStatusCopy(presentation);
         if (elements.statusDot) elements.statusDot.hidden = presentation.loading;
         if (elements.statusSpinner) elements.statusSpinner.hidden = !presentation.loading;
+        syncResponseStatusTimer(agent, presentation.status);
     }
 
     function setResponseStatusFallback(message) {
         if (!elements.statusMessage) return;
+        stopResponseStatusTimer();
         const copy = String(message || "The Agent request failed.").trim();
         elements.statusMessage.hidden = false;
         elements.statusMessage.dataset.status = "failed";
@@ -1518,12 +1628,36 @@
         if (elements.statusSpinner) elements.statusSpinner.hidden = true;
     }
 
+    function formatActivityTimestamp(timestamp) {
+        const parsed = new Date(String(timestamp || ""));
+        if (!Number.isFinite(parsed.getTime())) return "";
+        try {
+            return new Intl.DateTimeFormat("en-GB", {
+                timeZone: "Asia/Hong_Kong",
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                hour12: false,
+            }).format(parsed);
+        } catch (_error) {
+            return "";
+        }
+    }
+
+    function activityMeta(event) {
+        const meta = String(event?.meta || "").trim();
+        const timestamp = formatActivityTimestamp(event?.timestamp);
+        if (!timestamp) return meta;
+        return meta ? `${meta} · ${timestamp}` : timestamp;
+    }
+
     function initializeBrowserSessionStatus() {
         if (!elements.browserSession || !window.CACHELIKES_BROWSER_SESSION_STATUS?.init) return;
         browserStatusController = window.CACHELIKES_BROWSER_SESSION_STATUS.init(elements.browserSession, {
             platform: selectedPlatform(),
             getBrowser: selectedBrowser,
             onStateChange(payload, browserId, state) {
+                browserStatusState = String(state || "cleared");
                 lastBrowserStatus = state === "cleared"
                     ? null
                     : {...(payload || {}), browser: browserId};
@@ -1560,7 +1694,7 @@
 
                 const meta = document.createElement("span");
                 meta.className = "agent-activity-meta";
-                meta.textContent = event.meta || "";
+                meta.textContent = activityMeta(event);
                 item.append(status, content, meta);
                 return item;
             }));
@@ -2209,7 +2343,10 @@
         elements.terminalExecutionStatus.title = terminalExecution.message || "";
         elements.terminalExecutionStatus.setAttribute("aria-label", `Terminal permission: ${statusLabel}`);
         elements.terminalExecutionCopy.textContent = statusLabel;
-        if (elements.terminalExecutionCheckmark) elements.terminalExecutionCheckmark.hidden = !ready;
+        if (elements.terminalExecutionCheckmark) {
+            elements.terminalExecutionCheckmark.dataset.statusState = ready ? "ready" : "error";
+            elements.terminalExecutionCheckmark.hidden = false;
+        }
     }
 
     function renderComputeJob(job) {

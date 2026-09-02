@@ -19,7 +19,15 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-FIXTURE_IMAGE_COUNT = max(1, int(os.environ.get("CACHELIKES_BENCHMARK_IMAGE_COUNT", "32")))
+FIXTURE_IMAGE_COUNT = max(
+    1,
+    int(
+        os.environ.get(
+            "AGENTIC_CONTEXT_BENCHMARK_IMAGE_COUNT",
+            os.environ.get("CACHELIKES_BENCHMARK_IMAGE_COUNT", "32"),
+        )
+    ),
+)
 FIXTURE_SIZE = (1_024, 1_024)
 WARMUP_RUNS = 1
 MEASURED_RUNS = 5
@@ -67,7 +75,7 @@ def main() -> None:
     from app.core.compute_metrics import PerformanceMetrics
     from app.core.compute_resources import discover_compute_resources
 
-    with tempfile.TemporaryDirectory(prefix="cachelikes-compute-benchmark-") as temporary_root:
+    with tempfile.TemporaryDirectory(prefix="agenticContext-compute-benchmark-") as temporary_root:
         paths = _build_fixture(Path(temporary_root))
         before = _measure(lambda: [chatgpt_visual_properties(path) for path in paths])
         path_map = {str(index): path for index, path in enumerate(paths)}

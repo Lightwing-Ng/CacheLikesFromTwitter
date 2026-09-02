@@ -1,4 +1,4 @@
-{# Code version: v1.3.0-codex.1 #}
+{# Code version: v1.3.1-codex.1 #}
 
 {% macro render_browser_session_status(empty_message="No signed-in account detected", ready_label="Ready", terminal_execution=none, account_label="", compact=false, hide_ready_message=false) -%}
 <div
@@ -30,8 +30,8 @@
                 <span
                     class="browser-session-status-checkmark browser-session-status-terminal-checkmark"
                     data-agent-terminal-execution-checkmark
+                    data-status-state="{{ 'ready' if terminal_execution.ready else 'error' }}"
                     aria-hidden="true"
-                    {% if not terminal_execution.ready %}hidden{% endif %}
                 ></span>
                 <span class="agent-terminal-execution-label">Terminal permission</span>
                 <span data-agent-terminal-execution-copy hidden>{{ terminal_execution.status_label }}</span>

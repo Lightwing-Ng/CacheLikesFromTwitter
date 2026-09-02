@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.54.0-codex.1
+Code version: v3.54.4-codex.1
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ else:  # pragma: no cover - Windows uses a fail-closed delete path.
 from .agent_session_sources import (
     CLAUDE_HOME_URL,
     CLAUDE_HOSTS,
+    claude_project_session_id,
     normalize_agent_conversation_url,
     normalize_agent_project_url,
 )
@@ -48,6 +49,7 @@ from .agent.capability_registry import (
     validate_controller_action_payload,
 )
 from .browser_sessions import (
+    CLAUDE_COMPOSER_SELECTOR,
     CHROMIUM_WINDOW_MODE_OFFSCREEN,
     CHROMIUM_WINDOW_MODE_TASK_STAGE,
     browser_descriptors,
@@ -55,12 +57,14 @@ from .browser_sessions import (
     launch_chromium_context,
     select_provider_tab,
     sync_playwright_or_error,
+    visible_claude_composer_selector,
 )
 from .config import (
     CrawlConfig,
     PROJECT_ROOT,
     default_settings_path,
     is_windows_host,
+    runtime_root_is_overridden,
     resolve_runtime_root,
 )
 from .gemini_downloader import inspect_gemini_session
@@ -97,7 +101,7 @@ GROK_HOSTS = {"grok.com", "www.grok.com"}
 DEFAULT_AGENT_SETTINGS_PATH = default_settings_path().with_name("computer-use-agent.json")
 DEFAULT_AGENT_RUNTIME_ROOT = (
     resolve_runtime_root() / ".computer-use-agent"
-    if os.environ.get("CACHELIKES_RUNTIME_ROOT", "").strip()
+    if runtime_root_is_overridden()
     else default_settings_path().parent / "computer-use-agent"
 )
 DEFAULT_CONTEXT_LIMIT_MIB = 8
@@ -125,6 +129,7 @@ _ANCHORED_DELETE_SUPPORTED = bool(
 )
 MAX_ACTION_JSON_CHARS = 800_000
 MAX_INVALID_ACTION_RETRIES = 3
+INVALID_ACTION_CORRECTION_TIMEOUT_SECONDS = 120
 CHATGPT_MODEL_VERIFICATION_ATTEMPTS = 3
 CHATGPT_MODEL_CONTROL_RETRY_ATTEMPTS = CHATGPT_MODEL_VERIFICATION_ATTEMPTS
 CHATGPT_MODEL_LOCATOR_TIMEOUT_MILLISECONDS = 1_000
@@ -432,7 +437,7 @@ _CONTROLLER_PROTOCOL_INSTRUCTIONS = """Controller protocol rules:
 - `replace` and `replace_base64` require an existing file and the old text exactly once. Use the base64 form for quote-heavy or multiline content. `write` and `write_base64` create new files only; if a file exists, use replace instead.
 - `delete` requires a current controller `read` of the same file after the latest edit and the exact lowercase 64-character SHA-256 from that read receipt. Any edit invalidates the receipt; read again rather than guessing.
 - `run` is one direct, bounded verification command only. Allowed families are filtered `git status`; `pytest`, `ruff check`, `mypy`, `pyright`, `eslint`, `tsc --noEmit`; the controller Python runtime with approved verification modules or a project check/test script; `node --check`; package-manager `test` or existing check/lint/test/verify scripts; `go test`/`go vet`; `cargo check`/`cargo clippy`/`cargo test`; and `make` check/lint/test/verify targets. No nested shell, shell operators, redirection, network, environment enumeration, package installation, arbitrary Python entry point, Git mutation, or command that writes project files.
-- `job_start` is separate from `run`. It accepts only an entrypoint pinned by `.cachelikes-compute.json`, one workspace-relative JSON config, a stable idempotency key, and an optional explicit resume job. It never accepts shell text or arbitrary arguments. `job_status` returns bounded progress and log-tail data. `job_stop` terminates only the identity-verified job process group. Never start a duplicate job after a provider retry, and never auto-resume after interruption.
+- `job_start` is separate from `run`. It accepts only an entrypoint pinned by `.agenticContext-compute.json`, one workspace-relative JSON config, a stable idempotency key, and an optional explicit resume job. It never accepts shell text or arbitrary arguments. `job_status` returns bounded progress and log-tail data. `job_stop` terminates only the identity-verified job process group. Never start a duplicate job after a provider retry, and never auto-resume after interruption.
 - `bodycheck` must be requested after edits and after the latest successful verification. `final` is valid only when verification and bodycheck are current after the latest edit. A running compute job does not block final; report its job id and current state. For a read-only task, use only `list`, `read`, `search`, `job_status`, or `bodycheck`, then one `final` action for a local summary; do not edit, run, start, or stop a job. `final` does not mutate the workspace.
 - The controller may reject an action even if this prompt appears to allow it. On rejection, return one corrected action only; do not explain the rejection or repeat the invalid payload. Never claim success until the controller reports `ok: true`."""
 _CONTROLLER_PROTOCOL_LINES = tuple(_CONTROLLER_PROTOCOL_INSTRUCTIONS.splitlines())
@@ -1103,7 +1108,7 @@ def launch_terminal_authorization(operating_system: str) -> dict[str, Any]:
         application = "Terminal"
         message = (
             "System Settings opened to Full Disk Access. Enable the Terminal app that "
-            "starts CacheLikesFromTwitter."
+            "starts agenticContext."
         )
     else:
         command = [
@@ -1628,9 +1633,10 @@ def resolve_agent_session_target(
             if not conversation_path.startswith(f"{project_path}/c/"):
                 raise ValueError("The selected session does not belong to the selected Project.")
         elif selected_platform == "claude":
-            project_path = urlsplit(normalized_project_url).path.rstrip("/")
-            conversation_path = urlsplit(normalized_conversation_url).path.rstrip("/")
-            if not conversation_path.startswith(f"{project_path}/"):
+            if not claude_project_session_id(
+                normalized_conversation_url,
+                normalized_project_url,
+            ):
                 raise ValueError("The selected session does not belong to the selected Project.")
         elif selected_platform == "grok":
             project_path = urlsplit(normalized_project_url).path.rstrip("/")
@@ -6488,11 +6494,7 @@ def _provider_new_session_transition_allowed(
             == normalize_agent_project_url("grok", current_url)
         )
     if platform == "claude":
-        project_path = urlsplit(
-            normalize_agent_project_url("claude", expected_url)
-        ).path.rstrip("/")
-        conversation_path = urlsplit(conversation).path.rstrip("/")
-        return bool(project_path) and conversation_path.startswith(f"{project_path}/")
+        return bool(claude_project_session_id(conversation, expected_url))
     return False
 
 
@@ -7178,7 +7180,7 @@ def _is_screen_lock_interruption(reason: str) -> bool:
 
 def _provider_human_verification_reason(page: Any, platform: str) -> str:
     """Return a structured human-verification reason without scanning live chat text alone."""
-    if platform not in {"gemini", "grok"}:
+    if platform not in {"gemini", "grok", "claude"}:
         return ""
     try:
         result = page.evaluate(
@@ -7211,10 +7213,15 @@ def _provider_human_verification_reason(page: Any, platform: str) -> str:
                 const challengeElement = challengeSelectors
                     .flatMap((selector) => [...document.querySelectorAll(selector)])
                     .find(visible);
-                const composerAvailable = [...document.querySelectorAll(composerSelector)]
-                    .some((element) => visible(element)
+                const composerCount = [...document.querySelectorAll(composerSelector)]
+                    .filter((element) => visible(element)
                         && !element.disabled
-                        && element.getAttribute('aria-disabled') !== 'true');
+                        && element.getAttribute('aria-disabled') !== 'true'
+                        && !element.closest(
+                            '[role="dialog"], [role="menu"], [role="listbox"], nav, header, '
+                            + '[data-testid*="feedback" i], [class*="feedback" i]'
+                        ))
+                    .length;
                 const title = (document.title || '').trim();
                 const bodyText = (document.body?.innerText || '').trim();
                 const markerText = `${title}\n${bodyText}`.toLowerCase();
@@ -7242,9 +7249,10 @@ def _provider_human_verification_reason(page: Any, platform: str) -> str:
                     'cloudflare ray id'
                 ].find((candidate) => markerText.includes(candidate)) || '';
                 return {
-                    detected: Boolean(challengeElement || (!composerAvailable && marker)),
+                    detected: Boolean(challengeElement || (!composerCount && marker)),
                     reason: challengeElement ? 'security challenge control' : marker,
-                    composerAvailable,
+                    composerAvailable: composerCount === 1,
+                    composerCount,
                     title,
                     url: location.href,
                 };
@@ -8070,11 +8078,12 @@ def _run_web_action_loop(
             ).hexdigest()[:16]
             LOGGER.warning(
                 "%s returned an invalid controller response on retry %s "
-                "(characters=%s, sha256=%s).",
+                "(characters=%s, sha256=%s, parser_reason=%s).",
                 AGENT_PLATFORM_BY_KEY[platform]["label"],
                 invalid_action_retries,
                 len(str(response or "")),
                 response_hash,
+                str(exc)[:240],
             )
             record_page_observation(
                 "provider_turn",
@@ -8135,6 +8144,7 @@ def _run_web_action_loop(
                 submission_target_url=selected_target_url,
                 session_mode=session_binding.session_mode,
                 availability_check=provider_availability_check,
+                timeout_seconds=INVALID_ACTION_CORRECTION_TIMEOUT_SECONDS,
                 on_submitted=lambda: update(
                     phase="running",
                     message=f"Correction sent to {AGENT_PLATFORM_BY_KEY[platform]['label']} Web; waiting for a valid controller action.",
@@ -8354,11 +8364,13 @@ def _run_web_action_loop(
             return final_response, conversation_url, turn_index, True
 
         detail = _activity_detail(action)
+        activity_timestamp = utc_now()
         activity.append(
             {
                 "label": action_name.replace("_", " ").title() or "Controller action",
                 "detail": detail,
                 "meta": f"Turn {turn_index:,}",
+                "timestamp": activity_timestamp,
                 "status": "running",
             }
         )
@@ -8519,7 +8531,7 @@ def _verify_chatgpt_page(
 
 
 def _web_composer_selector(platform: str) -> str:
-    """Return the least-specific composer contract accepted for one provider."""
+    """Return the provider-specific composer contract used by all Web Agent stages."""
     return {
         "chatgpt": "#prompt-textarea",
         "gemini": (
@@ -8532,15 +8544,14 @@ def _web_composer_selector(platform: str) -> str:
             'textarea, div[contenteditable="true"][role="textbox"]'
             '[aria-label="Ask Grok anything"]'
         ),
-        "claude": (
-            'textarea, [contenteditable="true"][role="textbox"], '
-            'div.ProseMirror[contenteditable="true"], [contenteditable="true"]'
-        ),
+        "claude": CLAUDE_COMPOSER_SELECTOR,
     }.get(platform, 'textarea, [contenteditable="true"]')
 
 
 def _visible_web_composer_selector(platform: str) -> str:
     """Return a Playwright selector for visible, enabled provider composers."""
+    if platform == "claude":
+        return visible_claude_composer_selector()
     return ", ".join(
         f'{candidate.strip()}:visible:not([disabled]):not([aria-disabled="true"])'
         for candidate in _web_composer_selector(platform).split(",")
@@ -8619,6 +8630,7 @@ def _wait_for_visible_composer(
     target: Any,
     should_stop: Callable[[], bool] | None = None,
     readiness_check: Callable[[], float] | None = None,
+    require_unique: bool = False,
 ) -> bool:
     """Poll one composer locator so Stop can interrupt the initial readiness gate."""
     deadline = time.monotonic() + CHATGPT_COMPOSER_TIMEOUT_SECONDS
@@ -8633,6 +8645,20 @@ def _wait_for_visible_composer(
                 return False
         remaining_ms = max(1, int((deadline - time.monotonic()) * 1_000))
         try:
+            if require_unique:
+                count = getattr(target, "count", None)
+                composer_count = count() if callable(count) else 1
+                if composer_count != 1:
+                    last_error = _ComposerReadinessTimeout(
+                        f"Expected one provider composer, found {composer_count}."
+                    )
+                    time.sleep(
+                        min(
+                            WEB_SEND_BUTTON_POLL_MILLISECONDS / 1_000,
+                            max(0.001, remaining_ms / 1_000),
+                        )
+                    )
+                    continue
             target.wait_for(
                 state="visible",
                 timeout=min(WEB_SEND_BUTTON_POLL_MILLISECONDS, remaining_ms),
@@ -8697,10 +8723,12 @@ def _wait_for_web_composer(
 
     for attempt in range(1, CHATGPT_COMPOSER_RELOAD_ATTEMPTS + 1):
         try:
+            composer_locator = page.locator(selector)
             if not _wait_for_visible_composer(
-                page.locator(selector).first,
+                composer_locator if platform == "claude" else composer_locator.first,
                 should_stop=should_stop,
                 readiness_check=readiness_check,
+                require_unique=platform == "claude",
             ):
                 return False
             return True
@@ -12565,6 +12593,7 @@ def _submit_and_wait(
     submission_target_url: str = "",
     session_mode: str = "",
     availability_check: Callable[[], bool | tuple[bool, float]] | None = None,
+    timeout_seconds: float | None = None,
 ) -> str:
     """Submit one message and wait for one stable provider response."""
     if should_stop():
@@ -12693,7 +12722,12 @@ def _submit_and_wait(
     previous = ""
     response = ""
     current_user_receipt_seen = platform == "chatgpt" or not user_receipt_contract
-    deadline = submitted_at + WEB_TURN_TIMEOUT_SECONDS
+    response_timeout_seconds = (
+        WEB_TURN_TIMEOUT_SECONDS
+        if timeout_seconds is None
+        else max(1.0, float(timeout_seconds))
+    )
+    deadline = submitted_at + response_timeout_seconds
     while time.monotonic() < deadline:
         if should_stop():
             _stop_web_generation(page, browser_kind)
@@ -12854,7 +12888,14 @@ def _submit_and_wait(
         ):
             return response
         _web_wait(page, browser_kind, 500)
-    raise RuntimeError(f"{AGENT_PLATFORM_BY_KEY[platform]['label']} did not finish the controller turn within 30 minutes.")
+    if response_timeout_seconds == WEB_TURN_TIMEOUT_SECONDS:
+        timeout_copy = "30 minutes"
+    else:
+        timeout_copy = f"{response_timeout_seconds:g} seconds"
+    raise RuntimeError(
+        f"{AGENT_PLATFORM_BY_KEY[platform]['label']} did not finish the controller turn "
+        f"within {timeout_copy}."
+    )
 
 
 def _web_user_selector(platform: str) -> str:
@@ -12981,7 +13022,13 @@ def _submit_chromium_web_prompt(
                             }
                             return /prompt|message|ask|grok|what do you|输入|輸入|提问|提問/i.test(metadata);
                         }
-                        return true;
+                        if (platform === 'claude') {
+                            return Boolean(element.closest(
+                                'div.ProseMirror, [data-testid*="composer" i], '
+                                + '[data-testid*="message-input" i]'
+                            )) || /prompt|message|ask claude|type.+message|write.+message|输入|輸入|提问|提問/i.test(metadata);
+                        }
+                        return false;
                     };
                     const composers = [...document.querySelectorAll(composerSelector)]
                         .filter(isProviderComposer);
@@ -13509,7 +13556,13 @@ def _submit_chromium_web_prompt(
                         }
                         return /prompt|message|ask|grok|what do you|输入|輸入|提问|提問/i.test(metadata);
                     }
-                    return true;
+                    if (platform === 'claude') {
+                        return Boolean(element.closest(
+                            'div.ProseMirror, [data-testid*="composer" i], '
+                            + '[data-testid*="message-input" i]'
+                        )) || /prompt|message|ask claude|type.+message|write.+message|输入|輸入|提问|提問/i.test(metadata);
+                    }
+                    return false;
                 };
                 const visibleComposers = [...document.querySelectorAll(composerSelector)]
                     .filter(isProviderComposer);

@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.19.3-codex.1
+# Code version: v1.19.6-codex.1
 
 from __future__ import annotations
 
@@ -38,9 +38,26 @@ CHATGPT_AUTH_SESSION_URL = "https://chatgpt.com/api/auth/session"
 GEMINI_HOME_URL = "https://gemini.google.com/app"
 CLAUDE_HOME_URL = "https://claude.ai/new"
 CLAUDE_COMPOSER_SELECTOR = (
-    'textarea, [contenteditable="true"][role="textbox"], '
-    'div.ProseMirror[contenteditable="true"], [contenteditable="true"]'
+    'div.ProseMirror[contenteditable="true"], '
+    '[data-testid*="composer" i] [contenteditable="true"], '
+    '[data-testid*="message-input" i] [contenteditable="true"], '
+    '[contenteditable="true"][role="textbox"][aria-label*="message" i], '
+    '[contenteditable="true"][role="textbox"][aria-label*="prompt" i], '
+    '[contenteditable="true"][role="textbox"][aria-label*="ask" i], '
+    '[contenteditable="true"][data-placeholder*="message" i], '
+    'textarea[aria-label*="message" i], '
+    'textarea[aria-label*="prompt" i], '
+    'textarea[placeholder*="message" i]'
 )
+
+
+def visible_claude_composer_selector() -> str:
+    """Return the shared Claude composer selector with visible-state constraints."""
+    return ", ".join(
+        f'{candidate.strip()}:visible:not([disabled]):not([aria-disabled="true"])'
+        for candidate in CLAUDE_COMPOSER_SELECTOR.split(",")
+        if candidate.strip()
+    )
 EDGE_USER_DATA_DIR = default_edge_user_data_dir()
 EDGE_PROFILE_DIRECTORY = "Default"
 SAFARI_APPLESCRIPT_SOURCE_LIMIT = 500_000
@@ -261,7 +278,11 @@ def _probe_claude_session(
                     ),
                 }
             try:
-                page.locator(CLAUDE_COMPOSER_SELECTOR).first.wait_for(
+                composer = page.locator(visible_claude_composer_selector())
+                count = getattr(composer, "count", None)
+                if callable(count) and count() != 1:
+                    raise RuntimeError("Claude composer count was not unique.")
+                composer.first.wait_for(
                     state="visible",
                     timeout=20_000,
                 )
@@ -926,7 +947,7 @@ def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile
             raise RuntimeError(
                 f"macOS denied access to the {descriptor.label} profile at {denied_path}. "
                 "Open System Settings > Privacy & Security > Full Disk Access and enable "
-                "the Python 3.13 or 3.14 runtime used by CacheLikesFromTwitter, then restart the cache service."
+                "the Python 3.13 or 3.14 runtime used by agenticContext, then restart the cache service."
             ) from exc
         raise
     except OSError:

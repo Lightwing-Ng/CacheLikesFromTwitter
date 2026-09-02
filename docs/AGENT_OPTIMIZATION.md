@@ -1,11 +1,11 @@
 # OpenAI Site tools and Agent Optimization
 
-Documentation version: `v1.3.0-codex.1`
+Documentation version: `v1.3.1-codex.1`
 
 This project implements the shared Agent Optimization contract at
 `/Users/lightwing/Desktop/SHARED_AGENT_OPTIMIZATION.md`. That file owns the cross-project naming,
 schema, result, security, lifecycle, evaluation, and promotion rules. This document owns only the
-CacheLikesFromTwitter adapter and its verification evidence.
+agenticContext adapter and its verification evidence.
 
 ## Runtime adapter
 
@@ -134,7 +134,7 @@ test input.
 Run the complete project gate with:
 
 ```bash
-TZ=UTC CACHELIKES_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh
+TZ=UTC AGENTIC_CONTEXT_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh
 ```
 
 The suite uses pytest temporary runtime paths and disposable browser contexts where applicable. The
@@ -144,7 +144,7 @@ settings.
 
 Current automated evidence from 30 Aug 2026: all 9 shared Node contract cases and the focused
 registry, event-chain, Doctor, manifest, rendering, disposable-browser, and controller checks
-passed. The CacheLikesFromTwitter complete gate passed 1,177 Python cases and 413 subtests with
+passed. The agenticContext complete gate passed 1,177 Python cases and 413 subtests with
 70.04% combined branch coverage. The sibling antigravity complete gate passed 954 Python tests,
 293 Node tests, and 267 Chromium tests. Both projects render one manifest, register exactly the
 same three WebMCP tools, and serve byte-identical shared runtime copies (SHA-256

@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.54.0-codex.1
+Code version: v3.54.1-codex.1
 """
 
 from __future__ import annotations
@@ -280,6 +280,13 @@ def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None
         'textarea, div[contenteditable="true"][role="textbox"]'
         '[aria-label="Ask Grok anything"]'
     )
+    claude_selector = _web_composer_selector("claude")
+    assert "div.ProseMirror[contenteditable=\"true\"]" in claude_selector
+    assert not re.search(
+        r'(?:^|,\s*)\[contenteditable="true"\](?:\s*,|$)',
+        claude_selector,
+    )
+    assert "textarea, [contenteditable=\"true\"][role=\"textbox\"]," not in claude_selector
     assert AGENT_MODEL_OPTIONS_BY_PLATFORM["claude"][0]["ui_label"] == "Auto"
 
     with TemporaryDirectory() as raw_root:
@@ -2491,6 +2498,34 @@ def test_gemini_composer_contract_excludes_placeholder_skeleton() -> None:
     assert "textarea[placeholder]" not in selector
 
 
+def test_claude_composer_readiness_rejects_multiple_visible_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    monkeypatch.setattr(computer_use_agent, "CHATGPT_COMPOSER_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(computer_use_agent, "CHATGPT_COMPOSER_RELOAD_ATTEMPTS", 1)
+
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def count(self) -> int:
+            return 2
+
+        def wait_for(self, **_kwargs: object) -> None:
+            raise AssertionError("Ambiguous Claude composers must not be awaited.")
+
+    class _Page:
+        def locator(self, selector: str) -> _Composer:
+            assert selector == _visible_web_composer_selector("claude")
+            return _Composer()
+
+    with pytest.raises(RuntimeError, match="composer did not become ready"):
+        computer_use_agent._wait_for_web_composer(_Page(), "claude")
+
+
 def test_non_chatgpt_model_selection_does_not_retry_ambiguous_controls() -> None:
     evaluations = 0
 
@@ -2873,6 +2908,13 @@ def test_all_web_agent_platforms_support_new_recent_and_project_targets() -> Non
         resolve_agent_session_target(
             "project_session",
             conversation_url="https://claude.ai/chat/root-session",
+            project_url="https://claude.ai/project/project-1",
+            platform="claude",
+        )
+    with pytest.raises(ValueError, match="does not belong"):
+        resolve_agent_session_target(
+            "project_session",
+            conversation_url="https://claude.ai/project/project-2/chat/session-5",
             project_url="https://claude.ai/project/project-1",
             platform="claude",
         )
@@ -3272,12 +3314,12 @@ def test_non_regular_settings_file_returns_without_blocking(tmp_path: Path) -> N
 def test_default_prompts_share_the_complete_controller_action_schema() -> None:
     expected_prompt_fingerprints = {
         DEFAULT_MACOS_SYSTEM_PROMPT: (
-            7_291,
-            "dfa849d0c484e0518eebb7aa6c4776e69c611f6321894d5856d6e62867ee0511",
+            7_295,
+            "b5c1bb9b4085cb6146a99d0a811a9376859a40e0a6460e2df160e039f8341955",
         ),
         DEFAULT_WINDOWS_SYSTEM_PROMPT: (
-            6_960,
-            "529dc90d515caed7eb7611c9878bda1a75add654a271970c0e239b0323a6d847",
+            6_964,
+            "b8cc671cd036f8ff54dc1c0b21cf40b8874d1c54f3183501fa9f583235c693c3",
         ),
     }
     for prompt, (expected_length, expected_sha256) in expected_prompt_fingerprints.items():
@@ -13739,7 +13781,7 @@ def test_challenge_marker_in_chat_text_does_not_pause_with_a_visible_composer() 
             }
 
     assert _provider_human_verification_reason(_Page(), "gemini") == ""
-    assert "challengeElement || (!composerAvailable && marker)" in captured_source
+    assert "challengeElement || (!composerCount && marker)" in captured_source
 
 
 @pytest.mark.parametrize(
@@ -13747,6 +13789,7 @@ def test_challenge_marker_in_chat_text_does_not_pause_with_a_visible_composer() 
     (
         ("gemini", "unusual traffic"),
         ("grok", "security challenge control"),
+        ("claude", "captcha"),
     ),
 )
 def test_provider_human_verification_uses_a_fixed_safe_reason(

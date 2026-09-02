@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 
-# Code version: v1.1.1-codex.1
+# Code version: v1.1.3-codex.1
 
 resolve_python_bin() {
 	local candidate
-	local explicit_candidate="${CACHELIKES_PYTHON:-}"
+	local explicit_candidate="${AGENTIC_CONTEXT_PYTHON:-${CACHELIKES_PYTHON:-}}"
 	local candidates=(
 		"/usr/local/bin/python3.13"
 		"/Library/Frameworks/Python.framework/Versions/3.13/bin/python3"

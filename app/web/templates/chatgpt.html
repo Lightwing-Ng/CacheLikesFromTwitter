@@ -1,10 +1,10 @@
-{# Code version: v1.11.0-codex.4 #}
+{# Code version: v1.12.0-codex.1 #}
 {% extends "_cache_page.html" %}
 {% from "_cache_page_components.html" import render_metric, render_progress_metric %}
 {% from "_number_field.html" import render_number_field %}
 
 {% block head %}
-<script defer src="{{ url_for('static', filename='chatgpt-page.js', v='chatgpt-page-v1.2.1-codex.1') }}"></script>
+<script defer src="{{ url_for('static', filename='chatgpt-page.js', v='chatgpt-page-v1.3.0-codex.1') }}"></script>
 {% endblock %}
 
 {% block source_fields %}
@@ -16,19 +16,59 @@
     data-chatgpt-content-mode-input
 >
 <div data-chatgpt-media-config hidden>
-    <label class="field">
-        <span>Project or chat URL (optional)</span>
-        <input
-            type="url"
-            class="text-input-control"
-            name="chatgpt_project_url"
-            value="{{ saved_config.chatgpt_project_url }}"
-            placeholder="Leave blank for all generated media"
-            autocomplete="url"
-            aria-describedby="chatgpt_project_url_help"
-        >
-        <small class="field-help" id="chatgpt_project_url_help">Leave blank to cache generated media from all chats; uploaded media is skipped.</small>
-    </label>
+    <div class="field chatgpt-project-field" data-chatgpt-project-field>
+        <span class="field-label">Project</span>
+        <div class="trade-strategy-combobox agent-combobox agent-session-list-combobox chatgpt-project-combobox" data-chatgpt-project-picker>
+            <input
+                type="hidden"
+                name="chatgpt_project_url"
+                value="{{ saved_config.chatgpt_project_url }}"
+                data-chatgpt-project-url
+            >
+            <input
+                type="hidden"
+                name="chatgpt_project_name"
+                value="{{ saved_config.chatgpt_project_name }}"
+                data-chatgpt-project-name
+            >
+            <button
+                type="button"
+                class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger"
+                data-chatgpt-project-trigger
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="chatgpt_project_options"
+                aria-label="Project: {{ saved_config.chatgpt_project_name or 'All generated media' }}"
+            >
+                <span class="trade-strategy-trigger-label browser-session-trigger-label" data-chatgpt-project-selected-label>{{ saved_config.chatgpt_project_name or "All generated media" }}</span>
+                <span class="suggestion-loading-spinner agent-combobox-loading-spinner" data-chatgpt-project-spinner aria-hidden="true" hidden></span>
+                <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
+            </button>
+            <div
+                class="trade-strategy-dropdown backtest-shared-select-dropdown browser-session-dropdown agent-combobox-dropdown agent-session-list-menu"
+                id="chatgpt_project_options"
+                data-chatgpt-project-menu
+                role="listbox"
+                aria-label="Choose a recent project"
+                hidden
+            >
+                <button
+                    type="button"
+                    class="trade-strategy-dropdown-option agent-combobox-option is-selected is-active"
+                    data-chatgpt-project-option
+                    data-chatgpt-project-url=""
+                    data-chatgpt-project-name=""
+                    role="option"
+                    aria-selected="true"
+                    tabindex="-1"
+                >
+                    <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
+                    <span class="trade-strategy-dropdown-text">All generated media</span>
+                </button>
+            </div>
+        </div>
+        <small class="field-help" id="chatgpt_project_url_help">Choose a recent project, or select All generated media. Uploaded media is skipped.</small>
+    </div>
     {{ render_number_field("Startup timeout (s)", "chatgpt_startup_timeout_seconds", saved_config.chatgpt_startup_timeout_seconds, "decimal", "1", "1", "600", "field", "text-input-control") }}
     {{ render_number_field("Scan wait (s)", "chatgpt_scan_wait_seconds", saved_config.chatgpt_scan_wait_seconds, "decimal", "0.1", "0.1", "5", "field", "text-input-control") }}
 </div>
@@ -48,7 +88,7 @@
     <div class="notice-floating-copy">
         <p class="metric-label notice-floating-label">Best-available image cache</p>
         <p class="notice-floating-title">
-            Provide a project or chat URL to limit the media scan. Leave it blank to cache generated media from all chats; uploaded media is skipped in that mode. If ChatGPT no longer serves an indexed original but still exposes its thumbnail encoding, that recoverable preview is cached instead. The scan runs through an offscreen {{ selected_browser_label }} session.
+            Choose a project to limit the media scan, or select All generated media to scan every chat. Uploaded media is skipped in that mode. If ChatGPT no longer serves an indexed original but still exposes its thumbnail encoding, that recoverable preview is cached instead. The scan runs through an offscreen {{ selected_browser_label }} session.
         </p>
     </div>
     <span class="status-chip status-collecting">{{ selected_browser_label }} session</span>

@@ -1,6 +1,6 @@
 """Security helpers for exposing the local Agent control plane on a LAN."""
 
-# Code version: v1.0.0-codex.2
+# Code version: v1.0.0-codex.3
 
 from __future__ import annotations
 
@@ -9,7 +9,8 @@ import secrets
 from ipaddress import ip_address, ip_network
 
 
-AGENT_ACCESS_PASSWORD_ENV = "CACHELIKES_AGENT_PASSWORD"
+AGENT_ACCESS_PASSWORD_ENV = "AGENTIC_CONTEXT_AGENT_PASSWORD"
+LEGACY_AGENT_ACCESS_PASSWORD_ENV = "CACHELIKES_AGENT_PASSWORD"
 DEFAULT_AGENT_ACCESS_PASSWORD = "195135"
 AGENT_ACCESS_SESSION_KEY = "agent_access_granted"
 PRIVATE_NETWORKS = (
@@ -24,6 +25,7 @@ def resolve_agent_access_password() -> str:
     """Return the configured Agent password, falling back to the requested default."""
     return (
         str(os.environ.get(AGENT_ACCESS_PASSWORD_ENV, "")).strip()
+        or str(os.environ.get(LEGACY_AGENT_ACCESS_PASSWORD_ENV, "")).strip()
         or DEFAULT_AGENT_ACCESS_PASSWORD
     )
 

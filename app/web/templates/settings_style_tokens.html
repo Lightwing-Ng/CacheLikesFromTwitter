@@ -1,14 +1,14 @@
-<!-- Code version: v1.5.8-codex.1 -->
+<!-- Code version: v1.5.18-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>Settings</title>
+    <title>{{ product_name }} Settings</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.25-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.4-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='resizer.js', v='resizer-v1.0.0-codex.1') }}"></script>
@@ -92,10 +92,6 @@
                                     <h2 class="workspace-modal-title">{{ row.sample_title }}</h2>
                                     <p class="workspace-modal-copy">{{ row.sample_copy }}</p>
                                 </section>
-                            </div>
-                            {% elif row.sample_kind == "primary-inverted-button" %}
-                            <div class="style-token-component-action-row">
-                                <button type="button" class="primary-button primary-button--inverted style-token-action-button">{{ row.sample_title }}</button>
                             </div>
                             {% elif row.sample_kind == "range-mode" %}
                             <section class="style-token-range-mode-demo" data-style-token-demo="range-mode" aria-label="Segmented control">
@@ -330,7 +326,6 @@
                                         {% endfor %}
                                     </div>
                                 </div>
-                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
                             </section>
                             {% elif row.sample_kind == "scrollable-data-table" %}
                             <section class="style-token-component-demo style-token-table-demo-shell" data-style-token-demo="scrollable-data-table" data-style-token-table-demo data-style-token-table-page-size="6" aria-label="Scrollable data table demo">

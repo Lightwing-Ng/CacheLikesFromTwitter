@@ -1,6 +1,6 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.11.1-codex.2
+# Code version: v1.11.1-codex.3
 
 from __future__ import annotations
 
@@ -204,7 +204,12 @@ def _message_from_row(row: dict[str, Any], source: str) -> ChatHistoryMessage | 
         and first_seen_value > 0
         and persisted_last_seen_value >= first_seen_value
     )
-    last_seen_at = "" if gemini_capture_fallback else persisted_last_seen_at
+    chatgpt_capture_fallback = (
+        source == "chatgpt"
+        and first_seen_value > 0
+        and persisted_last_seen_value == first_seen_value
+    )
+    last_seen_at = "" if gemini_capture_fallback or chatgpt_capture_fallback else persisted_last_seen_at
     return ChatHistoryMessage(
         stable_id=f"chat-{stable_digest}",
         source=source,

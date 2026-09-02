@@ -1,4 +1,4 @@
-/* Code version: v1.1.1-codex.1 */
+/* Code version: v1.1.2-codex.1 */
 
 (function initializeSettingsNavigation() {
     "use strict";
@@ -10,10 +10,12 @@
 
     const categories = new Set(categoryPanels.map((panel) => panel.dataset.settingsPanel));
     const defaultCategory = "browser";
+    const legacyCategoryAliases = new Map([["chatgpt", "llm"]]);
 
     function categoryFromHash() {
         const hashCategory = window.location.hash.replace(/^#settings-/, "");
-        return categories.has(hashCategory) ? hashCategory : defaultCategory;
+        const category = legacyCategoryAliases.get(hashCategory) || hashCategory;
+        return categories.has(category) ? category : defaultCategory;
     }
 
     function activateCategory(category, options = {}) {

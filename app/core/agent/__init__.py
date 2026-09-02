@@ -1,6 +1,6 @@
 """Computer-use Agent boundary for access, source discovery, and execution."""
 
-# Code version: v1.6.0-codex.1
+# Code version: v1.6.1-codex.1
 
 from typing import TYPE_CHECKING
 
@@ -10,8 +10,10 @@ from ..agent_access_security import (
     validate_agent_access_password,
 )
 from ..agent_session_sources import (
+    fetch_grok_conversation_history,
     list_agent_project_sessions,
     list_agent_sources,
+    normalize_agent_conversation_url,
     normalize_agent_source_catalog_payload,
     normalize_agent_project_url,
     probe_and_collect_claude_sources,
@@ -94,11 +96,13 @@ __all__ = [
     "capability_registry_snapshot",
     "controller_action_prompt_schema",
     "default_model_for_platform",
+    "fetch_grok_conversation_history",
     "is_allowed_agent_network_request",
     "is_loopback_address",
     "launch_terminal_authorization",
     "list_agent_project_sessions",
     "list_agent_sources",
+    "normalize_agent_conversation_url",
     "normalize_agent_source_catalog_payload",
     "normalize_agent_project_url",
     "open_agent_in_browser",

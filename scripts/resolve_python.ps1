@@ -1,5 +1,5 @@
-# CacheLikesFromTwitter Python resolver.
-# Code version: v1.0.0-codex.1
+# agenticContext Python resolver.
+# Code version: v1.0.1-codex.1
 
 $ErrorActionPreference = "Stop"
 
@@ -12,25 +12,31 @@ function Test-SupportedPython([string]$Executable, [string[]]$Arguments = @()) {
     }
 }
 
-if ($env:CACHELIKES_PYTHON) {
-    if (Test-SupportedPython $env:CACHELIKES_PYTHON) {
-        $env:CACHELIKES_RESOLVED_PYTHON = $env:CACHELIKES_PYTHON
+$ExplicitPython = if ($env:AGENTIC_CONTEXT_PYTHON) {
+    $env:AGENTIC_CONTEXT_PYTHON
+} else {
+    $env:CACHELIKES_PYTHON
+}
+
+if ($ExplicitPython) {
+    if (Test-SupportedPython $ExplicitPython) {
+        $env:AGENTIC_CONTEXT_RESOLVED_PYTHON = $ExplicitPython
         return
     }
-    throw "CACHELIKES_PYTHON must point to Python 3.13 or 3.14."
+    throw "AGENTIC_CONTEXT_PYTHON must point to Python 3.13 or 3.14."
 }
 
 $python = Get-Command py -ErrorAction SilentlyContinue
 if ($python -and (Test-SupportedPython $python.Source @("-3.13"))) {
-    $env:CACHELIKES_RESOLVED_PYTHON = $python.Source
-    $env:CACHELIKES_RESOLVED_PYTHON_ARGS = "-3.13"
+    $env:AGENTIC_CONTEXT_RESOLVED_PYTHON = $python.Source
+    $env:AGENTIC_CONTEXT_RESOLVED_PYTHON_ARGS = "-3.13"
     return
 }
 
 $python = Get-Command python -ErrorAction SilentlyContinue
 if ($python -and (Test-SupportedPython $python.Source)) {
-    $env:CACHELIKES_RESOLVED_PYTHON = $python.Source
+    $env:AGENTIC_CONTEXT_RESOLVED_PYTHON = $python.Source
     return
 }
 
-throw "Install Python 3.13 or 3.14, or set CACHELIKES_PYTHON to a supported interpreter."
+throw "Install Python 3.13 or 3.14, or set AGENTIC_CONTEXT_PYTHON to a supported interpreter."

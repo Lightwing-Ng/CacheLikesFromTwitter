@@ -1,4 +1,4 @@
-/* Code version: v2.91.0-codex.1 */
+/* Code version: v2.91.25-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -155,11 +155,6 @@
     --primary-button-pad-block: 0px;
     --primary-button-pad-inline: var(--sidebar-action-button-padding-inline);
     --primary-button-radius: var(--sidebar-action-button-radius);
-    --primary-button-inverted-background: var(--color-white-adaptive);
-    --primary-button-inverted-background-hover: color-mix(in srgb, var(--theme-accent-primary) 8%, var(--color-white-adaptive));
-    --primary-button-inverted-border: 1px solid var(--accent-border-soft);
-    --primary-button-inverted-border-hover: 1px solid var(--accent-border-strong);
-    --primary-button-inverted-color: var(--accent-text);
     --sidebar-action-danger-background: var(--theme-error-translucent);
     --sidebar-action-danger-background-hover: var(--theme-error);
     --sidebar-action-danger-background-disabled: color-mix(in srgb, var(--theme-muted) 8%, transparent);
@@ -1141,12 +1136,51 @@ h2 {
 .trade-strategy-trigger-label.browser-session-trigger-label {
     display: inline-flex;
     align-items: center;
+    font-weight: var(--font-weight-regular);
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: var(--font-ui-lg);
     font-weight: var(--font-weight-regular);
+}
+
+.cache-source-switcher-trigger,
+.cache-browser-session-trigger {
+    height: var(--control-form-height);
+    min-height: var(--control-form-height);
+}
+
+.cache-source-switcher-trigger .browser-session-trigger-leading,
+.cache-browser-session-trigger .browser-session-trigger-leading {
+    gap: 8px;
+}
+
+.cache-source-switcher-trigger .browser-picker-selected-icon-shell,
+.cache-browser-session-trigger .browser-picker-selected-icon-shell {
+    width: 18px;
+    height: 18px;
+    border-radius: var(--radius-soft);
+}
+
+.cache-source-switcher-trigger .browser-source-filter-mark {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+}
+
+.cache-source-switcher-trigger .trade-strategy-trigger-label.browser-session-trigger-label {
+    font-size: var(--font-form-control);
+}
+
+.cache-browser-session-trigger .browser-picker-option-icon {
+    width: 18px;
+    height: 18px;
+    flex-basis: 18px;
+}
+
+.cache-browser-session-trigger .trade-strategy-trigger-label.browser-session-trigger-label {
+    font-size: var(--font-form-control);
 }
 
 .browser-picker-selected-icon-shell {
@@ -1363,8 +1397,8 @@ h2 {
 
 .browser-session-status-checkmark[data-status-state="error"] {
     background-color: var(--theme-error);
-    mask: url("/static/images/xmark.svg") center/contain no-repeat;
-    -webkit-mask: url("/static/images/xmark.svg") center/contain no-repeat;
+    mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;
 }
 
 .browser-session-status-terminal-checkmark {
@@ -1379,6 +1413,10 @@ h2 {
 }
 
 .browser-session-status-card-compact {
+    border-width: 0;
+}
+
+.browser-session-panel .browser-session-status-card {
     border-width: 0;
 }
 
@@ -1541,17 +1579,6 @@ input.formatted-number-input {
     font-size: var(--font-form-label);
     font-weight: var(--font-weight-regular);
     line-height: 1.2;
-}
-
-.cache-common-config-scope {
-    flex: 0 0 auto;
-    padding: 3px 7px;
-    border-radius: var(--radius-pill);
-    background: var(--accent-surface-muted);
-    color: var(--accent-text);
-    font-size: var(--font-tooltip);
-    font-weight: var(--font-weight-semibold);
-    line-height: 1;
 }
 
 .cache-common-config .settings-field-help {
@@ -1771,19 +1798,6 @@ input[type="url"].text-input-control {
     background: var(--primary-button-background-pending);
 }
 
-.primary-button--inverted {
-    border: var(--primary-button-inverted-border);
-    background: var(--primary-button-inverted-background);
-    color: var(--primary-button-inverted-color);
-}
-
-.primary-button--inverted:hover,
-.primary-button--inverted:focus-visible {
-    border: var(--primary-button-inverted-border-hover);
-    background: var(--primary-button-inverted-background-hover);
-    color: var(--primary-button-inverted-color);
-}
-
 .danger-button {
     width: 100%;
     border-radius: var(--sidebar-action-button-radius);
@@ -1888,14 +1902,15 @@ input[type="url"].text-input-control {
 
 .stop-button {
     background: var(--sidebar-action-danger-background);
-    border-color: var(--sidebar-action-danger-border);
+    border-width: 0;
+    border-color: transparent;
     color: var(--sidebar-action-danger-color);
 }
 
 .stop-button:hover,
 .stop-button:focus-visible {
     background: var(--sidebar-action-danger-background-hover);
-    border-color: var(--sidebar-action-danger-background-hover);
+    border-color: transparent;
     color: var(--sidebar-action-danger-color-hover);
 }
 
@@ -3413,8 +3428,9 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-response-status {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
+    flex: 1 1 auto;
     margin: 0;
     min-width: 0;
     color: var(--muted);
@@ -3439,10 +3455,15 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-response-status-copy {
+    display: -webkit-box;
+    flex: 1 1 auto;
     min-width: 0;
     overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    white-space: normal;
 }
 
 .agent-response-status[data-status="loading"] .agent-response-status-dot,
@@ -3523,7 +3544,8 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     border: var(--frosted-glass-border);
     border-radius: var(--radius-soft);
     background: var(--glass-surface-background-soft);
-    overflow: hidden;
+    /* Keep recovery action shadows and spatial effects visible beyond the panel. */
+    overflow: visible;
 }
 
 .agent-doctor-panel > summary {
@@ -3637,12 +3659,13 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-doctor-actions {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
 }
 
 .agent-doctor-action {
+    width: 100%;
     min-height: 36px;
 }
 
@@ -3665,6 +3688,10 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-runtime-form .field > .field-label {
     font-size: var(--font-ui-lg);
+}
+
+.agent-runtime-form > label.field > .field-help[data-agent-project-name] {
+    font-size: 17px;
 }
 
 .agent-runtime-form > label.field > .field-label,
@@ -3694,7 +3721,8 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-session-list-combobox .agent-combobox-trigger {
-    min-height: 46px;
+    height: var(--control-form-height);
+    min-height: var(--control-form-height);
 }
 
 .agent-session-list-combobox-direct {
@@ -3900,6 +3928,12 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-monospace-input,
 .agent-page code {
     font-family: var(--font-mono);
+}
+
+.path-display-input {
+    direction: rtl;
+    text-align: left;
+    text-overflow: ellipsis;
 }
 
 .agent-workspace {
@@ -4163,17 +4197,31 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-effort-dropdown {
     top: auto;
     bottom: calc(100% + 4px);
-    right: auto;
+    left: auto;
+    right: 0;
     min-width: 100%;
     width: max-content;
-    max-width: min(280px, 80vw);
+    max-width: min(360px, calc(100vw - 20px));
+    box-sizing: border-box;
+}
+
+.agent-model-dropdown .trade-strategy-dropdown-option,
+.agent-effort-dropdown .trade-strategy-dropdown-option {
+    width: 100%;
+    min-width: 0;
+}
+
+.agent-effort-dropdown .agent-combobox-option {
+    grid-template-columns: 16px minmax(0, 1fr);
 }
 
 .agent-model-dropdown .trade-strategy-dropdown-text,
 .agent-effort-dropdown .trade-strategy-dropdown-text {
-    min-width: max-content;
+    min-width: 0;
     overflow: visible;
     text-overflow: clip;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .agent-model-dropdown .agent-combobox-option {
@@ -4268,7 +4316,10 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-response-toolbar {
     justify-content: space-between;
     gap: 12px;
-    min-height: 0;
+    box-sizing: border-box;
+    flex: 0 0 auto;
+    min-height: var(--settings-round-icon-button-size);
+    margin-inline-end: calc(-1 * (var(--workspace-article-pad-inline) - var(--layout-edge-gap)));
 }
 
 .agent-response-card {
@@ -4403,11 +4454,13 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-response-question-header {
     display: flex;
     position: relative;
-    flex: 0 1 auto;
+    box-sizing: border-box;
+    flex: 0 0 auto;
     flex-direction: column;
     min-width: 0;
-    min-height: 0;
+    min-height: var(--control-form-height);
     max-height: min(8rem, 22svh);
+    margin-inline-end: calc(-1 * (var(--workspace-article-pad-inline) - var(--layout-edge-gap)));
     padding: 0 44px 12px 2px;
     border-bottom: var(--frosted-glass-border);
     overflow-x: hidden;
@@ -4609,19 +4662,20 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-activity-detail {
-    overflow: hidden;
     color: var(--muted);
     font-family: var(--font-mono);
     font-size: var(--font-ui-sm);
     line-height: 1.45;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
 }
 
 .agent-activity-meta {
     color: var(--muted);
     font-family: var(--font-mono);
     font-size: var(--font-ui-sm);
+    white-space: nowrap;
 }
 
 .settings-agent-runtime-status {
@@ -4703,7 +4757,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
  *
  * The visual source of truth is documented in docs/STYLE_REFERENCE.md. Keep this
  * compatibility layer limited to the shared shell and controls used here;
- * CacheLikesFromTwitter intentionally does not import product-specific views.
+ * agenticContext intentionally does not import product-specific views.
  */
 :root {
     --font-family-brand: "Univers Next for HSBC";
@@ -5161,6 +5215,17 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
         --agent-response-copy-global-rail-bleed: 0px;
     }
 
+    .agent-response-toolbar,
+    .agent-response-question-header {
+        margin-inline-end: 0;
+    }
+
+    .agent-model-dropdown,
+    .agent-effort-dropdown {
+        left: 0;
+        right: auto;
+    }
+
     .notice-floating-banner-global {
         top: calc(var(--sidebar-overlay-inset-top) + 52px);
     }
@@ -5184,6 +5249,12 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
         transform: translateX(-50%) translateY(8px) scale(0.95);
         opacity: 0;
         pointer-events: none;
+    }
+}
+
+@media (max-width: 900px) and (max-height: 500px) {
+    .agent-response-answer .agent-response-overflow-toggle {
+        margin-top: calc(var(--settings-round-icon-button-size) + var(--layout-edge-gap));
     }
 }
 
@@ -5641,7 +5712,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 
 .browser-filter-actions {
     display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: minmax(0, 1fr);
     gap: 8px;
     align-items: center;
     margin-top: 4px;
@@ -5664,23 +5735,22 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     justify-self: start;
 }
 
-.browser-chatgpt-media-link {
-    width: fit-content;
-    justify-self: center;
-    margin-top: -2px;
-    text-align: center;
-}
-
 .browser-filter-actions .primary-button {
     grid-column: 1 / -1;
     width: 100%;
     min-height: 38px;
 }
 
+.cache-settings-link,
+.browser-clear-link,
+.browser-session-back-link,
+.browser-refresh-button {
+    font-size: var(--font-size-3);
+}
+
 .browser-refresh-button {
     appearance: none;
     cursor: pointer;
-    font-size: var(--font-size-3);
     font-weight: var(--font-weight-semibold);
 }
 
@@ -6211,6 +6281,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .browser-session-back-link {
+    align-self: flex-start;
     margin-top: 2px;
 }
 
@@ -6280,6 +6351,17 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 
 .browser-session-detail-table tbody > tr > td:last-child {
     padding-right: 18px;
+}
+
+.browser-session-detail-table time.browser-session-message-time {
+    display: inline-grid;
+    gap: 2px;
+    white-space: normal;
+}
+
+.browser-session-message-time > span {
+    display: block;
+    white-space: nowrap;
 }
 
 .browser-session-table-number,
@@ -9174,7 +9256,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 .settings-category-nav-icon {
     width: 16px;
     height: 16px;
-    background-color: var(--settings-category-icon-tint, var(--theme-muted));
+    background: var(--settings-icon-background, var(--settings-category-icon-tint, var(--theme-muted)));
     mask: var(--settings-category-icon-url) center/contain no-repeat;
     -webkit-mask: var(--settings-category-icon-url) center/contain no-repeat;
 }
@@ -9195,8 +9277,8 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     --settings-category-icon-surface: color-mix(in srgb, var(--theme-accent-positive) 14%, transparent);
 }
 
-.settings-category-nav-item-chatgpt {
-    --settings-category-icon-url: url("/static/images/ChatGPT-Logo.svg");
+.settings-category-nav-item-llm {
+    --settings-category-icon-url: url("/static/images/wand.and.sparkles.inverse.svg");
     --settings-category-icon-tint: color-mix(in srgb, var(--theme-accent-secondary) 74%, var(--theme-accent-primary) 26%);
     --settings-category-icon-surface: color-mix(in srgb, var(--theme-accent-secondary) 14%, transparent);
 }
@@ -9298,7 +9380,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 
 .settings-category-panel > .cache-common-config,
 .settings-download-limit-grid,
-.settings-chatgpt-grid {
+.settings-llm-grid {
     width: min(100%, var(--settings-form-shell-max-width));
     max-width: var(--settings-form-shell-max-width);
 }
@@ -9315,10 +9397,24 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .settings-directory-status {
+    display: inline-flex;
+    align-items: flex-start;
+    gap: 6px;
     color: var(--theme-error-strong);
     font-size: var(--font-ui-sm);
     font-weight: var(--font-weight-semibold);
     line-height: 1.4;
+}
+
+.settings-directory-status.field-status--error::before {
+    content: "";
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+    margin-top: 1px;
+    background-color: var(--theme-error);
+    mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;
 }
 
 .settings-directory-status[hidden] {
@@ -9593,7 +9689,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     }
 
     .settings-download-limit-grid,
-    .settings-chatgpt-grid {
+    .settings-llm-grid {
         grid-template-columns: 1fr;
     }
 }
@@ -9615,6 +9711,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     --settings-category-icon-url: url("/static/images/textformat.size.svg");
     --settings-category-icon-tint: color-mix(in srgb, var(--theme-accent-primary) 76%, var(--theme-accent-secondary) 24%);
     --settings-category-icon-surface: color-mix(in srgb, var(--theme-accent-primary) 12%, var(--theme-accent-secondary) 4%);
+    --settings-icon-background: linear-gradient(90deg, var(--accent) 0%, var(--accent-secondary) 100%);
 }
 
 /* Sibling-compatible Style tokens layout. */
@@ -9758,7 +9855,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 .settings-nav-icon-shell .icon {
     width: 16px;
     height: 16px;
-    background-color: var(--settings-icon-tint, var(--theme-muted));
+    background: var(--settings-icon-background, var(--settings-icon-tint, var(--theme-muted)));
 }
 
 .settings-nav-item:not(.settings-nav-item-clear-cache) {
@@ -9766,14 +9863,17 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     --settings-icon-surface: transparent;
 }
 
-.settings-nav-item.is-active .icon { background-color: var(--accent-fill); }
+.settings-nav-item.is-active .icon { background: var(--settings-icon-background, var(--accent-fill)); }
 .settings-nav-item-browser { --settings-category-icon-url: url("/static/images/safari.svg"); }
 .settings-nav-item-downloads { --settings-category-icon-url: url("/static/images/tray.and.arrow.down.fill.svg"); }
-.settings-nav-item-chatgpt { --settings-category-icon-url: url("/static/images/ChatGPT-Logo.svg"); }
+.settings-nav-item-llm { --settings-category-icon-url: url("/static/images/wand.and.sparkles.inverse.svg"); }
 .settings-nav-item-agent { --settings-category-icon-url: url("/static/images/arrow.uturn.up.circle.svg"); }
 .settings-nav-item-cloud { --settings-category-icon-url: url("/static/images/externaldrive.fill.badge.checkmark.svg"); }
 .settings-nav-item-maintenance { --settings-category-icon-url: url("/static/images/trash.svg"); }
-.settings-nav-item-style-tokens { --settings-category-icon-url: url("/static/images/textformat.size.svg"); }
+.settings-nav-item-style-tokens {
+    --settings-category-icon-url: url("/static/images/textformat.size.svg");
+    --settings-icon-background: linear-gradient(90deg, var(--accent) 0%, var(--accent-secondary) 100%);
+}
 
 .style-token-shell {
     position: relative;
@@ -10198,10 +10298,6 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 
 .style-token-agent-browser-combobox {
     width: min(274px, 100%);
-}
-
-.style-token-agent-browser-demo .style-token-demo-note {
-    margin: 0;
 }
 
 /* Code version: v1.0.0-codex.3 */

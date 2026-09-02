@@ -1,6 +1,6 @@
 """Regression tests for the application-to-core dependency boundary."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.0.1-codex.1
 
 from __future__ import annotations
 

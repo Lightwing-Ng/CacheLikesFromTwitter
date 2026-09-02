@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 
-# Code version: v1.2.0-codex.1
+# Code version: v1.2.1-codex.1
 
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT_DIR/scripts/resolve_python.sh"
-COVERAGE_MINIMUM="${CACHELIKES_COVERAGE_MINIMUM:-55}"
+COVERAGE_MINIMUM="${AGENTIC_CONTEXT_COVERAGE_MINIMUM:-${CACHELIKES_COVERAGE_MINIMUM:-55}}"
 
 if ! PYTHON_BIN="$(resolve_python_bin)"; then
-	echo "Supported Python 3.13 or 3.14 interpreter not found: ${CACHELIKES_PYTHON:-host python3}" >&2
+	echo "Supported Python 3.13 or 3.14 interpreter not found: ${AGENTIC_CONTEXT_PYTHON:-${CACHELIKES_PYTHON:-host python3}}" >&2
 	exit 1
 fi
 
@@ -19,7 +19,7 @@ if ! command -v node >/dev/null 2>&1; then
 fi
 
 if [[ ! "$COVERAGE_MINIMUM" =~ ^[0-9]+$ ]] || (( COVERAGE_MINIMUM < 0 || COVERAGE_MINIMUM > 100 )); then
-	echo "CACHELIKES_COVERAGE_MINIMUM must be an integer from 0 to 100." >&2
+	echo "AGENTIC_CONTEXT_COVERAGE_MINIMUM must be an integer from 0 to 100." >&2
 	exit 1
 fi
 

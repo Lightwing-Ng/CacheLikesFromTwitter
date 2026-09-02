@@ -1,6 +1,6 @@
 """Rendered-page contracts for OpenAI Site tools and Agent Optimization.
 
-Code version: v1.1.0-codex.1
+Code version: v1.1.1-codex.1
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def test_primary_pages_publish_one_versioned_top_level_site_tools_adapter(
         manifest = _manifest_from_body(body)
         assert manifest["contractVersion"] == "1.1.0"
         assert manifest["status"] == "project-convention"
-        assert manifest["site"]["id"] == "cache-likes-from-twitter"
+        assert manifest["site"]["id"] == "agentic-context"
         assert {item["id"] for item in manifest["capabilities"]} == {
             "cache_review",
             "local_resources",

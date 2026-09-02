@@ -1,4 +1,4 @@
-<!-- Code version: v1.0.0-codex.1 -->
+<!-- Code version: v1.0.0-codex.2 -->
 <nav class="settings-category-nav" aria-label="Settings categories">
     <a
         href="{{ url_for('settings') }}#settings-browser"
@@ -23,15 +23,15 @@
         <span class="settings-category-nav-label">Downloads</span>
     </a>
     <a
-        href="{{ url_for('settings') }}#settings-chatgpt"
-        class="settings-category-nav-item settings-category-nav-item-chatgpt{% if current_category == 'chatgpt' %} is-active{% endif %}"
-        data-settings-category="chatgpt"
-        {% if current_category == 'chatgpt' %}aria-current="page"{% endif %}
+        href="{{ url_for('settings') }}#settings-llm"
+        class="settings-category-nav-item settings-category-nav-item-llm{% if current_category == 'llm' %} is-active{% endif %}"
+        data-settings-category="llm"
+        {% if current_category == 'llm' %}aria-current="page"{% endif %}
     >
         <span class="settings-category-nav-icon-shell" aria-hidden="true">
             <span class="icon settings-category-nav-icon"></span>
         </span>
-        <span class="settings-category-nav-label">ChatGPT</span>
+        <span class="settings-category-nav-label">LLM settings</span>
     </a>
     <a
         href="{{ url_for('settings') }}#settings-agent"

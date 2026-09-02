@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.48.5-codex.1
+Code version: v3.48.7-codex.1
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ from app.core.computer_use_agent import (
     DEFAULT_CHATGPT_MODEL,
     DEFAULT_MACOS_SYSTEM_PROMPT,
     DEFAULT_WINDOWS_SYSTEM_PROMPT,
+    INVALID_ACTION_CORRECTION_TIMEOUT_SECONDS,
     MAX_BASE64_DECODED_BYTES,
     MAX_INVALID_ACTION_RETRIES,
     SAFE_PROTOCOL_PROMPT_MARKERS,
@@ -569,6 +570,7 @@ class TestAriaDescribedbyRegression:
             '```'
         )
         submitted: list[str] = []
+        correction_timeouts: list[object] = []
 
         def submit(
             _page: object,
@@ -578,6 +580,7 @@ class TestAriaDescribedbyRegression:
             **_kwargs: object,
         ) -> str:
             submitted.append(message)
+            correction_timeouts.append(_kwargs.get("timeout_seconds"))
             return malformed
 
         monkeypatch.setattr(computer_use_agent, "_verify_agent_page", lambda *_args: None)
@@ -610,6 +613,12 @@ class TestAriaDescribedbyRegression:
         final_correction = json.loads(submitted[3].splitlines()[1])
         assert '{"action":"list","path":".","depth":2}' in final_correction["instruction"]
         assert len(set(submitted[1:])) == MAX_INVALID_ACTION_RETRIES
+        assert correction_timeouts == [
+            None,
+            INVALID_ACTION_CORRECTION_TIMEOUT_SECONDS,
+            INVALID_ACTION_CORRECTION_TIMEOUT_SECONDS,
+            INVALID_ACTION_CORRECTION_TIMEOUT_SECONDS,
+        ]
 
     def test_repeated_malformed_response_can_recover_before_the_retry_limit(
         self,
@@ -1150,7 +1159,7 @@ class TestRecentSessionCatalog:
         assert "clearCatalogLoadingState" in script
         assert "Recent sessions timed out after 15 seconds." in script
 
-    def test_passive_source_catalog_never_collects_on_refresh_query(self) -> None:
+    def test_explicit_source_catalog_refresh_collects_the_newest_catalog(self) -> None:
         first_payload = {
             "platform": "gemini",
             "browser_label": "Edge",
@@ -1158,18 +1167,11 @@ class TestRecentSessionCatalog:
             "projects": [],
             "limit": 20,
         }
-        second_payload = {
-            "platform": "gemini",
-            "browser_label": "Edge",
-            "recent_sessions": [{"id": "second-session"}],
-            "projects": [],
-            "limit": 20,
-        }
         with TemporaryDirectory() as raw_root:
             app = create_app(Path(raw_root) / "local_store")
             with patch(
                 "app.web.app.list_agent_sources",
-                side_effect=[first_payload, second_payload],
+                return_value=first_payload,
             ) as sources:
                 with app.test_client() as client:
                     first_response = client.get("/api/agent/sources?platform=gemini&browser=edge")
@@ -1178,9 +1180,9 @@ class TestRecentSessionCatalog:
                     )
         assert first_response.get_json()["recent_sessions"] == []
         assert first_response.get_json()["cache"]["status"] == "unprobed"
-        assert query_response.get_json()["recent_sessions"] == []
-        assert query_response.get_json()["cache"]["status"] == "unprobed"
-        sources.assert_not_called()
+        assert query_response.get_json()["recent_sessions"] == [{"id": "first-session"}]
+        assert query_response.get_json()["cache"]["status"] == "miss"
+        sources.assert_called_once()
 
     def test_post_session_catalog_refresh_uses_refresh_query(self) -> None:
         script = (
@@ -1216,7 +1218,7 @@ class TestRecentSessionCatalog:
         other = MagicMock()
         other.is_closed.return_value = False
         other.url = "https://127.0.0.1:8666/agent/edge/chatgpt"
-        other.title.return_value = "CacheLikesFromTwitter Agent"
+        other.title.return_value = "agenticContext Agent"
         context = MagicMock()
         context.pages = [other, chatgpt]
         chosen = select_provider_tab(

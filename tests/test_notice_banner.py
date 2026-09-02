@@ -1,4 +1,4 @@
-"""Regression coverage for the shared floating-banner contract. Code version: v0.1.0-codex.3."""
+"""Regression coverage for the shared floating-banner contract. Code version: v0.1.0-codex.4."""
 
 from pathlib import Path
 
@@ -10,22 +10,18 @@ TEMPLATE_ROOT = PROJECT_ROOT / "app/web/templates"
 STATIC_ROOT = PROJECT_ROOT / "app/web/static"
 
 
-def test_cache_status_banner_uses_the_shared_sibling_structure() -> None:
+def test_cache_status_stays_in_the_inline_progress_panel() -> None:
     with create_app().test_client() as client:
         response = client.get("/cache/chatgpt")
 
     body = response.get_data(as_text=True)
     assert response.status_code == 200
-    assert '{% call render_notice_banner(' in (TEMPLATE_ROOT / "_cache_page.html").read_text(encoding="utf-8")
-    assert 'class="notice notice-floating notice-floating-banner notice-floating-banner-global cache-status-banner"' in body
-    assert 'data-dismissible-notice' in body
-    assert 'data-notice-storage-key="cachelikes:chatgpt-status-banner-dismissed"' in body
-    assert 'class="dismiss-button notice-close"' in body
-    assert 'class="icon icon-dismiss-control"' in body
-    assert 'class="icon workspace-modal-icon notice-floating-banner-icon icon-modal-dialog-banner-default"' in body
-    assert '<p class="notice-floating-banner-heading">Task status</p>' in body
-    assert '<span id="banner_message">' in body
-    assert 'id="banner_phase"' not in body
+    cache_template = (TEMPLATE_ROOT / "_cache_page.html").read_text(encoding="utf-8")
+    assert "render_notice_banner" not in cache_template
+    assert "notice-banner.js" not in cache_template
+    assert 'id="status_banner"' not in body
+    assert 'id="banner_message"' not in body
+    assert 'id="message" data-status-field="message"' in body
 
 
 def test_browser_refresh_banner_reuses_the_shared_macro_and_controller() -> None:

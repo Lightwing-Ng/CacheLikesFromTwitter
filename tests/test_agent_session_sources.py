@@ -1,6 +1,6 @@
 """Focused tests for the provider-neutral Agent session source adapter.
 
-Code version: v1.7.0-codex.1
+Code version: v1.7.2-codex.1
 """
 
 from __future__ import annotations
@@ -14,6 +14,8 @@ from app.core.agent_session_sources import (
     _read_grok_project_links,
     _read_grok_project_session_links,
     _read_project_session_links,
+    claude_project_session_id,
+    fetch_grok_conversation_history,
     list_agent_project_sessions,
     list_agent_sources,
     normalize_agent_conversation_url,
@@ -21,6 +23,7 @@ from app.core.agent_session_sources import (
     normalize_agent_project_url,
     probe_and_collect_grok_sources,
 )
+from app.core.browser_sessions import visible_claude_composer_selector
 from app.core.config import CrawlConfig
 from app.core.gemini_downloader import GeminiConversationLink
 from app.core.grok_history import GrokConversation
@@ -125,6 +128,50 @@ def test_cached_gemini_project_rows_are_revalidated_before_replay() -> None:
     assert payload["cache"] == {"status": "hit", "layer": "parquet"}
 
 
+def test_cached_source_catalog_sorts_current_sessions_and_projects() -> None:
+    payload = normalize_agent_source_catalog_payload(
+        "chatgpt",
+        {
+            "recent_sessions": [
+                {
+                    "id": "old-session",
+                    "title": "Old title",
+                    "url": "https://chatgpt.com/c/old-session",
+                    "updated_at": "2026-08-13T10:00:00Z",
+                },
+                {
+                    "id": "new-session",
+                    "title": "Renamed session",
+                    "url": "https://chatgpt.com/c/new-session",
+                    "updated_at": "2026-09-02T01:00:00Z",
+                },
+            ],
+            "projects": [
+                {
+                    "id": "old-project",
+                    "title": "Old project",
+                    "url": "https://chatgpt.com/g/g-p-old/project",
+                    "updated_at": "2026-08-13T10:00:00Z",
+                },
+                {
+                    "id": "new-project",
+                    "title": "Renamed project",
+                    "url": "https://chatgpt.com/g/g-p-new/project",
+                    "updated_at": "2026-09-02T01:00:00Z",
+                },
+            ],
+        },
+    )
+
+    assert [row["id"] for row in payload["recent_sessions"]] == ["new-session", "old-session"]
+    assert payload["recent_sessions"][0]["title"] == "Renamed session"
+    assert [row["url"] for row in payload["projects"]] == [
+        "https://chatgpt.com/g/g-p-new/project",
+        "https://chatgpt.com/g/g-p-old/project",
+    ]
+    assert payload["projects"][0]["title"] == "Renamed project"
+
+
 def test_claude_sources_use_the_shared_chromium_source_collection() -> None:
     with patch(
         "app.core.agent_session_sources._run_chromium_source_collection",
@@ -171,6 +218,68 @@ def test_claude_status_exposes_account_restriction_without_attempting_login_bypa
     assert status["can_download"] is False
     assert status["account_name"] == "Claude account restricted"
     assert "restricted or unavailable" in status["message"]
+
+
+def test_claude_status_requires_one_shared_semantic_composer() -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            return self
+
+        def count(self) -> int:
+            return 1
+
+        def wait_for(self, **_kwargs: object) -> None:
+            return None
+
+    class _Body:
+        def inner_text(self, **_kwargs: object) -> str:
+            return "Claude"
+
+    class _Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def locator(self, selector: str) -> _Body | _Composer:
+            if selector == "body":
+                return _Body()
+            assert selector == visible_claude_composer_selector()
+            return _Composer()
+
+    status = _claude_page_status(_Page(), "Edge")
+
+    assert status["logged_in"] is True
+    assert status["can_download"] is True
+
+
+def test_claude_status_rejects_ambiguous_semantic_composers() -> None:
+    class _Composer:
+        @property
+        def first(self) -> "_Composer":
+            raise AssertionError("An ambiguous composer set must not be awaited.")
+
+        def count(self) -> int:
+            return 2
+
+    class _Body:
+        def inner_text(self, **_kwargs: object) -> str:
+            return "Claude"
+
+    class _Page:
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+        def locator(self, selector: str) -> _Body | _Composer:
+            if selector == "body":
+                return _Body()
+            assert selector == visible_claude_composer_selector()
+            return _Composer()
+
+    status = _claude_page_status(_Page(), "Edge")
+
+    assert status["logged_in"] is False
+    assert status["can_download"] is False
+    assert "could not verify" in status["message"]
 
 
 def test_grok_agent_status_uses_the_message_composer_instead_of_files() -> None:
@@ -766,6 +875,56 @@ def test_grok_project_session_fallback_keeps_only_same_project_chat_urls() -> No
     ]
 
 
+def test_claude_project_session_reader_keeps_only_same_project_conversations() -> None:
+    class _Page:
+        def evaluate(self, _script: str) -> list[dict[str, str]]:
+            return [
+                {
+                    "href": "https://claude.ai/project/project-1/chat/session-1",
+                    "title": "Same project",
+                },
+                {
+                    "href": "https://claude.ai/project/project-1/c/session-2",
+                    "title": "Same project legacy route",
+                },
+                {
+                    "href": "https://claude.ai/project/project-2/chat/session-3",
+                    "title": "Other project",
+                },
+                {
+                    "href": "https://claude.ai/chat/root-session",
+                    "title": "Root chat",
+                },
+            ]
+
+    assert claude_project_session_id(
+        "https://claude.ai/project/project-1/c/session-2",
+        "https://claude.ai/project/project-1",
+    ) == "session-2"
+    assert claude_project_session_id(
+        "https://claude.ai/project/project-2/chat/session-3",
+        "https://claude.ai/project/project-1",
+    ) == ""
+    assert _read_project_session_links(
+        _Page(),
+        "claude",
+        "https://www.claude.ai/project/project-1/?tab=chats",
+    ) == [
+        {
+            "id": "session-1",
+            "title": "Same project",
+            "url": "https://claude.ai/project/project-1/chat/session-1",
+            "updated_at": "",
+        },
+        {
+            "id": "session-2",
+            "title": "Same project legacy route",
+            "url": "https://claude.ai/project/project-1/c/session-2",
+            "updated_at": "",
+        },
+    ]
+
+
 def test_gemini_project_session_listing_fails_closed_without_collection() -> None:
     with patch(
         "app.core.agent_session_sources._run_chromium_source_collection"
@@ -823,6 +982,74 @@ def test_grok_project_session_listing_uses_the_shared_contract() -> None:
     assert payload["project_url"] == project_url
     assert payload["sessions"][0]["url"] == session_url
     assert collector.call_args.args[2] == project_url
+
+
+def test_grok_conversation_history_fetch_pairs_project_messages() -> None:
+    class _Page:
+        def evaluate(self, _script: str, request: dict[str, object]) -> dict[str, object]:
+            url = str(request["url"])
+            if "workspaceId=project-1" in url:
+                return {
+                    "status": 200,
+                    "body": {
+                        "conversations": [{
+                            "conversationId": "session-1",
+                            "title": "Renamed project session",
+                        }]
+                    },
+                }
+            if url.endswith("/response-node"):
+                return {
+                    "status": 200,
+                    "body": {
+                        "responseNodes": [
+                            {"responseId": "user-1"},
+                            {"responseId": "assistant-1"},
+                        ]
+                    },
+                }
+            if url.endswith("/load-responses"):
+                return {
+                    "status": 200,
+                    "body": {
+                        "responses": [
+                            {
+                                "responseId": "user-1",
+                                "sender": "human",
+                                "message": "What changed?",
+                                "createTime": "2026-09-02T01:00:00Z",
+                            },
+                            {
+                                "responseId": "assistant-1",
+                                "sender": "assistant",
+                                "message": "The selected session is now visible.",
+                                "createTime": "2026-09-02T01:00:02Z",
+                            },
+                        ]
+                    },
+                }
+            raise AssertionError(f"Unexpected Grok history request: {url}")
+
+    def run_collector(_browser: str, _config: CrawlConfig, _url: str, collector, **_kwargs):
+        return collector(_Page())
+
+    with patch(
+        "app.core.agent_session_sources._run_chromium_source_collection",
+        side_effect=run_collector,
+    ):
+        payload = fetch_grok_conversation_history(
+            "edge",
+            "https://grok.com/project/project-1?chat=session-1",
+            CrawlConfig(),
+        )
+
+    assert payload["title"] == "Renamed project session"
+    assert payload["history"] == [{
+        "prompt": "What changed?",
+        "response": "The selected session is now visible.",
+        "started_at": "2026-09-02T01:00:00Z",
+        "finished_at": "2026-09-02T01:00:02Z",
+    }]
 
 
 def test_chatgpt_project_session_listing_keeps_existing_adapter() -> None:

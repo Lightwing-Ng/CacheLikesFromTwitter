@@ -1,6 +1,6 @@
 """One registry for Agent actions, page observations, and WebMCP tools.
 
-Code version: v1.4.0-codex.1
+Code version: v1.4.1-codex.1
 """
 
 from __future__ import annotations
@@ -8,6 +8,8 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field
 from typing import Any
+
+from ..brand import PRODUCT_DESCRIPTION, PRODUCT_NAME, SITE_ID
 
 
 CAPABILITY_REGISTRY_VERSION = "1.4.0"
@@ -574,7 +576,7 @@ CAPABILITY_REGISTRY: tuple[CapabilityDefinition, ...] = (
             "job_start",
             {
                 "entrypoint": _string_property(
-                    "Approved entrypoint id from .cachelikes-compute.json.",
+                    "Approved entrypoint id from .agenticContext-compute.json.",
                     maximum=64,
                     minimum=1,
                 ),
@@ -880,12 +882,9 @@ def build_agent_optimization_manifest() -> dict[str, Any]:
         "profile": AGENT_OPTIMIZATION_PROFILE,
         "status": "project-convention",
         "site": {
-            "id": "cache-likes-from-twitter",
-            "name": "CacheLikesFromTwitter",
-            "description": (
-                "A local console for reviewing cached X, Grok, ChatGPT, and Gemini resources "
-                "and supervising browser-backed Agent workflows."
-            ),
+            "id": SITE_ID,
+            "name": PRODUCT_NAME,
+            "description": PRODUCT_DESCRIPTION,
             "privacyBoundary": (
                 "Local cached content, settings, authenticated sessions, and Agent context remain "
                 "behind the existing application routes and are not returned by the v1 Site tools."

@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.8.1-codex.1`
+Documentation version: `v1.8.2-codex.1`
 
 ## Launch
 
@@ -23,7 +23,7 @@ Cache and Local resources routes have no login layer, so keep the console on a t
 network, do not expose it through router port forwarding, and do not publish it through a public
 tunnel or reverse proxy. The Agent control plane is the exception: loopback requests continue
 directly, while private-network requests to `/agent` and `/api/agent/*` require the six-digit
-password gate. The default password is `195135`; set `CACHELIKES_AGENT_PASSWORD` before launch
+password gate. The default password is `195135`; set `AGENTIC_CONTEXT_AGENT_PASSWORD` before launch
 to override it. A successful unlock is stored in the signed Flask session for that browser.
 
 ## Browser-session preconditions
@@ -91,7 +91,7 @@ to override it. A successful unlock is stored in the signed Flask session for th
 
 ### Durable optimization jobs
 
-Before `job_start`, create a reviewed workspace-root `.cachelikes-compute.json` file. It must pin
+Before `job_start`, create a reviewed workspace-root `.agenticContext-compute.json` file. It must pin
 the exact approved entrypoint bytes, for example:
 
 ```json
@@ -150,7 +150,7 @@ still interrupt it, so the optimizer must checkpoint frequently enough for the w
 | `local_store/.browser-trash/` | Recoverable previews moved by the local-media browser |
 | `local_store/.browser_deleted.json` | Browser deletion tombstones and exclusion identities |
 | `logs/cachelikes.log.jsonl` | Structured local application log |
-| Platform-native CacheLikesFromTwitter settings path (`~/Library/Application Support/...` on macOS; `%APPDATA%\CacheLikesFromTwitter\...` on Windows) | Device-local saved settings |
+| Platform-native agenticContext settings path (`~/Library/Application Support/agenticContext/...` on macOS; `%APPDATA%\agenticContext\...` on Windows) | Device-local saved settings |
 
 All cache and log paths are ignored by Git. Back up local media before using any destructive reset
 operation.
@@ -194,7 +194,7 @@ you intend to discard that cache. Do not use reset operations as a routine troub
 ## Troubleshooting
 
 - Missing Playwright Chromium: run `./scripts/setup_python.sh`, or run
-  `CACHELIKES_PYTHON=/path/to/python3 -m playwright install chromium` with Python 3.13 or 3.14.
+  `AGENTIC_CONTEXT_PYTHON=/path/to/python3 -m playwright install chromium` with Python 3.13 or 3.14.
 - Missing downloader: install the project requirements so `yt-dlp` is available to the selected
   supported interpreter.
 - Browser profile lock: close duplicate normal browser windows, then retry the session probe.

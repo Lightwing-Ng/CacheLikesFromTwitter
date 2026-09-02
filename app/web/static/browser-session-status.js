@@ -1,4 +1,4 @@
-/* Code version: v1.8.3-codex.1 */
+/* Code version: v1.8.4-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v6:";
@@ -251,7 +251,7 @@
                 root.dataset.browserSessionPlatform = nextPlatform;
                 lastPayload = null;
                 clearStatus();
-                void load(activeBrowser);
+                void load(activeBrowser, {force: true});
             },
             refresh() {
                 return load(activeBrowser, {force: true});

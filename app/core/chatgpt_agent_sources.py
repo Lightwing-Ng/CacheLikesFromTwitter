@@ -1,11 +1,12 @@
 """Read ChatGPT Web sessions, projects, and conversation history for the local Agent.
 
-Code version: v1.5.2-codex.1
+Code version: v1.5.3-codex.1
 """
 
 from __future__ import annotations
 
 from collections.abc import Iterable
+from datetime import datetime, timezone
 import re
 from typing import Any
 from urllib.parse import urlencode, urlsplit
@@ -454,19 +455,18 @@ def _collect_root_sessions(context: Any, api_headers: dict[str, str]) -> list[di
         f"https://chatgpt.com/backend-api/conversations?{query}",
         api_headers,
     )
-    sessions: list[dict[str, str]] = []
-    seen_ids: set[str] = set()
+    deduplicated: dict[str, dict[str, str]] = {}
     for raw_item in _mapping_items(payload):
         if _has_project_marker(raw_item):
             continue
         session = _conversation_item(raw_item)
         session_id = session.get("id", "")
-        if session_id and session_id not in seen_ids:
-            seen_ids.add(session_id)
-            sessions.append(session)
-        if len(sessions) >= AGENT_SOURCE_LIMIT:
-            break
-    return sessions
+        if session_id:
+            existing = deduplicated.get(session_id)
+            deduplicated[session_id] = _prefer_newer_source_row(existing, session)
+    sessions = list(deduplicated.values())
+    sessions.sort(key=_source_updated_at_key, reverse=True)
+    return sessions[:AGENT_SOURCE_LIMIT]
 
 
 def _collect_projects(
@@ -483,15 +483,14 @@ def _collect_projects(
         if not project_url:
             continue
         existing = deduplicated.get(project_url)
-        if existing is None or (not existing.get("title") and project.get("title")):
-            deduplicated[project_url] = project
+        deduplicated[project_url] = _prefer_newer_source_row(existing, project)
     ordered = list(deduplicated.values())
-    if any(project.get("updated_at") for project in ordered):
-        ordered.sort(key=lambda project: project.get("updated_at", ""), reverse=True)
+    ordered.sort(key=_source_updated_at_key, reverse=True)
     return ordered[:AGENT_SOURCE_LIMIT]
 
 
 def _collect_projects_from_api(context: Any, api_headers: dict[str, str]) -> list[dict[str, str]]:
+    deduplicated: dict[str, dict[str, str]] = {}
     for endpoint in CHATGPT_PROJECT_API_ENDPOINTS:
         try:
             payload = _get_chatgpt_api_json(
@@ -501,10 +500,16 @@ def _collect_projects_from_api(context: Any, api_headers: dict[str, str]) -> lis
             )
         except RuntimeError:
             continue
-        projects = [project for item in _mapping_items(payload) if (project := _project_item(item))]
-        if projects:
-            return projects
-    return []
+        for item in _mapping_items(payload):
+            project = _project_item(item)
+            project_url = project.get("url", "")
+            if not project_url:
+                continue
+            existing = deduplicated.get(project_url)
+            deduplicated[project_url] = _prefer_newer_source_row(existing, project)
+    projects = list(deduplicated.values())
+    projects.sort(key=_source_updated_at_key, reverse=True)
+    return projects[:AGENT_SOURCE_LIMIT]
 
 
 def _collect_projects_from_page(page: Any) -> list[dict[str, str]]:
@@ -618,17 +623,52 @@ def _collect_project_sessions(context: Any, project_url: str) -> list[dict[str, 
         api_headers,
     )
     prefix = _project_conversation_prefix(project_url)
-    sessions: list[dict[str, str]] = []
-    seen_ids: set[str] = set()
+    deduplicated: dict[str, dict[str, str]] = {}
     for raw_item in _mapping_items(payload):
         session = _conversation_item(raw_item, url_prefix=prefix)
         session_id = session.get("id", "")
-        if session_id and session_id not in seen_ids:
-            seen_ids.add(session_id)
-            sessions.append(session)
-        if len(sessions) >= AGENT_SOURCE_LIMIT:
-            break
-    return sessions
+        if session_id:
+            existing = deduplicated.get(session_id)
+            deduplicated[session_id] = _prefer_newer_source_row(existing, session)
+    sessions = list(deduplicated.values())
+    sessions.sort(key=_source_updated_at_key, reverse=True)
+    return sessions[:AGENT_SOURCE_LIMIT]
+
+
+def _source_updated_at_key(item: dict[str, str]) -> tuple[int, float]:
+    """Sort provider rows by a parseable update time while preserving unknown rows."""
+    raw_value = str(item.get("updated_at") or "").strip()
+    if not raw_value:
+        return (0, 0.0)
+    try:
+        numeric_value = float(raw_value)
+    except ValueError:
+        numeric_value = None
+    if numeric_value is not None:
+        if numeric_value > 10_000_000_000:
+            numeric_value /= 1_000
+        return (1, numeric_value)
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+    except ValueError:
+        return (0, 0.0)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (1, parsed.astimezone(timezone.utc).timestamp())
+
+
+def _prefer_newer_source_row(
+    existing: dict[str, str] | None,
+    candidate: dict[str, str],
+) -> dict[str, str]:
+    """Merge duplicate provider rows without losing a newer title or timestamp."""
+    if existing is None:
+        return candidate
+    if _source_updated_at_key(candidate) > _source_updated_at_key(existing):
+        return candidate
+    if not existing.get("title") and candidate.get("title"):
+        return candidate
+    return existing
 
 
 def _mapping_items(payload: dict[str, Any]) -> Iterable[dict[str, Any]]:

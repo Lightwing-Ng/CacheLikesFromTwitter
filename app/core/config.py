@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.14.0-codex.1
+# Code version: v1.15.0-codex.1
 
 from __future__ import annotations
 
@@ -12,8 +12,12 @@ from pathlib import Path
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-RUNTIME_ROOT_ENV = "CACHELIKES_RUNTIME_ROOT"
-SETTINGS_PATH_ENV = "CACHELIKES_SETTINGS_PATH"
+RUNTIME_ROOT_ENV = "AGENTIC_CONTEXT_RUNTIME_ROOT"
+SETTINGS_PATH_ENV = "AGENTIC_CONTEXT_SETTINGS_PATH"
+LEGACY_RUNTIME_ROOT_ENV = "CACHELIKES_RUNTIME_ROOT"
+LEGACY_SETTINGS_PATH_ENV = "CACHELIKES_SETTINGS_PATH"
+SETTINGS_DIRECTORY_NAME = "agenticContext"
+LEGACY_SETTINGS_DIRECTORY_NAME = "CacheLikesFromTwitter"
 
 
 def is_windows_host() -> bool:
@@ -32,6 +36,14 @@ def _windows_app_data_root(variable_name: str, fallback_name: str) -> Path:
     if configured:
         return Path(configured).expanduser()
     return Path.home() / "AppData" / fallback_name
+
+
+def _configured_environment_value(primary_name: str, legacy_name: str) -> str:
+    """Read the current environment name before its legacy compatibility alias."""
+    return (
+        os.environ.get(primary_name, "").strip()
+        or os.environ.get(legacy_name, "").strip()
+    )
 
 
 def default_chrome_user_data_dir() -> Path:
@@ -62,10 +74,23 @@ def normalize_host_browser(value: object, fallback: str) -> str:
 
 def resolve_runtime_root() -> Path:
     """Return the optional runtime root used by isolated test processes."""
-    configured_root = os.environ.get(RUNTIME_ROOT_ENV, "").strip()
+    configured_root = _configured_environment_value(
+        RUNTIME_ROOT_ENV,
+        LEGACY_RUNTIME_ROOT_ENV,
+    )
     if not configured_root:
         return PROJECT_ROOT
     return Path(configured_root).expanduser().resolve(strict=False)
+
+
+def runtime_root_is_overridden() -> bool:
+    """Return whether a caller explicitly redirected the runtime root."""
+    return bool(
+        _configured_environment_value(
+            RUNTIME_ROOT_ENV,
+            LEGACY_RUNTIME_ROOT_ENV,
+        )
+    )
 
 
 RUNTIME_ROOT = resolve_runtime_root()
@@ -115,17 +140,32 @@ def normalize_download_workers(value: object, fallback: int = DEFAULT_DOWNLOAD_W
 
 def default_settings_path() -> Path:
     """Store local settings outside the Git worktree to avoid accidental commits."""
-    configured_path = os.environ.get(SETTINGS_PATH_ENV, "").strip()
+    configured_path = _configured_environment_value(
+        SETTINGS_PATH_ENV,
+        LEGACY_SETTINGS_PATH_ENV,
+    )
     if configured_path:
         return Path(configured_path).expanduser().resolve(strict=False)
     if is_windows_host():
         return (
             _windows_app_data_root("APPDATA", "Roaming")
-            / "CacheLikesFromTwitter/settings.json"
+            / f"{SETTINGS_DIRECTORY_NAME}/settings.json"
         )
     if is_macos_host():
-        return Path.home() / "Library/Application Support/CacheLikesFromTwitter/settings.json"
-    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "CacheLikesFromTwitter/settings.json"
+        return Path.home() / f"Library/Application Support/{SETTINGS_DIRECTORY_NAME}/settings.json"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / f"{SETTINGS_DIRECTORY_NAME}/settings.json"
+
+
+def legacy_default_settings_path() -> Path:
+    """Return the pre-agenticContext settings path for a one-way read fallback."""
+    if is_windows_host():
+        return (
+            _windows_app_data_root("APPDATA", "Roaming")
+            / f"{LEGACY_SETTINGS_DIRECTORY_NAME}/settings.json"
+        )
+    if is_macos_host():
+        return Path.home() / f"Library/Application Support/{LEGACY_SETTINGS_DIRECTORY_NAME}/settings.json"
+    return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / f"{LEGACY_SETTINGS_DIRECTORY_NAME}/settings.json"
 
 
 # Backward-compatible import-time snapshot. Runtime read/write helpers resolve the
@@ -182,8 +222,10 @@ def load_saved_config(settings_path: Path | None = None) -> CrawlConfig:
     """Load persisted crawler settings, or defaults when none exist."""
     resolved_settings_path = settings_path if settings_path is not None else default_settings_path()
     candidate_paths = [resolved_settings_path]
-    if resolved_settings_path == default_settings_path() and LEGACY_SETTINGS_PATH not in candidate_paths:
-        candidate_paths.append(LEGACY_SETTINGS_PATH)
+    if resolved_settings_path == default_settings_path():
+        for fallback_path in (legacy_default_settings_path(), LEGACY_SETTINGS_PATH):
+            if fallback_path not in candidate_paths:
+                candidate_paths.append(fallback_path)
 
     payload: dict[str, object] | None = None
     for candidate_path in candidate_paths:

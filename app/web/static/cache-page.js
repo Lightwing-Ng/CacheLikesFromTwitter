@@ -1,4 +1,4 @@
-/* Code version: v1.8.0-codex.3 */
+/* Code version: v1.8.2-codex.1 */
 
 (() => {
     "use strict";
@@ -38,7 +38,6 @@
     });
 
     const phaseChip = document.getElementById("phase_chip");
-    const bannerMessage = document.getElementById("banner_message");
     const phaseValue = document.getElementById("phase_value");
     const startButton = document.getElementById("start_button");
     const stopButton = document.getElementById("stop_button");
@@ -405,7 +404,8 @@
 
     function updateSectionLinkState(activeId) {
         const normalizedActiveId = ["overview", sourceKey, "activity"].includes(activeId)
-            ? sourceKey
+            // Cache page anchors belong to the Cache Dock section, not a source-specific Dock item.
+            ? "cache"
             : activeId;
         sectionLinks.forEach((link) => {
             link.classList.toggle("is-active", link.dataset.sectionLink === normalizedActiveId);
@@ -742,7 +742,6 @@
         lastRenderedStatusSignature = nextSignature;
         statusRefreshFailed = false;
         updateStatusFields(data);
-        setTextIfChanged(bannerMessage, data.message || "");
         setPhaseState(data.phase);
         setRecentEvents(data.recent_events || []);
         updateProgressUnitLabel(data);

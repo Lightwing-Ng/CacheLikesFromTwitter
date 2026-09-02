@@ -1,6 +1,6 @@
 """Focused tests for the Agent's ChatGPT Web source catalog.
 
-Code version: v1.2.2-codex.1
+Code version: v1.2.3-codex.1
 """
 
 from __future__ import annotations
@@ -10,8 +10,10 @@ import json
 from unittest.mock import patch
 
 from app.core.chatgpt_agent_sources import (
+    CHATGPT_PROJECT_API_ENDPOINTS,
     _collect_projects,
     _collect_projects_from_api,
+    _collect_project_sessions,
     _collect_root_sessions,
     _conversation_history_items,
     _conversation_item,
@@ -151,6 +153,86 @@ def test_root_sessions_filter_project_sessions_and_limit_to_twenty() -> None:
             "updated_at": "2026-08-13T10:00:00Z",
         }
     ]
+
+
+def test_root_sessions_are_sorted_by_provider_update_time() -> None:
+    context = _Context(
+        {
+            "/backend-api/conversations": {
+                "items": [
+                    {"id": "older", "title": "Old title", "update_time": "2026-08-13T10:00:00Z"},
+                    {"id": "newer", "title": "Renamed title", "update_time": "2026-09-02T01:00:00Z"},
+                ]
+            }
+        }
+    )
+
+    sessions = _collect_root_sessions(context, {"authorization": "Bearer test"})
+
+    assert [session["id"] for session in sessions] == ["newer", "older"]
+    assert sessions[0]["title"] == "Renamed title"
+
+
+def test_project_api_merges_all_catalog_endpoints_and_keeps_newest_projects() -> None:
+    responses = {
+        "/backend-api/gizmos/snorlax/sidebar?owned_only=true&conversations_per_gizmo=5&limit=20": {
+            "items": [
+                {
+                    "id": "g-p-old",
+                    "name": "Old project title",
+                    "updated_at": "2026-08-13T10:00:00Z",
+                }
+            ]
+        },
+        "/backend-api/projects?offset=0&limit=100&order=updated": {
+            "items": [
+                {
+                    "id": "g-p-new",
+                    "name": "Newest project",
+                    "updated_at": "2026-09-02T01:00:00Z",
+                }
+            ]
+        },
+    }
+
+    class _OrderedRequest:
+        def __init__(self) -> None:
+            self.urls: list[str] = []
+
+        def get(self, url: str, **_kwargs: object) -> _Response:
+            endpoint = url.split("chatgpt.com", 1)[-1]
+            self.urls.append(endpoint)
+            return _Response(responses.get(endpoint, {}))
+
+    class _OrderedContext:
+        def __init__(self) -> None:
+            self.request = _OrderedRequest()
+
+    context = _OrderedContext()
+    projects = _collect_projects_from_api(context, {"authorization": "Bearer test"})
+
+    assert [project["id"] for project in projects] == ["g-p-new", "g-p-old"]
+    assert len(context.request.urls) == len(CHATGPT_PROJECT_API_ENDPOINTS)
+
+
+def test_project_sessions_are_sorted_and_renamed_rows_are_reconciled() -> None:
+    project_url = "https://chatgpt.com/g/g-p-demo/project"
+    context = _Context(
+        {
+            "/api/auth/session": {"accessToken": "fixture-token"},
+            "/backend-api/gizmos/g-p-demo/conversations": {
+                "items": [
+                    {"id": "older", "title": "Old", "update_time": "2026-08-13T10:00:00Z"},
+                    {"id": "newer", "title": "New renamed title", "update_time": "2026-09-02T01:00:00Z"},
+                ]
+            }
+        }
+    )
+
+    sessions = _collect_project_sessions(context, project_url)
+
+    assert [session["id"] for session in sessions] == ["newer", "older"]
+    assert sessions[0]["title"] == "New renamed title"
 
 
 def test_project_api_parser_supports_nested_gizmo_items() -> None:

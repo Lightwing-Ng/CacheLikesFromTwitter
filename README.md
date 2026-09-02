@@ -1,11 +1,13 @@
-# CacheLikesFromTwitter
+# agenticContext
 
-Documentation version: `v1.15.0-codex.1`
+Documentation version: `v1.16.0-codex.1`
 
-CacheLikesFromTwitter is a local Flask web console that caches media from the
-currently signed-in X account's Likes timeline, Grok's Files library, and a
-configured ChatGPT project or session. It stores media locally and provides
-a browser for reviewing, deleting, and restoring cached files.
+agenticContext is a local Flask web console for preserving and using AI context
+across conversations, media, prompts, projects, and browser agents. It caches
+media from the currently signed-in X account's Likes timeline, Grok's Files
+library, and configured ChatGPT projects or sessions. It stores media and text
+history locally and provides a browser for reviewing, deleting, and restoring
+resources.
 
 Its Agent workspace uses the selected authenticated Web session for ChatGPT, Gemini, Grok, or Claude.
 The sidebar exposes one provider-neutral Project concept: ChatGPT Projects, Gemini Notebooks, and
@@ -70,8 +72,8 @@ On Windows, run the PowerShell entrypoint instead:
 .\scripts\run_app.ps1
 ```
 
-Set `CACHELIKES_SKIP_PLAYWRIGHT_INSTALL=1` only for an offline test-only dependency setup.
-`CACHELIKES_PYTHON` is an explicit Python 3.13 or 3.14 override intended primarily for CI or
+Set `AGENTIC_CONTEXT_SKIP_PLAYWRIGHT_INSTALL=1` only for an offline test-only dependency setup.
+`AGENTIC_CONTEXT_PYTHON` is an explicit Python 3.13 or 3.14 override intended primarily for CI or
 local runtime compatibility.
 
 ## Quality Checks

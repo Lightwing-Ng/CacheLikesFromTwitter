@@ -1,6 +1,6 @@
 # Engineering and test contract
 
-Documentation version: `v1.3.0-codex.1`
+Documentation version: `v1.3.1-codex.1`
 
 This document supplements the repository-root [AGENTS.md](../AGENTS.md), which remains
 authoritative. It records the project-specific documentation, testing, and handoff practices
@@ -29,7 +29,7 @@ adapted from the sibling project's quality model.
 The following are user-owned production data or external boundaries:
 
 - `local_store/` and its X, Grok, ChatGPT, and browser-deletion state
-- `logs/` and the macOS CacheLikesFromTwitter settings directory
+- `logs/` and the macOS agenticContext settings directory
 - Chrome, Edge, and Safari profiles, including their authenticated sessions
 - X, Grok, ChatGPT, yt-dlp, Playwright, and all network transport
 

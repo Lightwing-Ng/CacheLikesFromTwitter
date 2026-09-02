@@ -1,6 +1,6 @@
 """Read the local CSS foundation token registry for the Style tokens page.
 
-Code version: v0.4.0-codex.3
+Code version: v0.4.0-codex.5
 """
 
 from __future__ import annotations
@@ -240,7 +240,6 @@ def build_style_token_component_rows() -> list[dict[str, object]]:
             "name": "Agent browser selector",
             "sample_kind": "agent-browser-selector",
             "sample_title": "Browser",
-            "sample_copy": "The Agent selector keeps the active browser visible in the shared accessible menu.",
             "token_names": ("--control-form-height", "--control-liquid-background", "--control-liquid-background-hover", "--control-liquid-border", "--control-liquid-shadow", "--control-liquid-shadow-focus", "--control-liquid-blur", "--shared-select-dropdown-material", "--shared-select-option-radius", "--theme-success-strong", "--radius-pill", "--font-table-body"),
             "material_names": ("--shared-select-dropdown-material",),
         },
@@ -292,13 +291,6 @@ def build_style_token_component_rows() -> list[dict[str, object]]:
             "sample_title": "Sessions",
             "token_names": ("--local-store-pagination-material", "--radius-pill", "--accent-fill", "--accent-shadow-strong", "--font-table-body", "--motion-duration-spatial", "--motion-bouncy"),
             "material_names": ("--local-store-pagination-material",),
-        },
-        {
-            "id": "primary-inverted-button",
-            "name": "Primary (inverted) button",
-            "sample_kind": "primary-inverted-button",
-            "sample_title": "Start",
-            "token_names": ("--primary-button-inverted-background", "--primary-button-inverted-background-hover", "--primary-button-inverted-border", "--primary-button-inverted-border-hover", "--primary-button-inverted-color"),
         },
         {
             "id": "primary-button",

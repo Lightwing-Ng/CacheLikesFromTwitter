@@ -1,5 +1,6 @@
 .DS_Store
 .venv/
+.agenticContext-settings.json
 .cachelikes-settings.json
 .idea/*
 __pycache__/

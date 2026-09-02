@@ -1,6 +1,6 @@
 # Test Suite
 
-Test-suite version: `v1.3.1-codex.1`
+Test-suite version: `v1.3.2-codex.1`
 
 The authoritative test workflow, coverage baseline, isolation contract, and CI behavior are
 documented in [TESTING.md](TESTING.md). Use `./scripts/test.sh` for the normal
@@ -43,7 +43,7 @@ offline suite and `./scripts/check.sh` for the full quality gate.
 
 ## Isolation Rules
 
-`conftest.py` changes `HOME`, `CACHELIKES_RUNTIME_ROOT`, and `CACHELIKES_SETTINGS_PATH` before
+`conftest.py` changes `HOME`, `AGENTIC_CONTEXT_RUNTIME_ROOT`, and `AGENTIC_CONTEXT_SETTINGS_PATH` before
 application modules load. Filesystem tests use pytest temporary paths. The sidebar E2E suite uses
 a clean disposable browser context against a local isolated Flask server. Authenticated browser
 profiles, yt-dlp, X, Grok, remote network transport, and user-owned local media remain outside the

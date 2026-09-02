@@ -1,11 +1,12 @@
 """Provider-neutral Web Agent Project and session discovery.
 
-Code version: v1.9.0-codex.1
+Code version: v1.9.4-codex.1
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime, timezone
 import re
 from typing import Any, Callable
 from urllib.parse import parse_qs, quote, urlencode, urlsplit
@@ -17,6 +18,7 @@ from .browser_sessions import (
     launch_chromium_context,
     select_provider_tab,
     sync_playwright_or_error,
+    visible_claude_composer_selector,
 )
 from .chatgpt_agent_sources import (
     list_chatgpt_agent_sources,
@@ -30,10 +32,19 @@ from .gemini_downloader import (
     collect_gemini_conversation_links,
     normalize_gemini_conversation_url,
 )
-from .grok_history import GROK_HOME_URL, _grok_api_json, list_grok_conversations
+from .grok_history import (
+    GROK_HOME_URL,
+    GrokConversation,
+    _grok_api_json,
+    _load_responses,
+    _normalized_messages,
+    _response_nodes,
+    list_grok_conversations,
+)
 
 
 AGENT_SOURCE_LIMIT = 20
+AGENT_SESSION_HISTORY_LIMIT = 100
 SUPPORTED_AGENT_SOURCE_PLATFORMS = frozenset({"chatgpt", "gemini", "grok", "claude"})
 AGENT_SOURCE_PLATFORM_LABELS = {
     "chatgpt": "ChatGPT",
@@ -114,10 +125,25 @@ def normalize_agent_source_catalog_payload(
         raise ValueError("Choose ChatGPT, Gemini, Grok, or Claude for the Web Agent.")
     normalized = dict(payload) if isinstance(payload, dict) else {}
     normalized["platform"] = platform_key
+    raw_sessions = normalized.get("recent_sessions", [])
+    raw_session_rows = raw_sessions if isinstance(raw_sessions, list) else []
+    normalized_sessions = _normalize_session_rows(platform_key, raw_session_rows)
+    normalized["recent_sessions"] = (
+        normalized_sessions[:AGENT_SOURCE_LIMIT]
+        if normalized_sessions or not raw_session_rows
+        else raw_session_rows[:AGENT_SOURCE_LIMIT]
+    )
     normalized["projects"] = _normalize_project_rows(
         platform_key,
         normalized.get("projects", []),
     )[:AGENT_SOURCE_LIMIT]
+    if "sessions" in normalized:
+        raw_project_sessions = normalized.get("sessions", [])
+        project_session_rows = (
+            raw_project_sessions if isinstance(raw_project_sessions, list) else []
+        )
+        normalized_sessions = _normalize_session_rows(platform_key, project_session_rows)
+        normalized["sessions"] = normalized_sessions[:AGENT_SOURCE_LIMIT]
     return normalized
 
 
@@ -159,6 +185,19 @@ def normalize_claude_project_url(value: str) -> str:
     ):
         return ""
     return f"https://claude.ai{parsed.path.rstrip('/')}"
+
+
+def claude_project_session_id(conversation_url: str, project_url: str) -> str:
+    """Return a Claude Project session id only when both URLs share that Project path."""
+    normalized_project = normalize_claude_project_url(project_url)
+    normalized_conversation = normalize_claude_conversation_url(conversation_url)
+    if not normalized_project or not normalized_conversation:
+        return ""
+    project_path = urlsplit(normalized_project).path.rstrip("/")
+    conversation_path = urlsplit(normalized_conversation).path.rstrip("/")
+    session_suffix = conversation_path.removeprefix(f"{project_path}/")
+    match = re.fullmatch(r"(?:chat|c)/([A-Za-z0-9_-]+)", session_suffix)
+    return match.group(1) if match else ""
 
 
 def normalize_grok_conversation_url(value: str) -> str:
@@ -274,6 +313,116 @@ def list_agent_project_sessions(
         config,
         silent=silent,
     )
+
+
+def fetch_grok_conversation_history(
+    browser_name: str,
+    conversation_url: str,
+    config: CrawlConfig,
+    *,
+    silent: bool = False,
+) -> dict[str, Any]:
+    """Fetch one authenticated Grok conversation as read-only Agent history."""
+    normalized_url = normalize_agent_conversation_url("grok", conversation_url)
+    if not normalized_url:
+        raise ValueError("Choose a valid Grok conversation before loading its history.")
+
+    parsed_url = urlsplit(normalized_url)
+    project_id = ""
+    if GROK_PROJECT_PATH_PATTERN.fullmatch(parsed_url.path):
+        project_id = parsed_url.path.rstrip("/").rsplit("/", 1)[-1]
+        conversation_id = str(parse_qs(parsed_url.query).get("chat", [""])[0] or "").strip()
+    else:
+        conversation_id = parsed_url.path.rstrip("/").rsplit("/", 1)[-1]
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", conversation_id):
+        raise ValueError("Choose a valid Grok conversation before loading its history.")
+
+    def collect(page: Any) -> dict[str, Any]:
+        title = _grok_conversation_title(page, project_id, conversation_id)
+        conversation = GrokConversation(
+            conversation_id=conversation_id,
+            title=title or f"Grok session {conversation_id}",
+            created_at="",
+            updated_at="",
+            url=normalized_url,
+        )
+        nodes = _response_nodes(page, conversation_id)
+        response_ids = [
+            str(node.get("responseId") or node.get("id") or "").strip()
+            for node in nodes
+            if isinstance(node, dict)
+        ]
+        responses = _load_responses(page, conversation_id, response_ids)
+        history = _pair_grok_history(
+            _normalized_messages(conversation, nodes, responses, "")
+        )
+        return {
+            "conversation_url": normalized_url,
+            "title": title,
+            "history": history[-AGENT_SESSION_HISTORY_LIMIT:],
+            "limit": AGENT_SESSION_HISTORY_LIMIT,
+        }
+
+    return _run_chromium_source_collection(
+        browser_name,
+        config,
+        normalized_url,
+        collect,
+        silent=silent,
+    )
+
+
+def _grok_conversation_title(page: Any, project_id: str, conversation_id: str) -> str:
+    """Read a selected Grok title without making title lookup required for history."""
+    query = {"pageSize": "100"}
+    if project_id:
+        query["workspaceId"] = project_id
+    else:
+        query["excludeProjects"] = "true"
+    try:
+        payload = _grok_api_json(
+            page,
+            "/rest/app-chat/conversations?" + urlencode(query),
+        )
+    except Exception:
+        return ""
+    for item in payload.get("conversations", []) if isinstance(payload, dict) else []:
+        if not isinstance(item, dict):
+            continue
+        item_id = str(item.get("conversationId") or item.get("id") or "").strip()
+        if item_id != conversation_id:
+            continue
+        return str(item.get("title") or "").strip()
+    return ""
+
+
+def _pair_grok_history(messages: list[Any]) -> list[dict[str, str]]:
+    """Pair ordered Grok user and assistant messages into Agent response pages."""
+    history: list[dict[str, str]] = []
+    pending_prompt: Any | None = None
+    for message in sorted(
+        (item for item in messages if item is not None),
+        key=lambda item: int(getattr(item, "message_index", 0) or 0),
+    ):
+        role = str(getattr(message, "role", "") or "").strip().lower()
+        content = str(getattr(message, "content_text", "") or "").strip()
+        if not content:
+            continue
+        if role == "user":
+            pending_prompt = message
+            continue
+        if role != "assistant" or pending_prompt is None:
+            continue
+        history.append(
+            {
+                "prompt": str(getattr(pending_prompt, "content_text", "") or "").strip(),
+                "response": content,
+                "started_at": str(getattr(pending_prompt, "timestamp", "") or ""),
+                "finished_at": str(getattr(message, "timestamp", "") or ""),
+            }
+        )
+        pending_prompt = None
+    return history
 
 
 def _list_gemini_agent_sources(
@@ -619,10 +768,11 @@ def _claude_page_status(page: Any, browser_label: str) -> dict[str, Any]:
             "account_name": "Claude account restricted",
             "message": f"{browser_label} reported that the Claude account is restricted or unavailable.",
         }
-    composer = page.locator(
-        'textarea, [contenteditable="true"][role="textbox"], [contenteditable="true"]'
-    ).first
     try:
+        composer = page.locator(visible_claude_composer_selector())
+        count = getattr(composer, "count", None)
+        if callable(count) and count() != 1:
+            raise RuntimeError("Claude composer count was not unique.")
         composer.wait_for(state="visible", timeout=20_000)
     except Exception:
         if re.search(r"\b(?:sign in|log in|sign up|create account)\b", normalized_body):
@@ -949,6 +1099,13 @@ def _read_project_session_links(page: Any, platform: str, project_url: str) -> l
             ):
                 continue
             session_id = chat_id
+        elif platform == "claude":
+            session_id = claude_project_session_id(
+                normalized_url,
+                normalized_project,
+            )
+            if not session_id:
+                continue
         else:
             session_id = normalized_url.rsplit("/", 1)[-1]
         seen_urls.add(normalized_url)
@@ -965,7 +1122,7 @@ def _read_project_session_links(page: Any, platform: str, project_url: str) -> l
 
 def _normalize_project_rows(platform: str, rows: Any) -> list[dict[str, str]]:
     projects: list[dict[str, str]] = []
-    seen_urls: set[str] = set()
+    deduplicated: dict[str, dict[str, str]] = {}
     for row in rows if isinstance(rows, list) else []:
         if not isinstance(row, dict):
             continue
@@ -973,17 +1130,18 @@ def _normalize_project_rows(platform: str, rows: Any) -> list[dict[str, str]]:
             platform,
             str(row.get("href") or row.get("url") or ""),
         )
-        if not normalized_url or normalized_url in seen_urls:
+        if not normalized_url:
             continue
-        seen_urls.add(normalized_url)
-        projects.append(
-            {
-                "id": normalized_url.rstrip("/").split("/")[-1].split("?", 1)[0],
-                "title": str(row.get("title") or "").strip() or "Untitled project",
-                "url": normalized_url,
-                "updated_at": str(row.get("updated_at") or "").strip(),
-            }
-        )
+        candidate = {
+            "id": normalized_url.rstrip("/").split("/")[-1].split("?", 1)[0],
+            "title": str(row.get("title") or "").strip() or "Untitled project",
+            "url": normalized_url,
+            "updated_at": str(row.get("updated_at") or "").strip(),
+        }
+        existing = deduplicated.get(normalized_url)
+        deduplicated[normalized_url] = _prefer_newer_source_row(existing, candidate)
+    projects.extend(deduplicated.values())
+    projects.sort(key=_source_updated_at_key, reverse=True)
     return projects
 
 
@@ -998,24 +1156,60 @@ def _snapshot_rows(snapshot: Any, key: str) -> list[Any]:
 
 
 def _normalize_session_rows(platform: str, rows: list[Any]) -> list[dict[str, str]]:
-    sessions: list[dict[str, str]] = []
+    deduplicated: dict[str, dict[str, str]] = {}
     for row in rows:
         normalized_url = normalize_agent_conversation_url(platform, _item_value(row, "url"))
         if not normalized_url:
             continue
-        sessions.append(
-            {
-                "id": _item_value(row, "conversation_id")
-                or _item_value(row, "id")
-                or normalized_url.rsplit("/", 1)[-1],
-                "title": _item_value(row, "title") or "Untitled session",
-                "url": normalized_url,
-                "updated_at": _item_value(row, "updated_at"),
-            }
-        )
-        if len(sessions) >= AGENT_SOURCE_LIMIT:
-            break
-    return sessions
+        candidate = {
+            "id": _item_value(row, "conversation_id")
+            or _item_value(row, "id")
+            or normalized_url.rsplit("/", 1)[-1],
+            "title": _item_value(row, "title") or "Untitled session",
+            "url": normalized_url,
+            "updated_at": _item_value(row, "updated_at"),
+        }
+        existing = deduplicated.get(normalized_url)
+        deduplicated[normalized_url] = _prefer_newer_source_row(existing, candidate)
+    sessions = list(deduplicated.values())
+    sessions.sort(key=_source_updated_at_key, reverse=True)
+    return sessions[:AGENT_SOURCE_LIMIT]
+
+
+def _source_updated_at_key(item: dict[str, str]) -> tuple[int, float]:
+    """Sort source rows by update time while keeping undated provider rows stable."""
+    raw_value = str(item.get("updated_at") or "").strip()
+    if not raw_value:
+        return (0, 0.0)
+    try:
+        numeric_value = float(raw_value)
+    except ValueError:
+        numeric_value = None
+    if numeric_value is not None:
+        if numeric_value > 10_000_000_000:
+            numeric_value /= 1_000
+        return (1, numeric_value)
+    try:
+        parsed = datetime.fromisoformat(raw_value.replace("Z", "+00:00"))
+    except ValueError:
+        return (0, 0.0)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return (1, parsed.astimezone(timezone.utc).timestamp())
+
+
+def _prefer_newer_source_row(
+    existing: dict[str, str] | None,
+    candidate: dict[str, str],
+) -> dict[str, str]:
+    """Merge duplicate source rows without losing a newer title or timestamp."""
+    if existing is None:
+        return candidate
+    if _source_updated_at_key(candidate) > _source_updated_at_key(existing):
+        return candidate
+    if not existing.get("title") and candidate.get("title"):
+        return candidate
+    return existing
 
 
 def _item_value(item: Any, key: str) -> str:

@@ -1,14 +1,14 @@
-<!-- Code version: v3.28.0-codex.1 -->
+<!-- Code version: v3.28.15-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-    <title>CacheLikesFromTwitter Agent</title>
+    <title>{{ product_name }} Agent</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.25-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -37,7 +37,7 @@
                     <span class="field-help" data-agent-project-name>{{ agent_project_name }}</span>
                     <span class="shadow-backup-destination-control settings-directory-control">
                         <input
-                            class="text-input-control agent-monospace-input"
+                            class="text-input-control agent-monospace-input path-display-input"
                             type="text"
                             id="agent_project_path"
                             value="{{ settings.workspace_path }}"
@@ -159,6 +159,12 @@
                     </label>
                 </div>
 
+                <a
+                    class="secondary-button agent-llm-settings-link"
+                    href="{{ url_for('settings') }}#settings-llm"
+                    data-agent-llm-settings-link
+                >Open LLM settings</a>
+
                 <div class="agent-session-source" data-agent-session-source>
                     <label class="field">
                         <span class="field-label" data-agent-session-platform-label>Session source</span>
@@ -191,9 +197,9 @@
                                     <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/clock.fill.svg') }}" alt="" aria-hidden="true">
                                     <span class="trade-strategy-dropdown-text">Recent sessions</span>
                                 </button>
-                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option" data-agent-combobox-option="project" data-agent-combobox-label="Recent projects" data-agent-combobox-icon="{{ url_for('static', filename='images/rectangle.grid.3x2.fill.svg') }}" role="option" aria-selected="false" tabindex="-1">
+                                <button type="button" class="trade-strategy-dropdown-option agent-combobox-option" data-agent-combobox-option="project" data-agent-combobox-label="Recent projects" data-agent-combobox-icon="{{ url_for('static', filename='images/folder.fill.svg') }}" role="option" aria-selected="false" tabindex="-1">
                                     <span class="trade-strategy-dropdown-check" aria-hidden="true"></span>
-                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/rectangle.grid.3x2.fill.svg') }}" alt="" aria-hidden="true">
+                                    <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/folder.fill.svg') }}" alt="" aria-hidden="true">
                                     <span class="trade-strategy-dropdown-text">Recent projects</span>
                                 </button>
                             </div>
@@ -229,10 +235,13 @@
 
                     <div class="field agent-session-detail-field" data-agent-project-session-field hidden>
                         <span class="field-label">Project session</span>
-                        <div class="trade-strategy-combobox agent-combobox agent-session-list-combobox" data-agent-combobox data-agent-session-list="project-sessions">
+                        <div class="trade-strategy-combobox agent-combobox agent-session-list-combobox" data-agent-combobox data-agent-session-list="project-sessions" data-agent-new-session-icon="{{ url_for('static', filename='images/plus.circle.svg') }}">
                             <input type="hidden" value="new" data-agent-combobox-input data-agent-project-session-url>
                             <button type="button" class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger" data-agent-combobox-trigger aria-haspopup="listbox" aria-expanded="false" aria-label="Project session: Choose a project first" disabled>
                                 <span class="browser-session-trigger-leading">
+                                    <span class="browser-picker-selected-icon-shell" hidden>
+                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/plus.circle.svg') }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
+                                    </span>
                                     <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>Choose a project first</span>
                                     <span class="suggestion-loading-spinner agent-combobox-loading-spinner" data-agent-combobox-spinner aria-hidden="true" hidden></span>
                                 </span>
@@ -324,7 +333,8 @@
                                         <span class="agent-activity-label">{{ event.label }}</span>
                                         <span class="agent-activity-detail">{{ event.detail }}</span>
                                     </span>
-                                    <span class="agent-activity-meta">{{ event.meta }}</span>
+                                    {% set activity_time = format_agent_activity_time(event.timestamp) if event.timestamp else '' %}
+                                    <span class="agent-activity-meta">{{ event.meta }}{% if activity_time %} · {{ activity_time }}{% endif %}</span>
                                 </li>
                                 {% endfor %}
                             </ol>
@@ -505,9 +515,9 @@
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.20.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.3.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.3-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.4-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.28.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.28.7-codex.1') }}"></script>
 </body>
 </html>
