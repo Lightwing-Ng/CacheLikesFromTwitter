@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.59-codex.1
+Code version: v1.26.60-codex.1
 """
 
 from __future__ import annotations
@@ -6685,6 +6685,106 @@ def test_running_chatgpt_agent_locks_model_effort_and_refresh_controls(
         expect(effort).to_have_attribute("aria-expanded", "false")
         expect(page.locator(".agent-model-dropdown")).to_be_hidden()
         expect(page.locator(".agent-effort-dropdown")).to_be_hidden()
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_agent_reenables_loaded_project_selector_after_run_finishes(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Unlock a loaded Project selector after a running Agent snapshot finishes."""
+    project_url = "https://chatgpt.com/g/g-p-project-selector/project"
+    catalog_payload = {
+        **_chatgpt_catalog_sessions(),
+        "projects": [{
+            "id": "project-selector",
+            "title": "Project selector regression",
+            "url": project_url,
+            "updated_at": "2026-09-03T00:00:00Z",
+            "icon": "terminal",
+            "icon_color": "#3A83F7",
+        }],
+    }
+    finished_payload = _finished_chatgpt_agent_payload()
+    finished_payload["agent"].update(
+        {
+            "run_id": "project-selector-lock",
+            "run_revision": 2,
+            "started_at": "2026-09-03T08:00:00Z",
+            "finished_at": "2026-09-03T08:01:00Z",
+        }
+    )
+    running_payload = _finished_chatgpt_agent_payload()
+    running_payload["agent"].update(
+        {
+            "running": True,
+            "phase": "running",
+            "run_id": "project-selector-lock",
+            "run_revision": 1,
+            "started_at": "2026-09-03T08:00:00Z",
+            "finished_at": "",
+            "activity": [],
+        }
+    )
+    def fulfill_agent_status(route) -> None:
+        route.fulfill(json=finished_payload)
+
+    def fulfill_browser_status(route) -> None:
+        route.fulfill(
+            json={
+                "platform": "chatgpt",
+                "browser": "edge",
+                "browser_label": "Edge",
+                "logged_in": True,
+                "can_download": True,
+                "account_name": "ChatGPT account",
+                "message": "Edge is ready for ChatGPT Web.",
+                "agent_sources": catalog_payload,
+            }
+        )
+
+    def fulfill_project_sessions(route) -> None:
+        route.fulfill(json={"platform": "chatgpt", "project_url": project_url, "sessions": []})
+
+    def fulfill_ask(route) -> None:
+        route.fulfill(json=running_payload)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 900},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", fulfill_agent_status)
+    page.route("**/api/browser-session**", fulfill_browser_status)
+    page.route("**/api/agent/project-sessions**", fulfill_project_sessions)
+    page.route("**/api/agent/ask", fulfill_ask)
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
+        page.locator(
+            '.agent-session-mode-combobox [data-agent-combobox-option="project"]'
+        ).click()
+        project_trigger = page.locator(
+            '[data-agent-session-list="projects"] [data-agent-combobox-trigger]'
+        )
+        project_option = page.locator(
+            f'[data-agent-session-list="projects"] [data-agent-combobox-option="{project_url}"]'
+        )
+        expect(project_option).to_have_count(1)
+        expect(project_trigger).to_be_enabled()
+        project_trigger.click()
+        project_option.click()
+        page.locator("[data-agent-prompt-input]").fill("Run the Project selector regression.")
+        expect(page.locator("#agent_ask_button")).to_be_enabled()
+        with page.expect_request(re.compile(r"/api/agent/ask$")):
+            page.locator("#agent_ask_button").click()
+        expect(project_trigger).to_be_disabled()
+        expect(project_trigger).to_be_enabled()
     finally:
         context.close()
 

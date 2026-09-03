@@ -1,4 +1,4 @@
-/* Code version: v3.28.12-codex.1 */
+/* Code version: v3.28.13-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -1370,18 +1370,22 @@
         });
     }
 
+    function syncSessionListControls(running = Boolean(lastPayload.agent?.running)) {
+        [elements.recentSessionCombobox, elements.projectCombobox].forEach((combobox) => {
+            const trigger = combobox?.querySelector("[data-agent-combobox-trigger]");
+            if (!trigger) return;
+            const hasOptions = Boolean(combobox.querySelector("[data-agent-combobox-option]"));
+            const canRetryCatalog = catalogState === "error";
+            trigger.disabled = running
+                || sourcesLoading
+                || (!hasOptions && !canRetryCatalog);
+        });
+    }
+
     function clearCatalogLoadingState() {
         sourcesLoading = false;
         setCatalogControlsLoading(false);
-        [elements.recentSessionCombobox, elements.projectCombobox].forEach((combobox) => {
-            const trigger = combobox?.querySelector("[data-agent-combobox-trigger]");
-            const hasOptions = Boolean(combobox?.querySelector("[data-agent-combobox-option]"));
-            if (trigger && (catalogState === "error" || catalogState === "ready" || hasOptions)) {
-                trigger.disabled = catalogState === "error" ? false : trigger.disabled && !hasOptions;
-                if (catalogState === "error") trigger.disabled = false;
-                if (catalogState === "ready" && hasOptions) trigger.disabled = false;
-            }
-        });
+        syncSessionListControls();
         syncAgentSessionListViewport();
     }
 
@@ -2605,6 +2609,7 @@
             );
             if (isRuntimeChoice) trigger.disabled = false;
         });
+        syncSessionListControls(running);
         if (running) {
             closeAgentComposerCombobox(elements.modelCombobox);
             closeAgentComposerCombobox(elements.effortCombobox);
