@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.52-codex.1
+Code version: v1.26.53-codex.1
 """
 
 from __future__ import annotations
@@ -1542,10 +1542,12 @@ def test_agent_doctor_actions_keep_spatial_effects_visible(
                     const style = getComputedStyle(element);
                     const rect = element.getBoundingClientRect();
                     return {
+                        className: String(element.className || ""),
                         overflow: style.overflow,
                         overflowX: style.overflowX,
                         overflowY: style.overflowY,
                         boxShadow: style.boxShadow,
+                        widthCss: style.width,
                         rect: {
                             left: rect.left,
                             top: rect.top,
@@ -1560,11 +1562,15 @@ def test_agent_doctor_actions_keep_spatial_effects_visible(
                 for (let node = actions; node && node !== document.body; node = node.parentElement) {
                     ancestors.push(read(node));
                 }
+                const settingsLink = document.querySelector("[data-agent-llm-settings-link]");
+                const settingsForm = settingsLink?.closest("form") || null;
                 return {
                     panel: read(panel),
                     content: read(content),
                     actions: read(actions),
                     buttons: [...actions.children].map(read),
+                    settingsLink: settingsLink ? read(settingsLink) : null,
+                    settingsForm: settingsForm ? read(settingsForm) : null,
                     ancestors,
                     documentOverflow: document.documentElement.scrollWidth
                         - document.documentElement.clientWidth,
@@ -1578,6 +1584,20 @@ def test_agent_doctor_actions_keep_spatial_effects_visible(
         assert len(contract["buttons"]) == 4
         assert all(button["rect"]["width"] > 0 for button in contract["buttons"])
         assert all(button["boxShadow"] != "none" for button in contract["buttons"])
+        button_widths = [button["rect"]["width"] for button in contract["buttons"]]
+        assert max(button_widths) - min(button_widths) > 8
+        assert all(
+            button["rect"]["width"] < contract["actions"]["rect"]["width"] - 8
+            for button in contract["buttons"]
+        )
+        assert contract["settingsLink"] is not None
+        assert contract["settingsForm"] is not None
+        assert "secondary-button" in contract["settingsLink"]["className"]
+        assert all("secondary-button" in button["className"] for button in contract["buttons"])
+        assert (
+            contract["settingsLink"]["rect"]["width"]
+            < contract["settingsForm"]["rect"]["width"] - 8
+        )
         assert all(
             ancestor["overflowX"] == "visible" and ancestor["overflowY"] == "visible"
             for ancestor in contract["ancestors"][:4]

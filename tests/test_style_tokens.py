@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.37-codex.1
+Code version: v1.51.38-codex.1
 """
 
 from pathlib import Path
@@ -977,11 +977,17 @@ def test_style_token_secondary_button_preview_stays_intrinsic_and_reserves_svg_i
     preview_rule = stylesheet[preview_start:stylesheet.index("\n}", preview_start)]
     button_start = stylesheet.index(".style-token-secondary-button-demo .secondary-button {")
     button_rule = stylesheet[button_start:stylesheet.index("\n}", button_start)]
+    secondary_start = stylesheet.index(".secondary-button {")
+    secondary_rule = stylesheet[secondary_start:stylesheet.index("\n}", secondary_start)]
 
     assert "gap: 6px;" in button_rule
     for token in ("width: fit-content;", "max-width: 100%;"):
         assert token in preview_rule
         assert token in button_rule
+        assert token in secondary_rule
+    assert "justify-self: start;" in secondary_rule
+    assert "\n    width: auto;" not in secondary_rule
+    assert "\n    width: 100%;" not in secondary_rule
 
     template = (
         STYLE_PATH.parents[1] / "templates/settings_style_tokens.html"
@@ -1026,6 +1032,9 @@ def test_prompt_tag_specimen_reuses_the_saved_prompt_tag_contract() -> None:
         "align-items: center;",
         "justify-content: center;",
         "text-decoration: none;",
+        "width: fit-content;",
+        "max-width: 100%;",
+        "justify-self: start;",
     ):
         assert token in secondary_rule
 
@@ -1834,7 +1843,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.91.27-codex.1 */",
+        "/* Code version: v2.91.28-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -2263,6 +2272,9 @@ def test_agent_doctor_actions_stack_vertically() -> None:
 
     assert "display: grid;" in selector_rule
     assert "grid-template-columns: minmax(0, 1fr);" in selector_rule
+    assert "justify-items: start;" in selector_rule
+    assert ".agent-doctor-action {\n    width: 100%;" not in stylesheet
+    assert ".agent-doctor-action {\n    min-height: 36px;" not in stylesheet
 
 
 def test_agent_session_lists_open_above_the_sidebar_trigger() -> None:

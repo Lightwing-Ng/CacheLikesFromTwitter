@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.54.5-codex.1
+Code version: v3.54.7-codex.1
 """
 
 from __future__ import annotations
@@ -192,6 +192,15 @@ SUPPORTED_BROWSERS = frozenset({"chrome", "edge", "safari"})
 
 class AgentTurnLimitExceeded(RuntimeError):
     """Identify a bounded Agent run that can continue in its bound Web session."""
+
+
+def _is_legacy_turn_limit_failure(message: object) -> bool:
+    """Recognize the old persisted turn-limit wording for one-way migration."""
+    normalized = " ".join(str(message or "").split()).casefold()
+    return (
+        "reached the configured " in normalized
+        and "turn limit before returning final" in normalized
+    )
 
 
 SUPPORTED_OPERATING_SYSTEMS = frozenset({"macos", "windows"})
@@ -454,7 +463,8 @@ _CONTROLLER_TURN_REMINDER = (
     "Do not infer model, effort, browser, session, or destination from prompt text. "
     "Existing files require replace, new files require write, and edits require approved verification "
     "then bodycheck before final. Read-only tasks allow only list, read, search, job_status, or bodycheck, "
-    "followed by one non-mutating final summary."
+    "followed by one non-mutating final summary. When the turn budget is exhausted, return `final` immediately; "
+    "no further non-final action is accepted."
 )
 
 DEFAULT_MACOS_SYSTEM_PROMPT = (
@@ -4913,6 +4923,16 @@ class ComputerUseAgentService:
             )
             snapshot.finished_at = utc_now()
             snapshot.bodycheck_passed = False
+        elif snapshot.phase == "failed" and _is_legacy_turn_limit_failure(
+            snapshot.message
+        ):
+            legacy_message = str(snapshot.message or "").strip().rstrip(".")
+            snapshot.phase = "interrupted"
+            snapshot.message = (
+                f"{legacy_message}. This legacy turn-limit state is available for "
+                "explicit continuation."
+            )
+            snapshot.bodycheck_passed = False
         return snapshot
 
     def _persist_snapshot_locked(self) -> None:
@@ -6309,7 +6329,9 @@ def _initial_web_agent_message(
         f"Run budget: at most {settings.max_turns:,} controller turns; the context Markdown budget is "
         f"{settings.context_limit_mib:,} MiB; each verification command is limited to "
         f"{settings.command_timeout_seconds:,} seconds. Keep reads, searches, and command output bounded, "
-        "prioritize the smallest useful evidence, and reach verification plus bodycheck before the turn limit."
+        "prioritize the smallest useful evidence, and reach verification plus bodycheck before the turn limit. "
+        "After the last controller observation, return the non-mutating `final` summary immediately; "
+        "no further local action can be accepted."
     )
     first_action_instruction = (
         "For this fresh root or Project session, the first action must read `AGENTS.md` when it exists; "
@@ -8005,10 +8027,15 @@ def _run_web_action_loop(
     activity: list[dict[str, str]] = []
 
     turn_index = 0
+    # The turn budget covers local controller actions. After the last action's
+    # observation is submitted, allow exactly one provider response for `final`.
+    # This closes the common bodycheck-at-the-boundary race without permitting
+    # another local action or an unbounded retry loop.
+    finalization_grace_available = False
     invalid_action_retries = 0
     last_failure_hash = ""
     consecutive_failure_count = 0
-    while turn_index < settings.max_turns:
+    while turn_index < settings.max_turns or finalization_grace_available:
         if should_stop():
             _stop_web_generation(page, browser_kind)
             return (
@@ -8082,6 +8109,11 @@ def _run_web_action_loop(
                     turn_index,
                     controller.state.bodycheck_current,
                 )
+            if finalization_grace_available:
+                raise AgentTurnLimitExceeded(
+                    f"{AGENT_PLATFORM_BY_KEY[platform]['label']} reached the configured "
+                    f"{settings.max_turns:,}-turn limit before returning a valid final action."
+                ) from exc
             invalid_action_retries += 1
             response_hash = hashlib.sha256(
                 str(response or "").encode("utf-8", errors="replace")
@@ -8173,8 +8205,15 @@ def _run_web_action_loop(
         invalid_action_retries = 0
         last_failure_hash = ""
         consecutive_failure_count = 0
-        turn_index += 1
         action_name = str(action.get("action") or "").strip().lower()
+        if finalization_grace_available and action_name != "final":
+            raise AgentTurnLimitExceeded(
+                f"{AGENT_PLATFORM_BY_KEY[platform]['label']} reached the configured "
+                f"{settings.max_turns:,}-turn limit before returning final."
+            )
+        action_turn = turn_index + 1
+        if not finalization_grace_available:
+            turn_index += 1
         action_capability = _registered_action_capability(action_name)
         action_capability_key = action_capability.key if action_capability is not None else ""
         action_id = ""
@@ -8183,12 +8222,12 @@ def _run_web_action_loop(
                 "provider_turn",
                 status="invalid",
                 detail="Provider requested an Agent Action outside the capability registry.",
-                data={"turn": turn_index, "action": action_name or "unknown"},
+                data={"turn": action_turn, "action": action_name or "unknown"},
             )
         elif event_chain is not None:
             action_id, _action_event = event_chain.begin_action(
                 action_capability_key,
-                turn=turn_index,
+                turn=action_turn,
                 action_name=action_name or "unknown",
                 data=controller.action_event_metadata(
                     action,
@@ -8215,6 +8254,11 @@ def _run_web_action_loop(
                         status="failed",
                         detail="Final action was rejected by the registry-owned schema boundary.",
                     )
+                if finalization_grace_available:
+                    raise AgentTurnLimitExceeded(
+                        f"{AGENT_PLATFORM_BY_KEY[platform]['label']} reached the configured "
+                        f"{settings.max_turns:,}-turn limit before returning a valid final action."
+                    ) from exc
                 response = _submit_and_wait(
                     page,
                     browser_kind,
@@ -8260,6 +8304,11 @@ def _run_web_action_loop(
                         ),
                         status="blocked",
                         detail="Final action was blocked by the current verification gates.",
+                    )
+                if finalization_grace_available:
+                    raise AgentTurnLimitExceeded(
+                        f"{AGENT_PLATFORM_BY_KEY[platform]['label']} reached the configured "
+                        f"{settings.max_turns:,}-turn limit before satisfying the final verification gates."
                     )
                 response = _submit_and_wait(
                     page,
@@ -8311,7 +8360,7 @@ def _run_web_action_loop(
                         platform,
                         conversation_url,
                     ),
-                    turn_index - 1,
+                    turn_index if finalization_grace_available else turn_index - 1,
                     controller.state.bodycheck_current,
                 )
             try:
@@ -8354,7 +8403,7 @@ def _run_web_action_loop(
                 status="ready",
                 detail="Bounded Agent response summary recorded without provider transcript content.",
                 data={
-                    "turn": turn_index,
+                    "turn": action_turn,
                     "response_chars": len(final_response),
                     "verification_current": controller.state.verification_current,
                     "bodycheck_current": controller.state.bodycheck_current,
@@ -8462,6 +8511,8 @@ def _run_web_action_loop(
                 message=f"Controller observation sent; waiting for the next {AGENT_PLATFORM_BY_KEY[platform]['label']} action.",
             ),
         )
+        if turn_index >= settings.max_turns:
+            finalization_grace_available = True
 
     raise AgentTurnLimitExceeded(
         f"{AGENT_PLATFORM_BY_KEY[platform]['label']} reached the configured {settings.max_turns:,}-turn limit before returning final."

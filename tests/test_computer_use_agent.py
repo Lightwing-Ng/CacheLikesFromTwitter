@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.54.1-codex.1
+Code version: v3.54.3-codex.1
 """
 
 from __future__ import annotations
@@ -5886,6 +5886,59 @@ def test_action_loop_raises_typed_exception_when_turn_budget_is_exhausted(
     assert len(submitted) == 2
 
 
+def test_action_loop_allows_one_final_response_after_last_controller_action(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://chatgpt.com/c/turn-limit-final"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(workspace_path=str(workspace), max_turns=1)
+    controller = WorkspaceController(workspace, settings, lambda: False)
+    responses = iter(
+        (
+            '{"action":"bodycheck"}',
+            '{"action":"final","summary":"Task complete."}',
+        )
+    )
+    submitted: list[str] = []
+
+    def submit(_page: object, _browser: str, message: str, _should_stop: object, **_kwargs: object) -> str:
+        submitted.append(message)
+        return next(responses)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_chatgpt_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chatgpt_model", _select_verified_chatgpt_model)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    result = _run_web_action_loop(
+        page=_Page(),
+        browser_kind="chromium",
+        initial_message="Continue the task.",
+        controller=controller,
+        context_path=tmp_path / "context.md",
+        settings=settings,
+        session_mode="recent",
+        selected_target_url="https://chatgpt.com/c/turn-limit-final",
+        should_stop=lambda: False,
+        update=lambda **_changes: None,
+    )
+
+    assert result == (
+        "Task complete.",
+        "https://chatgpt.com/c/turn-limit-final",
+        1,
+        True,
+    )
+    assert len(submitted) == 2
+
+
 def test_action_loop_records_workspace_and_delete_receipt_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -11226,6 +11279,62 @@ def test_agent_service_exposes_turn_limit_as_resumable_interruption(
     )
     assert continue_action["enabled"]
     assert doctor["events"][-1]["kind"] == "run.interrupted"
+
+
+def test_agent_service_migrates_legacy_turn_limit_snapshot_to_interrupted(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    runtime_root = tmp_path / "runtime"
+    runtime_root.mkdir()
+    run_id = new_run_id()
+    event_chain = AgentEventChain(runtime_root, run_id)
+    event_chain.start()
+    event_chain.terminal(
+        "run.failed",
+        status="failed",
+        detail="Legacy bounded turn-limit failure.",
+    )
+    (runtime_root / "last-run.json").write_text(
+        json.dumps(
+            {
+                "phase": "failed",
+                "message": "ChatGPT reached the configured 40-turn limit before returning final.",
+                "workspace_path": str(workspace),
+                "conversation_url": "https://chatgpt.com/c/legacy-turn-limit",
+                "session_mode": "recent",
+                "operating_system": detect_host_operating_system(),
+                "platform": "chatgpt",
+                "browser": "edge",
+                "model": "gpt-5.6-sol",
+                "chatgpt_effort": "highest_available",
+                "read_only": False,
+                "conversation_bound": True,
+                "run_id": run_id,
+                "run_revision": 1,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    service = ComputerUseAgentService(
+        ComputerUseSettingsStore(tmp_path / "settings.json"),
+        runtime_root=runtime_root,
+    )
+
+    snapshot = service.snapshot()
+    assert snapshot["phase"] == "interrupted"
+    assert "available for explicit continuation" in snapshot["message"]
+    doctor = service.doctor()
+    continue_action = next(
+        action for action in doctor["actions"] if action["id"] == "continue"
+    )
+    assert continue_action["enabled"]
+    persisted = json.loads((runtime_root / "last-run.json").read_text(encoding="utf-8"))
+    assert persisted["phase"] == "interrupted"
+    assert service._event_chain is not None
+    assert service._event_chain.public_events()[-1]["kind"] == "run.failed"
 
 
 def test_agent_service_does_not_auto_handoff_a_non_edge_failure(tmp_path: Path) -> None:

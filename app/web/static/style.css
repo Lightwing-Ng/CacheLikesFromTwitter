@@ -1,4 +1,4 @@
-/* Code version: v2.91.27-codex.1 */
+/* Code version: v2.91.28-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -2510,8 +2510,10 @@ input[type="text"].output-directory-input {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: auto;
+    width: fit-content;
+    max-width: 100%;
     min-width: 0;
+    justify-self: start;
     border: var(--glass-chip-border);
     border-radius: var(--radius-pill);
     background: var(--glass-chip-background-strong);
@@ -3661,12 +3663,8 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-doctor-actions {
     display: grid;
     grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
     gap: 8px;
-}
-
-.agent-doctor-action {
-    width: 100%;
-    min-height: 36px;
 }
 
 .agent-runtime-form a,
@@ -4169,7 +4167,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     align-items: center;
     justify-content: center;
     gap: 6px;
-    width: auto;
     min-width: var(--agent-composer-control-height);
     height: var(--agent-composer-control-height);
     min-height: var(--agent-composer-control-height);

@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.54.2-codex.1`
+Documentation version: `v3.54.4-codex.1`
 
 ## Purpose
 
@@ -292,6 +292,9 @@ older task cannot be submitted accidentally through a different Web session.
    individual returned lines are also bounded. If the service cannot launch `rg`, a bounded Python
    literal-text fallback skips ignored, symlinked, sensitive, and oversized files and still
    enforces the requested path, glob, result, file-count, and time limits.
+   The configured budget counts local controller actions. When the last action's observation is
+   submitted at the boundary, exactly one additional non-mutating `final` response is accepted;
+   any non-final response in that bounded closing window interrupts the run without executing it.
 8. A malformed non-JSON reply receives up to three strict-format corrections without spending the
    configured controller-action budget. Corrections identify repeated invalid output, require only
    the single next unfinished action, and on the last retry offer one exact read-only `list` action
@@ -309,7 +312,10 @@ older task cannot be submitted accidentally through a different Web session.
    failed state without opening traditional Edge. The local page exposes an explicit `Continue in
    Edge` handoff instead of claiming completion. A traditional ChatGPT window can continue the
    conversation, but it cannot perform or verify local file actions through this controller; local
-   edits and bodycheck therefore remain unfinished.
+   edits and bodycheck therefore remain unfinished. A legacy persisted turn-limit failure is
+   reclassified as an interrupted task after restart so the same bound ChatGPT conversation can be
+   continued explicitly when its safety metadata is still valid; the historical failed event remains
+   unchanged and no continuation starts automatically.
 10. The local page renders the final Markdown and links to the selected Web conversation in the
    browser encoded by the task, rather than the system default browser. When a
    ChatGPT recent session or project session is selected, the page fetches that conversation's
