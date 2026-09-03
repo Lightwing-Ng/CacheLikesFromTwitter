@@ -1,4 +1,4 @@
-/* Code version: v1.2.0-codex.2 */
+/* Code version: v1.2.1-codex.1 */
 
 (() => {
     "use strict";
@@ -70,17 +70,21 @@
             return;
         }
         const minWidth = 220;
-        const getWidthRange = () => {
+        let dragGeometry = null;
+        const measureDragGeometry = () => {
             const rect = shell.getBoundingClientRect();
             const computed = getComputedStyle(shell);
             const columnGap = Number.parseFloat(computed.getPropertyValue("--style-token-column-gap")) || 24;
+            return {rect, columnGap};
+        };
+        const getDragGeometry = () => dragGeometry || measureDragGeometry();
+        const getWidthRange = () => {
+            const {rect, columnGap} = getDragGeometry();
             const maximum = Math.max(minWidth, rect.width - columnGap - 280);
             return {minimum: minWidth, maximum};
         };
         const widthFromPointer = (clientX) => {
-            const rect = shell.getBoundingClientRect();
-            const computed = getComputedStyle(shell);
-            const columnGap = Number.parseFloat(computed.getPropertyValue("--style-token-column-gap")) || 24;
+            const {rect, columnGap} = getDragGeometry();
             return clientX - rect.left - (columnGap / 2);
         };
         const getCurrentWidth = () => {
@@ -90,6 +94,8 @@
         const setCurrentWidth = (nextWidth) => {
             shell.style.setProperty("--style-token-demo-width-current", `${nextWidth}px`);
         };
+        let handlePositionFrame = 0;
+        let lastHandleY = null;
         const syncHandleY = () => {
             const rect = shell.getBoundingClientRect();
             if (!rect.height) {
@@ -103,7 +109,20 @@
             }
             const visibleCenterY = visibleTop + (visibleHeight / 2);
             const targetY = Math.min(Math.max(16, visibleCenterY - rect.top), rect.height - 16);
+            if (targetY === lastHandleY) {
+                return;
+            }
+            lastHandleY = targetY;
             shell.style.setProperty("--style-token-resizer-y", `${targetY}px`);
+        };
+        const scheduleHandleY = () => {
+            if (handlePositionFrame) {
+                return;
+            }
+            handlePositionFrame = window.requestAnimationFrame(() => {
+                handlePositionFrame = 0;
+                syncHandleY();
+            });
         };
         const unbind = window.CACHE_LIKES_RESIZER?.bind(handle, {
             axis: "inline",
@@ -112,15 +131,24 @@
             getValue: getCurrentWidth,
             setValue: setCurrentWidth,
             valueFromPointer: widthFromPointer,
+            onStart: () => {
+                dragGeometry = measureDragGeometry();
+            },
+            onEnd: () => {
+                dragGeometry = null;
+            },
         });
         handle.dataset.bound = "1";
         syncHandleY();
-        window.addEventListener("resize", syncHandleY, {passive: true});
-        window.addEventListener("scroll", syncHandleY, {passive: true});
+        window.addEventListener("resize", scheduleHandleY, {passive: true});
+        window.addEventListener("scroll", scheduleHandleY, {passive: true});
         handle._cacheLikesResizerCleanup = () => {
             unbind?.();
-            window.removeEventListener("resize", syncHandleY);
-            window.removeEventListener("scroll", syncHandleY);
+            window.removeEventListener("resize", scheduleHandleY);
+            window.removeEventListener("scroll", scheduleHandleY);
+            if (handlePositionFrame) {
+                window.cancelAnimationFrame(handlePositionFrame);
+            }
             delete handle.dataset.bound;
         };
     };

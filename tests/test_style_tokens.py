@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.35-codex.1
+Code version: v1.51.37-codex.1
 """
 
 from pathlib import Path
@@ -970,6 +970,27 @@ def test_browser_filter_actions_reuse_the_standard_secondary_button() -> None:
     assert 'class="secondary-button browser-refresh-button"' in browser_template
 
 
+def test_style_token_secondary_button_preview_stays_intrinsic_and_reserves_svg_icon() -> None:
+    """Keep the Style tokens specimen compact while leaving icon use data-driven."""
+    stylesheet = _stylesheet()
+    preview_start = stylesheet.index(".style-token-secondary-button-preview {")
+    preview_rule = stylesheet[preview_start:stylesheet.index("\n}", preview_start)]
+    button_start = stylesheet.index(".style-token-secondary-button-demo .secondary-button {")
+    button_rule = stylesheet[button_start:stylesheet.index("\n}", button_start)]
+
+    assert "gap: 6px;" in button_rule
+    for token in ("width: fit-content;", "max-width: 100%;"):
+        assert token in preview_rule
+        assert token in button_rule
+
+    template = (
+        STYLE_PATH.parents[1] / "templates/settings_style_tokens.html"
+    ).read_text(encoding="utf-8")
+    assert "row.use_icon" in template
+    assert "row.icon_class" in template
+    assert "data-style-token-secondary-button-use-icon" in template
+
+
 def test_prompt_tag_specimen_reuses_the_saved_prompt_tag_contract() -> None:
     """Keep the Style tokens tag specimen on the live prompt-tag classes."""
     stylesheet = _stylesheet()
@@ -1813,7 +1834,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.91.25-codex.1 */",
+        "/* Code version: v2.91.27-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1940,6 +1961,30 @@ def test_agent_model_trigger_uses_fifteen_pixel_type_token() -> None:
     assert "font-size: var(--font-size-5);" in selector_rule
 
 
+def test_agent_composer_triggers_reserve_a_protected_chevron_column() -> None:
+    """Keep model and thinking-effort labels separated from their chevrons."""
+    stylesheet = _stylesheet()
+    selector = ".agent-model-trigger,\n.agent-effort-trigger {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    for token in (
+        "display: grid;",
+        "grid-template-columns: minmax(0, 1fr) 12px;",
+        "column-gap: 8px;",
+        "align-items: center;",
+    ):
+        assert token in selector_rule
+
+    chevron_selector = (
+        ".agent-model-trigger .browser-picker-trigger-chevron,\n"
+        ".agent-effort-trigger .browser-picker-trigger-chevron {"
+    )
+    chevron_start = stylesheet.index(chevron_selector)
+    chevron_rule = stylesheet[chevron_start:stylesheet.index("\n}", chevron_start)]
+    assert "justify-self: end;" in chevron_rule
+
+
 def test_agent_effort_trigger_uses_fifteen_pixel_type_token_without_wrapping() -> None:
     """Keep the visible ChatGPT effort label readable at every viewport width."""
     stylesheet = _stylesheet()
@@ -1978,6 +2023,23 @@ def test_agent_effort_refresh_is_a_visible_labeled_action() -> None:
     ):
         assert token in label_rule
     assert "flex-wrap: wrap;" in stylesheet
+
+
+def test_agent_effort_refresh_rotates_its_icon_while_refreshing() -> None:
+    """Keep live effort refresh feedback visible without changing the button label."""
+    stylesheet = _stylesheet()
+    selector = ".agent-effort-refresh.is-refreshing .agent-effort-refresh-icon {"
+    selector_start = stylesheet.index(selector)
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+    assert "animation: agent-effort-refresh-spin 800ms linear infinite;" in selector_rule
+    keyframes_start = stylesheet.index("@keyframes agent-effort-refresh-spin {")
+    keyframes_rule = stylesheet[keyframes_start:stylesheet.index("\n}", keyframes_start)]
+    assert "transform: rotate(360deg);" in keyframes_rule
+    reduced_start = stylesheet.index(
+        ".agent-effort-refresh.is-refreshing .agent-effort-refresh-icon {",
+        keyframes_start,
+    )
+    assert "animation: none;" in stylesheet[reduced_start:stylesheet.index("\n}", reduced_start)]
 
 
 def test_visible_chatgpt_effort_uses_a_two_row_compact_composer_footer() -> None:

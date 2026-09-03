@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.48-codex.1
+Code version: v1.26.52-codex.1
 """
 
 from __future__ import annotations
@@ -1013,7 +1013,7 @@ def test_style_tokens_component_catalog_is_interactive_and_responsive(
     )
     try:
         cards = page.locator("[data-style-token-card]")
-        expect(cards).to_have_count(22)
+        expect(cards).to_have_count(21)
         assert page.evaluate(
             "document.documentElement.scrollWidth === document.documentElement.clientWidth"
         )
@@ -1024,11 +1024,26 @@ def test_style_tokens_component_catalog_is_interactive_and_responsive(
         ) == 2
         assert page.locator("[data-style-token-agent-browser-menu]").is_hidden()
 
+        resizer = page.locator("[data-style-token-resizer]")
+        demo = page.locator(".style-token-demo").first
+        resizer_box = resizer.bounding_box()
+        initial_demo_width = demo.bounding_box()["width"]
+        page.mouse.move(
+            resizer_box["x"] + (resizer_box["width"] / 2),
+            resizer_box["y"] + (resizer_box["height"] / 2),
+        )
+        page.mouse.down()
+        page.mouse.move(resizer_box["x"] + 40, resizer_box["y"] + (resizer_box["height"] / 2))
+        page.mouse.up()
+        assert demo.bounding_box()["width"] > initial_demo_width
+
         refresh_button = page.locator("[data-style-token-secondary-button]")
         refresh_geometry = refresh_button.evaluate(
-            "element => ({ width: element.getBoundingClientRect().width, parentWidth: element.parentElement.getBoundingClientRect().width })"
+            "element => ({ width: element.getBoundingClientRect().width, previewWidth: element.parentElement.getBoundingClientRect().width, demoWidth: element.closest('[data-style-token-demo]').getBoundingClientRect().width })"
         )
-        assert refresh_geometry["width"] < refresh_geometry["parentWidth"]
+        assert refresh_geometry["width"] <= refresh_geometry["previewWidth"] + 1
+        assert refresh_geometry["previewWidth"] < refresh_geometry["demoWidth"]
+        assert refresh_button.get_attribute("data-style-token-secondary-button-use-icon") == "false"
 
         tag_typography = page.locator("[data-style-token-prompt-tag]").evaluate(
             "element => { const style = getComputedStyle(element); return { fontSize: style.fontSize, fontWeight: style.fontWeight }; }"
@@ -1778,9 +1793,23 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
                 const label = document.querySelector('.agent-effort-trigger-label');
                 const labelRect = label?.getBoundingClientRect();
                 const labelStyle = label && getComputedStyle(label);
+                const protectedZone = selector => {
+                    const trigger = document.querySelector(selector);
+                    const triggerRect = trigger?.getBoundingClientRect();
+                    const labelRect = trigger?.querySelector('.trade-strategy-trigger-label')?.getBoundingClientRect();
+                    const chevronRect = trigger?.querySelector('.browser-picker-trigger-chevron')?.getBoundingClientRect();
+                    return {
+                        labelRight: labelRect?.right,
+                        chevronLeft: chevronRect?.left,
+                        chevronRight: chevronRect?.right,
+                        triggerRight: triggerRect?.right,
+                    };
+                };
                 return {
                     effort: rect('.agent-effort-trigger'),
                     model: rect('.agent-model-trigger'),
+                    effortProtectedZone: protectedZone('.agent-effort-trigger'),
+                    modelProtectedZone: protectedZone('.agent-model-trigger'),
                     submit: rect('#agent_ask_button'),
                     labelFontSize: labelStyle?.fontSize,
                     labelLineHeight: labelStyle?.lineHeight,
@@ -1801,6 +1830,12 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
         assert geometry["model"]["width"] < 190
         assert geometry["submit"]["height"] == 32
         assert geometry["horizontalOverflow"] <= 1
+        for protected_zone in (
+            geometry["effortProtectedZone"],
+            geometry["modelProtectedZone"],
+        ):
+            assert protected_zone["chevronLeft"] - protected_zone["labelRight"] >= 8
+            assert protected_zone["triggerRight"] - protected_zone["chevronRight"] >= 8
         effort.click()
         effort_menu = page.locator(".agent-effort-dropdown")
         expect(effort_menu).to_be_visible()
@@ -3177,6 +3212,7 @@ def test_chatgpt_edge_recent_sessions_are_a_direct_scrollable_keyboard_list(
 @pytest.mark.parametrize(
     ("platform", "platform_label", "project_url"),
     (
+        ("chatgpt", "ChatGPT", "https://chatgpt.com/g/g-p-chatgpt-project/project"),
         ("gemini", "Gemini", "https://gemini.google.com/notebook/gemini-project"),
         ("grok", "Grok", "https://grok.com/project/grok-project?tab=conversations"),
     ),
@@ -3219,7 +3255,13 @@ def test_agent_provider_projects_submit_agentic_task_target(
                 "session_title": "",
                 "session_mode": "new",
                 "platform": selected_platform,
-                "model": "gemini-3.1-pro" if selected_platform == "gemini" else "grok-build",
+                "model": (
+                    "gpt-5.6-sol"
+                    if selected_platform == "chatgpt"
+                    else "gemini-3.1-pro"
+                    if selected_platform == "gemini"
+                    else "grok-build"
+                ),
                 "finished_at": "",
             },
         }
@@ -3316,6 +3358,32 @@ def test_agent_provider_projects_submit_agentic_task_target(
         page.locator('[data-agent-session-list="projects"] [data-agent-combobox-trigger]').click()
         expect(project_option).to_be_visible()
         project_option.click()
+
+        if platform == "chatgpt":
+            project_icon_shells = page.locator(
+                ".agent-session-mode-combobox .browser-picker-selected-icon-shell, "
+                '[data-agent-session-list="projects"] .browser-picker-selected-icon-shell, '
+                '[data-agent-session-list="project-sessions"] .browser-picker-selected-icon-shell'
+            )
+            for width, height in ((1_280, 900), (390, 844)):
+                page.set_viewport_size({"width": width, "height": height})
+                expect(project_icon_shells).to_have_count(3)
+                expect(project_icon_shells.first).to_be_visible()
+                expect(
+                    page.locator(
+                        '[data-agent-session-list="projects"] [data-agent-combobox-selected-icon]'
+                    )
+                ).to_have_attribute(
+                    "src", re.compile(r"/static/images/chatgpt-project-terminal\.svg$")
+                )
+                icon_centers = project_icon_shells.evaluate_all(
+                    "nodes => nodes.map(node => { "
+                    "const rect = node.getBoundingClientRect(); "
+                    "return rect.left + rect.width / 2; "
+                    "})"
+                )
+                assert max(icon_centers) - min(icon_centers) <= 1
+            page.set_viewport_size({"width": 1_280, "height": 900})
 
         expect(page.locator('[data-agent-prompt-session-mode]')).to_have_value("project_new")
         expect(page.locator('[data-agent-prompt-project-url]')).to_have_value(project_url)
@@ -6173,13 +6241,35 @@ def test_client_cached_chatgpt_effort_catalog_exposes_verified_options_until_exp
         viewport={"width": 1_280, "height": 720},
         has_touch=False,
         is_mobile=False,
-        reduced_motion="reduce",
+        reduced_motion="no-preference",
     )
     page = context.new_page()
     cache_key = "cachelikes:browser-session:v6:agent:chatgpt:edge"
     page.add_init_script(
         f"sessionStorage.setItem({json.dumps(cache_key)}, JSON.stringify({{"
         f"cached_at: Date.now(), payload: {json.dumps(cached_status)}}}));"
+    )
+    page.add_init_script(
+        """(() => {
+            const originalFetch = window.fetch.bind(window);
+            let releaseRefresh;
+            const refreshGate = new Promise(resolve => { releaseRefresh = resolve; });
+            window.__releaseAgentEffortRefresh = releaseRefresh;
+            window.fetch = (input, init) => {
+                const requestUrl = typeof input === "string" ? input : input?.url;
+                if (
+                    requestUrl
+                    && requestUrl.includes("/api/browser-session")
+                    && requestUrl.includes("refresh=1")
+                ) {
+                    return originalFetch(input, init).then(async response => {
+                        await refreshGate;
+                        return response;
+                    });
+                }
+                return originalFetch(input, init);
+            };
+        })();"""
     )
     page.route("**/api/agent/status", lambda route: route.fulfill(json=_finished_chatgpt_agent_payload()))
     def fulfill_browser_status(route) -> None:
@@ -6203,17 +6293,87 @@ def test_client_cached_chatgpt_effort_catalog_exposes_verified_options_until_exp
         )
         assert browser_status_requests == []
 
+        refresh = page.locator("[data-agent-effort-refresh]")
         with page.expect_request(
             lambda request: "/api/browser-session" in request.url
             and "refresh=1" in request.url,
         ):
-            page.locator("[data-agent-effort-refresh]").click()
+            refresh.click()
+        expect(refresh).to_have_attribute("aria-busy", "true")
+        expect(refresh).to_have_class(re.compile(r"\bis-refreshing\b"))
+        assert refresh.locator(".agent-effort-refresh-icon").evaluate(
+            "element => getComputedStyle(element).animationName"
+        ) == "agent-effort-refresh-spin"
+        page.evaluate("() => window.__releaseAgentEffortRefresh()")
         expect(effort_options).to_have_count(3)
         assert effort_options.evaluate_all(
             "options => options.map((option) => option.dataset.agentComboboxOption)"
         ) == ["highest_available", "Fresh first", "Fresh maximum"]
         assert len(browser_status_requests) == 1
         assert "refresh=1" in browser_status_requests[0]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_running_chatgpt_agent_locks_model_effort_and_refresh_controls(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Prevent runtime model and effort changes while an Agent task is running."""
+    agent_payload = _finished_chatgpt_agent_payload()
+    agent_payload["agent"].update(
+        {
+            "running": True,
+            "phase": "running",
+            "run_id": "running-composer-lock",
+            "run_revision": 1,
+            "started_at": "2026-09-02T08:00:00Z",
+            "finished_at": "",
+            "activity": [],
+        }
+    )
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": True,
+        "can_download": True,
+        "account_name": "ChatGPT account",
+        "message": "Edge is ready for ChatGPT Web.",
+        "agent_sources": _chatgpt_catalog_sessions(),
+        "available_efforts": ["Live first", "Live maximum"],
+        "thinking_effort": "Live maximum",
+        "effort_catalog_complete": True,
+        "browser_session_freshness": {
+            "kind": "live_browser",
+            "cache_status": "refreshed",
+            "cached_at": "2026-09-02T08:00:00Z",
+            "age_seconds": 0,
+        },
+    }
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=agent_payload))
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        model = page.locator(".agent-model-trigger")
+        effort = page.locator(".agent-effort-trigger")
+        refresh = page.locator("[data-agent-effort-refresh]")
+        expect(model).to_be_disabled()
+        expect(effort).to_be_disabled()
+        expect(refresh).to_be_disabled()
+        expect(model).to_have_attribute("aria-expanded", "false")
+        expect(effort).to_have_attribute("aria-expanded", "false")
+        expect(page.locator(".agent-model-dropdown")).to_be_hidden()
+        expect(page.locator(".agent-effort-dropdown")).to_be_hidden()
     finally:
         context.close()
 

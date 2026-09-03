@@ -1,6 +1,6 @@
 """Read the local CSS foundation token registry for the Style tokens page.
 
-Code version: v0.4.0-codex.5
+Code version: v0.4.1-codex.1
 """
 
 from __future__ import annotations
@@ -319,6 +319,8 @@ def build_style_token_component_rows() -> list[dict[str, object]]:
             "name": "Secondary button",
             "sample_kind": "secondary-button",
             "sample_title": "Refresh cache",
+            "use_icon": False,
+            "icon_class": "agent-effort-refresh-icon",
             "token_names": ("--glass-chip-background-strong", "--glass-chip-background-hover", "--glass-chip-border", "--glass-chip-shadow", "--glass-chip-shadow-hover", "--radius-pill", "--font-tooltip", "--font-weight-semibold"),
         },
         {

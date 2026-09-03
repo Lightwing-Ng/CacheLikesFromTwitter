@@ -1,4 +1,4 @@
-<!-- Code version: v3.28.15-codex.1 -->
+<!-- Code version: v3.28.18-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.25-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.27-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -220,10 +220,13 @@
 
                     <div class="field agent-session-detail-field" data-agent-project-field hidden>
                         <span class="field-label">Recent projects</span>
-                        <div class="trade-strategy-combobox agent-combobox agent-session-list-combobox" data-agent-combobox data-agent-session-list="projects">
+                        <div class="trade-strategy-combobox agent-combobox agent-session-list-combobox" data-agent-combobox data-agent-session-list="projects" data-agent-project-icon="{{ url_for('static', filename='images/chatgpt-project-terminal.svg') }}">
                             <input type="hidden" value="" data-agent-combobox-input data-agent-project-url>
                             <button type="button" class="trade-strategy-select form-select trade-strategy-trigger agent-combobox-trigger" data-agent-combobox-trigger aria-haspopup="listbox" aria-expanded="false" aria-label="Recent projects: Loading" aria-busy="true" disabled>
                                 <span class="browser-session-trigger-leading">
+                                    <span class="browser-picker-selected-icon-shell"{% if settings.platform != 'chatgpt' %} hidden{% endif %}>
+                                        <img class="browser-picker-option-icon" src="{{ url_for('static', filename='images/chatgpt-project-terminal.svg') }}" alt="" data-agent-combobox-selected-icon aria-hidden="true">
+                                    </span>
                                     <span class="trade-strategy-trigger-label browser-session-trigger-label" data-agent-combobox-selected-label>Recent projects</span>
                                     <span class="suggestion-loading-spinner agent-combobox-loading-spinner" data-agent-combobox-spinner aria-hidden="true"></span>
                                 </span>
@@ -432,6 +435,7 @@
                                             aria-haspopup="listbox"
                                             aria-expanded="false"
                                             aria-label="Model: {{ selected_model.ui_label | default(selected_model.label, true) }}"
+                                            {% if agent_snapshot.running %}disabled{% endif %}
                                         >
                                             <span class="trade-strategy-trigger-label agent-model-trigger-label" data-agent-combobox-selected-label>{{ selected_model.ui_label | default(selected_model.label, true) }}</span>
                                             <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
@@ -468,6 +472,7 @@
                                                 aria-haspopup="listbox"
                                                 aria-expanded="false"
                                                 aria-label="Thinking effort: Highest available"
+                                                {% if agent_snapshot.running %}disabled{% endif %}
                                             >
                                                 <span class="trade-strategy-trigger-label agent-effort-trigger-label" data-agent-combobox-selected-label>Highest available</span>
                                                 <span class="browser-picker-trigger-chevron" aria-hidden="true"></span>
@@ -487,7 +492,7 @@
                                                 </button>
                                             </span>
                                         </span>
-                                        <button type="button" class="secondary-button agent-effort-refresh" data-agent-effort-refresh aria-label="Refresh ChatGPT thinking-effort options" title="Refresh ChatGPT thinking-effort options">
+                                        <button type="button" class="secondary-button agent-effort-refresh" data-agent-effort-refresh aria-label="Refresh ChatGPT thinking-effort options" title="Refresh ChatGPT thinking-effort options"{% if agent_snapshot.running %} disabled{% endif %}>
                                             <span class="icon agent-effort-refresh-icon" aria-hidden="true"></span>
                                             <span class="agent-effort-refresh-label">Refresh options</span>
                                         </button>
@@ -518,6 +523,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.4-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.28.7-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.28.10-codex.1') }}"></script>
 </body>
 </html>

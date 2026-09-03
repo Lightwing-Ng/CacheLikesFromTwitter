@@ -1,4 +1,4 @@
-/* Code version: v2.91.25-codex.1 */
+/* Code version: v2.91.27-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -4104,12 +4104,21 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-model-trigger,
 .agent-effort-trigger {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 12px;
+    column-gap: 8px;
+    align-items: center;
     width: max-content;
     max-width: 100%;
     height: var(--agent-composer-control-height);
     min-height: var(--agent-composer-control-height);
     padding: 4px 10px;
     border-radius: var(--radius-control);
+}
+
+.agent-model-trigger .browser-picker-trigger-chevron,
+.agent-effort-trigger .browser-picker-trigger-chevron {
+    justify-self: end;
 }
 
 .agent-model-trigger-label {
@@ -4179,6 +4188,22 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     background-color: currentColor;
     mask: url("/static/images/arrow.trianglehead.2.clockwise.svg") center/contain no-repeat;
     -webkit-mask: url("/static/images/arrow.trianglehead.2.clockwise.svg") center/contain no-repeat;
+}
+
+.agent-effort-refresh.is-refreshing .agent-effort-refresh-icon {
+    animation: agent-effort-refresh-spin 800ms linear infinite;
+}
+
+@keyframes agent-effort-refresh-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .agent-effort-refresh.is-refreshing .agent-effort-refresh-icon {
+        animation: none;
+    }
 }
 
 .agent-effort-refresh-label {
@@ -10253,6 +10278,17 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     justify-content: flex-start;
     min-height: 31px;
     margin: 0;
+}
+
+.style-token-secondary-button-preview {
+    width: fit-content;
+    max-width: 100%;
+}
+
+.style-token-secondary-button-demo .secondary-button {
+    gap: 6px;
+    width: fit-content;
+    max-width: 100%;
 }
 
 .style-token-component-kicker {

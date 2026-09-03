@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.89.20-codex.1
+# Code version: v1.89.23-codex.1
 
 from __future__ import annotations
 
@@ -549,7 +549,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.20.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.91.25-codex.1"
+                expected_style_version = "style-v2.91.27-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -916,7 +916,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.0-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.4-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.28.7-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.28.10-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
         self.assertIn('data-agent-compute-job-stop', local_body)
         self.assertIn('data-agent-effort-field', local_body)
@@ -930,7 +930,12 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-terminal-execution-status', local_body)
         self.assertIn('data-agent-terminal-execution-copy', local_body)
         self.assertIn('data-agent-terminal-execution-checkmark', local_body)
-        self.assertIn('data-agent-terminal-execution-checkmark\n                    data-status-state="ready"', local_body)
+        terminal_execution = local_status.get_json()["runtime"]["terminal_execution"]
+        expected_terminal_state = "ready" if terminal_execution["ready"] else "error"
+        self.assertRegex(
+            local_body,
+            rf'data-agent-terminal-execution-checkmark\s+data-status-state="{expected_terminal_state}"',
+        )
         self.assertIn('<span class="agent-terminal-execution-label">Terminal permission</span>', local_body)
         self.assertNotIn('Terminal execution permission:', local_body)
         self.assertIn('data-agent-platform-input', local_body)
@@ -1651,7 +1656,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('requestJson("/api/agent/open-conversation"', script)
         self.assertIn('elements.conversationLink.classList.toggle("is-traditional-handoff"', script)
         self.assertIn("agent?.traditional_handoff_available", script)
-        self.assertIn('agent?.phase === "failed"', script)
+        self.assertIn('["failed", "interrupted"].includes(String(agent?.phase || ""))', script)
         self.assertNotIn('document.getElementById("agent_stop_button")', script)
 
     def test_agent_session_source_contract_is_explicit_and_not_persisted(self) -> None:
@@ -1701,7 +1706,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.28.7-codex.1',
+            'computer-use-agent-v3.28.10-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'agent-effort-refresh-label">Refresh options</span>',
@@ -1709,6 +1714,8 @@ class WebAppTests(unittest.TestCase):
             'data-agent-session-list-state',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
             'src="/static/images/plus.circle.svg" alt="" data-agent-combobox-selected-icon',
+            'data-agent-project-icon="/static/images/chatgpt-project-terminal.svg"',
+            'src="/static/images/chatgpt-project-terminal.svg" alt="" data-agent-combobox-selected-icon',
             'data-agent-combobox-icon="/static/images/clock.fill.svg"',
             'src="/static/images/clock.fill.svg" alt="" aria-hidden="true">\n                                    <span class="trade-strategy-dropdown-text">Recent sessions</span>',
             'data-agent-combobox-icon="/static/images/folder.fill.svg"',
@@ -3222,7 +3229,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.91.25-codex.1", body)
+            self.assertIn("style-v2.91.27-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

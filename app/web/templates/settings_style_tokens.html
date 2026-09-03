@@ -1,4 +1,4 @@
-<!-- Code version: v1.5.18-codex.1 -->
+<!-- Code version: v1.5.19-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.25-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.27-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.4-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='resizer.js', v='resizer-v1.0.0-codex.1') }}"></script>
@@ -168,8 +168,11 @@
                             </div>
                             {% elif row.sample_kind == "secondary-button" %}
                             <section class="style-token-component-demo style-token-secondary-button-demo" data-style-token-demo="secondary-button" aria-label="Secondary button demo">
-                                <div class="browser-filter-actions style-token-component-action-row">
-                                    <button type="button" name="refresh" value="1" class="secondary-button browser-refresh-button" data-style-token-secondary-button data-source-xpath="/html/body/main/div[3]/aside/section[2]/form/div[2]/button">Refresh cache</button>
+                                <div class="style-token-secondary-button-preview style-token-component-action-row">
+                                    <button type="button" name="refresh" value="1" class="secondary-button browser-refresh-button" data-style-token-secondary-button data-style-token-secondary-button-use-icon="{{ 'true' if row.use_icon else 'false' }}" data-source-xpath="/html/body/main/div[3]/aside/section[2]/form/div[2]/button">
+                                        {% if row.use_icon %}<span class="icon {{ row.icon_class }}" aria-hidden="true"></span>{% endif %}
+                                        <span>{{ row.sample_title }}</span>
+                                    </button>
                                 </div>
                             </section>
                             {% elif row.sample_kind == "primary-button" %}

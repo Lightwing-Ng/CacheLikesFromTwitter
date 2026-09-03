@@ -1,6 +1,6 @@
 """Regression tests for the Settings → Style tokens registry.
 
-Code version: v1.2.0-codex.6
+Code version: v1.2.1-codex.1
 """
 
 import re
@@ -105,6 +105,8 @@ def test_style_token_component_rows_form_a_complete_sorted_component_catalog() -
         "shared-select-filter",
     ):
         assert rows_by_id[row_id]["sample_copy"] == ""
+    assert rows_by_id["secondary-button"]["use_icon"] is False
+    assert rows_by_id["secondary-button"]["icon_class"] == "agent-effort-refresh-icon"
     assert "--scrollable-data-table-min-width" in {
         token["name"] for token in rows_by_id["scrollable-data-table"]["tokens"]
     }
@@ -259,6 +261,9 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
     ):
         assert f'data-style-token-card="{card_id}"' in html
     assert 'data-source-xpath="/html/body/main/div[3]/aside/section[2]/form/div[2]/button"' in html
+    assert 'class="style-token-secondary-button-preview style-token-component-action-row"' in html
+    assert 'data-style-token-secondary-button-use-icon="false"' in html
+    assert 'class="icon agent-effort-refresh-icon"' not in html
     assert 'data-source-xpath="/html/body/main/div[3]/section/div/div[2]/nav"' in html
     assert 'data-source-xpath="/html/body/main/div[3]/aside/section[2]/form/label[2]/div/button"' in html
     assert 'data-source-route="/agent/edge/claude"' in html
@@ -317,6 +322,9 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
         "bindDismissibleDemos",
         "bindActionPackageDemo",
         "bindStyleTokenDensity",
+        "dragGeometry = measureDragGeometry();",
+        "targetY === lastHandleY",
+        "window.requestAnimationFrame",
         "__styleTokenOnSelect",
         "Tag removed; restoring preview",
     ):

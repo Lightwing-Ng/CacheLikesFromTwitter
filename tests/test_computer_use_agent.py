@@ -28,6 +28,7 @@ from app.core.computer_use_agent import (
     AGENT_MODEL_OPTIONS_BY_PLATFORM,
     AGENT_PLATFORM_OPTIONS,
     AgentRunSnapshot,
+    AgentTurnLimitExceeded,
     CHATGPT_MODEL_TRIGGER_LABELS,
     CHATGPT_SESSION_BIND_TIMEOUT_SECONDS,
     DEFAULT_CHATGPT_MODEL,
@@ -5837,6 +5838,54 @@ def test_action_loop_does_not_spend_the_turn_budget_on_one_format_retry(
     assert event_chain.summary()["state"] == "ready"
 
 
+def test_action_loop_raises_typed_exception_when_turn_budget_is_exhausted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    class _Page:
+        url = "https://chatgpt.com/c/turn-limit"
+
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    settings = ComputerUseSettings(workspace_path=str(workspace), max_turns=1)
+    controller = WorkspaceController(workspace, settings, lambda: False)
+    responses = iter(
+        (
+            '{"action":"bodycheck"}',
+            '{"action":"bodycheck"}',
+        )
+    )
+    submitted: list[str] = []
+
+    def submit(_page: object, _browser: str, message: str, _should_stop: object, **_kwargs: object) -> str:
+        submitted.append(message)
+        return next(responses)
+
+    monkeypatch.setattr(computer_use_agent, "_verify_chatgpt_page", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chat_mode", lambda *_args: None)
+    monkeypatch.setattr(computer_use_agent, "_select_chatgpt_model", _select_verified_chatgpt_model)
+    monkeypatch.setattr(computer_use_agent, "_attach_context_file", lambda *_args: False)
+    monkeypatch.setattr(computer_use_agent, "_submit_and_wait", submit)
+
+    with pytest.raises(AgentTurnLimitExceeded, match="configured 1-turn limit"):
+        _run_web_action_loop(
+            page=_Page(),
+            browser_kind="chromium",
+            initial_message="Continue the task.",
+            controller=controller,
+            context_path=tmp_path / "context.md",
+            settings=settings,
+            session_mode="recent",
+            selected_target_url="https://chatgpt.com/c/turn-limit",
+            should_stop=lambda: False,
+            update=lambda **_changes: None,
+        )
+
+    assert len(submitted) == 2
+
+
 def test_action_loop_records_workspace_and_delete_receipt_provenance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -11133,6 +11182,50 @@ def test_agent_service_leaves_a_failed_chatgpt_session_for_explicit_edge_handoff
     assert "bodycheck remain unfinished" in snapshot["traditional_handoff_message"]
     assert not snapshot["bodycheck_passed"]
     assert opened == []
+
+
+def test_agent_service_exposes_turn_limit_as_resumable_interruption(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    workspace.mkdir()
+    store = ComputerUseSettingsStore(tmp_path / "settings.json")
+
+    def runner(**kwargs: object) -> tuple[str, str, int, bool]:
+        update = kwargs["update"]
+        assert callable(update)
+        update(
+            conversation_url="https://chatgpt.com/c/turn-limit-session",
+            conversation_bound=True,
+            turn_count=40,
+        )
+        raise AgentTurnLimitExceeded(
+            "ChatGPT reached the configured 40-turn limit before returning final."
+        )
+
+    service = ComputerUseAgentService(
+        store,
+        runner=runner,
+        runtime_root=tmp_path / "runtime",
+    )
+    service.start("Finish the project task", str(workspace), CrawlConfig())
+    deadline = time.monotonic() + 2
+    while service.snapshot()["running"] and time.monotonic() < deadline:
+        time.sleep(0.01)
+
+    snapshot = service.snapshot()
+    assert snapshot["phase"] == "interrupted"
+    assert not snapshot["running"]
+    assert snapshot["conversation_url"] == "https://chatgpt.com/c/turn-limit-session"
+    assert snapshot["traditional_handoff_available"]
+    assert "configured 40-turn limit" in snapshot["last_error"]
+
+    doctor = service.doctor()
+    continue_action = next(
+        action for action in doctor["actions"] if action["id"] == "continue"
+    )
+    assert continue_action["enabled"]
+    assert doctor["events"][-1]["kind"] == "run.interrupted"
 
 
 def test_agent_service_does_not_auto_handoff_a_non_edge_failure(tmp_path: Path) -> None:

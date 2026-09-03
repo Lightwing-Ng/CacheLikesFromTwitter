@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.54.4-codex.1
+Code version: v3.54.5-codex.1
 """
 
 from __future__ import annotations
@@ -188,6 +188,12 @@ PROVIDER_SESSION_BIND_POLL_MILLISECONDS = 100
 GROK_SESSION_BASELINE_PAGE_LIMIT = 100
 WEB_PROGRESS_TEXT = {"thinking", "working", "searching", "analyzing", "generating"}
 SUPPORTED_BROWSERS = frozenset({"chrome", "edge", "safari"})
+
+
+class AgentTurnLimitExceeded(RuntimeError):
+    """Identify a bounded Agent run that can continue in its bound Web session."""
+
+
 SUPPORTED_OPERATING_SYSTEMS = frozenset({"macos", "windows"})
 SUPPORTED_AGENT_SESSION_MODES = frozenset({"new", "recent", "project_new", "project_session"})
 SUPPORTED_AGENT_PLATFORMS = frozenset({"chatgpt", "gemini", "grok", "claude"})
@@ -5802,11 +5808,10 @@ class ComputerUseAgentService:
                 self._record_agent_status_observation_locked(
                     detail="Agent lifecycle reached its completion boundary.",
                 )
-                terminal_kind = (
-                    "run.failed"
-                    if self._snapshot.phase == "failed"
-                    else "run.completed"
-                )
+                terminal_kind = {
+                    "failed": "run.failed",
+                    "interrupted": "run.interrupted",
+                }.get(self._snapshot.phase, "run.completed")
                 terminal_status = (
                     "failed"
                     if terminal_kind == "run.failed"
@@ -5818,7 +5823,11 @@ class ComputerUseAgentService:
                     detail=(
                         "Agent run failed after bounded cleanup."
                         if terminal_kind == "run.failed"
-                        else "Agent run completed its local lifecycle."
+                        else (
+                            "Agent run paused at its turn budget for explicit continuation."
+                            if terminal_kind == "run.interrupted"
+                            else "Agent run completed its local lifecycle."
+                        )
                     ),
                     action_id=self._snapshot.last_action_id,
                     data={
@@ -5965,6 +5974,7 @@ class ComputerUseAgentService:
                 stopped_after_error = self._stop_requested.is_set()
                 recorded_conversation_url = str(self._snapshot.conversation_url or "")
                 recorded_turn_count = int(self._snapshot.turn_count or 0)
+            turn_limit_exhausted = isinstance(exc, AgentTurnLimitExceeded)
             if stopped_after_error:
                 LOGGER.info("Computer Use web-agent request ended after Stop: %s", exc)
             else:
@@ -5988,7 +5998,7 @@ class ComputerUseAgentService:
                 )
             failure_message = str(exc).splitlines()[0][:500]
             completion = {
-                "phase": "failed",
+                "phase": "interrupted" if turn_limit_exhausted else "failed",
                 "paused": False,
                 "pause_reason": "",
                 "message": (
@@ -8453,7 +8463,7 @@ def _run_web_action_loop(
             ),
         )
 
-    raise RuntimeError(
+    raise AgentTurnLimitExceeded(
         f"{AGENT_PLATFORM_BY_KEY[platform]['label']} reached the configured {settings.max_turns:,}-turn limit before returning final."
     )
 
