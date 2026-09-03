@@ -1,4 +1,4 @@
-/* Code version: v2.91.37-codex.1 */
+/* Code version: v2.91.38-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -3684,7 +3684,12 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     font-size: var(--font-ui-lg);
 }
 
-.agent-runtime-form > label.field > .field-help[data-agent-project-name] {
+.agent-runtime-form > label.field > .field-label.agent-project-label {
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.agent-runtime-form > label.field > .field-label.agent-project-label [data-agent-project-name] {
     font-size: 17px;
 }
 

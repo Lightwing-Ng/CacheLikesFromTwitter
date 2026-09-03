@@ -1906,7 +1906,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.91.37-codex.1 */",
+        "/* Code version: v2.91.38-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -2591,13 +2591,21 @@ def test_agent_response_actions_align_to_the_global_action_rail() -> None:
 
 
 def test_agent_current_project_name_uses_requested_type_size() -> None:
-    """Keep the Current project name readable without changing other field-help copy."""
+    """Keep the combined Current project label readable and wrappable."""
     stylesheet = _stylesheet()
-    selector = ".agent-runtime-form > label.field > .field-help[data-agent-project-name] {"
+    selector = ".agent-runtime-form > label.field > .field-label.agent-project-label {"
     selector_start = stylesheet.index(selector)
     selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
 
-    assert "font-size: 17px;" in selector_rule
+    assert "overflow-wrap: anywhere;" in selector_rule
+    assert "white-space: normal;" in selector_rule
+    name_selector = (
+        ".agent-runtime-form > label.field > .field-label.agent-project-label "
+        "[data-agent-project-name] {"
+    )
+    name_selector_start = stylesheet.index(name_selector)
+    name_selector_rule = stylesheet[name_selector_start:stylesheet.index("\n}", name_selector_start)]
+    assert "font-size: 17px;" in name_selector_rule
 
 
 def test_agent_response_answer_expansion_stays_on_the_global_action_rail() -> None:
