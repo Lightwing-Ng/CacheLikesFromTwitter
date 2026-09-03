@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.45-codex.1
+Code version: v1.51.46-codex.1
 """
 
 from pathlib import Path
@@ -1906,7 +1906,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.91.35-codex.1 */",
+        "/* Code version: v2.91.37-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1992,13 +1992,13 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         assert token in stylesheet
 
 
-def test_agent_composer_centers_all_footer_controls_with_action_gap() -> None:
-    """Keep every Composer footer control centered on one shared row."""
+def test_agent_composer_right_aligns_all_footer_controls_with_action_gap() -> None:
+    """Keep every Composer footer control anchored to the shell's right edge."""
     stylesheet = _stylesheet()
     footer_start = stylesheet.rfind(".agent-composer-footer {")
     footer_rule = stylesheet[footer_start:stylesheet.index("\n}", footer_start)]
 
-    assert "justify-content: center;" in footer_rule
+    assert "justify-content: flex-end;" in footer_rule
     assert "gap: 12px;" in footer_rule
 
 

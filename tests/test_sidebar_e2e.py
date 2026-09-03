@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.58-codex.1
+Code version: v1.26.59-codex.1
 """
 
 from __future__ import annotations
@@ -1970,6 +1970,7 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
                     };
                 };
                 return {
+                    shell: rect('.agent-composer-shell'),
                     footer: rect('.agent-composer-footer'),
                     effort: rect('.agent-effort-trigger'),
                     model: rect('.agent-model-trigger'),
@@ -1996,19 +1997,17 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
         assert geometry["model"]["width"] < 190
         assert geometry["submit"]["height"] == 32
         assert geometry["horizontalOverflow"] <= 1
+        submit_center_x = (geometry["submit"]["left"] + geometry["submit"]["right"]) / 2
+        submit_center_y = (geometry["submit"]["top"] + geometry["submit"]["bottom"]) / 2
+        assert abs(
+            geometry["shell"]["right"] - submit_center_x
+            - (geometry["shell"]["bottom"] - submit_center_y)
+        ) <= 1
         if width > 560:
-            control_left = min(
-                geometry[selector]["left"]
-                for selector in ("model", "effort", "refresh", "submit")
-            )
-            control_right = max(
-                geometry[selector]["right"]
-                for selector in ("model", "effort", "refresh", "submit")
-            )
             assert abs(
-                (control_left + control_right) / 2
-                - (geometry["footer"]["left"] + geometry["footer"]["right"]) / 2
+                geometry["submit"]["right"] - geometry["footer"]["right"]
             ) <= 1
+            assert geometry["model"]["left"] > geometry["footer"]["left"]
             for selector in ("model", "effort", "refresh", "submit"):
                 assert abs(
                     geometry[selector]["top"] - geometry["footer"]["top"]
