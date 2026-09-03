@@ -1,6 +1,6 @@
 """Focused tests for the provider-neutral Agent session source adapter.
 
-Code version: v1.7.2-codex.1
+Code version: v1.7.3-codex.1
 """
 
 from __future__ import annotations
@@ -170,6 +170,35 @@ def test_cached_source_catalog_sorts_current_sessions_and_projects() -> None:
         "https://chatgpt.com/g/g-p-old/project",
     ]
     assert payload["projects"][0]["title"] == "Renamed project"
+
+
+def test_cached_chatgpt_project_icon_metadata_survives_revalidation() -> None:
+    payload = normalize_agent_source_catalog_payload(
+        "chatgpt",
+        {
+            "recent_sessions": [],
+            "projects": [
+                {
+                    "id": "project",
+                    "title": "worthward",
+                    "url": "https://chatgpt.com/g/g-p-worthward/project",
+                    "icon": "currency-dollar",
+                    "icon_color": "#53B559",
+                }
+            ],
+        },
+    )
+
+    assert payload["projects"] == [
+        {
+            "id": "project",
+            "title": "worthward",
+            "url": "https://chatgpt.com/g/g-p-worthward/project",
+            "updated_at": "",
+            "icon": "currency-dollar",
+            "icon_color": "#53B559",
+        }
+    ]
 
 
 def test_claude_sources_use_the_shared_chromium_source_collection() -> None:

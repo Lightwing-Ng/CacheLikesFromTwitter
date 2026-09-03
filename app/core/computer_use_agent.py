@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.54.7-codex.1
+Code version: v3.54.9-codex.1
 """
 
 from __future__ import annotations
@@ -109,7 +109,7 @@ MIN_CONTEXT_LIMIT_MIB = 1
 MAX_CONTEXT_LIMIT_MIB = 512
 DEFAULT_MAX_TURNS = 40
 MIN_MAX_TURNS = 2
-MAX_MAX_TURNS = 120
+MAX_MAX_TURNS = 2_048
 DEFAULT_COMMAND_TIMEOUT_SECONDS = 120
 MIN_COMMAND_TIMEOUT_SECONDS = 5
 MAX_COMMAND_TIMEOUT_SECONDS = 1_800
@@ -6447,6 +6447,13 @@ def _chatgpt_conversation_path_parts(url: str) -> tuple[str, str]:
     return path[:index], path[index + len(marker) :]
 
 
+def _chatgpt_conversation_ids_match(left_url: str, right_url: str) -> bool:
+    """True when two ChatGPT URLs name the same conversation id."""
+    _left_container, left_id = _chatgpt_conversation_path_parts(left_url)
+    _right_container, right_id = _chatgpt_conversation_path_parts(right_url)
+    return bool(left_id) and left_id.casefold() == right_id.casefold()
+
+
 def _chatgpt_conversation_id_is_client_placeholder(conversation_id: str) -> bool:
     """True when ChatGPT is still using a client-side WEB: conversation id."""
     return str(conversation_id or "").strip().casefold().startswith(
@@ -6666,6 +6673,34 @@ class _ProviderSessionBinding:
             self.session_mode,
         )
         self.initial_landing_bounce_detected = True
+
+    def _canonical_bound_conversation_url(self, current_url: str) -> str:
+        """Keep the bound ChatGPT URL aligned with ChatGPT's project-path alias."""
+        if self.platform != "chatgpt" or not self.bound_conversation_url:
+            return self.bound_conversation_url
+        current_conversation = normalize_agent_conversation_url(
+            "chatgpt",
+            current_url,
+        )
+        if (
+            current_conversation
+            and current_conversation != self.bound_conversation_url
+            and _chatgpt_conversation_ids_match(
+                self.bound_conversation_url,
+                current_conversation,
+            )
+        ):
+            LOGGER.info(
+                "event=chatgpt_conversation_url_canonicalized session_mode=%s from_url=%s to_url=%s",
+                self.session_mode,
+                self.bound_conversation_url,
+                current_conversation,
+            )
+            self.bound_conversation_url = current_conversation
+            _tab_id, _url, current_title = _provider_tab_identity(self.page)
+            if current_title:
+                self.expected_title = current_title
+        return self.bound_conversation_url
 
     def _chatgpt_bound_receipt_is_visible(self, current_url: str) -> bool:
         """Prove that a transient URL mismatch still shows this run's bound turn."""
@@ -6953,7 +6988,7 @@ class _ProviderSessionBinding:
                         self.bound_conversation_url,
                         settled_url,
                     ):
-                        return self.bound_conversation_url
+                        return self._canonical_bound_conversation_url(settled_url)
                     self._record_initial_chatgpt_landing_bounce()
                     return self.bound_conversation_url
                 LOGGER.warning(
@@ -6966,7 +7001,7 @@ class _ProviderSessionBinding:
                 raise RuntimeError(
                     "The selected provider tab navigated away from the newly created session."
                 )
-            return self.bound_conversation_url
+            return self._canonical_bound_conversation_url(current_url)
         if (
             allow_transition
             and self.platform == "gemini"
@@ -8933,13 +8968,19 @@ def _wait_for_chromium_composer(
 
 
 def _chatgpt_target_is_open(target_url: str, current_url: str) -> bool:
-    """Require the selected ChatGPT path while permitting query-string changes."""
+    """Require the selected ChatGPT conversation while permitting query and project-path aliases."""
     target = urlsplit(str(target_url or ""))
     current = urlsplit(str(current_url or ""))
-    return (
-        (target.hostname or "").lower() in CHATGPT_HOSTS
-        and (current.hostname or "").lower() in CHATGPT_HOSTS
-        and (target.path.rstrip("/") or "/") == (current.path.rstrip("/") or "/")
+    if (
+        (target.hostname or "").lower() not in CHATGPT_HOSTS
+        or (current.hostname or "").lower() not in CHATGPT_HOSTS
+    ):
+        return False
+    target_path = target.path.rstrip("/") or "/"
+    current_path = current.path.rstrip("/") or "/"
+    return target_path == current_path or _chatgpt_conversation_ids_match(
+        target_url,
+        current_url,
     )
 
 

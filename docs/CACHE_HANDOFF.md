@@ -1,6 +1,6 @@
 # Cache handoff and operating runbook
 
-Documentation version: `v1.4.1-codex.1`
+Documentation version: `v1.5.1-codex.1`
 
 This is the authoritative handoff document for the second Dock item, `Cache`.
 Read it before changing Cache routes, source switching, Text/Media behavior, local
@@ -25,18 +25,19 @@ Cache is the execution surface. Its canonical source pages are:
 | Grok | `/cache/grok` | Grok media assets | Grok sessions and messages |
 | ChatGPT | `/cache/chatgpt` | ChatGPT images | ChatGPT sessions and messages |
 | Gemini | `/cache/gemini` | Gemini sessions and messages | Gemini sessions and messages |
+| Claude | `/cache/claude` | Claude sessions and messages | Claude sessions and messages |
 
-The historical top-level paths `/grok`, `/chatgpt`, and `/gemini` are compatibility
+The historical top-level paths `/grok`, `/chatgpt`, `/gemini`, and `/claude` are compatibility
 redirects. Do not introduce new links to them. The legacy `/chatgpt` plan is not a
 separate Agent route; it resolves into the Cache namespace.
 
 `Local resources` owns `/browser`. It is the review and export surface, not the place
 where a source sync is started. Its text source filter accepts `all`, `chatgpt`,
-`gemini`, and `grok`.
+`claude`, `gemini`, and `grok`.
 
 ## 2. Shared Text/Media contract
 
-The Cache pages for ChatGPT, Grok, and Gemini render the shared blue sliding control at
+The Cache pages for ChatGPT, Grok, Gemini, and Claude render the shared blue sliding control at
 the top of the Cache sidebar:
 
 - Text is the first segment and the default for a new session.
@@ -44,11 +45,14 @@ the top of the Cache sidebar:
 - The selected segment is remembered in `sessionStorage` under
   `cachelikes:browser-content-mode:v1`.
 - Current Text destinations are source-aware where the page provides a source-specific
-  history: Grok uses `source=grok`, Gemini uses `source=gemini`, and the ChatGPT Cache
+  history: Grok uses `source=grok`, Gemini uses `source=gemini`, Claude uses `source=claude`, and the ChatGPT Cache
   Text shortcut intentionally uses `source=all` because ChatGPT history discovery is
   global rather than limited to the configured media project.
+- The Cache source selector always stays in the Cache dock and opens the selected source's
+  canonical `/cache/<source>` page. The Text segment remains the entrypoint to the
+  read-only Local resources history view.
 - The `all` source view is an aggregate view. It must include the ChatGPT, Gemini, and
-  Grok history files.
+  Grok and Claude history files.
 
 The control is shared markup in `app/web/templates/_cache_page.html`, behavior in
 `app/web/static/cache-page.js`, and styling in `app/web/static/style.css`. Changes to
@@ -63,12 +67,13 @@ Grok has two independent runtimes. This split is intentional:
 | Operation | UI action | Start route | Status route | Implementation |
 | --- | --- | --- | --- | --- |
 | Grok media | `Start` | `POST /cache/grok/start` | `GET /api/cache/grok/status` | `GrokDownloadService` and `grok_downloader.py` |
-| Grok Text | `Cache text history` | `POST /cache/grok/text/start` | `GET /api/cache/grok/text/status` | `GrokHistoryService` and `grok_history.py` |
+| Grok Text | No sidebar action (legacy runtime) | `POST /cache/grok/text/start` | `GET /api/cache/grok/text/status` | `GrokHistoryService` and `grok_history.py` |
 
 Text synchronization must not be implemented by scraping the currently visible Grok
-sidebar or by extending the media downloader with unrelated counters. The Text action
-uses the selected Edge profile in an isolated Chromium context, so it can read the
-authenticated session without taking over the foreground Edge window.
+sidebar or by extending the media downloader with unrelated counters. The retained Text
+runtime uses the selected Edge profile in an isolated Chromium context, so it can read the
+authenticated session without taking over the foreground Edge window. Its redundant
+sidebar action is no longer rendered; Local resources is the user-facing text-history view.
 
 The shared media action occupies one right-aligned slot: idle shows `Start`, and a
 running task replaces it in place with the existing red `Stop` form button.
@@ -87,6 +92,13 @@ The Text worker performs this sequence:
 The response-node tree is important. A DOM scroll only exposes a partial, selected
 branch and is not evidence that all history was discovered. The API list is paginated,
 and `load-responses` is required to recover the complete text payload.
+
+Claude history is a separate Cache runtime. It opens the authenticated `/chats` page,
+discovers conversation links from rendered DOM, opens each conversation, and stores only
+rendered user/assistant message content, source links, and visible model labels. It does
+not call private Claude endpoints, send prompts, or mutate the provider page. The runtime
+uses `POST /cache/claude/start`, `POST /cache/claude/stop`, and
+`GET /api/cache/claude/status` (with compatibility alias `GET /api/claude/status`).
 
 ## 4. Local compute boundary
 
@@ -110,14 +122,15 @@ The current local store layout is:
 | `local_store/llm/chatgpt/history.parquet` | ChatGPT Text runtime | Typed ChatGPT messages |
 | `local_store/llm/gemini/history.parquet` | Gemini Text runtime | Typed Gemini messages |
 | `local_store/llm/grok/history.parquet` | Grok Text runtime | Typed Grok messages |
+| `local_store/llm/claude/history.parquet` | Claude Text runtime | Typed Claude messages |
 | `local_store/prompt/prompts.parquet` | Prompt manager | Saved prompt content snapshots plus source-message pointers |
 | `local_store/.cache_task.lock` | All cache runtimes | Cross-process advisory task lock |
 | `logs/cachelikes.log.jsonl` | All runtimes | Structured diagnostics |
 
-The three LLM history files use the same logical fields, but Grok has its own
-`GROK_HISTORY_SCHEMA` and `GROK_HISTORY_SCHEMA_VERSION` in
-`app/core/resource_persistence.py`. Do not silently point Grok at the Gemini or
-ChatGPT file merely because all three filenames are `history.parquet`.
+The four LLM history files use the same logical fields, while each provider runtime has
+its own source-specific schema constant in `app/core/resource_persistence.py`. Do not
+silently point one provider at another provider's file merely because all filenames
+are `history.parquet`.
 
 Grok Text rows contain a stable `message_key` formed as
 `<conversation-id>:<response-id>`. The store replaces one conversation at a time,
@@ -228,12 +241,13 @@ The Edge session probe must report `logged_in: true`. The media and Text runtime
 be idle before starting another task. Only one cache task may hold
 `local_store/.cache_task.lock` across the entire application.
 
-### Start Grok Text
+### Legacy Grok Text runtime
 
-Open `http://localhost:8666/cache/grok`, confirm the selected session is Edge, and
-click `Cache text history`. Monitor `GET /api/cache/grok/text/status` until `running`
-is false. Use the Text stop action for a cooperative stop; do not delete the lock file
-while the worker process is alive.
+The legacy Grok Text runtime remains available through its status and start/stop routes
+for compatibility, but `/cache/grok` no longer renders a separate Text history action.
+Monitor `GET /api/cache/grok/text/status` until `running` is false. Use the runtime's
+cooperative stop route when needed; do not delete the lock file while the worker process
+is alive.
 
 ### Verify the resulting file
 
@@ -352,11 +366,14 @@ Read these files together before changing Cache behavior:
 
 - `app/web/templates/_cache_page.html`: shared Cache shell and Text/Media control.
 - `app/web/templates/grok.html`: Grok media controls and Grok Text action.
+- `app/web/templates/claude.html`: Claude rendered-history notice and metrics.
 - `app/web/static/cache-page.js`: mode memory and Cache status polling.
 - `app/web/cache_sources.py`: source registry and canonical page metadata.
 - `app/web/app.py`: runtime registration, routes, status reconciliation, and redirects.
 - `app/core/grok_history.py`: Grok API traversal, normalization, and Parquet persistence.
 - `app/core/grok_history_service.py`: worker lifecycle and shared task lock.
+- `app/core/claude_history.py`: rendered Claude discovery, extraction, and Parquet persistence.
+- `app/core/claude_history_service.py`: Claude worker lifecycle and shared task lock.
 - `app/core/chat_history_browser.py`: source path mapping and Local resources queries.
 - `app/core/resource_persistence.py`: typed Parquet schemas and atomic writes.
 - `tests/test_grok_history.py`: deterministic Grok Text regression coverage.

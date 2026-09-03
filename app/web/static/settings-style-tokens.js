@@ -1,4 +1,4 @@
-/* Code version: v1.2.1-codex.1 */
+/* Code version: v1.2.3-codex.1 */
 
 (() => {
     "use strict";
@@ -590,7 +590,6 @@
                 return;
             }
             button.dataset.bound = "1";
-            const label = button.closest("[data-style-token-demo='global-theme-toggle']")?.querySelector("[data-style-token-theme-toggle-label]");
             const sync = (effectiveTheme) => {
                 const isDark = effectiveTheme === "dark";
                 const nextLabel = isDark ? "Switch to Light mode" : "Switch to Dark mode";
@@ -598,9 +597,6 @@
                 button.setAttribute("aria-label", nextLabel);
                 button.title = nextLabel;
                 button.setAttribute("aria-pressed", String(isDark));
-                if (label) {
-                    label.textContent = nextLabel;
-                }
             };
             sync(button.dataset.effectiveTheme || "light");
             button.addEventListener("click", () => {
@@ -754,32 +750,37 @@
             actionPackage.dataset.bound = "1";
             const button = actionPackage.querySelector("[data-style-token-action-button]");
             const copy = actionPackage.querySelector("[data-style-token-action-copy]");
-            const live = actionPackage.querySelector("[data-style-token-action-live]");
-            const control = actionPackage.parentElement?.querySelector("[data-style-token-action-live-control]");
+            const liveMarker = actionPackage.querySelector("[data-action-package-live-marker]");
+            const control = actionPackage.parentElement?.querySelector("[data-style-token-action-package-live]");
             const setLive = (isLive) => {
-                if (live instanceof HTMLElement) {
-                    live.hidden = !isLive;
+                actionPackage.dataset.actionPackageLive = isLive ? "true" : "false";
+                if (liveMarker instanceof HTMLElement) {
+                    liveMarker.hidden = !isLive;
                 }
             };
             if (control instanceof HTMLInputElement) {
                 control.addEventListener("change", () => setLive(control.checked));
+                setLive(control.checked);
             }
             if (button instanceof HTMLButtonElement) {
                 const originalCopy = copy?.textContent || "";
                 button.addEventListener("click", () => {
                     button.disabled = true;
                     button.classList.add("is-pending");
-                    button.textContent = "Refreshing…";
+                    button.toggleAttribute("aria-busy", true);
+                    button.textContent = button.dataset.pendingLabel || "Refreshing…";
                     if (copy) {
-                        copy.textContent = "Refreshing local metadata and packaged assets.";
+                        copy.textContent = actionPackage.dataset.actionPackagePendingCopy
+                            || "Refreshing local metadata and packaged assets.";
                     }
                     setLive(true);
                     window.setTimeout(() => {
                         button.disabled = false;
                         button.classList.remove("is-pending");
-                        button.textContent = "Refresh";
+                        button.toggleAttribute("aria-busy", false);
+                        button.textContent = button.dataset.defaultLabel || "Refresh";
                         if (copy) {
-                            copy.textContent = originalCopy;
+                            copy.textContent = actionPackage.dataset.actionPackageDefaultCopy || originalCopy;
                         }
                         setLive(control instanceof HTMLInputElement && control.checked);
                     }, 1200);

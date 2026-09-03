@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.38-codex.1
+Code version: v1.51.45-codex.1
 """
 
 from pathlib import Path
@@ -156,6 +156,54 @@ def test_settings_layout_dimensions_reuse_the_sibling_width_contract() -> None:
         assert fragment in stylesheet
 
 
+def test_settings_execution_option_reuses_the_sibling_form_contract() -> None:
+    """Keep the execution-option specimen aligned with the sibling Settings form."""
+    stylesheet = _stylesheet()
+
+    expected_fragments = (
+        "--settings-general-option-radius: var(--radius-soft);",
+        "--settings-general-option-pad-block: 14px;",
+        "--settings-general-option-pad-inline: 16px;",
+        "--settings-general-option-background: var(--glass-surface-background-strong);",
+        "--settings-general-option-border: 0.5px solid color-mix(in srgb, var(--theme-text) 8%, transparent);",
+        ".settings-general-form {",
+        "display: grid;",
+        "gap: 12px;",
+        "width: min(100%, var(--settings-general-option-max-width));",
+        ".settings-general-option {",
+        "grid-template-columns: auto 1fr;",
+        "padding: var(--settings-general-option-pad-block) var(--settings-general-option-pad-inline);",
+        "transition: background-color 180ms var(--motion-standard), border-color 180ms var(--motion-standard), box-shadow 180ms var(--motion-standard);",
+        ".settings-general-option input {",
+        "accent-color: var(--theme-accent-primary);",
+        ".settings-general-option:has(input:checked) {",
+        "box-shadow: inset 0 0 0 1px var(--theme-accent-primary);",
+        ".settings-general-option-title {",
+        "font-size: var(--font-form-control);",
+        ".settings-general-option-desc {",
+        "font-weight: var(--font-weight-regular);",
+        '.style-token-demo[data-style-token-density="tight"] .settings-general-option,',
+    )
+    for fragment in expected_fragments:
+        assert fragment in stylesheet
+
+    for removed_token in (
+        "--settings-general-option-gap",
+        "--settings-general-option-padding",
+    ):
+        assert removed_token not in stylesheet
+
+
+def test_chart_tooltip_title_uses_the_medium_weight_token() -> None:
+    """Keep the Style tokens tooltip title on the shared 500 weight."""
+    stylesheet = _stylesheet()
+    selector_start = stylesheet.index(".chart-tooltip-title {")
+    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+
+    assert "font-weight: var(--font-weight-medium);" in selector_rule
+    assert "font-weight: var(--font-weight-semibold);" not in selector_rule
+
+
 def test_browser_filter_labels_use_the_medium_weight_token() -> None:
     """Give Local resources filter labels the shared medium emphasis."""
     stylesheet = _stylesheet()
@@ -246,6 +294,7 @@ def test_cache_status_message_hangs_under_the_account_label() -> None:
     assert "--browser-session-status-indent: calc(" in selector_rule
     assert "var(--browser-session-status-checkmark-size)" in selector_rule
     assert "var(--browser-session-status-item-gap)" in selector_rule
+    assert "margin: 0;" in selector_rule
     assert "padding-inline-start: var(--browser-session-status-indent);" in selector_rule
     assert "text-indent: calc(-1 * var(--browser-session-status-indent));" in selector_rule
 
@@ -308,15 +357,21 @@ def test_settings_action_packages_reuse_the_sibling_composite_card() -> None:
         "--settings-action-package-max-width: var(--layout-content-width);",
         "background: var(--settings-action-package-background);",
         "border: var(--settings-action-package-border);",
+        "box-shadow: var(--frosted-glass-shadow);",
+        "backdrop-filter: var(--frosted-glass-blur);",
         ".settings-action-package-icon-shell {",
         ".settings-action-package-copy {",
         "display: contents;",
+        ".settings-action-package-live-marker {",
+        "@keyframes settings-action-package-live-breath",
         ".settings-action-package-form {",
         "justify-self: end;",
         ".settings-action-package:has(.settings-service-name) {",
         ".settings-agent-terminal-authorization-status {",
         ".settings-agent-terminal-authorization-status[hidden] {",
         ".settings-inline-button-primary {",
+        ".style-token-action-package-live-control {",
+        ".style-token-action-package-live-label {",
     )
     for fragment in expected_fragments:
         assert fragment in stylesheet
@@ -445,8 +500,9 @@ def test_non_pill_corner_radii_use_the_shared_ten_pixel_value() -> None:
 
     expected_tokens = (
         "--radius-panel: 10px;",
-        "--radius-soft: 10px;",
-        "--strategy-stepper-radius: 10px;",
+        "--radius-soft: var(--radius-panel);",
+        "--strategy-stepper-radius: var(--radius-soft);",
+        "--workspace-modal-radius: var(--radius-panel);",
         "--browser-media-frame-radius: var(--radius-panel);",
         "border-radius: var(--browser-media-frame-radius, var(--radius-panel));",
         "border-radius: 0 0 var(--radius-panel) var(--radius-panel);",
@@ -455,6 +511,9 @@ def test_non_pill_corner_radii_use_the_shared_ten_pixel_value() -> None:
     )
     for token in expected_tokens:
         assert token in stylesheet
+
+    assert "border-radius: 10px;" not in stylesheet
+    assert "--radius-soft: 10px;" not in stylesheet
 
     for non_shared_radius in ("6px", "8px", "9px", "12px", "18px", "20px", "24px", "30px"):
         assert f"border-radius: {non_shared_radius};" not in stylesheet
@@ -1315,7 +1374,7 @@ def test_browser_pagination_range_menu_uses_glass_and_gel_motion_tokens() -> Non
         "scrollbar-width: thin;",
         ".browser-pagination-range-menu.is-scrollable {",
         "overflow-y: auto;",
-        "border-radius: 10px;",
+        "border-radius: var(--radius-soft);",
         "animation: browser-pagination-range-gel-in 300ms var(--motion-bouncy) both;",
         "@keyframes browser-pagination-range-gel-in {",
         "grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));",
@@ -1333,7 +1392,7 @@ def test_browser_pagination_range_menu_hides_the_scrollbar_track() -> None:
     assert "overflow-y: auto;" in menu_rule
     assert "scrollbar-width: none;" in menu_rule
     assert "-ms-overflow-style: none;" in menu_rule
-    assert "border-radius: 10px;" in menu_rule
+    assert "border-radius: var(--radius-soft);" in menu_rule
     assert "scrollbar-gutter:" not in menu_rule
     scrollbar_start = stylesheet.index(".browser-pagination-range-menu::-webkit-scrollbar {")
     scrollbar_rule = stylesheet[scrollbar_start:stylesheet.index("\n}", scrollbar_start)]
@@ -1520,7 +1579,7 @@ def test_browser_session_counts_reuse_regular_weight_and_roomy_cell_padding() ->
 
 
 def test_cache_workspace_reuses_the_shared_title_rail_and_scroll_layer() -> None:
-    """Keep every Cache title aligned with the sidebar action and clear when collapsed."""
+    """Keep Cache title and Events flow inside the named scroll layer."""
     stylesheet = _stylesheet()
 
     for token in (
@@ -1543,12 +1602,16 @@ def test_cache_workspace_reuses_the_shared_title_rail_and_scroll_layer() -> None
         ".cache-overview-title-card .report-heading {",
         "text-wrap: balance;",
         "@media (min-width: 901px)",
-        "main[data-cache-page] #workspace_panel > .workspace-header > .cache-workspace-content > #overview {",
-        "flex: 0 0 100%;",
         "main[data-cache-page] #workspace_panel > .workspace-header > .cache-workspace-content > .workspace-grid {",
+        "flex: 0 0 auto;",
         "height: auto;",
     ):
         assert token in stylesheet
+
+    assert (
+        "main[data-cache-page] #workspace_panel > .workspace-header > "
+        ".cache-workspace-content > #overview {"
+    ) not in stylesheet
 
 
 def test_browser_prompt_source_header_is_centered() -> None:
@@ -1843,7 +1906,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.91.28-codex.1 */",
+        "/* Code version: v2.91.35-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1929,13 +1992,13 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         assert token in stylesheet
 
 
-def test_agent_composer_right_aligns_model_selector_with_action_gap() -> None:
-    """Keep the model selector visually grouped with the circular submit action."""
+def test_agent_composer_centers_all_footer_controls_with_action_gap() -> None:
+    """Keep every Composer footer control centered on one shared row."""
     stylesheet = _stylesheet()
     footer_start = stylesheet.rfind(".agent-composer-footer {")
     footer_rule = stylesheet[footer_start:stylesheet.index("\n}", footer_start)]
 
-    assert "justify-content: flex-end;" in footer_rule
+    assert "justify-content: center;" in footer_rule
     assert "gap: 12px;" in footer_rule
 
 
@@ -1957,7 +2020,7 @@ def test_agent_combobox_trigger_labels_share_typography_contract() -> None:
     model_selector = ".agent-model-trigger,\n.agent-model-trigger .trade-strategy-trigger-label {"
     model_start = stylesheet.index(model_selector)
     model_rule = stylesheet[model_start:stylesheet.index("\n}", model_start)]
-    assert "font-weight: var(--font-weight-medium);" in model_rule
+    assert "font-weight: var(--font-weight-regular);" in model_rule
 
 
 def test_agent_model_trigger_uses_fifteen_pixel_type_token() -> None:
@@ -2341,9 +2404,13 @@ def test_agent_session_source_raises_above_the_inline_recent_session_list_when_o
 
 
 def test_browser_session_status_labels_share_nonbold_left_typography() -> None:
-    """Keep account and terminal status labels aligned without using bold emphasis."""
+    """Keep account, message, and terminal status text on one non-bold typography contract."""
     stylesheet = _stylesheet()
-    selector = ".browser-session-status-account,\n.agent-terminal-execution-label {"
+    selector = (
+        ".browser-session-status-account,\n"
+        ".browser-session-status-message[data-role=\"browser-session-message\"],\n"
+        ".agent-terminal-execution-label {"
+    )
     selector_start = stylesheet.index(selector)
     selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
 

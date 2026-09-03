@@ -1,4 +1,4 @@
-/* Code version: v1.8.4-codex.1 */
+/* Code version: v1.8.5-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v6:";
@@ -204,8 +204,7 @@
             const requiresAgentBootstrap = scope === "agent"
                 && BOOTSTRAPPED_AGENT_PLATFORMS.has(requestPlatform)
                 && Boolean(cachedPayload?.can_download)
-                && !Object.prototype.hasOwnProperty.call(cachedPayload || {}, "agent_sources")
-                && !Object.prototype.hasOwnProperty.call(cachedPayload || {}, "agent_sources_error");
+                && !Object.prototype.hasOwnProperty.call(cachedPayload || {}, "agent_sources");
             if (!forceRefresh && cachedStatus && !requiresAgentBootstrap && cachedStatus.ageMs < SESSION_STALE_MAX_AGE_MS) {
                 setStatus(
                     clientCachedPayload(cachedStatus.payload, cachedStatus.ageMs),

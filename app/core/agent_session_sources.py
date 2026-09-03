@@ -1,6 +1,6 @@
 """Provider-neutral Web Agent Project and session discovery.
 
-Code version: v1.9.4-codex.1
+Code version: v1.9.5-codex.1
 """
 
 from __future__ import annotations
@@ -1138,6 +1138,12 @@ def _normalize_project_rows(platform: str, rows: Any) -> list[dict[str, str]]:
             "url": normalized_url,
             "updated_at": str(row.get("updated_at") or "").strip(),
         }
+        icon = _item_value(row, "icon") or _item_value(row, "emoji")
+        icon_color = _item_value(row, "icon_color") or _item_value(row, "theme")
+        if icon:
+            candidate["icon"] = icon
+        if icon_color:
+            candidate["icon_color"] = icon_color
         existing = deduplicated.get(normalized_url)
         deduplicated[normalized_url] = _prefer_newer_source_row(existing, candidate)
     projects.extend(deduplicated.values())
@@ -1205,11 +1211,14 @@ def _prefer_newer_source_row(
     """Merge duplicate source rows without losing a newer title or timestamp."""
     if existing is None:
         return candidate
-    if _source_updated_at_key(candidate) > _source_updated_at_key(existing):
-        return candidate
-    if not existing.get("title") and candidate.get("title"):
-        return candidate
-    return existing
+    preferred = candidate if _source_updated_at_key(candidate) > _source_updated_at_key(existing) else existing
+    other = existing if preferred is candidate else candidate
+    if not preferred.get("title") and other.get("title"):
+        preferred = {**preferred, "title": other["title"]}
+    for key in ("icon", "icon_color"):
+        if not preferred.get(key) and other.get(key):
+            preferred = {**preferred, key: other[key]}
+    return preferred
 
 
 def _item_value(item: Any, key: str) -> str:

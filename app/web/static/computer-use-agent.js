@@ -1,4 +1,4 @@
-/* Code version: v3.28.10-codex.1 */
+/* Code version: v3.28.12-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -179,9 +179,47 @@
         return selectedValue(".agent-platform-combobox", "chatgpt");
     }
 
+    const CHATGPT_PROJECT_ICON_DEFINITIONS = {
+        "currency-dollar": {
+            viewBox: "0 0 24 24",
+            body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.596" d="M12 7.75v-1M12 16.25v1M9.5 15.08c2.5 1.724 5 .774 5-.797 0-2.707-5-1.757-5-4.463 0-1.572 2.5-2.523 4.5-1.18"/><path fill="none" stroke="currentColor" stroke-width="1.596" d="M12 20.7a8.7 8.7 0 1 0 0-17.4 8.7 8.7 0 0 0 0 17.4Z"/>',
+        },
+        "terminal": {
+            viewBox: "0 0 20 20",
+            body: '<path fill="currentColor" d="M6.196 7.862a.67.67 0 0 1 .837-.085l.105.085L8.804 9.53c.26.26.26.681 0 .94l-1.666 1.668a.666.666 0 0 1-.942-.94l1.197-1.198-1.197-1.195-.085-.105a.666.666 0 0 1 .085-.837M13.467 11.016a.665.665 0 0 1 0 1.302l-.134.014h-2.5a.666.666 0 0 1 0-1.33h2.5zM12.66 2.665c.69 0 1.246 0 1.696.036.458.038.864.117 1.24.309.596.303 1.081.788 1.384 1.384.192.376.272.782.31 1.24.036.45.035 1.007.035 1.696v5.33c0 .69 0 1.246-.036 1.696-.037.458-.117.864-.309 1.24a3.17 3.17 0 0 1-1.383 1.384c-.377.192-.783.272-1.24.31-.45.036-1.008.035-1.697.035H7.33c-.689 0-1.246 0-1.696-.036-.458-.037-.864-.117-1.24-.309a3.17 3.17 0 0 1-1.384-1.383c-.192-.377-.271-.783-.309-1.24-.037-.383-.036-1.008-.036-1.697V7.33c0-.689 0-1.246.036-1.696.038-.458.117-.864.309-1.24A3.17 3.17 0 0 1 4.394 3.01c.376-.192.782-.271 1.24-.309.45-.037 1.007-.036 1.696-.036z"/>',
+        },
+        "dumbbell": {
+            viewBox: "0 0 21 20",
+            body: '<path fill="currentColor" d="M17.794 7.667a.335.335 0 0 0-.335-.335h-.5a.335.335 0 0 0-.335.335v4.667l.007.067a.335.335 0 0 0 .328.268h.5c.184 0 .334-.15.335-.335zM2.457 12.334c0 .185.15.335.335.335h.5a.335.335 0 0 0 .328-.268l.007-.067V7.667a.335.335 0 0 0-.335-.335h-.5a.335.335 0 0 0-.335.335zM6.96 5.167a.335.335 0 0 0-.335-.335H5.292a.335.335 0 0 0-.335.335v9.667c0 .185.15.334.335.335h1.333c.185 0 .334-.15.335-.335zm8.334 0a.335.335 0 0 0-.335-.335h-1.334a.335.335 0 0 0-.335.335v9.667c0 .184.15.335.335.335h1.334c.184 0 .334-.15.335-.335zm1.33.868q.162-.033.335-.033h.5c.919 0 1.665.745 1.665 1.665v4.667c0 .919-.746 1.665-1.665 1.665h-.5q-.173 0-.335-.034v.869c0 .919-.746 1.665-1.665 1.665h-1.334c-.92 0-1.665-.746-1.665-1.665v-4.17H8.29v4.17c0 .92-.746 1.665-1.665 1.665H5.292c-.92 0-1.665-.746-1.665-1.665v-.87Q3.464 14 3.292 14h-.5c-.92 0-1.665-.746-1.665-1.665V7.667c0-.92.745-1.665 1.665-1.665h.5q.171 0 .335.033v-.868c0-.92.745-1.665 1.665-1.665h1.333c.92 0 1.665.745 1.665 1.665v4.168h3.67V5.167c0-.92.745-1.665 1.665-1.665h1.334c.919 0 1.665.745 1.665 1.665z"/>',
+        },
+        "code-brackets": {
+            viewBox: "0 0 20 20",
+            body: '<path fill="currentColor" d="M5.085 15v-2.5a.98.98 0 0 0-.448-.81l-.127-.074c-.47-.233-1.175-.758-1.175-1.616s.704-1.383 1.175-1.616l.127-.073a.98.98 0 0 0 .448-.81V5c0-1.318 1.113-2.333 2.415-2.333a.665.665 0 0 1 0 1.33c-.63 0-1.085.48-1.085 1.002v2.5c0 .862-.482 1.599-1.174 2l-.141.076c-.15.075-.274.165-.351.254-.074.086-.084.141-.084.17s.01.085.084.17c.077.088.2.18.35.254l.142.075A2.32 2.32 0 0 1 6.415 12.5V15c0 .49.4.942.969.996l.116.005.134.014a.665.665 0 0 1 0 1.303l-.134.013-.242-.011c-1.195-.117-2.173-1.085-2.173-2.32m8.5 0v-2.5c0-.919.548-1.696 1.315-2.076l.108-.058a1 1 0 0 0 .243-.197c.074-.085.084-.14.084-.169s-.01-.084-.084-.17a1 1 0 0 0-.243-.195l-.108-.059c-.767-.379-1.315-1.157-1.315-2.076V5c0-.49-.4-.941-.969-.996l-.116-.006-.134-.013a.665.665 0 0 1 .134-1.317l.242.012c1.195.116 2.173 1.085 2.173 2.32v2.5c0 .369.22.708.575.884l.186.1c.45.269.989.765.989 1.516s-.54 1.247-.99 1.515l-.185.1a1 1 0 0 0-.575.885V15c0 1.318-1.113 2.331-2.415 2.331a.665.665 0 0 1 0-1.33c.63 0 1.085-.478 1.085-1"/>',
+        },
+        function: {
+            viewBox: "0 0 20 20",
+            body: '<text x="10" y="15" fill="currentColor" font-family="Georgia, serif" font-size="16" font-weight="700" text-anchor="middle">ƒ</text>',
+        },
+    };
+
     function chatgptProjectIcon() {
         if (selectedPlatform() !== "chatgpt") return "";
         return elements.projectCombobox?.dataset.agentProjectIcon || "";
+    }
+
+    function chatgptProjectIconForItem(item) {
+        const fallback = chatgptProjectIcon();
+        if (selectedPlatform() !== "chatgpt") return fallback;
+        const iconName = String(item?.icon || "").trim().toLowerCase();
+        if (!iconName) return fallback;
+        const definition = CHATGPT_PROJECT_ICON_DEFINITIONS[iconName] || {
+            viewBox: "0 0 20 20",
+            body: `<text x="10" y="14" fill="currentColor" font-family="Arial, sans-serif" font-size="9" font-weight="700" text-anchor="middle">${iconName.replace(/[^a-z0-9]/gi, "").slice(0, 2).toUpperCase() || "•"}</text>`,
+        };
+        const rawColor = String(item?.icon_color || "").trim();
+        const iconColor = /^#[0-9a-f]{6}$/i.test(rawColor) ? rawColor : "#111827";
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${definition.viewBox}" color="${iconColor}">${definition.body}</svg>`;
+        return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
     }
 
     function agentRunIdentity(agent) {
@@ -774,13 +812,22 @@
         syncAgentSessionListViewport();
     }
 
-    function sourceOptionButton(value, label, icon = "", selected = false) {
+    function sourceOptionButton(
+        value,
+        label,
+        icon = "",
+        selected = false,
+        iconName = "",
+        iconColor = "",
+    ) {
         const option = document.createElement("button");
         option.type = "button";
         option.className = `trade-strategy-dropdown-option agent-combobox-option${selected ? " is-selected is-active" : ""}`;
         option.dataset.agentComboboxOption = value || "";
         option.dataset.agentComboboxLabel = label || "";
         if (icon) option.dataset.agentComboboxIcon = icon;
+        if (iconName) option.dataset.agentComboboxIconName = iconName;
+        if (iconColor) option.dataset.agentComboboxIconColor = iconColor;
         option.setAttribute("role", "option");
         option.setAttribute("aria-selected", String(selected));
         option.tabIndex = -1;
@@ -850,11 +897,16 @@
         const safeItems = Array.isArray(items) ? items : [];
         safeItems.forEach((item) => {
             const itemValue = item.url || "";
+            const itemIcon = combobox === elements.projectCombobox
+                ? chatgptProjectIconForItem(item)
+                : listIcon;
             const option = sourceOptionButton(
                 itemValue,
                 item.title || "Untitled",
-                listIcon,
+                itemIcon,
                 Boolean(selectedValue && itemValue === selectedValue),
+                combobox === elements.projectCombobox ? String(item.icon || "").trim() : "",
+                combobox === elements.projectCombobox ? String(item.icon_color || "").trim() : "",
             );
             if (isDirectList) option.tabIndex = 0;
             option.dataset.agentSourceId = item.id || "";
@@ -1060,7 +1112,7 @@
             };
             trigger?.addEventListener("click", () => {
                 if (combobox === elements.recentSessionCombobox || combobox === elements.projectCombobox) {
-                    loadAgentSources({forceRefresh: true});
+                    refreshAgentSessionSources();
                 }
                 toggleCombobox(combobox);
             });
@@ -1135,13 +1187,13 @@
                         if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
                         setProjectComboboxValue("", "Choose a recent project");
                         clearProjectSessionChoice();
-                        loadAgentSources({forceRefresh: true});
+                        refreshAgentSessionSources();
                     } else if (input.value === "project") {
                         if (elements.recentSessionUrl instanceof HTMLInputElement) elements.recentSessionUrl.value = "";
                         if (elements.projectSessionUrl instanceof HTMLInputElement) elements.projectSessionUrl.value = "new";
                         setComboboxValue(elements.recentSessionCombobox, "", "Choose a recent session");
                         clearProjectSessionChoice();
-                        loadAgentSources({forceRefresh: true});
+                        refreshAgentSessionSources();
                     }
                     updateSessionChoiceInputs();
                 }
@@ -1438,6 +1490,19 @@
             window.clearTimeout(timeoutId);
             if (requestId === sourceRequestId) clearCatalogLoadingState();
         }
+    }
+
+    function refreshAgentSessionSources() {
+        const hasBootstrap = Boolean(lastBrowserStatus)
+            && (
+                Object.prototype.hasOwnProperty.call(lastBrowserStatus, "agent_sources")
+                || Object.prototype.hasOwnProperty.call(lastBrowserStatus, "agent_sources_error")
+            );
+        if (hasBootstrap && browserStatusController?.refresh) {
+            void browserStatusController.refresh();
+            return;
+        }
+        void loadAgentSources({forceRefresh: true});
     }
 
     function bindCompletedAgentSession(agent, completedTransition) {

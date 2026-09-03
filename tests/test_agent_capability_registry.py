@@ -69,6 +69,7 @@ def test_public_manifest_is_derived_from_the_registry_and_stays_bounded() -> Non
         "/cache/grok",
         "/cache/chatgpt",
         "/cache/gemini",
+        "/cache/claude",
         "/browser",
         "/agent",
         "/settings",

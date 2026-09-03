@@ -788,6 +788,12 @@ NAVIGATION_TARGETS: tuple[NavigationTarget, ...] = (
         "/cache/gemini",
     ),
     NavigationTarget(
+        "claude_cache",
+        "Claude cache",
+        "Open the Claude history cache overview without starting or stopping a cache job.",
+        "/cache/claude",
+    ),
+    NavigationTarget(
         "local_resources",
         "Local resources",
         "Open the local cached-resource browser without deleting, restoring, or exporting data.",

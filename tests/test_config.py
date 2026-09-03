@@ -1,6 +1,6 @@
 """Focused regression tests for persisted crawler settings.
 
-Code version: v1.3.1-codex.2
+Code version: v1.4.0-codex.1
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ class ConfigPersistenceTests(unittest.TestCase):
 
     def test_new_configuration_uses_non_disruptive_gemini_default(self) -> None:
         self.assertEqual(CrawlConfig().gemini_browser, "edge")
+        self.assertEqual(CrawlConfig().claude_browser, "edge")
 
     def test_explicit_blank_chatgpt_project_url_survives_restart(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -37,6 +38,7 @@ class ConfigPersistenceTests(unittest.TestCase):
                 max_scroll_rounds=5_000,
                 scroll_pause_seconds=1.0,
                 stale_round_limit=12,
+                claude_browser="chrome",
                 gemini_browser="safari",
                 gemini_max_conversations=2_000,
                 gemini_scroll_pause_seconds=0.35,
@@ -60,6 +62,7 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertEqual(loaded.max_scroll_rounds, 5_000)
         self.assertEqual(loaded.scroll_pause_seconds, 1.0)
         self.assertEqual(loaded.stale_round_limit, 12)
+        self.assertEqual(loaded.claude_browser, "chrome")
         self.assertEqual(loaded.gemini_browser, "safari")
         self.assertEqual(loaded.gemini_max_conversations, 2_000)
         self.assertEqual(loaded.gemini_scroll_pause_seconds, 0.35)

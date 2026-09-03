@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.21.2-codex.1
+# Code version: v1.22.0-codex.1
 
 from __future__ import annotations
 
@@ -41,10 +41,10 @@ IMAGE_SUFFIXES = frozenset({".avif", ".gif", ".heic", ".jpeg", ".jpg", ".png", "
 VIDEO_SUFFIXES = frozenset({".m4v", ".mkv", ".mov", ".mp4", ".webm"})
 MEDIA_SUFFIXES = IMAGE_SUFFIXES | VIDEO_SUFFIXES
 SOURCE_VALUES = frozenset({"all", "x", "grok", "chatgpt"})
-TEXT_SOURCE_VALUES = frozenset({"all", "chatgpt", "gemini", "grok"})
+TEXT_SOURCE_VALUES = frozenset({"all", "chatgpt", "claude", "gemini", "grok"})
 # Gemini has no media cache source. Treat a legacy URL that names Gemini in
 # Media mode as the ChatGPT media view instead of silently showing all media.
-TEXT_ONLY_SOURCE_VALUES = frozenset({"gemini"})
+TEXT_ONLY_SOURCE_VALUES = frozenset({"claude", "gemini"})
 MEDIA_KIND_VALUES = frozenset({"all", "image", "video"})
 SORT_VALUES = frozenset({"newest", "oldest", "name"})
 VIEW_VALUES = frozenset({"media", "text", "prompts"})

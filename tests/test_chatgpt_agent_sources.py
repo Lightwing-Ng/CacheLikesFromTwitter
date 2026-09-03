@@ -1,6 +1,6 @@
 """Focused tests for the Agent's ChatGPT Web source catalog.
 
-Code version: v1.2.3-codex.1
+Code version: v1.2.4-codex.1
 """
 
 from __future__ import annotations
@@ -212,7 +212,7 @@ def test_project_api_merges_all_catalog_endpoints_and_keeps_newest_projects() ->
     projects = _collect_projects_from_api(context, {"authorization": "Bearer test"})
 
     assert [project["id"] for project in projects] == ["g-p-new", "g-p-old"]
-    assert len(context.request.urls) == len(CHATGPT_PROJECT_API_ENDPOINTS)
+    assert len(context.request.urls) == len(CHATGPT_PROJECT_API_ENDPOINTS) + 2
 
 
 def test_project_sessions_are_sorted_and_renamed_rows_are_reconciled() -> None:
@@ -262,6 +262,33 @@ def test_project_api_parser_supports_nested_gizmo_items() -> None:
             "updated_at": "2026-08-13T09:00:00Z",
         }
     ]
+
+
+def test_project_api_enriches_live_icon_metadata_from_project_detail() -> None:
+    context = _Context(
+        {
+            "/backend-api/gizmos/g-p-demo-project": {
+                "gizmo": {
+                    "id": "g-p-demo-project",
+                    "display": {"name": "Demo project", "emoji": "currency-dollar", "theme": "#53B559"},
+                }
+            },
+            "/backend-api/gizmos": {
+                "items": [
+                    {
+                        "id": "g-p-demo-project",
+                        "name": "Demo project",
+                        "updated_at": "2026-08-13T09:00:00Z",
+                    }
+                ]
+            },
+        }
+    )
+
+    projects = _collect_projects_from_api(context, {"authorization": "Bearer test"})
+
+    assert projects[0]["icon"] == "currency-dollar"
+    assert projects[0]["icon_color"] == "#53B559"
 
 
 def test_project_api_parser_supports_sidebar_resource_records() -> None:

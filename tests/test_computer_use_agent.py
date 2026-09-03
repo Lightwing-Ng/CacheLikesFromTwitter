@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.54.3-codex.1
+Code version: v3.54.5-codex.1
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from app.core.computer_use_agent import (
     CHATGPT_SESSION_BIND_TIMEOUT_SECONDS,
     DEFAULT_CHATGPT_MODEL,
     MAX_CONTROLLER_DELETE_BYTES,
+    MAX_MAX_TURNS,
     PROVIDER_SESSION_BIND_TIMEOUT_SECONDS,
     SEARCH_MAX_FILE_BYTES,
     ComputerUseAgentService,
@@ -151,6 +152,10 @@ def test_settings_validate_workspace_environment_browser_and_limits() -> None:
         assert settings.browser == "edge"
         assert settings.context_limit_mib == 64
         assert settings.max_turns == 55
+        assert MAX_MAX_TURNS == 2_048
+        assert validate_computer_use_settings(
+            {**asdict(settings), "max_turns": "2,048"}
+        ).max_turns == 2_048
         assert settings.command_timeout_seconds == 300
         assert "bodycheck" in settings.macos_system_prompt
         assert "fenced code block labelled json" in settings.macos_system_prompt
@@ -165,6 +170,10 @@ def test_settings_validate_workspace_environment_browser_and_limits() -> None:
             validate_computer_use_settings({**asdict(settings), "model": "unknown-model"})
         with pytest.raises(ValueError, match="official ChatGPT HTTPS host"):
             validate_computer_use_settings({**asdict(settings), "target_url": "https://example.com"})
+        with pytest.raises(ValueError, match="2,048"):
+            validate_computer_use_settings(
+                {**asdict(settings), "max_turns": MAX_MAX_TURNS + 1}
+            )
 
 
 def test_windows_agent_rejects_safari_and_accepts_chromium(tmp_path: Path) -> None:
@@ -3223,11 +3232,59 @@ def test_agent_session_target_resolves_root_and_project_choices() -> None:
 
 def test_chatgpt_target_check_requires_the_selected_conversation_path() -> None:
     target = "https://chatgpt.com/c/session-123"
+    project_alias = "https://chatgpt.com/g/g-p-6a979544dd548191bcc1cc1ce6f110bc/c/session-123"
 
     assert _chatgpt_target_is_open(target, "https://chatgpt.com/c/session-123?messageId=abc")
+    assert _chatgpt_target_is_open(target, project_alias)
+    assert _chatgpt_target_is_open(project_alias, target)
+    assert _web_target_is_open("chatgpt", target, project_alias)
     assert not _chatgpt_target_is_open(target, "https://chatgpt.com/")
     assert not _chatgpt_target_is_open(target, "https://chatgpt.com/c/different-session")
+    assert not _chatgpt_target_is_open(
+        target,
+        "https://chatgpt.com/g/g-p-6a979544dd548191bcc1cc1ce6f110bc/c/different-session",
+    )
     assert not _chatgpt_target_is_open(target, "https://example.com/c/session-123")
+
+
+def test_recent_chatgpt_binding_follows_project_path_canonicalization(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    selected = "https://chatgpt.com/c/6a97ec5e-defc-83ee-842f-5db477a83306"
+    canonical = (
+        "https://chatgpt.com/g/g-p-6a979544dd548191bcc1cc1ce6f110bc/"
+        "c/6a97ec5e-defc-83ee-842f-5db477a83306"
+    )
+
+    class _Page:
+        url = selected
+
+        def evaluate(
+            self,
+            _expression: str,
+            _argument: dict[str, str],
+        ) -> dict[str, object]:
+            return {"markerEchoed": False, "url": self.url}
+
+        def title(self) -> str:
+            return "Project session"
+
+    page = _Page()
+    binding = _ProviderSessionBinding(page, "chatgpt", selected, "recent")
+    assert binding.bound_conversation_url == selected
+    page.url = canonical
+
+    with caplog.at_level("INFO", logger="app.core.computer_use_agent"):
+        assert binding.check() == canonical
+    assert binding.bound_conversation_url == canonical
+    assert "event=chatgpt_conversation_url_canonicalized" in caplog.text
+    page.url = selected
+    assert binding.check() == selected
+    assert binding.bound_conversation_url == selected
+    page.url = "https://chatgpt.com/g/g-p-other/c/different-session"
+    with pytest.raises(RuntimeError, match="navigated away from the newly created session"):
+        binding.check()
+    assert binding.bound_conversation_url == selected
 
 
 def test_claude_new_target_allows_the_provider_conversation_redirect() -> None:

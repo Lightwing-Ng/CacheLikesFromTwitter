@@ -1,6 +1,6 @@
 """Read ChatGPT Web sessions, projects, and conversation history for the local Agent.
 
-Code version: v1.5.3-codex.1
+Code version: v1.5.4-codex.1
 """
 
 from __future__ import annotations
@@ -41,6 +41,7 @@ CHATGPT_HOSTS = frozenset({"chatgpt.com", "www.chatgpt.com"})
 AGENT_SOURCE_LIMIT = 20
 CHATGPT_SOURCE_API_LIMIT = 100
 CHATGPT_PROJECT_API_LIMIT = 20
+CHATGPT_PROJECT_DETAIL_ENDPOINT = "/backend-api/gizmos/{project_id}"
 CHATGPT_HISTORY_TURN_LIMIT = 100
 CHATGPT_PROJECT_API_ENDPOINTS = (
     "/backend-api/gizmos/snorlax/sidebar?owned_only=true&conversations_per_gizmo=5&limit=20",
@@ -508,8 +509,37 @@ def _collect_projects_from_api(context: Any, api_headers: dict[str, str]) -> lis
             existing = deduplicated.get(project_url)
             deduplicated[project_url] = _prefer_newer_source_row(existing, project)
     projects = list(deduplicated.values())
+    _enrich_project_icon_metadata(context, api_headers, projects)
     projects.sort(key=_source_updated_at_key, reverse=True)
     return projects[:AGENT_SOURCE_LIMIT]
+
+
+def _enrich_project_icon_metadata(
+    context: Any,
+    api_headers: dict[str, str],
+    projects: list[dict[str, str]],
+) -> None:
+    """Read each Project's live icon metadata without replacing its catalog row."""
+    for project in projects[:CHATGPT_PROJECT_API_LIMIT]:
+        if project.get("icon"):
+            continue
+        project_id = str(project.get("id") or "").strip()
+        if not project_id:
+            continue
+        try:
+            detail_payload = _get_chatgpt_api_json(
+                context,
+                "https://chatgpt.com"
+                + CHATGPT_PROJECT_DETAIL_ENDPOINT.format(project_id=project_id),
+                api_headers,
+            )
+        except RuntimeError:
+            continue
+        detail = _project_item(detail_payload)
+        for key in ("icon", "icon_color"):
+            value = str(detail.get(key) or "").strip()
+            if value:
+                project[key] = value
 
 
 def _collect_projects_from_page(page: Any) -> list[dict[str, str]]:
@@ -664,11 +694,14 @@ def _prefer_newer_source_row(
     """Merge duplicate provider rows without losing a newer title or timestamp."""
     if existing is None:
         return candidate
-    if _source_updated_at_key(candidate) > _source_updated_at_key(existing):
-        return candidate
-    if not existing.get("title") and candidate.get("title"):
-        return candidate
-    return existing
+    preferred = candidate if _source_updated_at_key(candidate) > _source_updated_at_key(existing) else existing
+    other = existing if preferred is candidate else candidate
+    if not preferred.get("title") and other.get("title"):
+        preferred = {**preferred, "title": other["title"]}
+    for key in ("icon", "icon_color"):
+        if not preferred.get(key) and other.get(key):
+            preferred = {**preferred, key: other[key]}
+    return preferred
 
 
 def _mapping_items(payload: dict[str, Any]) -> Iterable[dict[str, Any]]:
@@ -706,7 +739,7 @@ def _project_item(raw_item: dict[str, Any]) -> dict[str, str]:
         project_url = normalize_chatgpt_project_url(f"https://chatgpt.com/g/{project_segment}/project")
     if not project_url:
         return {}
-    return {
+    project = {
         "id": _chatgpt_project_id(project_url) or project_id,
         "title": (
             _first_text(raw_item, "name", "title", "project_name")
@@ -723,6 +756,23 @@ def _project_item(raw_item: dict[str, Any]) -> dict[str, str]:
             "created_at",
         ),
     }
+    icon = _first_text(raw_item, "emoji", "icon", "icon_name") or _first_text(
+        display,
+        "emoji",
+        "icon",
+        "icon_name",
+    )
+    icon_color = _first_text(raw_item, "theme", "icon_color", "color") or _first_text(
+        display,
+        "theme",
+        "icon_color",
+        "color",
+    )
+    if icon:
+        project["icon"] = icon
+    if icon_color:
+        project["icon_color"] = icon_color
+    return project
 
 
 def _project_metadata(raw_item: dict[str, Any]) -> dict[str, Any]:

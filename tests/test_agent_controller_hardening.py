@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.48.7-codex.1
+Code version: v3.48.8-codex.1
 """
 
 from __future__ import annotations
@@ -1130,6 +1130,8 @@ class TestDirectoryPickerValidation:
             "clearLoadingState",
         ):
             assert fragment in script
+        assert 'renderStatus("", false);' in script
+        assert 'renderStatus("Path validated.", false);' not in script
         assert "silently ignore" not in script
 
 

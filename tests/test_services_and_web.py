@@ -62,6 +62,7 @@ def test_web_pages_and_status_apis_are_available(client) -> None:
             ("/cache/grok", b"Grok library overview"),
             ("/cache/chatgpt", b"ChatGPT cache overview"),
             ("/cache/gemini", b"Gemini history cache overview"),
+            ("/cache/claude", b"Claude history cache overview"),
         ("/settings", b"Configuration center"),
     ):
         response = client.get(path)
@@ -72,11 +73,13 @@ def test_web_pages_and_status_apis_are_available(client) -> None:
     grok_status = client.get("/api/grok/status")
     chatgpt_status = client.get("/api/chatgpt/status")
     gemini_status = client.get("/api/gemini/status")
+    claude_status = client.get("/api/claude/status")
     generic_statuses = [client.get(f"/api/cache/{source.key}/status") for source in CACHE_SOURCE_VIEWS]
     assert status.status_code == 200
     assert grok_status.status_code == 200
     assert chatgpt_status.status_code == 200
     assert gemini_status.status_code == 200
+    assert claude_status.status_code == 200
     assert all(response.status_code == 200 for response in generic_statuses)
     assert status.get_json()["phase"] in {
         "idle",
@@ -98,6 +101,7 @@ def test_legacy_cache_page_paths_redirect_to_canonical_namespace(client) -> None
         ("/grok", "/cache/grok"),
         ("/chatgpt", "/cache/chatgpt"),
         ("/gemini", "/cache/gemini"),
+        ("/claude", "/cache/claude"),
     ):
         response = client.get(legacy_path)
         assert response.status_code == 302

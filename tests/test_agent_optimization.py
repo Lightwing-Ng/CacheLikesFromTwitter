@@ -23,6 +23,7 @@ EXPECTED_PATHS = {
     "/cache/grok",
     "/cache/chatgpt",
     "/cache/gemini",
+    "/cache/claude",
     "/browser",
     "/agent",
     "/settings",

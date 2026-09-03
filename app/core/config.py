@@ -1,6 +1,6 @@
 """Configuration helpers."""
 
-# Code version: v1.15.0-codex.1
+# Code version: v1.16.0-codex.1
 
 from __future__ import annotations
 
@@ -187,6 +187,7 @@ class CrawlConfig:
     grok_browser: str = "edge"
     chatgpt_browser: str = "edge"
     gemini_browser: str = DEFAULT_GEMINI_BROWSER
+    claude_browser: str = "edge"
     gemini_max_conversations: int = DEFAULT_GEMINI_MAX_CONVERSATIONS
     gemini_scroll_pause_seconds: float = DEFAULT_GEMINI_SCROLL_PAUSE_SECONDS
     gemini_stale_round_limit: int = DEFAULT_GEMINI_STALE_ROUND_LIMIT
@@ -268,6 +269,10 @@ def load_saved_config(settings_path: Path | None = None) -> CrawlConfig:
             payload.get("gemini_browser", defaults.gemini_browser),
             defaults.gemini_browser,
         ),
+        claude_browser=normalize_host_browser(
+            payload.get("claude_browser", defaults.claude_browser),
+            defaults.claude_browser,
+        ),
         gemini_max_conversations=max(
             1,
             int(payload.get("gemini_max_conversations", defaults.gemini_max_conversations)),
@@ -342,6 +347,7 @@ def save_config(config: CrawlConfig, settings_path: Path | None = None) -> None:
     payload["grok_browser"] = config.grok_browser
     payload["chatgpt_browser"] = config.chatgpt_browser
     payload["gemini_browser"] = config.gemini_browser
+    payload["claude_browser"] = config.claude_browser
     payload["chatgpt_project_url"] = config.chatgpt_project_url
     payload["chatgpt_project_name"] = config.chatgpt_project_name
     payload["chrome_user_data_dir"] = str(config.chrome_user_data_dir)

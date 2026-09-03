@@ -1,4 +1,4 @@
-<!-- Code version: v1.29.16-codex.1 -->
+<!-- Code version: v1.29.18-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,12 +8,12 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.28-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.35-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='settings-navigation.js', v='settings-navigation-v1.1.2-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.3.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.3.1-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='settings-auto-save.js', v='settings-auto-save-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='agent-settings.js', v='agent-settings-v1.0.0-codex.1') }}"></script>
 </head>
@@ -161,12 +161,15 @@
                                 aria-labelledby="settings_llm_heading"
                             >
                                 <div class="settings-category-heading">
-                                    <h3 id="settings_llm_heading">LLM cache timing</h3>
-                                    <p>Fine-tune startup and scan timing for browser-based LLM cache tasks.</p>
+                                    <h3 id="settings_llm_heading">LLM cache settings</h3>
+                                    <p>Configure timing and history-scan limits for browser-based LLM cache tasks.</p>
                                 </div>
                                 <div class="field-grid compact-config-grid settings-llm-grid">
                                     {{ render_number_field("Startup timeout (s)", "chatgpt_startup_timeout_seconds", saved_config.chatgpt_startup_timeout_seconds, "decimal", "1", "1", "600") }}
                                     {{ render_number_field("Scan wait (s)", "chatgpt_scan_wait_seconds", saved_config.chatgpt_scan_wait_seconds, "decimal", "0.1", "0.1", "5") }}
+                                    {{ render_number_field("Max sessions", "gemini_max_conversations", saved_config.gemini_max_conversations, minimum="1") }}
+                                    {{ render_number_field("Sidebar wait (s)", "gemini_scroll_pause_seconds", saved_config.gemini_scroll_pause_seconds, "decimal", "0.05", "0.1") }}
+                                    {{ render_number_field("Stale scroll limit", "gemini_stale_round_limit", saved_config.gemini_stale_round_limit, minimum="1") }}
                                 </div>
                             </section>
 
@@ -230,7 +233,7 @@
                                         </label>
                                         <label class="field">
                                             <span>Maximum controller turns</span>
-                                            <input class="text-input-control agent-monospace-input" name="agent_max_turns" type="number" min="2" max="120" value="{{ agent_settings.max_turns }}" required>
+                                            <input class="text-input-control agent-monospace-input" name="agent_max_turns" type="number" min="2" max="2048" value="{{ agent_settings.max_turns }}" required>
                                             <span class="field-help">Bounds each fresh browser session and prevents an unproductive loop.</span>
                                         </label>
                                         <label class="field">
@@ -491,7 +494,7 @@
 </main>
 
 {% include "_waiting_modal.html" %}
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.20.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.21.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='shadow-backup-settings.js', v='shadow-backup-settings-v1.3.0-codex.2') }}"></script>
 </body>
 </html>

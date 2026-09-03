@@ -1,4 +1,4 @@
-/* Code version: v2.91.28-codex.1 */
+/* Code version: v2.91.35-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -167,7 +167,7 @@
 
     --radius-panel: 10px;
     --radius-control: 999px;
-    --radius-soft: 10px;
+    --radius-soft: var(--radius-panel);
     --radius-pill: 999px;
     --mode-switch-radius: var(--radius-pill);
     --mode-switch-pad: 4px;
@@ -281,12 +281,12 @@
     --shared-select-option-padding: 9px 10px;
     --shared-select-option-radius: var(--radius-pill);
     --shared-select-option-gap: 8px;
-    --settings-general-option-gap: 12px;
-    --settings-general-option-padding: 12px;
     --settings-general-option-radius: var(--radius-soft);
-    --settings-general-option-background: var(--frosted-glass-background);
-    --settings-general-option-border: var(--frosted-glass-border);
+    --settings-general-option-pad-block: 14px;
+    --settings-general-option-pad-inline: 16px;
     --settings-general-option-max-width: var(--layout-content-width);
+    --settings-general-option-background: var(--glass-surface-background-strong);
+    --settings-general-option-border: 0.5px solid color-mix(in srgb, var(--theme-text) 8%, transparent);
     --settings-form-shell-max-width: var(--layout-content-width);
     --settings-form-control-min-width: 220px;
     --settings-form-control-max-width: var(--layout-control-width);
@@ -298,7 +298,7 @@
     --workspace-title-rail-height: calc(var(--workspace-title-rail-pad-block-start) + var(--workspace-title-rail-control-height));
     --workspace-title-rail-collapsed-pad-inline-start: calc(var(--settings-round-icon-button-size) + 22px);
     --workspace-title-safe-top: 60px;
-    --workspace-modal-radius: 10px;
+    --workspace-modal-radius: var(--radius-panel);
     --workspace-modal-pad-block: 18px;
     --workspace-modal-pad-inline: 18px;
     --workspace-modal-close-offset: 10px;
@@ -467,7 +467,7 @@
     --text-input-control-shadow: var(--control-liquid-shadow);
     --text-input-control-shadow-hover: var(--control-liquid-shadow-focus);
     --strategy-stepper-width: 20px;
-    --strategy-stepper-radius: 10px;
+    --strategy-stepper-radius: var(--radius-soft);
     --strategy-stepper-button-height: 18px;
     --strategy-stepper-font-size: 9px;
     --scrollable-data-table-header-padding: 4px 1px;
@@ -1186,7 +1186,7 @@ h2 {
 .browser-picker-selected-icon-shell {
     width: 28px;
     height: 28px;
-    border-radius: 10px;
+    border-radius: var(--radius-soft);
     background: color-mix(in srgb, var(--theme-color-white-adaptive) 72%, transparent);
     display: inline-flex;
     align-items: center;
@@ -1326,7 +1326,7 @@ h2 {
 
 .browser-session-status-card {
     padding: 12px;
-    border-radius: 10px;
+    border-radius: var(--radius-panel);
     background: color-mix(in srgb, var(--glass-surface-background-strong) 92%, transparent);
     border: 1px solid color-mix(in srgb, var(--theme-color-white-adaptive) 34%, transparent);
     box-shadow: 0 14px 28px rgba(15, 31, 53, 0.08), inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 92%, transparent);
@@ -1339,6 +1339,7 @@ h2 {
         var(--browser-session-status-checkmark-size)
         + var(--browser-session-status-item-gap)
     );
+    margin: 0;
     padding-inline-start: var(--browser-session-status-indent);
     text-indent: calc(-1 * var(--browser-session-status-indent));
 }
@@ -1376,6 +1377,7 @@ h2 {
 }
 
 .browser-session-status-account,
+.browser-session-status-message[data-role="browser-session-message"],
 .agent-terminal-execution-label {
     font-family: inherit;
     font-size: var(--font-ui-lg);
@@ -1436,7 +1438,7 @@ h2 {
 
 .browser-session-panel.is-browser-ready .browser-session-status-card,
 .agent-browser-session-field.is-browser-ready .browser-session-status-card {
-    border-radius: 10px;
+    border-radius: var(--radius-panel);
     background: color-mix(in srgb, var(--theme-success) 6%, var(--glass-surface-background-strong));
 }
 
@@ -2108,12 +2110,6 @@ html.sidebar-memory-collapsed .app-shell .cache-overview-title-card {
 }
 
 @media (min-width: 901px) {
-    main[data-cache-page] #workspace_panel > .workspace-header > .cache-workspace-content > #overview {
-        flex: 0 0 100%;
-        min-height: 100%;
-        box-sizing: border-box;
-    }
-
     main[data-cache-page] #workspace_panel > .workspace-header > .cache-workspace-content > .workspace-grid {
         flex: 0 0 auto;
         height: auto;
@@ -4088,7 +4084,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-composer-footer {
-    justify-content: flex-end;
+    justify-content: center;
     gap: 12px;
 }
 
@@ -4212,7 +4208,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-model-trigger,
 .agent-model-trigger .trade-strategy-trigger-label {
-    font-weight: var(--font-weight-medium);
+    font-weight: var(--font-weight-regular);
 }
 
 .agent-model-dropdown,
@@ -4784,7 +4780,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 :root {
     --font-family-brand: "Univers Next for HSBC";
     --font-family-base: var(--font-family-brand), var(--font-family-cjk), "Helvetica Neue", Helvetica, Arial, "PingFang HK", "PingFang TC", "Microsoft JhengHei", sans-serif;
-    --radius-soft: 10px;
+    --radius-soft: var(--radius-panel);
     --motion-duration-instant: 100ms;
     --motion-duration-fast: 160ms;
     --motion-duration-standard: 240ms;
@@ -4809,9 +4805,9 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     --frosted-glass-shadow-hover: 0 22px 48px rgba(10, 14, 25, 0.16), inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 64%, transparent);
     --frosted-glass-shadow-active: 0 12px 28px rgba(10, 14, 25, 0.14), inset 0 1px 0 color-mix(in srgb, var(--theme-glass-highlight) 48%, transparent);
     --frosted-glass-blur: saturate(160%) blur(18px);
-    --settings-action-package-radius: var(--radius-soft);
-    --settings-action-package-pad-block: 14px;
-    --settings-action-package-pad-inline: 16px;
+    --settings-action-package-radius: var(--settings-general-option-radius);
+    --settings-action-package-pad-block: var(--settings-general-option-pad-block);
+    --settings-action-package-pad-inline: var(--settings-general-option-pad-inline);
     --settings-action-package-column-gap: 12px;
     --settings-action-package-row-gap: 8px;
     --settings-action-package-copy-gap: 4px;
@@ -7117,7 +7113,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     padding: 8px 10px;
     box-sizing: border-box;
     border: var(--tooltip-border);
-    border-radius: 10px;
+    border-radius: var(--radius-soft);
     background: var(--tooltip-background);
     box-shadow: var(--tooltip-shadow);
     backdrop-filter: var(--tooltip-blur);
@@ -7451,7 +7447,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 
 .browser-chat-message-content code {
     padding: 2px 4px;
-    border-radius: 10px;
+    border-radius: var(--radius-soft);
     background: var(--accent-surface-muted);
     font-family: var(--font-family-mono-cjk);
     font-size: 0.92em;
@@ -8516,7 +8512,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     scrollbar-width: none;
     -ms-overflow-style: none;
     border: var(--frosted-glass-border);
-    border-radius: 10px;
+    border-radius: var(--radius-soft);
     background: var(--frosted-glass-opaque-background, var(--frosted-glass-background));
     background-clip: padding-box;
     box-shadow: var(--frosted-glass-shadow);
@@ -9267,7 +9263,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     flex: 0 0 auto;
     width: 28px;
     height: 28px;
-    border-radius: 10px;
+    border-radius: var(--radius-soft);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -9469,9 +9465,9 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     border-radius: var(--settings-action-package-radius);
     background: var(--settings-action-package-background);
     border: var(--settings-action-package-border);
-    box-shadow: var(--shadow);
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    box-shadow: var(--frosted-glass-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
 }
 
 .settings-action-package-icon-shell {
@@ -9483,7 +9479,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     justify-content: center;
     width: 36px;
     height: 36px;
-    border-radius: 10px;
+    border-radius: var(--radius-soft);
     background: var(--settings-icon-surface, var(--accent-surface-icon));
     color: var(--settings-icon-tint, var(--accent-text));
     box-shadow: inset 0 1px 0 var(--theme-glass-highlight);
@@ -9521,6 +9517,52 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 
 .settings-action-package .settings-service-name {
     position: relative;
+}
+
+.settings-action-package-live-marker {
+    position: absolute;
+    top: 50%;
+    left: calc(var(--settings-action-package-live-marker-size) * -1.25);
+    width: var(--settings-action-package-live-marker-size);
+    height: var(--settings-action-package-live-marker-size);
+    border-radius: 50%;
+    background: var(--settings-action-package-live-marker-color);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--settings-action-package-live-marker-color) 18%, transparent);
+    transform: translateY(-50%);
+}
+
+.settings-action-package-live-marker::before,
+.settings-action-package-live-marker::after {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 16px;
+    height: 16px;
+    border: 1.6px solid color-mix(in srgb, var(--settings-action-package-live-marker-color) 72%, transparent);
+    border-radius: 50%;
+    content: "";
+    opacity: 0.46;
+    transform: translate(-50%, -50%) scale(0.36);
+    animation: settings-action-package-live-breath var(--settings-action-package-live-marker-duration) var(--motion-emphasized) infinite;
+}
+
+.settings-action-package-live-marker::after {
+    width: 12px;
+    height: 12px;
+    opacity: 0.28;
+    animation-delay: 0.9s;
+}
+
+@keyframes settings-action-package-live-breath {
+    0% {
+        opacity: 0.44;
+        transform: translate(-50%, -50%) scale(0.36);
+    }
+
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(1);
+    }
 }
 
 .settings-service-name {
@@ -9583,6 +9625,14 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     grid-column: 2;
     grid-row: 3;
     justify-self: end;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .settings-action-package-live-marker::before,
+    .settings-action-package-live-marker::after {
+        animation: none;
+        opacity: 0;
+    }
 }
 
 .settings-action-package.shadow-backup-actions {
@@ -10301,10 +10351,6 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     overflow: visible;
 }
 
-.style-token-pagination-demo-nav {
-    margin-top: 18px;
-}
-
 .style-token-shared-filter-demo {
     display: grid;
     align-content: start;
@@ -10348,12 +10394,6 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     min-height: var(--settings-round-icon-button-size);
 }
 
-.style-token-theme-toggle-label {
-    color: var(--muted);
-    font-size: var(--font-form-label);
-    line-height: 1.25;
-}
-
 /* Code version: v1.0.0-codex.5 */
 .style-token-primary-button-demo {
     display: grid;
@@ -10395,12 +10435,6 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 .style-token-table-demo-shell {
     min-height: 252px;
     padding: 12px;
-}
-
-.style-token-table-demo-summary-row {
-    display: grid;
-    gap: 4px;
-    margin-bottom: 10px;
 }
 
 .style-token-table-demo-surface {
@@ -10662,40 +10696,75 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     font-weight: var(--font-weight-bold);
 }
 
-.style-token-action-button {
-    width: auto;
-    min-width: 92px;
-}
-
 .style-token-action-package {
     width: 100%;
     max-width: none;
 }
 
-.style-token-action-live-control {
+.style-token-demo[data-style-token-density="compact"] .settings-action-package,
+.style-token-demo[data-style-token-density="tight"] .settings-action-package {
+    grid-template-columns: 36px minmax(0, 1fr);
+}
+
+.style-token-demo[data-style-token-density="compact"] .settings-action-package-form,
+.style-token-demo[data-style-token-density="tight"] .settings-action-package-form {
+    grid-column: 2;
+    grid-row: 3;
+    justify-self: end;
+    align-self: start;
+}
+
+.style-token-action-package-live-control {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    margin-top: 10px;
+    justify-content: space-between;
+    gap: 10px;
+    width: 100%;
+    margin-top: 8px;
+    padding: 0;
+    min-height: 24px;
+    height: auto;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
     color: var(--muted);
-    font-size: var(--font-form-label);
+    font-size: var(--font-ui-xs);
+    line-height: 1.3;
 }
 
-.style-token-action-live {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    color: var(--theme-success-strong);
-    font-size: var(--font-tooltip);
+.style-token-action-package-live-label {
+    margin: 0;
+    color: inherit;
+    font-size: inherit;
+    font-weight: var(--font-weight-regular);
+    line-height: inherit;
 }
 
-.style-token-action-live::before {
-    content: "";
-    width: var(--settings-action-package-live-marker-size);
-    height: var(--settings-action-package-live-marker-size);
-    border-radius: 50%;
-    background: var(--settings-action-package-live-marker-color);
-    animation: style-token-live-pulse var(--settings-action-package-live-marker-duration) ease-in-out infinite;
+.style-token-action-package-live-control .ios-switch-shell {
+    width: 32px;
+    height: 20px;
+    flex-basis: 32px;
+}
+
+.style-token-action-package-live-control .ios-switch-slider::after {
+    width: 16px;
+    height: 16px;
+}
+
+.style-token-action-package-live-control .ios-switch-shell input:checked + .ios-switch-slider::after {
+    transform: translateX(12px);
+}
+
+.settings-general-form {
+    display: grid;
+    gap: 12px;
+    width: min(100%, var(--settings-general-option-max-width));
+}
+
+.style-token-demo > .settings-general-form,
+.style-token-demo > .style-token-settings-general-form {
+    width: 100%;
+    max-width: none;
 }
 
 .style-token-settings-general-form {
@@ -10706,14 +10775,43 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .settings-general-option {
-    display: flex;
+    display: grid;
+    grid-template-columns: auto 1fr;
     align-items: flex-start;
-    gap: var(--settings-general-option-gap);
-    padding: var(--settings-general-option-padding);
+    gap: 12px;
+    padding: var(--settings-general-option-pad-block) var(--settings-general-option-pad-inline);
     border: var(--settings-general-option-border);
     border-radius: var(--settings-general-option-radius);
     background: var(--settings-general-option-background);
     cursor: pointer;
+    transition: background-color 180ms var(--motion-standard), border-color 180ms var(--motion-standard), box-shadow 180ms var(--motion-standard);
+}
+
+.settings-general-option--action {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    cursor: default;
+}
+
+.settings-general-option input {
+    margin: 2px 0 0;
+    width: auto;
+    min-width: 0;
+    height: auto;
+    padding: 0;
+    background: transparent;
+    accent-color: var(--theme-accent-primary);
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+.settings-general-option:has(input:checked) {
+    background: color-mix(in srgb, var(--theme-accent-primary) 12%, var(--settings-general-option-background));
+    border-color: color-mix(in srgb, var(--theme-accent-primary) 56%, transparent);
+    box-shadow: inset 0 0 0 1px var(--theme-accent-primary);
+}
+
+.settings-general-option:has(input:checked) .settings-general-option-title {
+    color: var(--theme-accent-primary);
 }
 
 .settings-general-option-copy {
@@ -10722,10 +10820,33 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     min-width: 0;
 }
 
-.settings-general-option-copy > span {
+.settings-general-option-title {
+    font-size: var(--font-form-control);
+    line-height: 1.3;
+    font-weight: var(--font-weight-bold);
+    color: var(--text);
+}
+
+.settings-general-option-desc {
+    font-size: var(--font-table-body);
+    line-height: 1.35;
+    font-weight: var(--font-weight-regular);
     color: var(--muted);
-    font-size: var(--font-form-label);
-    line-height: 1.4;
+}
+
+.style-token-demo[data-style-token-density="tight"] .settings-general-option,
+.style-token-demo[data-style-token-density="tight"] .settings-general-option--action {
+    grid-template-columns: minmax(0, 1fr);
+}
+
+.style-token-demo[data-style-token-density="tight"] .settings-general-option input {
+    margin-top: 0;
+}
+
+.style-token-demo[data-style-token-density="tight"] .style-token-settings-input-shell,
+.style-token-demo[data-style-token-density="tight"] .style-token-settings-general-form,
+.style-token-demo[data-style-token-density="tight"] .style-token-metric-card-demo {
+    width: 100%;
 }
 
 .style-token-shared-select-field,
@@ -10794,7 +10915,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 
 .chart-tooltip-title {
     margin: 0 0 var(--chart-tooltip-row-gap);
-    font-weight: var(--font-weight-semibold);
+    font-weight: var(--font-weight-medium);
 }
 
 .chart-tooltip-list {
@@ -10919,11 +11040,6 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 @keyframes style-token-linked-pulse {
     0%, 100% { opacity: 0; }
     30% { opacity: 1; border-color: var(--accent-border-strong); box-shadow: 0 0 0 4px var(--accent-surface-soft); }
-}
-
-@keyframes style-token-live-pulse {
-    0%, 100% { opacity: 0.5; transform: scale(0.8); }
-    50% { opacity: 1; transform: scale(1); }
 }
 
 @media (max-width: 900px) {

@@ -16,6 +16,8 @@ from ..chatgpt_downloader import (
     reset_chatgpt_state,
 )
 from ..chatgpt_service import ChatGPTDownloadService
+from ..claude_history import build_claude_initial_snapshot
+from ..claude_history_service import ClaudeHistoryService
 from ..gemini_downloader import build_gemini_initial_snapshot
 from ..gemini_service import GeminiHistoryService
 from ..grok_downloader import build_grok_initial_snapshot, reset_grok_state
@@ -27,10 +29,12 @@ from ..service import CacheLikesService
 __all__ = [
     "CacheLikesService",
     "ChatGPTDownloadService",
+    "ClaudeHistoryService",
     "GeminiHistoryService",
     "GrokDownloadService",
     "GrokHistoryService",
     "build_chatgpt_initial_snapshot",
+    "build_claude_initial_snapshot",
     "build_gemini_initial_snapshot",
     "build_grok_history_snapshot",
     "build_grok_initial_snapshot",

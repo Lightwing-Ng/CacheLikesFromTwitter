@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.56.7-codex.1
+# Code version: v1.58.0-codex.1
 
 from __future__ import annotations
 
@@ -74,10 +74,12 @@ from app.core.foundation import (
 from app.core.providers import (
     CacheLikesService,
     ChatGPTDownloadService,
+    ClaudeHistoryService,
     GeminiHistoryService,
     GrokDownloadService,
     GrokHistoryService,
     build_chatgpt_initial_snapshot,
+    build_claude_initial_snapshot,
     build_gemini_initial_snapshot,
     build_grok_history_snapshot,
     build_grok_initial_snapshot,
@@ -536,6 +538,19 @@ def create_app(
         shadow_backup_service=shadow_backup_service,
     )
     app.extensions["gemini_service"] = gemini_service
+    claude_state = TaskState(
+        version=APP_VERSION,
+        snapshot_factory=lambda version: build_claude_initial_snapshot(
+            version,
+            media_catalog.local_store_root,
+        ),
+    )
+    claude_service = ClaudeHistoryService(
+        claude_state,
+        media_catalog.local_store_root,
+        shadow_backup_service=shadow_backup_service,
+    )
+    app.extensions["claude_history_service"] = claude_service
     saved_config = load_saved_config()
     computer_use_settings = ComputerUseSettingsStore(computer_use_settings_path)
     agent_service_kwargs: dict[str, Any] = {
@@ -631,32 +646,26 @@ def create_app(
                 media_catalog.local_store_root,
             ),
         ),
+        "claude": CacheRuntimeAdapter(
+            state=claude_state,
+            service=claude_service,
+            hydrate_snapshot=lambda: build_claude_initial_snapshot(
+                APP_VERSION,
+                media_catalog.local_store_root,
+            ),
+        ),
     }
 
     @app.template_global("cache_source_switcher_path")
     def cache_source_switcher_path(current_source_key: str, target_source_key: str) -> str:
-        """Return a destination owned by the Cache surface for one source option."""
-        current_source = get_cache_source_view(current_source_key)
+        """Return the canonical Cache destination for one source option."""
         target_source = get_cache_source_view(target_source_key)
         if (
-            current_source is None
+            get_cache_source_view(current_source_key) is None
             or target_source is None
             or target_source.key not in cache_runtimes
         ):
             return ""
-        if target_source.key == current_source.key or target_source.key == "chatgpt":
-            return url_for("cache_source", source_key=target_source.key)
-        if current_source.group_key == "llm" and (
-            target_source.group_key == "llm" or target_source.include_in_llm_switcher
-        ):
-            return url_for(
-                "browser",
-                view="text",
-                session_view="1",
-                q="",
-                source=target_source.key,
-                sort="newest",
-            )
         return url_for("cache_source", source_key=target_source.key)
 
     @app.context_processor
@@ -818,6 +827,9 @@ def create_app(
             gemini_browser=(request.form.get("gemini_browser", source.gemini_browser) or source.gemini_browser)
             .strip()
             .lower(),
+            claude_browser=(request.form.get("claude_browser", source.claude_browser) or source.claude_browser)
+            .strip()
+            .lower(),
             gemini_max_conversations=parse_int_field(
                 "gemini_max_conversations",
                 source.gemini_max_conversations,
@@ -955,6 +967,10 @@ def create_app(
     @app.get("/gemini")
     def gemini():
         return legacy_cache_source_redirect("gemini")
+
+    @app.get("/claude")
+    def claude():
+        return legacy_cache_source_redirect("claude")
 
     @app.get("/settings")
     def settings():
@@ -2144,6 +2160,14 @@ def create_app(
     def stop_gemini():
         return stop_cache_source_runtime("gemini")
 
+    @app.post("/claude/start")
+    def start_claude():
+        return start_cache_source_runtime("claude")
+
+    @app.post("/claude/stop")
+    def stop_claude():
+        return stop_cache_source_runtime("claude")
+
     @app.post("/chatgpt/reset")
     def reset_chatgpt():
         if chatgpt_service.is_running():
@@ -2361,6 +2385,10 @@ def create_app(
     @app.get("/api/gemini/status")
     def api_gemini_status():
         return jsonify(build_reconciled_cache_snapshot("gemini"))
+
+    @app.get("/api/claude/status")
+    def api_claude_status():
+        return jsonify(build_reconciled_cache_snapshot("claude"))
 
     @app.get("/api/cache/<source_key>/status")
     def api_cache_status(source_key: str):

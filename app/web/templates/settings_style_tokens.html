@@ -1,4 +1,4 @@
-<!-- Code version: v1.5.20-codex.1 -->
+<!-- Code version: v1.5.23-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,12 +8,12 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.28-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.35-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.4-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='resizer.js', v='resizer-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.2.0-codex.2') }}"></script>
+    <script defer src="{{ url_for('static', filename='settings-style-tokens.js', v='settings-style-tokens-v1.2.3-codex.1') }}"></script>
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
@@ -102,26 +102,39 @@
                                 </div>
                             </section>
                             {% elif row.sample_kind == "action-package" %}
-                            <section class="settings-action-package style-token-action-package" data-style-token-action-package>
-                                <span class="settings-action-package-icon-shell settings-callout-card-primary"><span class="icon icon-store-maintain" aria-hidden="true"></span></span>
-                                <div class="settings-action-package-copy">
-                                    <p class="settings-service-name">{{ row.sample_title }}</p>
-                                    <p class="settings-service-note" data-style-token-action-copy>{{ row.sample_copy }}</p>
-                                    <span class="style-token-action-live" data-style-token-action-live hidden>Live</span>
+                            <div
+                                class="settings-action-package settings-callout-card-primary style-token-action-package"
+                                data-style-token-action-package
+                                data-action-package-live="false"
+                                data-action-package-default-copy="{{ row.sample_copy }}"
+                                data-action-package-pending-copy="Refreshing local metadata and packaged assets."
+                            >
+                                <span class="settings-nav-icon-shell settings-action-package-icon-shell settings-callout-icon-shell" aria-hidden="true"><span class="icon icon-store-maintain"></span></span>
+                                <div class="settings-action-package-copy settings-callout-text">
+                                    <p class="settings-service-name"><span class="settings-action-package-live-marker" data-action-package-live-marker role="img" aria-label="Live refresh is active" title="Live refresh is active" hidden></span>{{ row.sample_title }}</p>
+                                    <p class="settings-service-note" data-style-token-action-copy data-action-package-copy>{{ row.sample_copy }}</p>
                                 </div>
                                 <div class="settings-action-package-form">
-                                    <button type="button" class="primary-button style-token-action-button" data-style-token-action-button>Refresh</button>
+                                    <button type="button" class="settings-inline-button settings-inline-button-primary" data-style-token-action-button data-action-package-button data-default-label="Refresh" data-pending-label="Refreshing…">Refresh</button>
                                 </div>
-                            </section>
-                            <label class="style-token-action-live-control"><input type="checkbox" data-style-token-action-live-control> Show live state</label>
+                            </div>
+                            <label class="switch-row style-token-action-package-live-control" for="style_token_action_package_live">
+                                <span class="style-token-action-package-live-label">Live marker</span>
+                                <span class="ios-switch-shell">
+                                    <input id="style_token_action_package_live" type="checkbox" data-style-token-action-package-live>
+                                    <span class="ios-switch-slider" aria-hidden="true"></span>
+                                </span>
+                            </label>
                             {% elif row.sample_kind == "settings-general-option" %}
-                            <fieldset class="style-token-settings-general-form">
-                                <legend class="sr-only">Execution option</legend>
+                            <form class="settings-general-form style-token-settings-general-form" action="#" method="get">
                                 <label class="settings-general-option">
-                                    <input type="radio" name="style_token_execution_option" checked>
-                                    <span class="settings-general-option-copy"><strong>{{ row.sample_title }}</strong><span>{{ row.sample_copy }}</span></span>
+                                    <input type="radio" name="style_token_execution_mode" value="update_existing" checked>
+                                    <span class="settings-general-option-copy">
+                                        <span class="settings-general-option-title">{{ row.sample_title }}</span>
+                                        <span class="settings-general-option-desc">{{ row.sample_copy }}</span>
+                                    </span>
                                 </label>
-                            </fieldset>
+                            </form>
                             {% elif row.sample_kind == "shared-select-dropdown" %}
                             <label class="style-token-shared-select-field">
                                 <span>{{ row.sample_title }}</span>
@@ -202,7 +215,6 @@
                                     >
                                         <span class="icon" data-style-token-theme-toggle-icon aria-hidden="true"></span>
                                     </button>
-                                    <span class="style-token-theme-toggle-label" data-style-token-theme-toggle-label>Switch to Dark mode</span>
                                 </div>
                             </section>
                             {% elif row.sample_kind == "prompt-tag" %}
@@ -229,7 +241,6 @@
                             </section>
                             {% elif row.sample_kind == "local-store-pagination" %}
                             <section class="style-token-component-demo style-token-pagination-demo" data-style-token-demo="local-store-pagination" aria-label="Local store pagination demo">
-                                <p class="style-token-component-kicker">{{ row.sample_title }}</p>
                                 <nav class="browser-pagination local-store-pagination local-store-pagination--floating style-token-pagination-demo-nav" data-layout-role="pagination" aria-label="Sessions" data-style-token-pagination data-pagination-page-count="16" data-pagination-current-page="1" data-source-xpath="/html/body/main/div[3]/section/div/div[2]/nav">
                                     <span class="local-store-pagination-indicator" aria-hidden="true"></span>
                                     <button type="button" class="local-store-page-button is-active" data-pagination-target="1" data-pagination-current="1" aria-label="Session page 1" aria-current="page">1</button>
@@ -332,9 +343,6 @@
                             </section>
                             {% elif row.sample_kind == "scrollable-data-table" %}
                             <section class="style-token-component-demo style-token-table-demo-shell" data-style-token-demo="scrollable-data-table" data-style-token-table-demo data-style-token-table-page-size="6" aria-label="Scrollable data table demo">
-                                <div class="style-token-table-demo-summary-row">
-                                    <p class="style-token-component-kicker">{{ row.sample_title }}</p>
-                                </div>
                                 <div class="events-table-shell style-token-table-demo-surface">
                                     <div class="events-table-scroll style-token-table-demo-scroll" data-style-token-table-scroll>
                                         <table class="events-table style-token-scrollable-table" data-style-token-table-body aria-label="Transaction history">
@@ -436,6 +444,6 @@
     {% set dock_section = "settings" %}
     {% include "_sidebar_dock.html" %}
 </main>
-<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.20.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.21.0-codex.1') }}"></script>
 </body>
 </html>

@@ -1,6 +1,6 @@
 """Read the local CSS foundation token registry for the Style tokens page.
 
-Code version: v0.4.1-codex.1
+Code version: v0.4.2-codex.1
 """
 
 from __future__ import annotations
@@ -346,7 +346,7 @@ def build_style_token_component_rows() -> list[dict[str, object]]:
             "sample_kind": "settings-general-option",
             "sample_title": "Update existing cache entries",
             "sample_copy": "When enabled, refresh existing metadata as well as newly discovered items.",
-            "token_names": ("--settings-general-option-gap", "--settings-general-option-padding", "--settings-general-option-radius", "--settings-general-option-background", "--settings-general-option-border"),
+            "token_names": ("--settings-general-option-background", "--settings-general-option-border", "--settings-general-option-max-width", "--settings-general-option-pad-block", "--settings-general-option-pad-inline", "--settings-general-option-radius"),
             "related_styles": ({"name": "Settings action package", "target_id": "settings-action-package"},),
         },
         {

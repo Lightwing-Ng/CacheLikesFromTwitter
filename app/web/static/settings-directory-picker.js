@@ -1,4 +1,4 @@
-/* Code version: v1.3.0-codex.1 */
+/* Code version: v1.3.1-codex.1 */
 
 (function initializeSettingsDirectoryPickers() {
     "use strict";
@@ -154,7 +154,7 @@
                 }
                 if (result.valid) {
                     input.removeAttribute("aria-invalid");
-                    renderStatus("Path validated.", false);
+                    renderStatus("", false);
                 } else {
                     input.setAttribute("aria-invalid", "true");
                     renderStatus(result.reason || "Invalid path.", true);

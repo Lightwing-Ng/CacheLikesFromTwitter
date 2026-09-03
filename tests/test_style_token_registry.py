@@ -1,6 +1,6 @@
 """Regression tests for the Settings → Style tokens registry.
 
-Code version: v1.2.1-codex.1
+Code version: v1.2.5-codex.1
 """
 
 import re
@@ -118,6 +118,14 @@ def test_style_token_component_rows_form_a_complete_sorted_component_catalog() -
     assert rows_by_id["settings-action-package"]["related_styles"] == (
         {"name": "Settings execution option", "target_id": "settings-execution-option"},
     )
+    assert {token["name"] for token in rows_by_id["settings-execution-option"]["tokens"]} == {
+        "--settings-general-option-background",
+        "--settings-general-option-border",
+        "--settings-general-option-max-width",
+        "--settings-general-option-pad-block",
+        "--settings-general-option-pad-inline",
+        "--settings-general-option-radius",
+    }
     assert any(
         token.get("editable") and token.get("unit") == "px"
         for row in rows
@@ -184,7 +192,7 @@ def test_style_tokens_route_renders_live_demos_and_settings_navigation(client) -
     assert 'href="#frosted-glass"' in html
     assert 'data-style-token-control' in html
     assert 'href="/settings/style-tokens"' in html
-    assert 'sidebar.js?v=sidebar-v1.20.0-codex.1' in html
+    assert 'sidebar.js?v=sidebar-v1.21.0-codex.1' in html
     assert 'segmented-control.js?v=segmented-control-v1.0.4-codex.1' in html
 
 
@@ -273,6 +281,8 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
     assert 'data-style-token-demo="global-theme-toggle"' in html
     assert 'data-style-token-theme-toggle' in html
     assert 'aria-label="Switch to Dark mode"' in html
+    assert 'data-style-token-theme-toggle-label' not in html
+    assert 'class="style-token-theme-toggle-label"' not in html
     assert 'data-style-token-demo="primary-button"' in html
     assert 'data-style-token-primary-button' in html
     assert 'data-source-selector="button#start_button"' in html
@@ -284,6 +294,9 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
     assert 'data-source-route="/browser"' in html
     assert 'aria-label="Remove remark PS"' in html
     assert 'data-style-token-table-demo' in html
+    assert 'class="style-token-table-demo-summary-row"' not in html
+    assert 'class="style-token-component-kicker">Sessions</p>' not in html
+    assert '<legend class="sr-only">Execution option</legend>' not in html
     assert 'data-style-token-table-filter-option="buy"' in html
     assert 'data-style-token-table-pagination' in html
     assert html.count('data-style-token-table-row') == 12
@@ -293,7 +306,19 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
     assert 'data-style-token-text-input-clear' in html
     assert html.count(' data-style-token-dismiss aria-label=') == 2
     assert 'data-style-token-action-package' in html
-    assert 'data-style-token-action-live-control' in html
+    assert 'data-style-token-action-package-live' in html
+    assert 'data-action-package-live-marker' in html
+    assert 'class="settings-action-package settings-callout-card-primary style-token-action-package"' in html
+    assert 'class="settings-nav-icon-shell settings-action-package-icon-shell settings-callout-icon-shell"' in html
+    assert 'class="settings-general-form style-token-settings-general-form"' in html
+    assert 'class="settings-general-option-title">' in html
+    assert 'class="settings-general-option-desc">' in html
+    assert 'class="settings-action-package-copy settings-callout-text"' in html
+    assert 'class="settings-inline-button settings-inline-button-primary"' in html
+    assert 'class="switch-row style-token-action-package-live-control"' in html
+    assert 'class="style-token-action-package-live-label">Live marker</span>' in html
+    assert 'data-style-token-action-live-control' not in html
+    assert 'Show live state' not in html
     assert 'data-style-token-reference="frosted-glass"' in html
     assert 'data-style-token-reference="settings-execution-option"' in html
     for removed_copy in (
@@ -322,6 +347,9 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
         "bindDismissibleDemos",
         "bindActionPackageDemo",
         "bindStyleTokenDensity",
+        "data-action-package-live-marker",
+        "data-style-token-action-package-live",
+        "aria-busy",
         "dragGeometry = measureDragGeometry();",
         "targetY === lastHandleY",
         "window.requestAnimationFrame",

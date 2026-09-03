@@ -202,9 +202,10 @@ you intend to discard that cache. Do not use reset operations as a routine troub
   shared Download workers setting only when the machine cannot sustain that browser load.
 - Sync failure: inspect `logs/cachelikes.log.jsonl` for full structured diagnostics. The UI shows a
   bounded status message while retaining the detailed local log.
-- Grok Text cache: use the `Cache text history` action on `/cache/grok`. It follows all Grok
-  conversation pages and response trees; do not replace it with a visible-sidebar scroll. See
-  [CACHE_HANDOFF.md](CACHE_HANDOFF.md) for status routes, verified counts, and recovery commands.
+- Grok Text cache: the legacy text runtime follows all Grok conversation pages and response
+  trees, but `/cache/grok` no longer renders a redundant sidebar action. Review the resulting
+  history through Local resources, and see [CACHE_HANDOFF.md](CACHE_HANDOFF.md) for status
+  routes, verified counts, and recovery commands.
 - Gemini Text cache defaults to Edge on macOS and Windows. If Safari is explicitly selected,
   preserve the saved Safari navigation interval. If Safari reaches `Failed to open page`, stop
   that run, close its single task window, and restart after confirming the window count returned

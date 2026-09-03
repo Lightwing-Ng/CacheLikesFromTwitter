@@ -1,4 +1,4 @@
-/* Code version: v1.8.2-codex.1 */
+/* Code version: v1.9.1-codex.1 */
 
 (() => {
     "use strict";
@@ -109,9 +109,22 @@
         }
     }
 
+    function syncCacheSourceSwitcherContentMode(mode) {
+        if (!cacheSourceSwitcher) return;
+        const normalizedMode = mode === "media" ? "media" : "text";
+        cacheSourceSwitcher.dataset.cacheSourceContentMode = normalizedMode;
+        cacheSourceSwitcher.querySelectorAll("[data-cache-source-switcher-option]").forEach((option) => {
+            const isAvailable = normalizedMode === "media"
+                || option.dataset.cacheSourceTextAvailable === "true";
+            option.hidden = !isAvailable;
+            if (!isAvailable) option.classList.remove("is-active");
+        });
+    }
+
     function syncCacheContentMode(mode) {
         if (!cacheContentModeControl) return;
         const normalizedMode = mode === "media" ? "media" : "text";
+        syncCacheSourceSwitcherContentMode(normalizedMode);
         const options = Array.from(
             cacheContentModeControl.querySelectorAll("[data-cache-content-mode-option]"),
         );
@@ -140,7 +153,9 @@
         cacheContentModeControl.addEventListener("click", (event) => {
             const option = event.target.closest("[data-cache-content-mode-option]");
             if (!option || !cacheContentModeControl.contains(option)) return;
-            rememberCacheContentMode(option.dataset.cacheContentModeOption);
+            const mode = option.dataset.cacheContentModeOption;
+            rememberCacheContentMode(mode);
+            syncCacheContentMode(mode);
         });
     }
 
@@ -439,8 +454,14 @@
         const options = Array.from(cacheSourceSwitcher.querySelectorAll("[data-cache-source-switcher-option]"));
         if (!trigger || !menu || !options.length) return;
 
+        function navigableOptions() {
+            return options.filter((option) => !option.hidden);
+        }
+
         function selectedOption() {
-            return options.find((option) => option.getAttribute("aria-selected") === "true") || options[0];
+            const availableOptions = navigableOptions();
+            return availableOptions.find((option) => option.getAttribute("aria-selected") === "true")
+                || availableOptions[0];
         }
 
         function setActiveOption(option) {
@@ -463,6 +484,7 @@
         }
 
         function navigateToOption(option) {
+            if (option.hidden) return;
             const targetPath = option.dataset.cacheSourceSwitcherPath || "";
             if (!targetPath) return;
 
@@ -488,34 +510,39 @@
             if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
             event.preventDefault();
             setMenuOpen(true);
-            const selectedIndex = Math.max(options.indexOf(selectedOption()), 0);
+            const availableOptions = navigableOptions();
+            if (!availableOptions.length) return;
+            const selectedIndex = Math.max(availableOptions.indexOf(selectedOption()), 0);
             const targetIndex = event.key === "Home"
                 ? 0
                 : event.key === "End"
-                    ? options.length - 1
+                    ? availableOptions.length - 1
                     : Math.min(
                         Math.max(selectedIndex + (event.key === "ArrowDown" ? 1 : -1), 0),
-                        options.length - 1,
+                        availableOptions.length - 1,
                     );
-            setActiveOption(options[targetIndex]);
-            options[targetIndex].focus({ preventScroll: true });
+            setActiveOption(availableOptions[targetIndex]);
+            availableOptions[targetIndex].focus({ preventScroll: true });
         });
 
-        options.forEach((option, index) => {
+        options.forEach((option) => {
             option.addEventListener("click", () => navigateToOption(option));
             option.addEventListener("keydown", (event) => {
                 if (["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
                     event.preventDefault();
+                    const availableOptions = navigableOptions();
+                    const currentIndex = availableOptions.indexOf(option);
+                    if (currentIndex < 0) return;
                     const nextIndex = event.key === "Home"
                         ? 0
                         : event.key === "End"
-                            ? options.length - 1
+                            ? availableOptions.length - 1
                             : Math.min(
-                                Math.max(index + (event.key === "ArrowDown" ? 1 : -1), 0),
-                                options.length - 1,
+                                Math.max(currentIndex + (event.key === "ArrowDown" ? 1 : -1), 0),
+                                availableOptions.length - 1,
                             );
-                    setActiveOption(options[nextIndex]);
-                    options[nextIndex].focus({ preventScroll: true });
+                    setActiveOption(availableOptions[nextIndex]);
+                    availableOptions[nextIndex].focus({ preventScroll: true });
                 } else if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     navigateToOption(option);

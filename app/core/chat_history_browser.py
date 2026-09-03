@@ -1,6 +1,6 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.11.1-codex.3
+# Code version: v1.12.0-codex.1
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from .local_media_browser import (
 )
 from .resource_persistence import (
     CHATGPT_HISTORY_FILENAME,
+    CLAUDE_HISTORY_FILENAME,
     GEMINI_HISTORY_FILENAME,
     GROK_HISTORY_FILENAME,
     read_parquet_rows,
@@ -26,7 +27,7 @@ from .resource_persistence import (
 
 CHAT_HISTORY_PAGE_SIZE = 100
 CHAT_HISTORY_SESSION_PAGE_SIZE = 100
-CHAT_HISTORY_SOURCE_VALUES = frozenset({"all", "chatgpt", "gemini", "grok"})
+CHAT_HISTORY_SOURCE_VALUES = frozenset({"all", "chatgpt", "claude", "gemini", "grok"})
 CHAT_HISTORY_SORT_VALUES = frozenset({"newest", "oldest", "name"})
 
 
@@ -130,6 +131,7 @@ def chat_history_path(local_store_root: Path | str, source: str = "gemini") -> P
     normalized_source = normalize_chat_history_source(source)
     filename = {
         "chatgpt": CHATGPT_HISTORY_FILENAME,
+        "claude": CLAUDE_HISTORY_FILENAME,
         "gemini": GEMINI_HISTORY_FILENAME,
         "grok": GROK_HISTORY_FILENAME,
     }.get(normalized_source, GEMINI_HISTORY_FILENAME)
@@ -240,6 +242,7 @@ def load_chat_history_messages(
         if normalized_source != "all"
         else (
             ("chatgpt", chat_history_path(local_store_root, "chatgpt")),
+            ("claude", chat_history_path(local_store_root, "claude")),
             ("gemini", chat_history_path(local_store_root, "gemini")),
             ("grok", chat_history_path(local_store_root, "grok")),
         )

@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.53-codex.1
+Code version: v1.26.58-codex.1
 """
 
 from __future__ import annotations
@@ -290,7 +290,7 @@ def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
     sidebar_server_url: str,
 ) -> None:
     """Verify every cache sidebar exposes the same complete source menu in Chromium."""
-    expected_sources = ["chatgpt", "gemini", "grok", "x"]
+    expected_sources = ["chatgpt", "claude", "gemini", "grok", "x"]
     page, context = _open_page(
         disposable_browser,
         f"{sidebar_server_url}/cache/chatgpt",
@@ -299,7 +299,7 @@ def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
         touch=False,
     )
     try:
-        for page_source in ("chatgpt", "gemini", "grok"):
+        for page_source in ("chatgpt", "claude", "gemini", "grok"):
             if page_source != "chatgpt":
                 page.goto(f"{sidebar_server_url}/cache/{page_source}", wait_until="domcontentloaded")
 
@@ -319,13 +319,23 @@ def test_cache_source_switcher_reuses_the_complete_registry_across_cache_pages(
             expected_paths = (
                 [
                     "/cache/chatgpt",
+                    "/cache/claude",
                     "/cache/gemini",
-                    "/browser?view=text&session_view=1&q=&source=grok&sort=newest",
+                    "/cache/grok",
+                    "/cache/x",
+                ]
+                if page_source == "claude"
+                else [
+                    "/cache/chatgpt",
+                    "/cache/claude",
+                    "/cache/gemini",
+                    "/cache/grok",
                     "/cache/x",
                 ]
                 if page_source == "gemini"
                 else [
                     "/cache/chatgpt",
+                    "/cache/claude",
                     "/cache/gemini",
                     "/cache/grok",
                     "/cache/x",
@@ -367,6 +377,56 @@ def test_cache_status_stays_in_the_progress_panel_without_a_floating_banner(
             assert status_card.evaluate(
                 "element => getComputedStyle(element).borderWidth"
             ) == "0px"
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_cache_events_card_stays_inside_content_scrollport_when_viewport_has_room(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep the empty Events surface inside the named scrollport on a tall desktop viewport."""
+    page, context = _open_page(
+        disposable_browser,
+        f"{sidebar_server_url}/cache/chatgpt",
+        1_017,
+        1_354,
+        touch=False,
+    )
+    try:
+        geometry = page.evaluate(
+            """() => {
+                const rect = selector => {
+                    const element = document.querySelector(selector);
+                    if (!element) return null;
+                    const box = element.getBoundingClientRect();
+                    return {top: box.top, bottom: box.bottom};
+                };
+                const scrollport = document.querySelector(
+                    '[data-layout-role="content-scrollport"]',
+                );
+                return {
+                    overview: rect('#overview'),
+                    activity: rect('#activity'),
+                    scrollport: rect('[data-layout-role="content-scrollport"]'),
+                    scrollHeight: scrollport?.scrollHeight ?? 0,
+                    clientHeight: scrollport?.clientHeight ?? 0,
+                    documentOverflow: Math.max(
+                        document.documentElement.scrollHeight,
+                        document.body.scrollHeight,
+                    ) - document.documentElement.clientHeight,
+                };
+            }"""
+        )
+        assert geometry["overview"] is not None
+        assert geometry["activity"] is not None
+        assert geometry["scrollport"] is not None
+        assert geometry["activity"]["top"] >= geometry["overview"]["bottom"]
+        assert geometry["activity"]["bottom"] <= geometry["scrollport"]["bottom"] + 1
+        assert geometry["scrollHeight"] == geometry["clientHeight"]
+        assert geometry["documentOverflow"] <= 1
     finally:
         context.close()
 
@@ -1091,6 +1151,53 @@ def test_style_tokens_component_catalog_is_interactive_and_responsive(
         page.locator("[data-style-token-text-input-clear]").click()
         expect(page.locator("[data-style-token-text-input]")).to_have_value("")
 
+        action_package = page.locator("[data-style-token-action-package]")
+        action_package_style = action_package.evaluate(
+            "element => { const style = getComputedStyle(element); return { borderRadius: style.borderRadius, boxShadow: style.boxShadow, backdropFilter: style.backdropFilter }; }"
+        )
+        assert action_package_style["borderRadius"] == "10px"
+        assert action_package_style["boxShadow"] != "none"
+        assert "blur" in action_package_style["backdropFilter"]
+
+        live_control = page.locator("[data-style-token-action-package-live]")
+        live_marker = page.locator("[data-action-package-live-marker]")
+        expect(live_marker).to_be_hidden()
+        live_control.check()
+        expect(live_marker).to_be_visible()
+        live_control.uncheck()
+        expect(live_marker).to_be_hidden()
+
+        execution_option = page.locator(
+            "#settings-execution-option .settings-general-option"
+        )
+        execution_option_style = execution_option.evaluate(
+            "element => { const style = getComputedStyle(element); return { display: style.display, gridTemplateColumns: style.gridTemplateColumns, gap: style.gap, padding: style.padding, borderRadius: style.borderRadius, transition: style.transition }; }"
+        )
+        assert execution_option_style["display"] == "grid"
+        grid_columns = execution_option_style["gridTemplateColumns"].split()
+        assert len(grid_columns) == 2
+        assert all(column.endswith("px") for column in grid_columns)
+        assert float(grid_columns[0][:-2]) < float(grid_columns[1][:-2])
+        assert execution_option_style["gap"] == "12px"
+        assert execution_option_style["padding"] == "14px 16px"
+        assert execution_option_style["borderRadius"] == "10px"
+        assert "background-color" in execution_option_style["transition"]
+        assert page.locator(
+            "#settings-execution-option .settings-general-option-title"
+        ).inner_text() == "Update existing cache entries"
+        assert page.locator(
+            "#settings-execution-option .settings-general-option-desc"
+        ).inner_text() == (
+            "When enabled, refresh existing metadata as well as newly discovered items."
+        )
+        assert page.locator("#global-theme-toggle [data-style-token-theme-toggle-label]").count() == 0
+        assert page.locator("#pagination .style-token-component-kicker").count() == 0
+        assert page.locator("#scrollable-data-table .style-token-component-kicker").count() == 0
+        assert page.locator("#settings-execution-option legend").count() == 0
+        assert page.locator("#tooltip .chart-tooltip-title").evaluate(
+            "element => getComputedStyle(element).fontWeight"
+        ) == "500"
+
         action_button = page.locator("[data-style-token-action-button]")
         action_button.click()
         expect(action_button).to_be_disabled()
@@ -1214,7 +1321,7 @@ def test_shared_segmented_controls_shrink_wrap_and_center(
 
 @pytest.mark.integration
 @pytest.mark.slow
-@pytest.mark.parametrize("page_source", ("chatgpt", "gemini", "grok", "x"))
+@pytest.mark.parametrize("page_source", ("chatgpt", "claude", "gemini", "grok", "x"))
 def test_cache_source_switcher_click_matrix_stays_within_expected_destinations(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -1224,24 +1331,35 @@ def test_cache_source_switcher_click_matrix_stays_within_expected_destinations(
     expected_paths = {
         "chatgpt": {
             "chatgpt": "/cache/chatgpt",
+            "claude": "/cache/claude",
             "gemini": "/cache/gemini",
             "grok": "/cache/grok",
             "x": "/cache/x",
         },
         "gemini": {
             "chatgpt": "/cache/chatgpt",
+            "claude": "/cache/claude",
             "gemini": "/cache/gemini",
-            "grok": "/browser?view=text&session_view=1&q=&source=grok&sort=newest",
+            "grok": "/cache/grok",
             "x": "/cache/x",
         },
         "grok": {
             "chatgpt": "/cache/chatgpt",
+            "claude": "/cache/claude",
             "gemini": "/cache/gemini",
             "grok": "/cache/grok",
             "x": "/cache/x",
         },
         "x": {
             "chatgpt": "/cache/chatgpt",
+            "claude": "/cache/claude",
+            "gemini": "/cache/gemini",
+            "grok": "/cache/grok",
+            "x": "/cache/x",
+        },
+        "claude": {
+            "chatgpt": "/cache/chatgpt",
+            "claude": "/cache/claude",
             "gemini": "/cache/gemini",
             "grok": "/cache/grok",
             "x": "/cache/x",
@@ -1257,6 +1375,18 @@ def test_cache_source_switcher_click_matrix_stays_within_expected_destinations(
     try:
         for target_source, expected_path in expected_paths.items():
             page.goto(f"{sidebar_server_url}/cache/{page_source}", wait_until="domcontentloaded")
+            if page_source != "x":
+                page.locator('[data-cache-content-mode-option="text"]').click()
+                page.goto(f"{sidebar_server_url}/cache/{page_source}", wait_until="domcontentloaded")
+                expect(page.locator('[data-cache-content-mode-option="text"]')).to_have_attribute(
+                    "aria-checked",
+                    "true",
+                )
+            if target_source == "x" and page_source != "x":
+                page.locator('[data-cache-content-mode-option="media"]').click()
+                assert page.locator('[data-cache-source-switcher-option="x"]').evaluate(
+                    "element => !element.hidden"
+                )
             page.locator("[data-cache-source-switcher-trigger]").click()
             page.locator(
                 f'[data-cache-source-switcher-option="{target_source}"]'
@@ -1268,7 +1398,7 @@ def test_cache_source_switcher_click_matrix_stays_within_expected_destinations(
 
 @pytest.mark.integration
 @pytest.mark.slow
-@pytest.mark.parametrize("page_source", ("chatgpt", "gemini", "grok", "x"))
+@pytest.mark.parametrize("page_source", ("chatgpt", "claude", "gemini", "grok", "x"))
 def test_cache_dock_click_preserves_the_current_cache_source(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -1304,7 +1434,7 @@ def test_cache_sidebars_reuse_the_chatgpt_base_contract(
         touch=False,
     )
     try:
-        for page_source in ("chatgpt", "gemini", "grok"):
+        for page_source in ("chatgpt", "claude", "gemini", "grok"):
             if page_source != "chatgpt":
                 page.goto(f"{sidebar_server_url}/cache/{page_source}", wait_until="domcontentloaded")
 
@@ -1313,13 +1443,27 @@ def test_cache_sidebars_reuse_the_chatgpt_base_contract(
             expect(aside.locator(":scope > .hero")).to_have_count(1)
             expect(aside.locator(":scope > .cache-page-content-mode-section")).to_have_count(1)
             expect(aside.locator("[data-cache-source-switcher]")).to_have_count(1)
-            expect(aside.locator("[data-cache-source-switcher-option]")).to_have_count(4)
+            expect(aside.locator("[data-cache-source-switcher-option]")).to_have_count(5)
             expect(aside.locator("[data-browser-session-panel]")).to_have_count(1)
             expect(aside.locator(".browser-session-panel-label")).to_have_text("Authorized browser")
             expect(aside.locator(".cache-settings-link")).to_have_count(1)
             expect(aside.locator("[data-cache-action-row]")).to_have_count(1)
             expect(aside.locator("#start_button")).to_have_count(1)
             expect(aside.locator("#stop_button")).to_have_count(1)
+            if page_source == "gemini":
+                for field_name in (
+                    "gemini_max_conversations",
+                    "gemini_scroll_pause_seconds",
+                    "gemini_stale_round_limit",
+                ):
+                    expect(aside.locator(f"#{field_name}")).to_have_count(0)
+                expect(aside.locator("#start_form_gemini input")).to_have_count(1)
+                expect(aside.locator(".cache-settings-link")).to_have_attribute(
+                    "href",
+                    "/settings#settings-llm",
+                )
+            if page_source == "grok":
+                expect(aside.locator(".cache-secondary-action")).to_have_count(0)
     finally:
         context.close()
 
@@ -1826,8 +1970,10 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
                     };
                 };
                 return {
+                    footer: rect('.agent-composer-footer'),
                     effort: rect('.agent-effort-trigger'),
                     model: rect('.agent-model-trigger'),
+                    refresh: rect('[data-agent-effort-refresh]'),
                     effortProtectedZone: protectedZone('.agent-effort-trigger'),
                     modelProtectedZone: protectedZone('.agent-model-trigger'),
                     submit: rect('#agent_ask_button'),
@@ -1850,6 +1996,23 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
         assert geometry["model"]["width"] < 190
         assert geometry["submit"]["height"] == 32
         assert geometry["horizontalOverflow"] <= 1
+        if width > 560:
+            control_left = min(
+                geometry[selector]["left"]
+                for selector in ("model", "effort", "refresh", "submit")
+            )
+            control_right = max(
+                geometry[selector]["right"]
+                for selector in ("model", "effort", "refresh", "submit")
+            )
+            assert abs(
+                (control_left + control_right) / 2
+                - (geometry["footer"]["left"] + geometry["footer"]["right"]) / 2
+            ) <= 1
+            for selector in ("model", "effort", "refresh", "submit"):
+                assert abs(
+                    geometry[selector]["top"] - geometry["footer"]["top"]
+                ) <= 1
         for protected_zone in (
             geometry["effortProtectedZone"],
             geometry["modelProtectedZone"],
@@ -1972,7 +2135,7 @@ def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
         assert main_typography["lineHeight"] == "21.75px"
         assert sidebar_typography["fontSize"] == "13px"
         assert sidebar_typography["lineHeight"] == "18.85px"
-        assert main_typography["fontWeight"] == "500"
+        assert main_typography["fontWeight"] == "400"
         assert sidebar_typography["fontWeight"] == "400"
         project_name = page.locator("[data-agent-project-name]")
         expect(project_name).to_be_visible()
@@ -2038,14 +2201,99 @@ def test_browser_session_status_reuses_account_typography_for_terminal_and_cache
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_cache_shared_settings_link_opens_the_downloads_category(
+def test_cache_browser_session_failure_message_matches_account_typography_and_hangs_after_status_icon(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
-    """Verify the shared cache settings link leaves the Cache form and opens Downloads."""
+    """Keep Cache failure copy the same size as its label with a status-icon hanging indent."""
+    browser_status = {
+        "can_download": False,
+        "account_name": "Security verification required",
+        "message": (
+            "Grok showed a Cloudflare security verification page in Edge, so the "
+            "signed-in account could not be verified."
+        ),
+    }
+    context = disposable_browser.new_context(
+        viewport={"width": 1_017, "height": 1_354},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
+    try:
+        page.goto(f"{sidebar_server_url}/cache/grok", wait_until="domcontentloaded")
+        account = page.locator(".browser-session-status-account")
+        message = page.locator(
+            '.browser-session-status-message[data-role="browser-session-message"]'
+        )
+        status_icon = page.locator(
+            '.browser-session-status-item .browser-session-status-checkmark[data-status-state="error"]'
+        )
+        expect(account).to_have_count(1)
+        expect(message).to_be_visible()
+        expect(status_icon).to_be_visible()
+
+        layout = page.evaluate(
+            """() => {
+                const account = document.querySelector('.browser-session-status-account');
+                const message = document.querySelector('.browser-session-status-message[data-role="browser-session-message"]');
+                const icon = document.querySelector('.browser-session-status-item .browser-session-status-checkmark[data-status-state="error"]');
+                const item = document.querySelector('.browser-session-status-item');
+                const card = document.querySelector('.browser-session-status-card');
+                const readTypography = (element) => {
+                    const style = getComputedStyle(element);
+                    return {
+                        fontFamily: style.fontFamily,
+                        fontSize: style.fontSize,
+                        fontWeight: style.fontWeight,
+                        lineHeight: style.lineHeight,
+                        textAlign: style.textAlign,
+                    };
+                };
+                const messageStyle = getComputedStyle(message);
+                const itemStyle = getComputedStyle(item);
+                return {
+                    accountTypography: readTypography(account),
+                    messageTypography: readTypography(message),
+                    messageMarginTop: messageStyle.marginTop,
+                    messagePaddingInlineStart: messageStyle.paddingInlineStart,
+                    messageTextIndent: messageStyle.textIndent,
+                    iconRight: icon.getBoundingClientRect().right,
+                    accountLeft: account.getBoundingClientRect().left,
+                    itemGap: parseFloat(itemStyle.columnGap || itemStyle.gap),
+                    messageRight: message.getBoundingClientRect().right,
+                    cardRight: card.getBoundingClientRect().right,
+                };
+            }"""
+        )
+        assert layout["accountTypography"] == layout["messageTypography"]
+        assert layout["messageMarginTop"] == "0px"
+        assert layout["messagePaddingInlineStart"] == "26px"
+        assert layout["messageTextIndent"] == "-26px"
+        assert abs(layout["accountLeft"] - (layout["iconRight"] + layout["itemGap"])) <= 1
+        assert layout["messageRight"] <= layout["cardRight"] + 1
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    ("source_key", "settings_category"),
+    (("x", "downloads"), ("gemini", "llm")),
+)
+def test_cache_shared_settings_link_opens_the_expected_category(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    source_key: str,
+    settings_category: str,
+) -> None:
+    """Verify each Cache settings link leaves the source form and opens its category."""
     page, context = _open_page(
         disposable_browser,
-        f"{sidebar_server_url}/cache/x",
+        f"{sidebar_server_url}/cache/{source_key}",
         1_280,
         900,
         touch=False,
@@ -2054,21 +2302,38 @@ def test_cache_shared_settings_link_opens_the_downloads_category(
         settings_link = page.locator(".cache-settings-link")
         expect(settings_link).to_have_count(1)
         expect(settings_link).to_have_class(re.compile(r"\bsecondary-button\b"))
-        expect(settings_link).to_have_attribute("href", "/settings#settings-downloads")
+        expect(settings_link).to_have_attribute(
+            "href",
+            f"/settings#settings-{settings_category}",
+        )
         expect(page.locator("#start_form section")).to_have_count(0)
         assert settings_link.evaluate("element => !element.closest('form')")
+        if source_key == "gemini":
+            for field_name in (
+                "gemini_max_conversations",
+                "gemini_scroll_pause_seconds",
+                "gemini_stale_round_limit",
+            ):
+                expect(page.locator(f"#{field_name}")).to_have_count(0)
 
         settings_link.click()
-        page.wait_for_url(re.compile(r"/settings#settings-downloads$"))
+        page.wait_for_url(re.compile(rf"/settings#settings-{settings_category}$"))
 
         expect(page.locator("[data-settings-category-shell]")).to_have_attribute(
             "data-active-category",
-            "downloads",
+            settings_category,
         )
-        expect(page.locator("#settings-downloads")).to_be_visible()
-        expect(page.locator('[data-settings-category="downloads"]')).to_have_class(
+        expect(page.locator(f"#settings-{settings_category}")).to_be_visible()
+        expect(page.locator(f'[data-settings-category="{settings_category}"]')).to_have_class(
             re.compile(r"\bis-active\b")
         )
+        if source_key == "gemini":
+            for field_name in (
+                "gemini_max_conversations",
+                "gemini_scroll_pause_seconds",
+                "gemini_stale_round_limit",
+            ):
+                expect(page.locator(f"#{field_name}")).to_be_visible()
     finally:
         context.close()
 
@@ -2105,6 +2370,12 @@ def test_settings_reuse_shared_primary_and_numeric_control_contracts(
         )
         expect(page.locator("#settings_sidebar .hero h1")).to_have_text("Settings")
         expect(page.locator("#chatgpt_startup_timeout_seconds")).to_have_count(1)
+        for field_name in (
+            "gemini_max_conversations",
+            "gemini_scroll_pause_seconds",
+            "gemini_stale_round_limit",
+        ):
+            expect(page.locator(f"#{field_name}")).to_be_visible()
         assert page.locator("#chatgpt_startup_timeout_seconds").evaluate(
             "element => getComputedStyle(element).fontWeight"
         ) == "300"
@@ -3037,11 +3308,13 @@ def test_chatgpt_edge_recent_sessions_are_a_direct_scrollable_keyboard_list(
         ]
     )
     source_requests: list[str] = []
+    browser_status_requests: list[str] = []
 
     def fulfill_agent_status(route) -> None:
         route.fulfill(json=_finished_chatgpt_agent_payload())
 
     def fulfill_browser_status(route) -> None:
+        browser_status_requests.append(route.request.url)
         route.fulfill(
             json={
                 "platform": "chatgpt",
@@ -3179,8 +3452,11 @@ def test_chatgpt_edge_recent_sessions_are_a_direct_scrollable_keyboard_list(
         expect(first_option).to_have_attribute("role", "option")
         expect(first_option).to_have_attribute("tabindex", "0")
         assert first_option.evaluate("element => element.tagName") == "BUTTON"
-        assert source_requests, "Selecting Recent sessions must request a fresh catalog."
-        assert all("refresh=1" in request_url for request_url in source_requests)
+        assert len(browser_status_requests) >= 2, (
+            "Selecting Recent sessions must refresh the bootstrapped browser catalog."
+        )
+        assert any("refresh=1" in request_url for request_url in browser_status_requests)
+        assert source_requests == []
 
         assert_direct_list_geometry(1_280, 900)
 
@@ -3320,6 +3596,11 @@ def test_agent_provider_projects_submit_agentic_task_target(
                         "title": f"{platform_label} project",
                         "url": project_url,
                         "updated_at": "2026-08-14T04:00:00Z",
+                        **(
+                            {"icon": "currency-dollar", "icon_color": "#53B559"}
+                            if platform == "chatgpt"
+                            else {}
+                        ),
                     }
                 ],
                 "limit": 20,
@@ -3393,8 +3674,9 @@ def test_agent_provider_projects_submit_agentic_task_target(
                     page.locator(
                         '[data-agent-session-list="projects"] [data-agent-combobox-selected-icon]'
                     )
-                ).to_have_attribute(
-                    "src", re.compile(r"/static/images/chatgpt-project-terminal\.svg$")
+                ).to_have_attribute("src", re.compile(r"^data:image/svg\+xml"))
+                expect(project_option).to_have_attribute(
+                    "data-agent-combobox-icon-name", "currency-dollar"
                 )
                 icon_centers = project_icon_shells.evaluate_all(
                     "nodes => nodes.map(node => { "
@@ -3678,7 +3960,7 @@ def test_browser_text_media_switch_defaults_to_text_and_remembers_selection(
 
 @pytest.mark.integration
 @pytest.mark.slow
-@pytest.mark.parametrize("source_key", ("chatgpt", "grok", "gemini"))
+@pytest.mark.parametrize("source_key", ("chatgpt", "grok", "gemini", "claude"))
 def test_cache_sidebar_text_media_switcher_defaults_to_text(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -3699,6 +3981,12 @@ def test_cache_sidebar_text_media_switcher_defaults_to_text(
         expect(mode_control).to_have_attribute("data-segmented-active-index", "0")
         expect(text_option).to_have_attribute("aria-checked", "true")
         expect(media_option).to_have_attribute("aria-checked", "false")
+        source_options = page.locator("[data-cache-source-switcher-option]")
+        x_source_option = page.locator('[data-cache-source-switcher-option="x"]')
+        expect(x_source_option).to_be_hidden()
+        assert source_options.evaluate_all(
+            "elements => elements.filter(element => !element.hidden).map(element => element.dataset.cacheSourceSwitcherOption)"
+        ) == ["chatgpt", "claude", "gemini", "grok"]
         if source_key == "chatgpt":
             expect(page.locator("#start_form_chatgpt > label")).to_have_count(0)
             expect(page.locator("[data-chatgpt-media-config]")).to_be_hidden()
@@ -3714,6 +4002,10 @@ def test_cache_sidebar_text_media_switcher_defaults_to_text(
             "data-segmented-active-index",
             "1",
         )
+        assert x_source_option.evaluate("element => !element.hidden")
+        assert source_options.evaluate_all(
+            "elements => elements.filter(element => !element.hidden).map(element => element.dataset.cacheSourceSwitcherOption)"
+        ) == ["chatgpt", "claude", "gemini", "grok", "x"]
         if source_key == "chatgpt":
             expect(page.locator("#start_form_chatgpt > label")).to_have_count(0)
             expect(page.locator("[data-chatgpt-media-config]")).to_be_visible()
@@ -7137,6 +7429,7 @@ def test_agent_bootstrap_replaces_ready_cache_without_catalog(
         "can_download": True,
         "account_name": "ChatGPT account",
         "message": "Cached ChatGPT status",
+        "agent_sources_error": "Stale catalog failure",
     }
     page.add_init_script(
         f"sessionStorage.setItem({json.dumps(cache_key)}, "
