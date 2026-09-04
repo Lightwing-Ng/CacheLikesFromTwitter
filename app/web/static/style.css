@@ -1,4 +1,4 @@
-/* Code version: v2.92.6-codex.1 */
+/* Code version: v2.92.10-codex.1 */
 /*
  * Standalone faces are extracted from the approved TTC by scripts/build_web_fonts.py.
  * Collection URL fragments are not reliable face selectors in Chromium.
@@ -1112,10 +1112,20 @@ h2 {
     appearance: none;
     -webkit-appearance: none;
     padding-inline-end: 34px;
-    background-image: var(--browser-picker-chevron-image);
-    background-repeat: no-repeat;
-    background-position: right 10px center;
-    background-size: 12px 8px;
+    background-image: none;
+}
+
+.browser-filter-field:has(> select.form-select)::after {
+    content: "";
+    position: absolute;
+    right: 10px;
+    bottom: calc(var(--control-form-height) / 2 + 4px);
+    width: 12px;
+    height: 8px;
+    pointer-events: none;
+    background-color: var(--text);
+    mask: var(--browser-picker-chevron-image) center / 12px 8px no-repeat;
+    -webkit-mask: var(--browser-picker-chevron-image) center / 12px 8px no-repeat;
 }
 
 .trade-strategy-trigger[aria-expanded="true"] {
@@ -1207,13 +1217,12 @@ h2 {
     width: 12px;
     height: 8px;
     flex: 0 0 12px;
-    color: var(--muted);
+    color: var(--text);
     font-size: 0;
     line-height: 0;
-    background-image: var(--browser-picker-chevron-image);
-    background-repeat: no-repeat;
-    background-position: center;
-    background-size: 12px 8px;
+    background-color: currentColor;
+    mask: var(--browser-picker-chevron-image) center / 12px 8px no-repeat;
+    -webkit-mask: var(--browser-picker-chevron-image) center / 12px 8px no-repeat;
     transition: transform 180ms var(--motion-standard);
 }
 
@@ -5839,7 +5848,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 .browser-filter-actions .secondary-button {
     width: fit-content;
     max-width: 100%;
-    justify-self: start;
+    justify-self: end;
 }
 
 .browser-filter-actions .primary-button {
@@ -6037,6 +6046,8 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     display: flex;
     align-items: flex-start;
     flex: 0 0 auto;
+    width: min(100%, var(--layout-content-width));
+    max-width: var(--layout-content-width);
     min-height: calc(var(--workspace-title-rail-control-height) + var(--workspace-article-pad-block-start));
     max-height: none;
     overflow: visible;
@@ -10345,8 +10356,8 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     border-radius: 0;
     background: transparent;
     box-shadow: none;
-    backdrop-filter: saturate(180%) blur(24px);
-    -webkit-backdrop-filter: saturate(180%) blur(24px);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
     overflow: hidden;
     display: grid;
     gap: 2px;

@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.27.6-codex.1
+Code version: v1.27.12-codex.1
 """
 
 from __future__ import annotations
@@ -700,8 +700,8 @@ def test_browser_title_rail_stays_aligned_with_global_anchors_across_viewports(
     page, context = _open_page(
         disposable_browser,
         f"{sidebar_server_url}/browser?view=text&source=all&kind=all&q=&sort=newest&session_view=1",
-        974,
-        863,
+        1_280,
+        900,
         touch=False,
     )
 
@@ -722,6 +722,7 @@ def test_browser_title_rail_stays_aligned_with_global_anchors_across_viewports(
                     sidebarCenterY: centerY("#browser_sidebar .hero h1"),
                     toggleCenterY: centerY("#sidebar_toggle"),
                     themeCenterY: centerY("#global_theme_toggle"),
+                    summaryWidth: summary.getBoundingClientRect().width,
                     summaryPaddingTop: summaryStyle.paddingTop,
                     summaryOverflow: summaryStyle.overflow,
                     horizontalOverflow: Math.max(
@@ -739,6 +740,7 @@ def test_browser_title_rail_stays_aligned_with_global_anchors_across_viewports(
         assert abs(desktop["titleCenterY"] - desktop["sidebarCenterY"]) <= 1
         assert abs(desktop["titleCenterY"] - desktop["toggleCenterY"]) <= 1
         assert abs(desktop["titleCenterY"] - desktop["themeCenterY"]) <= 1
+        assert abs(desktop["summaryWidth"] - 640) <= 1
         assert desktop["summaryPaddingTop"] == "10px"
         assert desktop["summaryOverflow"] == "visible"
         assert not desktop["horizontalOverflow"]
@@ -750,9 +752,39 @@ def test_browser_title_rail_stays_aligned_with_global_anchors_across_viewports(
         assert narrow is not None
         assert abs(narrow["titleCenterY"] - narrow["toggleCenterY"]) <= 1
         assert abs(narrow["titleCenterY"] - narrow["themeCenterY"]) <= 1
+        assert 0 < narrow["summaryWidth"] <= 640
         assert narrow["summaryPaddingTop"] == "12px"
         assert narrow["summaryOverflow"] == "visible"
         assert not narrow["horizontalOverflow"]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+def test_text_browser_omits_redundant_per_page_metric(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+) -> None:
+    """Keep the text summary focused on totals rather than the current page size."""
+    route = f"{sidebar_server_url}/browser?view=text&source=all&kind=all&q=&sort=newest&session_view=1"
+    page, context = _open_page(
+        disposable_browser,
+        route,
+        1_018,
+        900,
+        touch=False,
+    )
+    try:
+        for width, height in ((1_018, 900), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            page.goto(route, wait_until="domcontentloaded")
+            labels = page.locator(".browser-text-metric-grid .metric-label")
+            expect(labels).to_have_count(2)
+            assert labels.all_text_contents() == ["Messages", "Sessions"]
+            body_text = page.locator("body").inner_text()
+            assert "Sessions shown" not in body_text
+            assert "Messages shown" not in body_text
     finally:
         context.close()
 
@@ -780,15 +812,26 @@ def test_browser_filter_actions_stack_standard_buttons_across_viewports(
             expect(actions).to_have_count(2)
             expect(page.locator(".browser-chatgpt-media-link")).to_have_count(0)
             geometry = actions.evaluate_all(
-                "elements => elements.map(element => {"
-                "  const rect = element.getBoundingClientRect();"
-                "  return {top: rect.top, height: rect.height};"
-                "})"
+                "elements => {"
+                "  const containerRect = elements[0].parentElement.getBoundingClientRect();"
+                "  return {"
+                "    containerRight: containerRect.right,"
+                "    buttons: elements.map(element => {"
+                "      const rect = element.getBoundingClientRect();"
+                "      return {top: rect.top, height: rect.height, right: rect.right};"
+                "    }),"
+                "  };"
+                "}"
             )
-            assert geometry[1]["top"] >= geometry[0]["top"] + geometry[0]["height"] - 1, (
+            assert geometry["buttons"][1]["top"] >= geometry["buttons"][0]["top"] + geometry["buttons"][0]["height"] - 1, (
                 width,
                 geometry,
             )
+            for button in geometry["buttons"]:
+                assert abs(button["right"] - geometry["containerRight"]) <= 1, (
+                    width,
+                    geometry,
+                )
     finally:
         context.close()
 
@@ -2451,6 +2494,81 @@ def test_shared_dropdown_gel_tracks_and_reduced_motion(
         trigger.press("Escape")
         expect(menu).to_be_hidden()
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("width", (1_018, 390))
+def test_dropdown_chevrons_use_trigger_text_color_in_dark_theme(
+    disposable_browser: Browser, sidebar_server_url: str, width: int,
+) -> None:
+    """Keep every rendered dropdown chevron the same color as its trigger text."""
+    page, context = _open_page(
+        disposable_browser, f"{sidebar_server_url}/cache/chatgpt",
+        width, 900 if width > 900 else 844, touch=False,
+    )
+    try:
+        page.emulate_media(color_scheme="dark")
+        chevrons = page.evaluate("""() => Array.from(
+            document.querySelectorAll('.browser-picker-trigger-chevron')
+        ).map(element => {
+            const trigger = element.closest('button');
+            const arrowStyle = getComputedStyle(element);
+            const triggerStyle = trigger && getComputedStyle(trigger);
+            return {
+                arrowColor: arrowStyle.color,
+                arrowBackground: arrowStyle.backgroundColor,
+                triggerColor: triggerStyle?.color,
+                maskImage: arrowStyle.maskImage,
+                webkitMaskImage: arrowStyle.webkitMaskImage,
+            };
+        })""")
+        assert chevrons
+        for chevron in chevrons:
+            assert chevron["arrowColor"] == chevron["triggerColor"]
+            assert chevron["arrowBackground"] == chevron["triggerColor"]
+            assert "data:image/svg+xml" in chevron["maskImage"]
+            assert "data:image/svg+xml" in chevron["webkitMaskImage"]
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("width", (1_018, 390))
+def test_cache_metric_cards_blend_into_the_overview_in_dark_theme(
+    disposable_browser: Browser, sidebar_server_url: str, width: int,
+) -> None:
+    """Keep Foundation metric cards visually transparent inside the overview surface."""
+    page, context = _open_page(
+        disposable_browser, f"{sidebar_server_url}/cache/chatgpt",
+        width, 900 if width > 900 else 844, touch=False,
+    )
+    try:
+        page.emulate_media(color_scheme="dark")
+        cards = page.evaluate("""() => Array.from(
+            document.querySelectorAll('#overview .foundation-metric-card')
+        ).map(element => {
+            const style = getComputedStyle(element);
+            return {
+                backgroundColor: style.backgroundColor,
+                borderWidth: style.borderWidth,
+                borderRadius: style.borderRadius,
+                boxShadow: style.boxShadow,
+                backdropFilter: style.backdropFilter,
+                webkitBackdropFilter: style.webkitBackdropFilter || style.backdropFilter,
+            };
+        })""")
+        assert cards
+        for card in cards:
+            assert card["backgroundColor"] == "rgba(0, 0, 0, 0)"
+            assert card["borderWidth"] == "0px"
+            assert card["borderRadius"] == "0px"
+            assert card["boxShadow"] == "none"
+            assert card["backdropFilter"] == "none"
+            assert card["webkitBackdropFilter"] == "none"
     finally:
         context.close()
 

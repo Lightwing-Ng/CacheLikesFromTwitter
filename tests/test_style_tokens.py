@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.52.5-codex.1
+Code version: v1.52.9-codex.1
 """
 
 import hashlib
@@ -39,7 +39,8 @@ def test_cache_metrics_reuse_the_foundation_surface_and_type_contract() -> None:
         "border-radius: 0;",
         "background: transparent;",
         "box-shadow: none;",
-        "backdrop-filter: saturate(180%) blur(24px);",
+        "backdrop-filter: none;",
+        "-webkit-backdrop-filter: none;",
     ):
         assert token in card_rule
     assert "workspace-article-background" not in card_rule
@@ -1028,7 +1029,7 @@ def test_browser_filter_actions_reuse_the_standard_secondary_button() -> None:
     for token in (
         "width: fit-content;",
         "max-width: 100%;",
-        "justify-self: start;",
+        "justify-self: end;",
     ):
         assert token in refresh_container_rule
     assert "\n    width: 100%;" not in refresh_container_rule
@@ -1820,6 +1821,8 @@ def test_browser_workspace_reuses_the_shared_title_rail_and_content_card() -> No
 
     assert "display: flex;" in summary_rule
     assert "flex: 0 0 auto;" in summary_rule
+    assert "width: min(100%, var(--layout-content-width));" in summary_rule
+    assert "max-width: var(--layout-content-width);" in summary_rule
     assert "min-height: calc(var(--workspace-title-rail-control-height) + var(--workspace-article-pad-block-start));" in summary_rule
     assert "padding: var(--workspace-article-pad-block-start) var(--workspace-article-pad-inline) 0;" in summary_rule
     assert "display: flex;" in content_rule
@@ -1866,7 +1869,7 @@ def test_global_quick_actions_reuse_the_sibling_shell_positioning_contract() -> 
 
 
 def test_browser_picker_arrow_matches_the_shared_select_arrow() -> None:
-    """Keep custom picker arrows visually aligned with native select controls."""
+    """Keep every picker arrow painted with its trigger text color."""
     stylesheet = _stylesheet()
     arrow_start = stylesheet.index("\n.browser-picker-trigger-chevron {") + 1
     arrow_rule = stylesheet[arrow_start:stylesheet.index("\n}", arrow_start)]
@@ -1874,10 +1877,11 @@ def test_browser_picker_arrow_matches_the_shared_select_arrow() -> None:
     for token in (
         "width: 12px;",
         "height: 8px;",
+        "color: var(--text);",
         "font-size: 0;",
-        "background-repeat: no-repeat;",
-        "background-position: center;",
-        "background-size: 12px 8px;",
+        "background-color: currentColor;",
+        "mask: var(--browser-picker-chevron-image) center / 12px 8px no-repeat;",
+        "-webkit-mask: var(--browser-picker-chevron-image) center / 12px 8px no-repeat;",
     ):
         assert token in arrow_rule
 
@@ -1887,11 +1891,24 @@ def test_browser_picker_arrow_matches_the_shared_select_arrow() -> None:
         "appearance: none;",
         "-webkit-appearance: none;",
         "padding-inline-end: 34px;",
-        "background-image: var(--browser-picker-chevron-image);",
-        "background-position: right 10px center;",
-        "background-size: 12px 8px;",
+        "background-image: none;",
     ):
         assert token in select_rule
+
+    native_fallback_start = stylesheet.index(
+        ".browser-filter-field:has(> select.form-select)::after {"
+    )
+    native_fallback_rule = stylesheet[
+        native_fallback_start:stylesheet.index("\n}", native_fallback_start)
+    ]
+    for token in (
+        "right: 10px;",
+        "bottom: calc(var(--control-form-height) / 2 + 4px);",
+        "background-color: var(--text);",
+        "mask: var(--browser-picker-chevron-image) center / 12px 8px no-repeat;",
+        "-webkit-mask: var(--browser-picker-chevron-image) center / 12px 8px no-repeat;",
+    ):
+        assert token in native_fallback_rule
 
     assert "fill='currentColor'" in stylesheet
     assert 'content: "\\25BE";' not in stylesheet
@@ -1936,7 +1953,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.92.6-codex.1 */",
+        "/* Code version: v2.92.10-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
