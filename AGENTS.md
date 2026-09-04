@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Code policy version: v1.3.0-agent-contract.0
+Code policy version: v1.3.1-agent-contract.0
 
 This file defines mandatory collaboration rules for all coding agents in this repository (Claude, Codex, Antigravity, Trae, and future agents).
 
@@ -73,12 +73,15 @@ This file defines mandatory collaboration rules for all coding agents in this re
 - Assume Chrome on the host machine is already authenticated for that page.
 - Do not rework, replace, or repeatedly troubleshoot login unless the user explicitly asks for login-related changes.
 - Assume future user sessions will also start from that already logged-in page.
-- Use the macOS built-in Terminal as the canonical interface for local development launches,
-  restarts, process control, and log observation.
+- Use the host platform's canonical terminal for local development launches, restarts, process control,
+  and log observation: the built-in Terminal on macOS, or PowerShell on Windows.
 - Do not use PyCharm as a runtime entrypoint or process-control interface.
-- Do not close or disrupt the user's existing Terminal windows or sessions unless explicitly requested.
-- Use `/usr/local/bin/python3.13` as the required interpreter for project execution unless the user explicitly overrides it.
-- On this machine, treat `python3` as the valid Python alias and do not assume `python` is available or preferred.
+- Do not close or disrupt the user's existing Terminal or PowerShell windows unless explicitly requested.
+- Use a supported Python 3.13 or 3.14 interpreter for project execution. The resolver prefers
+  `/usr/local/bin/python3.13` (or `python3`) on macOS and the `py -3.13` launcher on Windows;
+  set `AGENTIC_CONTEXT_PYTHON` to override with any supported interpreter.
+- On macOS, treat `python3` as the valid Python alias. On Windows, prefer the `py` launcher and do
+  not assume `python3` is available.
 
 ## 9) Handoff Requirements
 - Summarize what changed and why.

@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.8.2-codex.1`
+Documentation version: `v1.8.4-codex.1`
 
 ## Launch
 
@@ -10,10 +10,22 @@ Prepare the supported local runtime:
 ./scripts/setup_python.sh
 ```
 
+On Windows:
+
+```powershell
+.\scripts\setup_python.ps1
+```
+
 Start the Flask console:
 
 ```bash
 ./scripts/run_app.sh
+```
+
+On Windows:
+
+```powershell
+.\scripts\run_app.ps1
 ```
 
 The normal server address is `http://127.0.0.1:8666`. The application also binds to `0.0.0.0`,
@@ -30,7 +42,7 @@ to override it. A successful unlock is stored in the signed Flask session for th
 
 - X caching begins from the currently signed-in Likes page in a supported host browser.
 - Grok and ChatGPT syncing use their existing authenticated browser sessions.
-- A Safari-backed Cache task is opt-in and owns one standard, visible background window
+- A Safari-backed Cache task is macOS-only, opt-in, and owns one standard, visible background window
   with native window controls. It restores the user's previous frontmost application after
   every window-affecting operation, then closes and verifies that exact window at task end;
   it must not hide, minimize, move offscreen, reuse, or accumulate Safari windows.
@@ -72,8 +84,10 @@ to override it. A successful unlock is stored in the signed Flask session for th
 - Sending a task transmits the generated context and requested source excerpts to the selected Web
   account. Review that provider's data controls before using private or regulated source code.
 - Stop requests end current web generation and terminate the active local command process group.
-  They do not stop a detached durable compute job; use its dedicated `Stop job` control or
-  `job_stop` with the exact `job_id`.
+  On Windows, approved `.ps1` scripts run through the PowerShell controller, and process-tree
+  cleanup uses `taskkill /T /F` where applicable. That mechanism is not an OS-level sandbox.
+  Stop requests do not stop a detached durable compute job; use its dedicated `Stop job` control
+  or `job_stop` with the exact `job_id`.
 - Agent source discovery is cached in `local_store/agent/agent_source_catalog.parquet` for 15
   minutes per provider/browser/Project key. Fresh reads use process memory; the first read after a
   restart hydrates memory from Parquet. Expired passive reads retain the previous catalog and never
@@ -114,9 +128,11 @@ digest after every entrypoint change; a stale digest fails closed. The optimizer
 `--resume <prior-checkpoint>`. Its config is a workspace-relative regular JSON file no larger than
 1 MiB. Shell operators, redirects, executable names, environment enumeration, download commands,
 and arbitrary argument vectors are not part of the action protocol.
-On macOS the worker also runs through `/usr/bin/sandbox-exec` with `network*` denied. Optimizers
-must therefore use only local datasets and must not depend on license servers, remote telemetry,
-distributed network workers, or localhost sockets during the job.
+On macOS, the worker also runs through `/usr/bin/sandbox-exec` with `network*` denied. The Windows
+path does not currently apply an equivalent OS-level network-denying sandbox profile; the worker
+runs with the current user's permissions. Optimizers must therefore use only local datasets and
+must not depend on license servers, remote telemetry, distributed network workers, or localhost
+sockets during the job.
 
 Publish heartbeat data atomically to `progress.json`. Supported fields are generation or iteration,
 completed and total evaluations, best objective, elapsed time, optional reliable ETA, and a bounded
@@ -130,9 +146,10 @@ explicit new `job_start` with a new idempotency key and the prior `resume_job_id
 duplicates an expensive run automatically.
 
 Closing or refreshing the Agent page, finishing one provider turn, or reaching a Web Agent final
-response does not stop the worker. Normal idle sleep is inhibited while it runs on macOS. Closing
-the lid, explicit Sleep, logout, reboot, power loss, service-host failure, or hardware failure can
-still interrupt it, so the optimizer must checkpoint frequently enough for the workload.
+response does not stop the worker. Normal idle sleep is inhibited while it runs on macOS. The
+project does not currently inhibit Windows idle sleep for the equivalent task. Closing the lid,
+explicit Sleep, logout, reboot, power loss, service-host failure, or hardware failure can still
+interrupt it, so the optimizer must checkpoint frequently enough for the workload.
 
 ## Local data
 
@@ -177,6 +194,12 @@ For a repeatable isolated measurement, run:
 /usr/local/bin/python3.13 scripts/benchmark_compute.py
 ```
 
+On Windows:
+
+```powershell
+py -3.13 scripts/benchmark_compute.py
+```
+
 The benchmark creates a temporary synthetic fixture, performs one warmup and five measured runs,
 and reports distributions for the legacy sequential path and the bounded CPU backend. It does not
 read the local cache or launch a browser.
@@ -193,8 +216,10 @@ you intend to discard that cache. Do not use reset operations as a routine troub
 
 ## Troubleshooting
 
-- Missing Playwright Chromium: run `./scripts/setup_python.sh`, or run
-  `AGENTIC_CONTEXT_PYTHON=/path/to/python3 -m playwright install chromium` with Python 3.13 or 3.14.
+- Missing Playwright Chromium: on macOS run `./scripts/setup_python.sh`, or run
+  `AGENTIC_CONTEXT_PYTHON=/path/to/python3 -m playwright install chromium` with Python 3.13 or
+  3.14. On Windows run `.`\scripts`\setup_python.ps1` or
+  `py -3.13 -m playwright install chromium`.
 - Missing downloader: install the project requirements so `yt-dlp` is available to the selected
   supported interpreter.
 - Browser profile lock: close duplicate normal browser windows, then retry the session probe.
@@ -206,11 +231,11 @@ you intend to discard that cache. Do not use reset operations as a routine troub
   trees, but `/cache/grok` no longer renders a redundant sidebar action. Review the resulting
   history through Local resources, and see [CACHE_HANDOFF.md](CACHE_HANDOFF.md) for status
   routes, verified counts, and recovery commands.
-- Gemini Text cache defaults to Edge on macOS and Windows. If Safari is explicitly selected,
-  preserve the saved Safari navigation interval. If Safari reaches `Failed to open page`, stop
-  that run, close its single task window, and restart after confirming the window count returned
-  to baseline. Never accelerate the run by reducing the saved interval and never open parallel
-  Safari task windows.
+- Gemini Text cache defaults to Edge on macOS and Windows. Safari is macOS-only; if it is explicitly
+  selected there, preserve the saved Safari navigation interval. If Safari reaches `Failed to open
+  page`, stop that run, close its single task window, and restart after confirming the window count
+  returned to baseline. Never accelerate the run by reducing the saved interval and never open
+  parallel Safari task windows.
 - Gemini Text on Edge: use the headless Chromium history-RPC path. It follows the authenticated
   `MaZiqc` cursor, stores a 24-hour discovery checkpoint, and resumes by skipping cached session
   IDs. The current verified run exposed `740` sessions and cached `736` text-bearing sessions
@@ -221,6 +246,7 @@ you intend to discard that cache. Do not use reset operations as a routine troub
 
 ## Safe development checks
 
-Run `./scripts/test.sh` or `./scripts/check.sh` for offline validation. Pytest redirects all
+Run `./scripts/test.sh` or `./scripts/check.sh` (macOS/Linux) or `.\scripts\test.ps1` or
+`.\scripts\check.ps1` (Windows) for offline validation. Pytest redirects all
 default runtime paths into temporary directories; tests must never be pointed at the production
 cache, log, settings, or browser-profile locations.

@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.7.1-codex.1`
+Documentation version: `v1.7.3-codex.1`
 
 ## Supported commands
 
@@ -10,10 +10,22 @@ Install the runtime and development dependencies with the supported Python 3.13/
 ./scripts/setup_python.sh
 ```
 
+On Windows:
+
+```powershell
+.\scripts\setup_python.ps1
+```
+
 Run the ordinary offline suite:
 
 ```bash
 ./scripts/test.sh
+```
+
+On Windows:
+
+```powershell
+.\scripts\test.ps1
 ```
 
 Run a focused test or marker selection:
@@ -23,13 +35,32 @@ Run a focused test or marker selection:
 AGENTIC_CONTEXT_TEST_MARK_EXPRESSION=integration ./scripts/test.sh
 ```
 
+On Windows:
+
+```powershell
+.\scripts\test.ps1 tests/test_local_media_browser.py
+$env:AGENTIC_CONTEXT_TEST_MARK_EXPRESSION='integration'; .\scripts\test.ps1
+```
+
 The default marker expression is `not live`. Run an intentionally manual live check only with an
 explicit override, for example `AGENTIC_CONTEXT_TEST_MARK_EXPRESSION=live ./scripts/test.sh`.
+
+On Windows:
+
+```powershell
+$env:AGENTIC_CONTEXT_TEST_MARK_EXPRESSION='live'; .\scripts\test.ps1
+```
 
 Run the complete quality gate:
 
 ```bash
 ./scripts/check.sh
+```
+
+On Windows:
+
+```powershell
+.\scripts\check.ps1
 ```
 
 Run the isolated local-compute benchmark:
@@ -38,10 +69,22 @@ Run the isolated local-compute benchmark:
 /usr/local/bin/python3.13 scripts/benchmark_compute.py
 ```
 
+On Windows:
+
+```powershell
+py -3.13 scripts/benchmark_compute.py
+```
+
 Run the durable optimization-job contract tests without a long-lived workload:
 
 ```bash
 ./scripts/test.sh tests/test_compute_jobs.py tests/test_agent_capability_registry.py
+```
+
+On Windows:
+
+```powershell
+.\scripts\test.ps1 tests/test_compute_jobs.py tests/test_agent_capability_registry.py
 ```
 
 When the quality gate fails, read the [CI Failure Playbook](CI_FAILURE_PLAYBOOK.md) before changing
@@ -54,12 +97,28 @@ Run the responsive contract and sidebar browser layers independently with:
 ./scripts/test.sh tests/test_sidebar_e2e.py
 ```
 
+On Windows:
+
+```powershell
+.\scripts\test.ps1 tests/test_responsive_contract.py
+.\scripts\test.ps1 tests/test_sidebar_e2e.py
+```
+
 Run the OpenAI Site tools contract and disposable-browser layers independently with:
 
 ```bash
 node --test tests/test_agent_optimization.mjs
 ./scripts/test.sh \
   tests/test_agent_optimization.py \
+  tests/test_agent_optimization_browser.py
+```
+
+On Windows:
+
+```powershell
+node --test tests/test_agent_optimization.mjs
+.\scripts\test.ps1 `
+  tests/test_agent_optimization.py `
   tests/test_agent_optimization_browser.py
 ```
 
@@ -70,7 +129,8 @@ installations.
 
 ## Quality gate
 
-`scripts/check.sh` is the single local and CI quality command. It runs, in order:
+The canonical local and CI quality gate is `scripts/check.sh` on macOS/Linux and
+`scripts/check.ps1` on Windows. The gates run, in order:
 
 1. Ruff static checks over `main.py`, `app/`, and `tests/`.
 2. `node --check` for every first-party JavaScript file in `app/web/static/`.
@@ -96,14 +156,21 @@ or lower the threshold to mask a gap.
 
 ## CI portability contract
 
-GitHub Actions is the canonical clean-room gate. It runs on `ubuntu-latest` with Python 3.13,
-Node.js 22, UTC, and a freshly installed Playwright Chromium. A test that passes only on the
-developer's macOS workstation is not evidence of a passing project contract.
+GitHub Actions is the canonical clean-room gate. It runs the quality contract on `ubuntu-latest`
+and `windows-latest` with Python 3.13, Node.js 22, UTC, and a freshly installed Playwright
+Chromium. A test that passes only on the developer's macOS workstation is not evidence of a
+passing project contract.
 
 Use this command to reproduce the CI timezone locally:
 
 ```bash
 TZ=UTC AGENTIC_CONTEXT_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh
+```
+
+On Windows:
+
+```powershell
+$env:TZ='UTC'; .\scripts\check.ps1
 ```
 
 Tests must follow these rules:
@@ -166,9 +233,9 @@ downloads, Safari, Parquet commit, and backup stages remain outside GPU accelera
 separate live profile proves otherwise.
 
 When a gate fails on GitHub, reproduce the exact failing node first with `TZ=UTC`, then run the
-complete `./scripts/check.sh`. Do not weaken an assertion, skip a platform branch, lower coverage,
-or add a retry until the failure has been classified as a real product regression or a test
-environment assumption.
+complete platform gate: `./scripts/check.sh` on macOS/Linux or ` .\scripts\check.ps1` on Windows.
+Do not weaken an assertion, skip a platform branch, lower coverage, or add a retry until the
+failure has been classified as a real product regression or a test environment assumption.
 
 ## Test organization
 
@@ -236,4 +303,5 @@ isolation properties and must never navigate to an external service.
 3. Use a temporary filesystem location for every test-owned file.
 4. Use the `client` fixture for route contracts and preserve the injected runtime boundary.
 5. Add a marker only when it accurately describes the test's cost or boundary.
-6. Run the focused test, then `./scripts/check.sh` before handoff.
+6. Run the focused test, then `./scripts/check.sh` on macOS/Linux or ` .\scripts\check.ps1` on
+   Windows before handoff.

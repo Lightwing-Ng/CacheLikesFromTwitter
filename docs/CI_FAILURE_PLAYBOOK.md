@@ -1,6 +1,6 @@
 # CI Failure Playbook
 
-Documentation version: `v1.0.1-codex.1`
+Documentation version: `v1.0.2-codex.1`
 
 Established: 21 Aug 2026
 
@@ -48,11 +48,23 @@ Use the CI timezone and the required local interpreter:
 TZ=UTC AGENTIC_CONTEXT_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh
 ```
 
+On Windows:
+
+```powershell
+$env:TZ='UTC'; .\scripts\check.ps1
+```
+
 For a browser failure, run the exact test first:
 
 ```bash
 TZ=UTC AGENTIC_CONTEXT_PYTHON=/usr/local/bin/python3.13 \
 /usr/local/bin/python3.13 -m pytest -q tests/test_sidebar_e2e.py -k "exact_test_name"
+```
+
+On Windows:
+
+```powershell
+$env:TZ='UTC'; py -3.13 -m pytest -q tests/test_sidebar_e2e.py -k "exact_test_name"
 ```
 
 Record at least:

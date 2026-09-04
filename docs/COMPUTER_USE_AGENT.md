@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.54.4-codex.1`
+Documentation version: `v3.54.6-codex.1`
 
 ## Purpose
 
@@ -351,9 +351,10 @@ argument list. The runtime invokes only the current Python interpreter and the f
 protocol. A changed source digest, absolute path, traversal, linked path, non-JSON config, or a
 second active job fails closed. An idempotency key reused for the same request returns the existing
 job; reuse for different bytes or parameters is rejected.
-On macOS the fixed optimizer command runs through the system sandbox with all network operations
-denied. This converts the action-level ban on download commands into an operating-system network
-boundary for the approved worker as well.
+On macOS, the fixed optimizer command runs through `/usr/bin/sandbox-exec` with all network
+operations denied. This converts the action-level ban on download commands into an operating-system
+network boundary for the approved worker as well. The Windows path does not currently apply an
+equivalent OS-level network-denying sandbox profile.
 
 Each job has an unpredictable 32-hex-character `job_id` and an external task-owned directory. Its
 atomic metadata contains state, PID and birth identity, timestamps, approved entrypoint identity,
@@ -364,7 +365,7 @@ verification fingerprints by location rather than by weakening fingerprint rules
 
 The detached wrapper owns a fixed 12-hour default and 24-hour hard maximum instead of inheriting
 `command_timeout_seconds`. A provider turn, browser refresh, Web stream interruption, normal Agent
-final, or Web Agent Stop does not terminate it. On macOS its idle-sleep assertion watches the
+final, or Web Agent Stop does not terminate it. On macOS, its idle-sleep assertion watches the
 worker PID and remains independent of the Web task assertion. Worker completion, dedicated Stop,
 and stale terminal reconciliation release the assertion; `caffeinate -w` also self-releases when
 the worker exits.
@@ -485,7 +486,7 @@ actions.
   During service exit, the shutdown hook requests Stop, waits up to eight seconds, and then claims
   any assertion that the worker has not already claimed. A late worker registration after shutdown
   immediately attempts to release its assertion instead of repopulating the shared slot. The
-  assertion also runs as `caffeinate -i -w <service PID>`, so termination of the service PID releases
+  On macOS, the assertion also runs as `caffeinate -i -w <service PID>`, so termination of the service PID releases
   it even when Python cleanup or the daemon worker cannot finish. A context deletion failure instead
   publishes a failed phase, persists the context path and size as bounded
   recovery metadata, and logs the cleanup error. The next production run retries that exact
@@ -637,9 +638,10 @@ cleanup. Worker completion and service shutdown use an atomic ownership transfer
 to terminate that assertion, while `caffeinate -w` is the final safeguard if the service exits
 before cleanup. A failed context removal is published as a recoverable failed state rather than
 keeping an orphan worker marked active. On Windows, the controller isolates the active process in a
-new process group and uses a cooperative stop before terminating it. Closing a MacBook lid, choosing
-Sleep, restarting, losing network access, or ending the local service can still suspend or interrupt
-a task.
+new process group and uses a cooperative stop before terminating it. The project does not currently
+inhibit Windows idle sleep for Agent tasks. On macOS, closing a MacBook lid, choosing Sleep,
+restarting, losing network access, or ending the local service can still suspend or interrupt a
+task; Windows system sleep can likewise interrupt the task.
 
 ## Verification
 
@@ -684,7 +686,7 @@ verification-gate ordering, canonical executable and argument confinement, hard-
 strict direct `tsc --noEmit` parsing, shared cross-platform action-schema migration, atomic settings
 replacement, unique atomic run-snapshot replacement, Safari submission Stop gates, Chromium retry
 Stop gates, linked-path-confined orphaned-context housekeeping, bounded content fingerprints, and
-real POSIX leader-exited descendant processes. Sleep lifecycle regressions cover service-PID-bound
+real POSIX leader-exited descendant processes. macOS sleep lifecycle regressions cover service-PID-bound
 `caffeinate`, shutdown-first and worker-first ownership races, join timeout takeover, late
 registration after shutdown, and assertion startup or registration exceptions followed by a clean
 second run. Runtime regressions reject linked or junction-backed

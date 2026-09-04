@@ -1,6 +1,6 @@
 # agenticContext
 
-Documentation version: `v1.16.0-codex.1`
+Documentation version: `v1.16.1-codex.1`
 
 agenticContext is a local Flask web console for preserving and using AI context
 across conversations, media, prompts, projects, and browser agents. It caches
@@ -84,10 +84,22 @@ Run the fast offline Python suite with:
 ./scripts/test.sh
 ```
 
+On Windows:
+
+```powershell
+.\scripts\test.ps1
+```
+
 Run the complete local quality gate with:
 
 ```bash
 ./scripts/check.sh
+```
+
+On Windows:
+
+```powershell
+.\scripts\check.ps1
 ```
 
 The quality gate runs Ruff, JavaScript syntax checks, the shared Agent Optimization Node contract,

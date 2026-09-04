@@ -1,6 +1,6 @@
 # Shared UI workflow
 
-Documentation version: `v1.0.1`
+Documentation version: `v1.0.2`
 
 This is the short entrypoint for shared visual and interaction work. The only
 long-form synchronization state lives in:
@@ -38,6 +38,12 @@ Typical Cache-focused command:
 
 ```bash
 /usr/local/bin/python3.13 -m pytest tests/test_style_tokens.py tests/test_web_app.py -q
+```
+
+On Windows:
+
+```powershell
+py -3.13 -m pytest tests/test_style_tokens.py tests/test_web_app.py -q
 ```
 
 Before handoff, report the exact commands, pass/fail counts, live verification, and

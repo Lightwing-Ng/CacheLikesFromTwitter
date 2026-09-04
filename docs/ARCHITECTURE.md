@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.12.2-codex.1`
+Documentation version: `v1.12.4-codex.1`
 
 ## Runtime flow
 
@@ -140,8 +140,10 @@ argument vector. It invokes the approved file through the fixed `--config`, `--j
 optional `--resume` protocol, copies the bounded JSON config into the task-owned runtime directory,
 and strips the inherited environment to a small non-secret allowlist. Approval is therefore a code
 review boundary: changing the entrypoint bytes invalidates approval before execution.
-On macOS, the detached optimizer is also launched through the system sandbox with `network*`
+On macOS, the detached optimizer is also launched through `/usr/bin/sandbox-exec` with `network*`
 denied, so even approved code cannot open a download or other network socket during the job.
+The Windows path does not currently apply an equivalent OS-level network-denying sandbox profile;
+the worker runs with the current user's permissions.
 
 Runtime metadata, progress, checkpoints, results, and rolling logs live below the external Agent
 runtime root in `compute-jobs/<workspace-hash>/<job-id>/`; they never live in the selected source
@@ -153,8 +155,10 @@ process identity. Missing workers become `interrupted`; they are never resubmitt
 The detached worker owns the approved maximum runtime, capped at 24 hours, and remains alive after
 the provider turn or browser session ends. On macOS, a job-scoped `caffeinate -i -w <worker-pid>`
 assertion follows the worker rather than the Web Agent turn. It exits with the worker and is also
-identity-checked during terminal-state reconciliation. Service exit deliberately does not stop an
-active compute job.
+identity-checked during terminal-state reconciliation. The project does not currently inhibit
+Windows idle sleep for the equivalent task. On Windows, process-tree cleanup uses
+`taskkill /T /F` where applicable; this is a termination mechanism, not an OS-level sandbox
+boundary. Service exit deliberately does not stop an active compute job.
 
 ## Responsive application-shell contract
 
@@ -258,7 +262,7 @@ optional and not installed by the base requirements; an injected adapter must re
 identity, otherwise the whole batch is discarded and recomputed on CPU. GPU workers never write
 media, catalog, or Parquet state.
 
-### Gemini Text cache
+### Gemini Text cache (Safari path, macOS-only)
 
 ```text
 selected authenticated Safari session
@@ -269,14 +273,17 @@ selected authenticated Safari session
   -> native window close with Safari window-ID verification
 ```
 
-Safari contexts are serialized across processes. The worker never reuses the user's
+The Safari-specific flow is macOS-only. Safari contexts are serialized across processes. The worker never reuses the user's
 current window, never creates a replacement after the user closes the owned window,
 and never leaves a hidden or blank reusable shell. Window creation, session probes, and
 X likes collection share this context so failure paths still run exact-window cleanup.
 The context restores the user's previous frontmost application after Safari window work,
-and JavaScript execution is bounded by an AppleScript timeout. Conversation rows are
+and JavaScript execution is bounded by a macOS-only AppleScript timeout. Conversation rows are
 replaced atomically per session, so a stopped run preserves every previously verified
 session without duplicating messages.
+The Windows path uses the Edge/Chromium controller and does not use a Safari window or
+AppleScript. Its approved `.ps1` verification paths run through PowerShell, and
+`taskkill /T /F` is used for process-tree cleanup where applicable.
 
 ### Local-media browser
 
@@ -343,6 +350,9 @@ The launcher restores the prior foreground app if the browser took focus; macOS 
 grouping. Chromium suppresses browser prompts and cleans the task-owned profile on exit. Stale
 cleanup is restricted to abandoned application-prefixed temporary directories older than 24 hours;
 the user's normal browser profile and unrelated temporary paths are not modified.
+On Windows, the controller uses PowerShell-compatible paths and trusted PowerShell execution for
+approved `.ps1` scripts. The Windows path has no OS-level sandbox equivalent to macOS
+`sandbox-exec`, and `taskkill /T /F` remains process-tree cleanup rather than sandbox isolation.
 Traditional failure handoff does not reuse that writable clone. It records only the normalized
 official conversation URL for the browser selected by the failed run; a normal Edge window opens
 only after the user invokes the handoff action. That remote ChatGPT page never receives local

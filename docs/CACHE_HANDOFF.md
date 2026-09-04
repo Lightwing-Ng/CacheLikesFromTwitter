@@ -1,6 +1,6 @@
 # Cache handoff and operating runbook
 
-Documentation version: `v1.5.1-codex.1`
+Documentation version: `v1.5.3-codex.1`
 
 This is the authoritative handoff document for the second Dock item, `Cache`.
 Read it before changing Cache routes, source switching, Text/Media behavior, local
@@ -163,6 +163,10 @@ foreground window, but must never be hidden, minimized, moved offscreen, or conv
 reusable blank window shell. The shared Safari context captures and restores the user's
 frontmost application whenever it changes Safari window state.
 
+This Safari window lifecycle and its AppleScript/`osascript` controller are macOS-only. Windows
+uses the PowerShell controller for approved `.ps1` paths and its Windows process-control path;
+`taskkill /T /F` provides process-tree cleanup where applicable, not OS-level sandbox isolation.
+
 The lifecycle is strict:
 
 1. Record the existing Safari window count.
@@ -226,8 +230,8 @@ cooldown, and the exact failure remains visible in the task event log.
 
 ## 9. Safe operator workflow
 
-Use the local Terminal as the runtime control surface. The required project interpreter
-is `/usr/local/bin/python3.13`.
+Use the local Terminal (macOS) or PowerShell (Windows) as the runtime control surface. The required
+project interpreter is `/usr/local/bin/python3.13` on macOS or `py -3.13` on Windows.
 
 ### Before starting a sync
 
@@ -270,6 +274,27 @@ print({
 PY
 ```
 
+On Windows:
+
+```powershell
+py -3.13 -c @'
+from collections import Counter
+from pathlib import Path
+
+from app.core.resource_persistence import read_parquet_rows
+
+path = Path('local_store/llm/grok/history.parquet')
+rows = read_parquet_rows(path) or []
+print({
+    'path': str(path),
+    'messages': len(rows),
+    'sessions': len({row.get('conversation_id') for row in rows}),
+    'roles': Counter(row.get('role') for row in rows),
+    'empty_messages': sum(not str(row.get('content_text') or '').strip() for row in rows),
+})
+'@
+```
+
 Then open:
 
 ```text
@@ -281,14 +306,14 @@ original Grok conversation links.
 
 ## 10. Troubleshooting decision tree
 
-### Safari reports an unreadable JavaScript result
+### Safari reports an unreadable JavaScript result (macOS-only)
 
 Inspect the embedded JavaScript first. A Safari parse error can occur before the
 wrapper's `try/catch`, causing AppleScript to return an empty value. In the Gemini bot
 check, verify that split selector strings use an explicit `+`. Then run a minimal live
 probe against `inspect_gemini_bot_check` before starting a full history sync.
 
-### Safari shows `Failed to open page`
+### Safari shows `Failed to open page` (macOS-only)
 
 Stop the current Cache task and close its exact owned window. Do not continue counting
 each later session as an independent failure. Confirm the saved Gemini interval is 5
@@ -356,6 +381,13 @@ Run the focused checks first:
 ```bash
 /usr/local/bin/python3.13 -m pytest -q tests/test_grok_history.py
 /usr/local/bin/python3.13 -m pytest -q tests/test_web_app.py tests/test_style_tokens.py
+```
+
+On Windows:
+
+```powershell
+py -3.13 -m pytest -q tests/test_grok_history.py
+py -3.13 -m pytest -q tests/test_web_app.py tests/test_style_tokens.py
 ```
 
 The second command requires the Agent module set to be internally consistent.
