@@ -1,4 +1,4 @@
-<!-- Code version: v3.28.26-codex.1 -->
+<!-- Code version: v3.29.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.91.40-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.92.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -346,20 +346,25 @@
                         {% set initial_finished_answer = not agent_snapshot.running and agent_snapshot.phase == 'finished' and (initial_history_item or agent_snapshot.response) %}
                         <div class="agent-response-output" id="agent_response_output" lang="zh-CN"{% if not initial_history_item and not agent_snapshot.response %} hidden{% endif %}>
                             <header class="agent-response-question-header browser-session-table-message-shell" id="agent_response_question_header">
-                                <h3 class="agent-response-question" id="agent_response_question" data-agent-response-question>{{ initial_history_item.prompt if initial_history_item else agent_snapshot.prompt }}</h3>
+                                <div class="agent-response-question-scroll" id="agent_response_question_scroll" data-layout-role="scrollport" tabindex="0" aria-label="Question text">
+                                    <h3 class="agent-response-question" id="agent_response_question" data-agent-response-question>{{ initial_history_item.prompt if initial_history_item else agent_snapshot.prompt }}</h3>
+                                </div>
                                 <button
                                     type="button"
                                     class="browser-session-message-toggle agent-response-overflow-toggle"
                                     data-browser-session-message-toggle
                                     data-browser-session-message-number="question"
-                                    aria-controls="agent_response_question_header"
+                                    aria-controls="agent_response_question_scroll"
                                     aria-expanded="false"
                                     aria-label="Expand question"
                                     title="Expand question"
                                     hidden
                                 ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
                             </header>
-                            <div class="agent-response-answer browser-media-prompt-markdown browser-session-table-message-shell" id="agent_response_answer" data-agent-response-answer>
+                            <div class="agent-response-answer-shell browser-session-table-message-shell">
+                                <div class="agent-response-answer browser-media-prompt-markdown" id="agent_response_answer" data-agent-response-answer data-layout-role="scrollport" tabindex="0" aria-label="Answer text">
+                                    <div class="agent-response-answer-content" data-agent-response-answer-content>{{ (initial_history_item.response_html if initial_history_item else agent_snapshot.response_html) | safe }}</div>
+                                </div>
                                 <button
                                     type="button"
                                     class="global-quick-action-button agent-response-copy"
@@ -371,7 +376,6 @@
                                     <span class="icon agent-response-copy-icon" aria-hidden="true"></span>
                                     <span class="agent-response-copy-feedback" data-agent-response-copy-feedback aria-live="polite"></span>
                                 </button>
-                                <div class="agent-response-answer-content" data-agent-response-answer-content>{{ (initial_history_item.response_html if initial_history_item else render_prompt_markdown(agent_snapshot.response)) | safe }}</div>
                                 <button
                                     type="button"
                                     class="browser-session-message-toggle agent-response-overflow-toggle"
@@ -383,6 +387,7 @@
                                     title="Expand answer"
                                     hidden
                                 ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
+                                <nav class="browser-pagination local-store-pagination agent-response-pagination" id="agent_response_pagination" data-layout-role="pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
                             </div>
                         </div>
                         <details class="agent-error-record" id="agent_error_record"{% if agent_snapshot.error_traceback or agent_snapshot.last_error %} open{% endif %}{% if not (agent_snapshot.error_traceback or agent_snapshot.last_error) %} hidden{% endif %}>
@@ -407,8 +412,6 @@
                             </div>
                         </details>
                     </article>
-
-                    <nav class="browser-pagination local-store-pagination agent-response-pagination" id="agent_response_pagination" data-layout-role="pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
 
                     <form id="agent_prompt_form" class="agent-prompt-form">
                         <input type="hidden" name="workspace_path" value="{{ settings.workspace_path }}" data-agent-workspace-input>
@@ -523,6 +526,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.6-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.28.14-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.29.0-codex.1') }}"></script>
 </body>
 </html>

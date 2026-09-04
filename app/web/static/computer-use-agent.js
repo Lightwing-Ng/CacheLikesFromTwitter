@@ -1,4 +1,4 @@
-/* Code version: v3.28.14-codex.1 */
+/* Code version: v3.29.0-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -185,6 +185,11 @@
     }
 
     const CHATGPT_PROJECT_ICON_DEFINITIONS = {
+        // ChatGPT Blue Brain: sprites-core-ff27b486.svg#7a5aca, verified 4 Sep 2026.
+        brain: {
+            viewBox: "0 0 20 20",
+            body: '<path fill="currentColor" d="M12.5 1.835c.764-.008 1.554.231 2.163.751a2.88 2.88 0 0 1 .98 1.812c2.329.703 3.244 3.61 1.869 5.546 1.242 1.75.656 4.336-1.314 5.322-.47 1.664-1.837 2.752-3.287 2.886a3.06 3.06 0 0 1-2.197-.641 3.4 3.4 0 0 1-.714-.782 3.4 3.4 0 0 1-.714.782 3.06 3.06 0 0 1-2.197.64c-1.45-.133-2.818-1.22-3.288-2.885-1.97-.986-2.555-3.573-1.313-5.322-1.374-1.936-.46-4.842 1.869-5.546.11-.76.467-1.374.98-1.812.61-.52 1.4-.759 2.163-.75.764.007 1.55.263 2.155.794q.188.165.345.36.157-.195.345-.36c.605-.531 1.391-.787 2.155-.795m-3.165 3.14c0-.631-.236-1.063-.558-1.346-.335-.294-.802-.459-1.292-.464s-.954.15-1.285.433c-.316.27-.55.688-.55 1.31a.7.7 0 0 1-.593.692c-1.73.266-2.48 2.453-1.35 3.746a.91.91 0 0 1 0 1.195c-.984 1.128-.577 2.998.81 3.592.23.098.41.289.494.523l.03.103.062.227c.346 1.11 1.252 1.763 2.108 1.841.45.042.887-.073 1.253-.361.357-.281.688-.764.871-1.538zm1.33 9.953c.183.774.514 1.257.871 1.538.366.288.803.403 1.253.361.913-.084 1.882-.82 2.17-2.068l.03-.103a.9.9 0 0 1 .493-.523c1.388-.594 1.795-2.464.812-3.592a.91.91 0 0 1 0-1.195c1.13-1.293.38-3.48-1.35-3.746a.7.7 0 0 1-.594-.696c-.001-.62-.234-1.036-.55-1.306-.331-.282-.795-.438-1.285-.433s-.957.17-1.292.464c-.282.248-.498.61-.547 1.12l-.01.227z"/>',
+        },
         "currency-dollar": {
             viewBox: "0 0 24 24",
             body: '<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.596" d="M12 7.75v-1M12 16.25v1M9.5 15.08c2.5 1.724 5 .774 5-.797 0-2.707-5-1.757-5-4.463 0-1.572 2.5-2.523 4.5-1.18"/><path fill="none" stroke="currentColor" stroke-width="1.596" d="M12 20.7a8.7 8.7 0 1 0 0-17.4 8.7 8.7 0 0 0 0 17.4Z"/>',
@@ -1387,7 +1392,7 @@
                     resetRemoteSessionHistory();
                     if (elements.projectUrl instanceof HTMLInputElement) elements.projectUrl.value = input.value;
                     clearProjectSessionChoice("Project session", true, true);
-                    loadProjectSessions(input.value, {forceRefresh: true});
+                    loadProjectSessions(input.value);
                     updateSessionChoiceInputs();
                 }
                 if (combobox === elements.projectSessionCombobox) {
@@ -1441,6 +1446,10 @@
             const payload = await requestJson(`/api/agent/project-sessions?${query.toString()}`);
             if (requestId !== projectSessionRequestId || projectUrl !== selectedProjectUrl()) return false;
             populateProjectSessionChoices(payload.sessions || []);
+            // Show durable cached choices immediately, then revalidate only an expired catalog.
+            if (payload.cache?.status === "stale" && !options.forceRefresh) {
+                loadProjectSessions(projectUrl, {forceRefresh: true});
+            }
             return true;
         } catch (_error) {
             if (requestId !== projectSessionRequestId) return false;

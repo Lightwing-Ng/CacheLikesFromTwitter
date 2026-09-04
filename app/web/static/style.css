@@ -1,14 +1,14 @@
-/* Code version: v2.91.40-codex.1 */
+/* Code version: v2.92.0-codex.1 */
 /*
- * Univers Next for HSBC is packaged as one OpenType collection so the local
- * application uses the same family faces as its sibling project.
+ * Standalone faces are extracted from the approved TTC by scripts/build_web_fonts.py.
+ * Collection URL fragments are not reliable face selectors in Chromium.
  */
 @font-face {
     font-display: swap;
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 100;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-UltraLight") format("collection");
+    src: url("/static/fonts/UniversNextforHSBC-UltraLight.ttf") format("truetype");
 }
 
 @font-face {
@@ -16,7 +16,7 @@
     font-family: "Univers Next for HSBC";
     font-style: italic;
     font-weight: 100;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-UltraLightItalic") format("collection");
+    src: url("/static/fonts/UniversNextforHSBC-UltraLightItalic.ttf") format("truetype");
 }
 
 @font-face {
@@ -24,7 +24,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 200;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Thin") format("collection");
+    src: url("/static/fonts/UniversNextforHSBC-Thin.ttf") format("truetype");
 }
 
 @font-face {
@@ -32,7 +32,7 @@
     font-family: "Univers Next for HSBC";
     font-style: italic;
     font-weight: 200;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-ThinItalic") format("collection");
+    src: url("/static/fonts/UniversNextforHSBC-ThinItalic.ttf") format("truetype");
 }
 
 @font-face {
@@ -40,7 +40,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 300;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Light") format("collection");
+    src: url("/static/fonts/UniversNextforHSBC-Light.ttf") format("truetype");
 }
 
 @font-face {
@@ -48,7 +48,7 @@
     font-family: "Univers Next for HSBC";
     font-style: italic;
     font-weight: 300;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-LightItalic") format("collection");
+    src: url("/static/fonts/UniversNextforHSBC-LightItalic.ttf") format("truetype");
 }
 
 @font-face {
@@ -56,7 +56,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 400;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Regular") format("collection");
+    src: url("/static/fonts/UniversNextforHSBC-Regular.ttf") format("truetype");
 }
 
 @font-face {
@@ -64,7 +64,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 500 600;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Medium") format("collection");
+    src: url("/static/fonts/UniversNextforHSBC-Medium.ttf") format("truetype");
 }
 
 @font-face {
@@ -72,7 +72,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 700 900;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Bold") format("collection");
+    src: url("/static/fonts/UniversNextforHSBC-Bold.ttf") format("truetype");
 }
 
 :root {
@@ -137,6 +137,7 @@
     --control-compact-height: 28px;
     --control-form-height: 36px;
     --agent-composer-control-height: 32px;
+    --local-store-pagination-slot-size: 30px;
     --sidebar-action-primary-background: var(--theme-accent-primary);
     --sidebar-action-primary-background-hover: color-mix(in srgb, var(--theme-accent-primary) 88%, var(--color-white-adaptive));
     --sidebar-action-primary-background-disabled: color-mix(in srgb, var(--theme-muted) 28%, transparent);
@@ -3680,6 +3681,10 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     padding-bottom: 8px;
 }
 
+.agent-runtime-form > .agent-llm-settings-link {
+    justify-self: end;
+}
+
 .agent-runtime-form .field > .field-label {
     font-size: var(--font-ui-lg);
 }
@@ -3943,6 +3948,8 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     flex-direction: column;
     min-height: 0;
     max-height: 100%;
+    --agent-page-inset-right: var(--layout-page-inset-right);
+    --agent-action-rail-bleed: calc(var(--workspace-article-pad-inline) + var(--agent-page-inset-right) - var(--global-quick-actions-right));
 }
 
 .agent-workspace .workspace-header {
@@ -4315,6 +4322,10 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 @media (max-width: 560px) {
+    .agent-workspace {
+        --agent-page-inset-right: var(--page-compact-edge-pad);
+    }
+
     .agent-composer-footer:has(.agent-effort-controls:not([hidden])) {
         display: grid;
         grid-template-columns: minmax(0, 1fr) auto;
@@ -4346,7 +4357,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     box-sizing: border-box;
     flex: 0 0 auto;
     min-height: var(--settings-round-icon-button-size);
-    margin-inline-end: calc(-1 * (var(--workspace-article-pad-inline) - var(--layout-edge-gap)));
+    margin-inline-end: calc(-1 * var(--agent-action-rail-bleed));
 }
 
 .agent-response-card {
@@ -4478,33 +4489,47 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     line-height: 1.55;
 }
 
-.agent-response-question-header {
-    display: flex;
+.agent-response-question-header.browser-session-table-message-shell {
+    display: grid;
     position: relative;
     box-sizing: border-box;
-    flex: 0 0 auto;
-    flex-direction: column;
+    grid-template-columns: minmax(0, 1fr) var(--settings-round-icon-button-size);
+    column-gap: var(--layout-edge-gap);
+    flex: 0 1 auto;
     min-width: 0;
-    min-height: var(--control-form-height);
-    max-height: min(8rem, 22svh);
-    margin-inline-end: calc(-1 * (var(--workspace-article-pad-inline) - var(--layout-edge-gap)));
-    padding: 0 44px 12px 2px;
+    min-height: calc(var(--settings-round-icon-button-size) + 12px);
+    margin-inline-end: calc(-1 * var(--agent-action-rail-bleed));
+    padding-bottom: 12px;
     border-bottom: var(--frosted-glass-border);
-    overflow-x: hidden;
-    overflow-y: auto;
+    overflow: visible;
+}
+
+.agent-response-question-scroll {
+    min-width: 0;
+    min-height: 0;
+    max-height: min(8rem, 22svh);
+    overflow: auto;
     overscroll-behavior: contain;
     scrollbar-gutter: stable;
 }
 
-.agent-response-question-header.is-expanded {
+.agent-response-question-header.is-expanded .agent-response-question-scroll {
     max-height: min(14rem, 38svh);
 }
 
 .agent-response-question-header .agent-response-overflow-toggle {
-    position: absolute;
-    top: 0;
-    right: 0;
+    position: static;
+    align-self: start;
+    grid-column: 2;
+    grid-row: 1;
     margin: 0;
+}
+
+.agent-response-overflow-toggle.browser-session-message-toggle {
+    width: var(--settings-round-icon-button-size);
+    height: var(--settings-round-icon-button-size);
+    min-width: var(--settings-round-icon-button-size);
+    min-height: var(--settings-round-icon-button-size);
 }
 
 .agent-response-question {
@@ -4516,17 +4541,22 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     overflow-wrap: anywhere;
 }
 
-.agent-response-answer {
-    --agent-response-copy-global-rail-bleed: calc(var(--workspace-article-pad-inline) - var(--layout-edge-gap));
-    display: flex;
+.agent-response-answer-shell {
     position: relative;
-    flex-direction: column;
-    flex: 1 1 auto;
+    display: flex;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: calc(var(--settings-round-icon-button-size) * 2 + 24px);
+    margin-inline-end: calc(-1 * var(--agent-action-rail-bleed));
+    overflow: visible;
+}
+
+.agent-response-answer {
+    box-sizing: border-box;
+    flex: 1 1 0;
     min-width: 0;
     min-height: 0;
-    max-height: min(42rem, 62svh, 100%);
-    margin-inline-end: calc(-1 * var(--agent-response-copy-global-rail-bleed));
-    padding-top: 12px;
+    padding: 12px calc(var(--settings-round-icon-button-size) + var(--layout-edge-gap)) 12px 0;
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -4535,14 +4565,26 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     font-size: var(--font-size-5);
 }
 
-.agent-response-answer.is-expanded {
-    max-height: min(52rem, 76svh, 100%);
+.agent-response-answer-shell:has(.agent-response-pagination:not([hidden])) .agent-response-answer {
+    padding-bottom: calc(var(--local-store-pagination-slot-size) + 32px);
+    scroll-padding-bottom: calc(var(--local-store-pagination-slot-size) + 32px);
+}
+
+.agent-response-output:has(.agent-response-answer-shell.is-expanded) .agent-response-question-scroll {
+    max-height: var(--settings-round-icon-button-size);
 }
 
 .agent-response-answer-content {
-    flex: 0 0 auto;
     min-width: 0;
-    padding-inline-end: calc(var(--settings-round-icon-button-size) + var(--layout-edge-gap));
+    display: flow-root;
+}
+
+.agent-response-answer-content > :first-child {
+    margin-top: 0;
+}
+
+.agent-response-answer-content > :last-child {
+    margin-bottom: 0;
 }
 
 .agent-response-copy {
@@ -4557,26 +4599,29 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     opacity: 0.48;
 }
 
-.agent-response-answer .agent-response-overflow-toggle {
-    position: sticky;
+.agent-response-answer-shell > .agent-response-overflow-toggle {
+    position: absolute;
     right: 0;
     bottom: 8px;
-    align-self: flex-end;
-    margin: 8px 0 0;
+    margin: 0;
     z-index: var(--layer-control-affordance);
 }
 
 .browser-pagination.agent-response-pagination {
-    position: relative;
+    position: absolute;
+    left: 50%;
+    bottom: 10px;
+    transform: translateX(-50%);
     z-index: var(--layer-control-affordance);
-    flex: 0 0 auto;
-    margin: 0 auto;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    box-shadow: none;
-    backdrop-filter: none;
-    -webkit-backdrop-filter: none;
+    margin: 0;
+    padding: 4px;
+    max-width: calc(100% - 2 * (var(--settings-round-icon-button-size) + var(--layout-edge-gap)));
+    border: var(--frosted-glass-border);
+    border-radius: var(--radius-pill);
+    background: var(--frosted-glass-background);
+    box-shadow: var(--frosted-glass-shadow);
+    backdrop-filter: var(--frosted-glass-blur);
+    -webkit-backdrop-filter: var(--frosted-glass-blur);
     overflow: visible;
 }
 
@@ -5238,15 +5283,6 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
         top: var(--global-quick-actions-top);
     }
 
-    .agent-response-answer {
-        --agent-response-copy-global-rail-bleed: 0px;
-    }
-
-    .agent-response-toolbar,
-    .agent-response-question-header {
-        margin-inline-end: 0;
-    }
-
     .agent-model-dropdown,
     .agent-effort-dropdown {
         left: 0;
@@ -5276,12 +5312,6 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
         transform: translateX(-50%) translateY(8px) scale(0.95);
         opacity: 0;
         pointer-events: none;
-    }
-}
-
-@media (max-width: 900px) and (max-height: 500px) {
-    .agent-response-answer .agent-response-overflow-toggle {
-        margin-top: calc(var(--settings-round-icon-button-size) + var(--layout-edge-gap));
     }
 }
 
@@ -7930,12 +7960,14 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .agent-response-answer-content pre {
+    box-sizing: border-box;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     word-break: break-word;
 }
 
 .agent-response-answer-content pre code {
+    display: block;
     white-space: inherit;
     overflow-wrap: inherit;
     word-break: inherit;
@@ -8298,7 +8330,6 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .browser-pagination {
-    --local-store-pagination-slot-size: 30px;
     --local-store-pagination-gap: 10px;
     --local-store-pagination-floating-shell-padding: 4px;
     --local-store-pagination-button-radius: var(--radius-pill);

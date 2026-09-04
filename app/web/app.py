@@ -1,10 +1,11 @@
 """Flask application for the local web console."""
 
-# Code version: v1.58.1-codex.1
+# Code version: v1.59.0-codex.1
 
 from __future__ import annotations
 
 import atexit
+import json
 from datetime import UTC, datetime
 import os
 import secrets
@@ -301,6 +302,33 @@ def render_prompt_markdown(value: str) -> Markup:
     """Render stored ChatGPT prompt Markdown while escaping embedded HTML."""
     prompt = str(value or "").replace("\x00", "").strip()
     return Markup(PROMPT_MARKDOWN_RENDERER.render(prompt)) if prompt else Markup("")
+
+
+def render_agent_response(value: str) -> Markup:
+    """Render live and restored final actions through the same Markdown boundary.
+
+    The source remains untouched for copying and provenance. Only a complete
+    controller final envelope is unwrapped; ordinary JSON and malformed data
+    retain their original presentation.
+    """
+    from app.core.computer_use_agent import _render_final_action, parse_agent_action
+
+    source = str(value or "").strip()
+    candidate = source
+    if candidate.startswith("```json\n") and candidate.endswith("```"):
+        candidate = candidate[8:-3].strip()
+    try:
+        payload = json.loads(candidate)
+        if (
+            isinstance(payload, dict)
+            and payload.get("action") == "final"
+            and isinstance(payload.get("summary"), str)
+            and payload["summary"].strip()
+        ):
+            source = _render_final_action(parse_agent_action(candidate))
+    except (ValueError, TypeError):
+        pass
+    return render_prompt_markdown(source)
 
 
 def render_cached_message(content_text: str, content_html: str = "") -> Markup:
@@ -1160,7 +1188,7 @@ def create_app(
         """Add safe rendered Markdown to the Agent status payload."""
         snapshot = computer_use_agent_service.snapshot()
         snapshot["response_html"] = str(
-            render_prompt_markdown(str(snapshot.get("response", "")))
+            render_agent_response(str(snapshot.get("response", "")))
         )
         rendered_history: list[dict[str, Any]] = []
         for raw_item in snapshot.get("history", []):
@@ -1168,7 +1196,7 @@ def create_app(
                 continue
             item = dict(raw_item)
             item["response_html"] = str(
-                render_prompt_markdown(str(item.get("response", "")))
+                render_agent_response(str(item.get("response", "")))
             )
             rendered_history.append(item)
         snapshot["history"] = rendered_history
@@ -1655,7 +1683,7 @@ def create_app(
 
     @app.get("/api/agent/chatgpt-session-history")
     def agent_chatgpt_session_history():
-        """Load one selected ChatGPT conversation without persisting remote messages."""
+        """Reuse one selected ChatGPT conversation from the shared memory/Parquet cache."""
         require_local_agent_request()
         if not external_agent_operations_enabled():
             return reject_external_agent_operation()
@@ -1666,11 +1694,17 @@ def create_app(
         if not conversation_url:
             return jsonify({"error": "Choose a valid ChatGPT conversation before loading its history."}), 400
         try:
-            payload = fetch_chatgpt_conversation_history(
-                browser_name,
-                conversation_url,
-                saved_config,
-                silent=True,
+            payload = load_agent_source_catalog(
+                platform="chatgpt",
+                browser=browser_name,
+                source_kind="session-history",
+                project_url=conversation_url,
+                collector=lambda: fetch_chatgpt_conversation_history(
+                    browser_name,
+                    conversation_url,
+                    saved_config,
+                    silent=True,
+                ),
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
@@ -1679,7 +1713,7 @@ def create_app(
             if not isinstance(raw_item, dict):
                 continue
             item = dict(raw_item)
-            item["response_html"] = str(render_prompt_markdown(str(item.get("response", ""))))
+            item["response_html"] = str(render_agent_response(str(item.get("response", ""))))
             rendered_history.append(item)
         return jsonify(
             {
@@ -1687,12 +1721,13 @@ def create_app(
                 "title": str(payload.get("title") or "Untitled session"),
                 "history": rendered_history,
                 "limit": int(payload.get("limit") or len(rendered_history)),
+                "cache": payload.get("cache", {}),
             }
         )
 
     @app.get("/api/agent/grok-session-history")
     def agent_grok_session_history():
-        """Load one selected Grok conversation without persisting remote messages."""
+        """Reuse one selected Grok conversation from the shared memory/Parquet cache."""
         require_local_agent_request()
         if not external_agent_operations_enabled():
             return reject_external_agent_operation()
@@ -1704,11 +1739,17 @@ def create_app(
         if not conversation_url:
             return jsonify({"error": "Choose a valid Grok conversation before loading its history."}), 400
         try:
-            payload = fetch_grok_conversation_history(
-                browser_name,
-                conversation_url,
-                saved_config,
-                silent=True,
+            payload = load_agent_source_catalog(
+                platform="grok",
+                browser=browser_name,
+                source_kind="session-history",
+                project_url=conversation_url,
+                collector=lambda: fetch_grok_conversation_history(
+                    browser_name,
+                    conversation_url,
+                    saved_config,
+                    silent=True,
+                ),
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409
@@ -1717,7 +1758,7 @@ def create_app(
             if not isinstance(raw_item, dict):
                 continue
             item = dict(raw_item)
-            item["response_html"] = str(render_prompt_markdown(str(item.get("response", ""))))
+            item["response_html"] = str(render_agent_response(str(item.get("response", ""))))
             rendered_history.append(item)
         return jsonify(
             {
@@ -1725,6 +1766,7 @@ def create_app(
                 "title": str(payload.get("title") or ""),
                 "history": rendered_history,
                 "limit": int(payload.get("limit") or len(rendered_history)),
+                "cache": payload.get("cache", {}),
             }
         )
 

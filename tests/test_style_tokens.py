@@ -1,10 +1,13 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.48-codex.1
+Code version: v1.52.0-codex.1
 """
 
 import hashlib
 from pathlib import Path
+import struct
+
+from scripts.build_web_fonts import FACE_NAMES, checksum, extract_face
 
 
 FONT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/fonts/UniversNextforHSBC.ttc"
@@ -62,7 +65,7 @@ def test_typography_matches_the_sibling_font_contract() -> None:
     expected_tokens = (
         '@font-face {',
         'font-family: "Univers Next for HSBC";',
-        'src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Regular") format("collection");',
+        'src: url("/static/fonts/UniversNextforHSBC-Regular.ttf") format("truetype");',
         "--font-size-1: 11px;",
         "--font-size-2: 12px;",
         "--font-size-3: 13px;",
@@ -95,6 +98,18 @@ def test_hsbc_font_collection_is_present_and_checksum_pinned() -> None:
     assert hashlib.sha256(FONT_PATH.read_bytes()).hexdigest() == (
         "e10a317b9da0016c24a9fce70ccbd33eb39458da15253d5abfe051d8cc33e21a"
     )
+
+
+def test_standalone_web_fonts_preserve_every_approved_face() -> None:
+    """Verify deterministic table extraction and valid standalone font checksums."""
+    source = FONT_PATH.read_bytes()
+    for index, face in enumerate(FACE_NAMES):
+        offset = struct.unpack_from(">I", source, 12 + index * 4)[0]
+        path = FONT_PATH.with_name(f"UniversNextforHSBC-{face}.ttf")
+        extracted = path.read_bytes()
+        assert extracted == extract_face(source, offset)
+        assert checksum(extracted) == 0xB1B0AFBA
+        assert path.name in _stylesheet()
 
 
 def test_routine_labels_use_restrained_font_weights() -> None:
@@ -1917,7 +1932,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.91.40-codex.1 */",
+        "/* Code version: v2.92.0-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1935,7 +1950,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         "gap: 14px;",
         ".agent-platform-combobox .browser-session-trigger-leading {",
         "flex: 1 1 auto;",
-        ".agent-response-question-header {",
+        ".agent-response-question-header.browser-session-table-message-shell {",
         ".agent-response-question {",
         "font-size: 17px;",
         ".agent-response-answer {",
@@ -2179,12 +2194,12 @@ def test_agent_composer_uses_a_two_line_regular_weight_prompt_with_a_standard_to
     ):
         assert token in toggle_rule
     for token in (
-        "margin: 0 auto;",
-        "padding: 0;",
-        "border: 0;",
-        "background: transparent;",
-        "box-shadow: none;",
-        "backdrop-filter: none;",
+        "left: 50%;",
+        "padding: 4px;",
+        "border: var(--frosted-glass-border);",
+        "background: var(--frosted-glass-background);",
+        "box-shadow: var(--frosted-glass-shadow);",
+        "backdrop-filter: var(--frosted-glass-blur);",
     ):
         assert token in pagination_rule
 
@@ -2534,7 +2549,7 @@ def test_agent_response_pagination_keeps_spatial_effects_unclipped() -> None:
 
     pagination_start = stylesheet.index(".agent-response-pagination {")
     pagination_rule = stylesheet[pagination_start:stylesheet.index("\n}", pagination_start)]
-    assert "position: relative;" in pagination_rule
+    assert "position: absolute;" in pagination_rule
     assert "z-index: var(--layer-control-affordance);" in pagination_rule
     assert "overflow: visible;" in pagination_rule
 
@@ -2568,15 +2583,15 @@ def test_agent_response_copy_uses_the_global_action_rail_without_consuming_scrol
     copy_start = stylesheet.index(".agent-response-copy {")
     copy_rule = stylesheet[copy_start:stylesheet.index("\n}", copy_start)]
 
-    assert (
-        "--agent-response-copy-global-rail-bleed: "
-        "calc(var(--workspace-article-pad-inline) - var(--layout-edge-gap));"
-    ) in answer_rule
-    assert "position: relative;" in answer_rule
-    assert "margin-inline-end: calc(-1 * var(--agent-response-copy-global-rail-bleed));" in answer_rule
+    shell_start = stylesheet.index(".agent-response-answer-shell {")
+    shell_rule = stylesheet[shell_start:stylesheet.index("\n}", shell_start)]
+    assert "position: relative;" in shell_rule
+    assert "margin-inline-end: calc(-1 * var(--agent-action-rail-bleed));" in shell_rule
     assert "overflow-x: hidden;" in answer_rule
     assert "overflow-y: auto;" in answer_rule
-    assert "padding-inline-end: calc(var(--settings-round-icon-button-size) + var(--layout-edge-gap));" in content_rule
+    assert "max-height:" not in answer_rule
+    assert "var(--settings-round-icon-button-size) + var(--layout-edge-gap)" in answer_rule
+    assert "display: flow-root;" in content_rule
     for declaration in (
         "position: absolute;",
         "top: 12px;",
@@ -2594,11 +2609,11 @@ def test_agent_response_actions_align_to_the_global_action_rail() -> None:
 
     toolbar_start = stylesheet.rindex(".agent-response-toolbar {")
     toolbar_rule = stylesheet[toolbar_start:stylesheet.index("\n}", toolbar_start)]
-    question_header_start = stylesheet.index(".agent-response-question-header {")
+    question_header_start = stylesheet.index(".agent-response-question-header.browser-session-table-message-shell {")
     question_header_rule = stylesheet[
         question_header_start:stylesheet.index("\n}", question_header_start)
     ]
-    rail_bleed = "margin-inline-end: calc(-1 * (var(--workspace-article-pad-inline) - var(--layout-edge-gap)));"
+    rail_bleed = "margin-inline-end: calc(-1 * var(--agent-action-rail-bleed));"
 
     assert rail_bleed in toolbar_rule
     assert rail_bleed in question_header_rule
@@ -2625,12 +2640,12 @@ def test_agent_current_project_name_uses_requested_type_size() -> None:
 def test_agent_response_answer_expansion_stays_on_the_global_action_rail() -> None:
     """Keep the answer expansion affordance on the same rail as the theme control."""
     stylesheet = _stylesheet()
-    answer_toggle_start = stylesheet.index(".agent-response-answer .agent-response-overflow-toggle {")
+    answer_toggle_start = stylesheet.index(".agent-response-answer-shell > .agent-response-overflow-toggle {")
     answer_toggle_rule = stylesheet[
         answer_toggle_start:stylesheet.index("\n}", answer_toggle_start)
     ]
 
-    assert "position: sticky;" in answer_toggle_rule
+    assert "position: absolute;" in answer_toggle_rule
     assert "right: 0;" in answer_toggle_rule
 
 
@@ -2685,15 +2700,17 @@ def test_agent_response_header_and_answer_pin_the_composer() -> None:
 
     toolbar_start = stylesheet.rfind(".agent-response-toolbar {")
     toolbar_rule = stylesheet[toolbar_start:stylesheet.index("\n}", toolbar_start)]
-    header_start = stylesheet.index(".agent-response-question-header {")
+    header_start = stylesheet.index(".agent-response-question-header.browser-session-table-message-shell {")
     header_rule = stylesheet[header_start:stylesheet.index("\n}", header_start)]
     answer_start = stylesheet.index(".agent-response-answer {")
     answer_rule = stylesheet[answer_start:stylesheet.index("\n}", answer_start)]
     composer_start = stylesheet.rfind(".agent-task-card > .agent-prompt-form {")
     composer_rule = stylesheet[composer_start:stylesheet.index("\n}", composer_start)]
 
-    for rule in (header_rule, answer_rule):
-        assert "overflow-y: auto;" in rule
+    scroll_start = stylesheet.index(".agent-response-question-scroll {")
+    scroll_rule = stylesheet[scroll_start:stylesheet.index("\n}", scroll_start)]
+    for rule in (scroll_rule, answer_rule):
+        assert "overflow-y: auto;" in rule or "overflow: auto;" in rule
         assert "scrollbar-gutter: stable;" in rule
         assert "overscroll-behavior: contain;" in rule
     for declaration in (
@@ -2701,9 +2718,10 @@ def test_agent_response_header_and_answer_pin_the_composer() -> None:
         "flex: 0 0 auto;",
     ):
         assert declaration in toolbar_rule
-        assert declaration in header_rule
+    assert "box-sizing: border-box;" in header_rule
+    assert "flex: 0 1 auto;" in header_rule
     assert "min-height: var(--settings-round-icon-button-size);" in toolbar_rule
-    assert "min-height: var(--control-form-height);" in header_rule
+    assert "min-height: calc(var(--settings-round-icon-button-size) + 12px);" in header_rule
     assert "overflow-anchor: none;" in answer_rule
     assert "position: sticky;" in composer_rule
     assert "bottom: 0;" in composer_rule

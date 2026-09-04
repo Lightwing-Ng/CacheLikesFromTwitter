@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.63-codex.1
+Code version: v1.27.0-codex.1
 """
 
 from __future__ import annotations
@@ -1481,7 +1481,7 @@ def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
     height: int,
     touch: bool,
 ) -> None:
-    """Verify the Agent pagination is surface-free without clipping its interactions."""
+    """Verify one immersed glass pagination surface without clipping its interactions."""
     page, context = _open_page(
         disposable_browser,
         f"{sidebar_server_url}/agent",
@@ -1570,7 +1570,7 @@ def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
                     ancestors: [task, pagination].map(read),
                     responseOutput: read(output),
                     answer: read(answer),
-                    paginationParentIsTask: pagination.parentElement === task,
+                    paginationParentIsAnswerShell: pagination.parentElement === answer.parentElement,
                     paginationWidth: pagination.getBoundingClientRect().width,
                     shortPosition,
                     longPosition,
@@ -1587,19 +1587,19 @@ def test_agent_response_pagination_is_immersed_but_keeps_interactive_effects(
         assert contract is not None
         assert contract["paginationWidth"] > 0
         assert contract["indicatorVisible"]
-        assert contract["paginationSurface"]["background"].startswith("rgba(0, 0, 0, 0)")
-        assert contract["paginationSurface"]["borderWidth"] == "0px"
-        assert contract["paginationSurface"]["boxShadow"] == "none"
-        assert contract["paginationSurface"]["padding"] == "0px"
+        assert not contract["paginationSurface"]["background"].startswith("rgba(0, 0, 0, 0)")
+        assert contract["paginationSurface"]["borderWidth"] == "1px"
+        assert contract["paginationSurface"]["boxShadow"] != "none"
+        assert contract["paginationSurface"]["padding"] == "4px"
         assert all(item["overflow"] == "visible" for item in contract["ancestors"])
-        assert contract["ancestors"][-1]["position"] == "relative"
+        assert contract["ancestors"][-1]["position"] == "absolute"
         assert contract["ancestors"][-1]["zIndex"] == "2"
         assert contract["responseOutput"]["overflow"] == "visible"
         assert contract["answer"]["overflowX"] == "hidden"
         assert contract["answer"]["overflowY"] == "auto"
-        assert contract["paginationParentIsTask"]
-        assert contract["shortPosition"]["composerGap"] >= 13
-        assert contract["shortPosition"]["composerGap"] <= 15
+        assert contract["paginationParentIsAnswerShell"]
+        assert contract["shortPosition"]["composerGap"] >= 23
+        assert contract["shortPosition"]["composerGap"] <= 25
         assert abs(
             contract["shortPosition"]["composerGap"]
             - contract["longPosition"]["composerGap"]
@@ -3636,7 +3636,7 @@ def test_agent_provider_projects_submit_agentic_task_target(
                         "url": project_url,
                         "updated_at": "2026-08-14T04:00:00Z",
                         **(
-                            {"icon": "currency-dollar", "icon_color": "#53B559"}
+                            {"icon": "brain", "icon_color": "#3A83F7"}
                             if platform == "chatgpt"
                             else {}
                         ),
@@ -3715,8 +3715,14 @@ def test_agent_provider_projects_submit_agentic_task_target(
                     )
                 ).to_have_attribute("src", re.compile(r"^data:image/svg\+xml"))
                 expect(project_option).to_have_attribute(
-                    "data-agent-combobox-icon-name", "currency-dollar"
+                    "data-agent-combobox-icon-name", "brain"
                 )
+                icon_svg = project_option.locator("img").evaluate(
+                    "image => decodeURIComponent(image.src.split(',')[1])"
+                )
+                assert '<path fill="currentColor"' in icon_svg
+                assert '<text' not in icon_svg
+                assert '#3A83F7' in icon_svg
                 icon_centers = project_icon_shells.evaluate_all(
                     "nodes => nodes.map(node => { "
                     "const rect = node.getBoundingClientRect(); "
@@ -3932,6 +3938,7 @@ def test_agent_project_session_selection_loads_grok_response_immediately(
         )
         expect(page.locator("#agent_response_question")).to_have_text("What changed?")
         assert len(project_session_requests) == 2
+        assert all("refresh=1" not in url for url in project_session_requests)
         assert len(history_requests) == 2
     finally:
         context.close()
@@ -6955,6 +6962,92 @@ def test_foreign_running_agent_poll_keeps_only_neutral_stop_state(
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.parametrize(("width", "height"), ((1_018, 1_433), (390, 844)))
+def test_agent_response_scrollports_keep_actions_and_last_line_inside(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    tmp_path: Path,
+    width: int,
+    height: int,
+) -> None:
+    """Check actual glyphs, shared centers, scroll ownership, and bottom clearance."""
+    payload = _finished_chatgpt_agent_payload()
+    response_html = "<pre><code>" + "Long code line\n" * 180 + "Last line</code></pre>"
+    payload["agent"].update({
+        "prompt": "Long question text. " * 200,
+        "response": "Long code line\n" * 180 + "Last line",
+        "response_html": response_html,
+        "history": [
+            {"prompt": "Long question text. " * 200, "response": str(index), "response_html": response_html}
+            for index in range(3)
+        ],
+    })
+    context = disposable_browser.new_context(
+        viewport={"width": width, "height": height}, reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=payload))
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json={
+        "platform": "chatgpt", "browser": "edge", "logged_in": True,
+        "can_download": True, "agent_sources": _chatgpt_catalog_sessions(),
+    }))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        expect(page.locator(".agent-response-answer-content")).to_contain_text("Last line")
+        page.evaluate("() => document.fonts.ready")
+        cdp = context.new_cdp_session(page)
+        cdp.send("DOM.enable")
+        cdp.send("CSS.enable")
+        document = cdp.send("DOM.getDocument")
+        node = cdp.send("DOM.querySelector", {
+            "nodeId": document["root"]["nodeId"], "selector": ".agent-model-trigger-label",
+        })
+        fonts = cdp.send("CSS.getPlatformFontsForNode", {"nodeId": node["nodeId"]})["fonts"]
+        assert any(font["postScriptName"] == "UniversNextforHSBC-Regular" for font in fonts), fonts
+        assert all(font["postScriptName"] != "UniversNextforHSBC-Bold" for font in fonts), fonts
+        read_layout = """() => {
+            const selectors = {
+                theme: '#global_theme_toggle', questionToggle: '.agent-response-question-header button',
+                copy: '[data-agent-response-copy]', answer: '#agent_response_answer',
+                output: '#agent_response_output', pagination: '#agent_response_pagination',
+                question: '#agent_response_question_scroll', code: '.agent-response-answer-content pre code',
+                pre: '.agent-response-answer-content pre', content: '.agent-response-answer-content',
+                settings: '.agent-llm-settings-link', form: '#agent_runtime_form',
+            };
+            return Object.fromEntries(Object.entries(selectors).map(([key, selector]) => {
+                const e = document.querySelector(selector), r = e.getBoundingClientRect();
+                return [key, {left:r.left,right:r.right,top:r.top,bottom:r.bottom,
+                    height:r.height, center:r.left+r.width/2,scrollTop:e.scrollTop}];
+            }));
+        }"""
+        before = page.evaluate(read_layout)
+        for action in ("questionToggle", "copy"):
+            assert before[action]["center"] == pytest.approx(before["theme"]["center"], abs=1), before
+        assert before["settings"]["right"] == pytest.approx(before["form"]["right"], abs=1)
+        assert before["answer"]["bottom"] == pytest.approx(before["output"]["bottom"], abs=1)
+        assert before["answer"]["height"] > 100
+        page.locator("#agent_response_question_scroll").hover()
+        page.mouse.wheel(0, 600)
+        page.locator("#agent_response_answer").focus()
+        page.keyboard.press("End")
+        page.wait_for_function("() => document.querySelector('#agent_response_answer').scrollTop > 0")
+        page.evaluate("() => { const e=document.querySelector('#agent_response_answer'); e.scrollTop=e.scrollHeight; }")
+        after = page.evaluate(read_layout)
+        for action in ("questionToggle", "copy"):
+            assert after[action]["top"] == pytest.approx(before[action]["top"], abs=1)
+        assert after["question"]["scrollTop"] > 0
+        assert after["code"]["bottom"] <= after["pre"]["bottom"]
+        assert after["pre"]["bottom"] <= after["content"]["bottom"]
+        assert after["content"]["bottom"] < after["pagination"]["top"]
+        assert after["code"]["right"] <= after["answer"]["right"]
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+        page.screenshot(path=str(tmp_path / f"agent-response-{width}.png"))
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
 def test_agent_response_copy_uses_raw_history_text_and_the_global_action_rail(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -7133,7 +7226,7 @@ def test_agent_response_action_rail_survives_a_short_crowded_viewport(
             ".agent-response-question-header .agent-response-overflow-toggle"
         )
         answer_toggle = page.locator(
-            "#agent_response_answer .agent-response-overflow-toggle"
+            ".agent-response-answer-shell > .agent-response-overflow-toggle"
         )
         expect(question_toggle).to_be_visible()
         expect(answer_toggle).to_be_visible()
@@ -7149,7 +7242,7 @@ def test_agent_response_action_rail_survives_a_short_crowded_viewport(
                     safari: '[data-agent-open-conversation]',
                     expand: '.agent-response-question-header .agent-response-overflow-toggle',
                     copy: '[data-agent-response-copy]',
-                    answerExpand: '#agent_response_answer .agent-response-overflow-toggle',
+                    answerExpand: '.agent-response-answer-shell > .agent-response-overflow-toggle',
                     theme: '#global_theme_toggle',
                     };
                 const rect = value => {
@@ -7214,7 +7307,7 @@ def test_agent_response_action_rail_survives_a_short_crowded_viewport(
                     safari: '[data-agent-open-conversation]',
                     expand: '.agent-response-question-header .agent-response-overflow-toggle',
                     copy: '[data-agent-response-copy]',
-                    answerExpand: '#agent_response_answer .agent-response-overflow-toggle',
+                    answerExpand: '.agent-response-answer-shell > .agent-response-overflow-toggle',
                 };
                 const rect = selector => {
                     const element = document.querySelector(selector);
@@ -8149,7 +8242,7 @@ def test_successful_agent_completion_collapses_activity_without_erasing_a_new_dr
                 const composerRect = composer?.getBoundingClientRect();
                 return {
                     headerClientHeight: header?.clientHeight,
-                    headerScrollHeight: header?.scrollHeight,
+                    headerScrollHeight: document.querySelector("#agent_response_question_scroll")?.scrollHeight,
                     questionClientWidth: question?.clientWidth,
                     questionScrollWidth: question?.scrollWidth,
                     questionFontWeight: question ? getComputedStyle(question).fontWeight : null,

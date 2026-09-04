@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.92.8-codex.1
+# Code version: v1.93.0-codex.1
 
 from __future__ import annotations
 
@@ -29,6 +29,7 @@ from app.web.app import (
     reconcile_cached_snapshot,
     render_cached_message,
     render_prompt_markdown,
+    render_agent_response,
 )
 from app.web.cache_sources import CACHE_SOURCE_VIEWS
 
@@ -83,6 +84,41 @@ MAGNIFYING_GLASS_ASSET_PATH = Path(__file__).resolve().parents[1] / "app/web/sta
 
 
 class WebAppTests(unittest.TestCase):
+    def test_agent_final_envelopes_share_safe_live_and_history_rendering(self) -> None:
+        source = json.dumps({
+            "action": "final",
+            "summary": "## Result\n\n**Verified** <script>unsafe()</script>",
+            "verification": ["One check"],
+            "limitations": ["No live run"],
+        })
+        rendered = str(render_agent_response(source))
+        self.assertIn("<h2>Result</h2>", rendered)
+        self.assertIn("<strong>Verified</strong>", rendered)
+        self.assertIn("<li>One check</li>", rendered)
+        self.assertIn("<li>No live run</li>", rendered)
+        self.assertNotIn("<script>", rendered)
+        self.assertEqual(render_agent_response(f"```json\n{source}\n```"), rendered)
+        for ordinary in ('{"action":"list","path":"."}', '{"action":"final"}', '```json\n{broken}\n```'):
+            self.assertEqual(render_agent_response(ordinary), render_prompt_markdown(ordinary))
+
+    def test_agent_history_reuses_parquet_after_restart_and_preserves_source(self) -> None:
+        source = json.dumps({"action": "final", "summary": "**Restored**"})
+        collected = {"title": "Saved task", "history": [{"prompt": "Inspect", "response": source}]}
+        url = "/api/agent/chatgpt-session-history?browser=edge&conversation_url=https://chatgpt.com/c/cache-test"
+        with TemporaryDirectory() as root:
+            app = create_app(Path(root) / "store")
+            with patch("app.web.app.fetch_chatgpt_conversation_history", return_value=collected) as fetch:
+                first = app.test_client().get(url).get_json()
+                second = app.test_client().get(url).get_json()
+                restarted = create_app(Path(root) / "store").test_client().get(url).get_json()
+            fetch.assert_called_once()
+            self.assertTrue((Path(root) / "store/agent/agent_source_catalog.parquet").is_file())
+        self.assertEqual(first["cache"]["status"], "miss")
+        self.assertEqual(second["cache"]["layer"], "memory")
+        self.assertEqual(restarted["cache"]["layer"], "parquet")
+        self.assertEqual(restarted["history"][0]["response"], source)
+        self.assertIn("<strong>Restored</strong>", restarted["history"][0]["response_html"])
+
     """Validate the index page renders live progress metrics."""
 
     def test_cache_source_registry_is_alphabetized_and_extensible(self) -> None:
@@ -568,7 +604,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.21.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.91.40-codex.1"
+                expected_style_version = "style-v2.92.0-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -970,7 +1006,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.1-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.6-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.28.14-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.29.0-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
         self.assertIn('data-agent-compute-job-stop', local_body)
         self.assertIn('data-agent-effort-field', local_body)
@@ -1854,7 +1890,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.28.14-codex.1',
+            'computer-use-agent-v3.29.0-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'agent-effort-refresh-label">Refresh options</span>',
@@ -3392,7 +3428,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.91.40-codex.1", body)
+            self.assertIn("style-v2.92.0-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)
