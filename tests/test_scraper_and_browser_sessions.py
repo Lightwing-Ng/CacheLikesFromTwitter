@@ -379,21 +379,31 @@ def test_silent_edge_chromium_context_is_backgrounded_without_stealing_focus(
     assert "--start-minimized" in launch_kwargs["args"]
 
 
-def test_task_stage_edge_context_is_not_forced_back_offscreen_by_silent_mode(
+@pytest.mark.parametrize(
+    ("browser_id", "channel", "dir_name"),
+    (
+        ("edge", "msedge", "Edge"),
+        ("chrome", "chrome", "Chrome"),
+    ),
+)
+def test_task_stage_chromium_context_is_not_forced_back_offscreen_by_silent_mode(
     tmp_path: Path,
+    browser_id: str,
+    channel: str,
+    dir_name: str,
 ) -> None:
-    source_user_data_dir = tmp_path / "Edge"
+    source_user_data_dir = tmp_path / dir_name
     source_profile_dir = source_user_data_dir / "Default"
     source_profile_dir.mkdir(parents=True)
     (source_profile_dir / "Preferences").write_text("{}", encoding="utf-8")
     descriptor = BrowserDescriptor(
-        browser_id="edge",
-        label="Edge",
-        icon_filename="images/browser.edge.png",
+        browser_id=browser_id,
+        label=browser_id.title(),
+        icon_filename=f"images/browser.{browser_id}.png",
         engine="chromium",
         user_data_dir=source_user_data_dir,
         profile_directory="Default",
-        channel="msedge",
+        channel=channel,
     )
     context = SimpleNamespace(close=lambda: None)
 

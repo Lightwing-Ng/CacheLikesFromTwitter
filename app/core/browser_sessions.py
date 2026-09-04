@@ -808,7 +808,7 @@ def launch_chromium_context(
         effective_headless = headless
         effective_background_window = background_window or (
             silent
-            and descriptor.browser_id == "edge"
+            and descriptor.browser_id in {"edge", "chrome"}
             and window_mode == CHROMIUM_WINDOW_MODE_OFFSCREEN
         )
         return playwright.chromium.launch_persistent_context(

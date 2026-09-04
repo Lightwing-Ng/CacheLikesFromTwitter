@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.61-codex.1
+Code version: v1.26.62-codex.1
 """
 
 from __future__ import annotations
@@ -3510,6 +3510,15 @@ def test_chatgpt_edge_recent_sessions_are_a_direct_scrollable_keyboard_list(
         )
         _assert_agent_session_source_menu_is_hit_testable(page)
 
+        page.reload(wait_until="domcontentloaded")
+        expect(page.locator("input[data-agent-session-mode]")).to_have_value("recent")
+        expect(page.locator("[data-agent-recent-session-url]")).to_have_value(first_session_url)
+        expect(
+            page.locator(
+                f'[data-agent-session-list="recent"] [data-agent-combobox-option="{first_session_url}"]'
+            )
+        ).to_have_attribute("aria-selected", "true")
+
         page.set_viewport_size({"width": 390, "height": 844})
         toggle = page.locator("#sidebar_toggle")
         if toggle.get_attribute("aria-expanded") != "true":
@@ -3746,6 +3755,7 @@ def test_agent_project_session_selection_loads_grok_response_immediately(
     project_url = "https://grok.com/project/grok-project?tab=conversations"
     session_url = "https://grok.com/project/grok-project?chat=grok-session"
     history_requests: list[str] = []
+    project_session_requests: list[str] = []
 
     def agent_payload() -> dict[str, object]:
         return {
@@ -3814,6 +3824,7 @@ def test_agent_project_session_selection_loads_grok_response_immediately(
         )
 
     def fulfill_project_sessions(route) -> None:
+        project_session_requests.append(route.request.url)
         route.fulfill(
             json={
                 "platform": "grok",
@@ -3908,6 +3919,20 @@ def test_agent_project_session_selection_loads_grok_response_immediately(
         )
         assert len(history_requests) == 1
         assert "conversation_url=" in history_requests[0]
+
+        page.reload(wait_until="domcontentloaded")
+        expect(page.locator("input[data-agent-session-mode]")).to_have_value("project")
+        expect(page.locator("[data-agent-project-url]")).to_have_value(project_url)
+        expect(page.locator("[data-agent-project-session-url]")).to_have_value(session_url)
+        expect(page.locator("[data-agent-session-list=\"projects\"] [data-agent-combobox-selected-label]")).to_have_text(
+            "Grok project"
+        )
+        expect(page.locator("[data-agent-session-list=\"project-sessions\"] [data-agent-combobox-selected-label]")).to_have_text(
+            "Renamed project session"
+        )
+        expect(page.locator("#agent_response_question")).to_have_text("What changed?")
+        assert len(project_session_requests) == 2
+        assert len(history_requests) == 2
     finally:
         context.close()
 

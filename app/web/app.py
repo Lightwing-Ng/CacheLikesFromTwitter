@@ -1503,11 +1503,13 @@ def create_app(
             platform = str(snapshot.get("platform", computer_use_settings.settings.platform))
             browser = str(snapshot.get("browser", computer_use_settings.settings.browser))
             target_url = str(snapshot.get("conversation_url", ""))
+            payload = request.get_json(silent=True) or {}
+            background = bool(payload.get("background", True))
             result = open_agent_in_browser(
                 platform,
                 browser,
                 target_url,
-                background=False,
+                background=background,
             )
         except (RuntimeError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409

@@ -581,9 +581,9 @@ selected provider's DOM directly. Passive source checks use a quiet, task-indepe
 ChatGPT source checks use a non-headless, backgrounded/offscreen context because ChatGPT's
 Cloudflare challenge rejects the headless clone with HTTP 403; this remains one bounded probe and
 does not surface a user-facing browser window.
-On macOS, an executing Edge task uses one normal, non-offscreen task-owned window, rather than a
+On macOS, an executing Edge or Chrome task uses one normal, non-offscreen task-owned window, rather than a
 full-display or permanently hidden window. It is restored to the normal macOS window state and the previous
-foreground app is restored if Edge took focus, leaving the task window available for the user to
+foreground app is restored if the browser took focus, leaving the task window available for the user to
 inspect through macOS window management. macOS ultimately determines Stage Manager grouping.
 The user's original profile is never opened for writing. Chromium still suppresses first-run,
 crash, notification, and repost prompts; a normal task exit closes the isolated context and removes

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.92.6-codex.1
+# Code version: v1.92.7-codex.1
 
 from __future__ import annotations
 
@@ -970,7 +970,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.1-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.5-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.28.13-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.28.14-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
         self.assertIn('data-agent-compute-job-stop', local_body)
         self.assertIn('data-agent-effort-field', local_body)
@@ -1638,7 +1638,7 @@ class WebAppTests(unittest.TestCase):
             "application": "Microsoft Edge",
             "url": "https://chatgpt.com/c/current-session",
             "targeted_conversation": True,
-            "background": False,
+            "background": True,
         }
 
         with patch.object(agent_service, "snapshot", return_value=snapshot):
@@ -1660,7 +1660,7 @@ class WebAppTests(unittest.TestCase):
             "chatgpt",
             "edge",
             "https://chatgpt.com/c/current-session",
-            background=False,
+            background=True,
         )
 
     def test_agent_sidebar_log_and_chat_composer_keep_runtime_targets_in_sync(self) -> None:
@@ -1760,7 +1760,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.28.13-codex.1',
+            'computer-use-agent-v3.28.14-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'agent-effort-refresh-label">Refresh options</span>',
@@ -1783,6 +1783,9 @@ class WebAppTests(unittest.TestCase):
                 self.assertIn(fragment, body)
         self.assertIn('function syncSessionModeTrigger()', script)
         self.assertIn('syncComboboxTriggerFromOption(combobox, option)', script)
+        self.assertIn('window.localStorage.getItem(sessionSelectionCacheKey())', script)
+        self.assertIn('function restoreRememberedSessionSelection()', script)
+        self.assertIn('void restoreRememberedProjectSession(remembered, remembered.project_url)', script)
         self.assertIn('const isDirectList = combobox.dataset.agentDirectList === "true"', script)
         self.assertIn("selectedOption?.dataset.agentComboboxLabel", script)
         self.assertIn('function verifiedChatgptEffortCatalog()', script)

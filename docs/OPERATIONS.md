@@ -39,7 +39,7 @@ to override it. A successful unlock is stored in the signed Flask session for th
 - Passive Agent checks use a quiet, isolated Chromium context. ChatGPT source checks use a
   non-headless, backgrounded/offscreen context because the provider's Cloudflare challenge rejects
   headless clones with HTTP 403; this remains one bounded probe and does not surface a user-facing
-  browser window. On macOS, an executing Edge task uses
+  browser window. On macOS, an executing Edge or Chrome task uses
   one non-offscreen, task-owned temporary window that is restored to a normal window state; if it
   takes focus, the previous foreground app is restored. macOS decides whether it appears in
   Stage Manager. It never writes to the user's normal profile. First-run, crash, notification,

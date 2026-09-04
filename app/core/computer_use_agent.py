@@ -1232,7 +1232,7 @@ def open_agent_in_browser(
     browser: str = "edge",
     target_url: str = "",
     *,
-    background: bool = False,
+    background: bool = True,
 ) -> dict[str, Any]:
     """Open one trusted Web Agent target in the explicitly selected browser."""
     selected_platform = str(platform or DEFAULT_AGENT_PLATFORM).strip().lower()
@@ -6234,9 +6234,12 @@ def run_web_computer_use(
                 event_chain=event_chain,
             )
 
-    task_stage_window = settings.browser == "edge" and sys.platform == "darwin"
+    task_stage_window = settings.browser in {"edge", "chrome"} and sys.platform == "darwin"
     previous_frontmost_application = (
         _capture_macos_frontmost_application() if task_stage_window else ""
+    )
+    task_browser_application = (
+        "Google Chrome" if settings.browser == "chrome" else "Microsoft Edge"
     )
     with sync_playwright_or_error() as playwright:
         with launch_chromium_context(
@@ -6245,7 +6248,7 @@ def run_web_computer_use(
             headless=False,
             clone_profile_first=True,
             background_window=True,
-            silent=settings.browser == "edge",
+            silent=task_stage_window,
             window_mode=(
                 CHROMIUM_WINDOW_MODE_TASK_STAGE
                 if task_stage_window
@@ -6261,7 +6264,7 @@ def run_web_computer_use(
                 if task_stage_window:
                     _restore_macos_frontmost_application_after_task_stage(
                         previous_frontmost_application,
-                        "Microsoft Edge",
+                        task_browser_application,
                     )
             if should_stop():
                 return stopped_result
@@ -6428,6 +6431,24 @@ def _chatgpt_fresh_navigation_allowed(expected_url: str, current_url: str) -> bo
         project_prefix = expected_path[: -len("/project")]
         if re.fullmatch(re.escape(project_prefix) + r"/c/[^/]+/?", current_path, re.IGNORECASE):
             return True
+    return False
+
+
+def _chatgpt_is_project_surface(page: Any = None, session_type: str = "") -> bool:
+    """Return True if running within a ChatGPT Project (where no effort slider exists)."""
+    if str(session_type or "").strip().lower() == "project":
+        return True
+    try:
+        url = page if isinstance(page, str) else str(getattr(page, "url", "") or "").strip()
+        if url:
+            parsed = urlsplit(url)
+            host = (parsed.hostname or "").lower()
+            if not host or host in CHATGPT_HOSTS:
+                path = (parsed.path or "").lower()
+                if path.startswith("/g/"):
+                    return True
+    except Exception:
+        pass
     return False
 
 
@@ -7365,7 +7386,7 @@ def _send_cdp_window_bounds(
 
 
 def _keep_task_stage_window_available(page: Any) -> None:
-    """Keep the owned Edge clone in a normal window without activating it."""
+    """Keep the owned Chromium clone in a normal window without activating it."""
     context = getattr(page, "context", None)
     session = None
     try:
@@ -7862,12 +7883,14 @@ def _run_web_action_loop(
             should_stop=should_stop,
             availability_check=provider_availability_check,
             chatgpt_effort=settings.chatgpt_effort,
+            session_type=session_type,
         )
     )
     run_with_provider_availability(session_binding.check)
     if (
         platform == "chatgpt"
         and model_selected
+        and not _chatgpt_is_project_surface(page, session_type)
         and not bool(model_observation.get("effort_catalog_complete"))
     ):
         # Every ChatGPT model path must prove the current subscription slider.
@@ -10404,6 +10427,8 @@ def _chatgpt_select_subscription_effort(
         current_state = (
             _chatgpt_effort_slider_state(slider) if slider is not None else None
         )
+        if current_state is None:
+            return finish(complete=False, error="effort-slider-unreadable")
         if not range_is_stable(current_state):
             return finish(complete=False, error="effort-range-changed")
         if current_state["now"] != position:
@@ -10474,6 +10499,8 @@ def _chatgpt_select_subscription_effort(
             wait_budget=slider_bind_wait_budget,
         )
         final_state = _chatgpt_effort_slider_state(slider) if slider is not None else None
+        if final_state is None:
+            return finish(complete=False, error="effort-slider-unreadable")
         if not range_is_stable(final_state):
             return finish(complete=False, error="effort-range-changed")
         if final_state["now"] != state["min"]:
@@ -10500,6 +10527,8 @@ def _chatgpt_select_subscription_effort(
             final_state = (
                 _chatgpt_effort_slider_state(slider) if slider is not None else None
             )
+            if final_state is None:
+                return finish(complete=False, error="effort-slider-unreadable")
             if not range_is_stable(final_state):
                 return finish(complete=False, error="effort-range-changed")
             if final_state["now"] != position:
@@ -10520,6 +10549,8 @@ def _chatgpt_select_subscription_effort(
         if post_menu_slider is not None
         else None
     )
+    if post_menu_state is None:
+        return finish(complete=False, error="effort-slider-unreadable")
     if not range_is_stable(post_menu_state):
         return finish(complete=False, error="effort-range-changed")
     if post_menu_state["now"] != target_position:
@@ -10624,14 +10655,18 @@ def _select_chatgpt_model_chromium(
     observation: dict[str, Any] | None = None,
     should_stop: Callable[[], bool] | None = None,
     thinking_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST,
+    session_type: str = "",
 ) -> bool:
     """Use trusted Playwright clicks, then read back the remote Chromium model."""
     wait_for_timeout = getattr(page, "wait_for_timeout", lambda _milliseconds: None)
     model_labels = _chatgpt_remote_model_labels(option, remote_labels)
     requested_thinking_effort = normalize_chatgpt_effort(thinking_effort)
+    is_project = _chatgpt_is_project_surface(page, session_type)
 
     def effort_selection_failed(catalog_complete: bool) -> bool:
-        """Require a complete live catalog for every ChatGPT execution request."""
+        """Require a complete live catalog for every ChatGPT execution request except Project surfaces."""
+        if is_project:
+            return False
         return not catalog_complete
 
     def result_matches_target(result_payload: dict[str, Any], current_value: str) -> bool:
@@ -10691,6 +10726,11 @@ def _select_chatgpt_model_chromium(
 
     def select_effort_catalog(result_payload: dict[str, Any]) -> tuple[dict[str, Any], list[str], bool]:
         """Restrict menu sliders to the exact model trigger selected for this run."""
+        if is_project:
+            project_result = dict(result_payload)
+            project_result["effort_catalog_complete"] = True
+            project_result.pop("effort_selection_error", None)
+            return project_result, [], True
         return _chatgpt_select_subscription_effort(
             page,
             result_payload,
@@ -11077,6 +11117,7 @@ def _select_chatgpt_model(
     observation: dict[str, Any] | None = None,
     should_stop: Callable[[], bool] | None = None,
     thinking_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST,
+    session_type: str = "",
 ) -> bool:
     """Select and read back the requested ChatGPT model before any project upload."""
     selected_model = str(model or DEFAULT_CHATGPT_MODEL).strip().lower()
@@ -11097,15 +11138,29 @@ def _select_chatgpt_model(
             or result_payload.get("current")
             or ""
         ).strip()
+        available_values = [
+            str(item).strip()
+            for item in (result_payload.get("available") or [])
+            if str(item).strip()
+        ]
+        if _chatgpt_is_project_surface(page, session_type):
+            _record_model_observation(
+                observation,
+                observed=current,
+                available=available_values or ([current] if current else []),
+                thinking_effort="",
+                available_efforts=[],
+                effort_catalog_complete=True,
+                attempted_labels=remote_labels,
+                menu_text=current,
+                reason="",
+            )
+            return True
         verification_payload = {
             "ok": True,
             "current": current,
             "selected_model": current,
-            "available": [
-                str(item).strip()
-                for item in (result_payload.get("available") or [])
-                if str(item).strip()
-            ],
+            "available": available_values,
             "thinking_effort": None,
         }
         verified_payload, effort_labels, catalog_complete = _chatgpt_select_subscription_effort(
@@ -11147,6 +11202,7 @@ def _select_chatgpt_model(
                 observation=attempt_observation,
                 should_stop=should_stop,
                 thinking_effort=thinking_effort,
+                session_type=session_type,
             )
             if result or attempt_observation.get("reason") not in {
                 "model-menu-unreadable",
@@ -11897,6 +11953,7 @@ def _select_web_model(
     should_stop: Callable[[], bool] | None = None,
     availability_check: Callable[[], bool | tuple[bool, float]] | None = None,
     chatgpt_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST,
+    session_type: str = "",
 ) -> bool:
     """Select a provider model when its page exposes a compatible model menu."""
     if platform == "chatgpt":
@@ -11907,6 +11964,7 @@ def _select_web_model(
             observation,
             should_stop=should_stop,
             thinking_effort=chatgpt_effort,
+            session_type=session_type,
         )
     options = _platform_model_options(platform)
     option = next((candidate for candidate in options if candidate["key"] == model), None)

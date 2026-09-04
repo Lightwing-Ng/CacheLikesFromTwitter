@@ -62,6 +62,7 @@ from app.core.computer_use_agent import (
     _detect_browser_interruption,
     default_model_for_platform,
     strongest_model_option,
+    _chatgpt_is_project_surface,
     _chatgpt_target_is_open,
     _grok_existing_conversation_urls,
     _web_target_is_open,
@@ -1773,6 +1774,183 @@ def test_chatgpt_checked_sol_without_slider_fails_closed() -> None:
     assert observation.get("available") == ["Medium", "GPT-5.6 Sol", "GPT-5.5"]
 
 
+def test_chatgpt_is_project_surface_detection() -> None:
+    assert _chatgpt_is_project_surface(session_type="project") is True
+    assert _chatgpt_is_project_surface(session_type="fresh") is False
+    assert _chatgpt_is_project_surface(session_type="") is False
+    assert _chatgpt_is_project_surface("https://chatgpt.com/g/g-p-6a978edb95308191a53d2bb113154c10-worthward/project") is True
+    assert _chatgpt_is_project_surface("https://chatgpt.com/g/g-p-123/c/456") is True
+    assert _chatgpt_is_project_surface("https://chatgpt.com/") is False
+    assert _chatgpt_is_project_surface("https://chatgpt.com/c/123") is False
+
+
+def test_chatgpt_project_surface_verifies_sol_without_effort_slider() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.click_count = 0
+            self.expanded = False
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _Page:
+        def __init__(self) -> None:
+            self.url = "https://chatgpt.com/g/g-p-6a978edb95308191a53d2bb113154c10-worthward/project"
+            self.power = _PowerLocator()
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            if role == "button" and name == "GPT-5.6 Sol" and exact is True:
+                return self.power
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "current:" in expression or "selected_model:" in expression:
+                return {
+                    "ok": True,
+                    "current": "GPT-5.6 Sol",
+                    "selected_model": "GPT-5.6 Sol",
+                    "available": ["GPT-5.6 Sol", "GPT-5.5"],
+                    "thinking_effort": None,
+                }
+            return {"buttons": [], "candidate_buttons": ["GPT-5.6 Sol"], "menus": ["menu"]}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        observation,
+    ) is True
+    assert observation["observed"] == "GPT-5.6 Sol"
+    assert observation["effort_catalog_complete"] is True
+    assert observation.get("reason") == ""
+    assert observation.get("available") == ["GPT-5.6 Sol", "GPT-5.5"]
+
+
+def test_chatgpt_project_session_type_verifies_sol_without_effort_slider() -> None:
+    class _EmptyLocator:
+        def count(self) -> int:
+            return 0
+
+    class _PowerLocator:
+        def __init__(self) -> None:
+            self.click_count = 0
+            self.expanded = False
+
+        def count(self) -> int:
+            return 1
+
+        def nth(self, index: int) -> "_PowerLocator":
+            assert index == 0
+            return self
+
+        def is_visible(self) -> bool:
+            return True
+
+        def get_attribute(self, name: str, **_kwargs: object) -> str | None:
+            if name == "aria-expanded":
+                return "true" if self.expanded else "false"
+            if name == "aria-haspopup":
+                return "menu"
+            return None
+
+        def click(self, **_kwargs: object) -> None:
+            self.click_count += 1
+            self.expanded = not self.expanded
+
+    class _Page:
+        def __init__(self) -> None:
+            self.url = "https://chatgpt.com/"
+            self.power = _PowerLocator()
+
+        def get_by_role(
+            self,
+            role: str,
+            name: str | None = None,
+            exact: bool | None = None,
+        ) -> _PowerLocator | _EmptyLocator:
+            if role == "button" and name == "GPT-5.6 Sol" and exact is True:
+                return self.power
+            return _EmptyLocator()
+
+        def locator(self, _selector: str) -> _EmptyLocator:
+            return _EmptyLocator()
+
+        def evaluate(self, expression: str, *_args: object) -> dict[str, object]:
+            if "current:" in expression or "selected_model:" in expression:
+                return {
+                    "ok": True,
+                    "current": "GPT-5.6 Sol",
+                    "selected_model": "GPT-5.6 Sol",
+                    "available": ["GPT-5.6 Sol", "GPT-5.5"],
+                    "thinking_effort": None,
+                }
+            return {"buttons": [], "candidate_buttons": ["GPT-5.6 Sol"], "menus": ["menu"]}
+
+        def wait_for_timeout(self, _milliseconds: int) -> None:
+            return None
+
+    page = _Page()
+    observation: dict[str, object] = {}
+
+    assert _select_chatgpt_model(
+        page,
+        "chromium",
+        DEFAULT_CHATGPT_MODEL,
+        observation,
+        session_type="project",
+    ) is True
+    assert observation["observed"] == "GPT-5.6 Sol"
+    assert observation["effort_catalog_complete"] is True
+
+    obs_web: dict[str, object] = {}
+    assert _select_web_model(
+        page,
+        "chromium",
+        "chatgpt",
+        DEFAULT_CHATGPT_MODEL,
+        obs_web,
+        session_type="project",
+    ) is True
+    assert obs_web["observed"] == "GPT-5.6 Sol"
+    assert obs_web["effort_catalog_complete"] is True
+
+
 def test_chatgpt_clicks_sol_but_rejects_missing_effort_slider() -> None:
     class _EmptyLocator:
         def count(self) -> int:
@@ -3033,6 +3211,66 @@ def test_open_agent_in_browser_opens_chatgpt_quietly_in_edge(
     ]
 
 
+def test_open_agent_in_browser_defaults_to_background_quietly_for_safari_and_chrome(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    launched: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **options: launched.append((command, options)),
+    )
+
+    chrome_result = open_agent_in_browser(
+        "chatgpt",
+        "chrome",
+        "https://chatgpt.com/c/session-chrome",
+    )
+    assert chrome_result["background"] is True
+    assert chrome_result["application"] == "Google Chrome"
+
+    safari_result = open_agent_in_browser(
+        "chatgpt",
+        "safari",
+        "https://chatgpt.com/c/session-safari",
+    )
+    assert safari_result["background"] is True
+    assert safari_result["application"] == "Safari"
+
+    assert len(launched) == 2
+    chrome_cmd, _ = launched[0]
+    assert 'tell application "Google Chrome"' in chrome_cmd
+    assert "set handoffWindow to make new window" in chrome_cmd
+    safari_cmd, _ = launched[1]
+    assert safari_cmd == ["/usr/bin/open", "-g", "-a", "Safari", "https://chatgpt.com/c/session-safari"]
+
+
+def test_open_agent_in_browser_accepts_explicit_foreground(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    launched: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **options: launched.append((command, options)),
+    )
+
+    result = open_agent_in_browser(
+        "chatgpt",
+        "safari",
+        "https://chatgpt.com/c/session-foreground",
+        background=False,
+    )
+    assert result["background"] is False
+    assert launched[0][0] == ["/usr/bin/open", "-a", "Safari", "https://chatgpt.com/c/session-foreground"]
+
+
 def test_host_operating_system_detection_uses_supported_host_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     import app.core.computer_use_agent as computer_use_agent
 
@@ -4052,9 +4290,18 @@ def test_stop_during_browser_startup_never_enters_the_action_loop(
     assert context_exited == [True]
 
 
+@pytest.mark.parametrize(
+    ("browser_name", "expected_app"),
+    (
+        ("edge", "Microsoft Edge"),
+        ("chrome", "Google Chrome"),
+    ),
+)
 def test_chromium_agent_selects_the_provider_tab_before_navigation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    browser_name: str,
+    expected_app: str,
 ) -> None:
     import app.core.computer_use_agent as computer_use_agent
 
@@ -4107,7 +4354,7 @@ def test_chromium_agent_selects_the_provider_tab_before_navigation(
     context_path.write_text("context", encoding="utf-8")
     settings = ComputerUseSettings(
         workspace_path=str(workspace),
-        browser="edge",
+        browser=browser_name,
         platform="gemini",
         model="gemini-3.1-pro",
         target_url="https://gemini.google.com/app",
@@ -4116,7 +4363,7 @@ def test_chromium_agent_selects_the_provider_tab_before_navigation(
     monkeypatch.setattr(
         computer_use_agent,
         "browser_descriptors",
-        lambda _config: {"edge": _Descriptor()},
+        lambda _config: {browser_name: _Descriptor()},
     )
     monkeypatch.setattr(
         computer_use_agent,
@@ -4169,7 +4416,7 @@ def test_chromium_agent_selects_the_provider_tab_before_navigation(
     assert launch_options[0]["headless"] is False
     assert launch_options[0]["background_window"] is True
     assert launch_options[0]["silent"] is True
-    assert restored_frontmost_apps == [("WeChat", "Microsoft Edge")]
+    assert restored_frontmost_apps == [("WeChat", expected_app)]
 
 
 def test_running_false_is_published_after_context_cleanup_and_sleep_release(

@@ -337,9 +337,9 @@ Passive Agent bootstrap checks use quiet, task-independent Chromium contexts. Ch
 checks use a non-headless, backgrounded/offscreen context because its Cloudflare challenge rejects
 the headless clone with HTTP 403; this remains one bounded probe and does not surface a user-facing
 browser window. On macOS, an executing
-Edge task clones the selected profile into one normal, non-offscreen task-owned window so the user can
+Edge or Chrome task clones the selected profile into one normal, non-offscreen task-owned window so the user can
 choose to inspect it through macOS window management without an automatic full-display takeover.
-The launcher restores the prior foreground app if Edge took focus; macOS controls any Stage Manager
+The launcher restores the prior foreground app if the browser took focus; macOS controls any Stage Manager
 grouping. Chromium suppresses browser prompts and cleans the task-owned profile on exit. Stale
 cleanup is restricted to abandoned application-prefixed temporary directories older than 24 hours;
 the user's normal browser profile and unrelated temporary paths are not modified.
