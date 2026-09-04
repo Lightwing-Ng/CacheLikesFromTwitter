@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.54.6-codex.1`
+Documentation version: `v3.54.7-codex.1`
 
 ## Purpose
 
@@ -571,7 +571,10 @@ different limits or attachment behavior, so the controller requires a visible ex
 readback before claiming an attachment and otherwise falls back to bounded controller observations.
 
 Windows uses the same complete action schema and file-action boundary with native Windows paths, a new process group, an
-absolute System32 `taskkill /T /F` fallback, and Edge or Chrome Chromium sessions. This round's
+absolute System32 `taskkill /T /F` fallback, and Edge or Chrome Chromium sessions. Explicit Edge and Chrome handoffs
+resolve an installed browser executable rather than relying on `PATH`; the default-browser helpers continue to use
+Windows URL association. Chromium session probes serialize the complete synchronous Playwright lifecycle, including
+context cleanup, so independent Flask worker threads do not enter that lifecycle concurrently. This round's
 Windows process-tree contract is covered statically and by mocks, not by a real Windows end-to-end
 run. If a Windows group leader exits before its descendants, `taskkill` is best effort rather than
 the strict Job Object completion barrier required for hostile child processes. Safari remains
@@ -595,6 +598,11 @@ window on success, stop, failure, or exception. Safari remains available only fo
 session flows. Claude requires Edge or Chrome. If Claude renders an
 account suspension, ban, deactivation, or other restricted-state message, the readiness card reports
 that state and does not attempt a login bypass.
+
+When an Agent browser status is not signed in, the status card exposes an `Open <Browser> to sign in`
+action. It opens the selected browser visibly at the provider home page; the user must then choose the
+existing recheck action to verify the new session. It does not assume that opening the browser completed sign-in
+and does not add automatic login polling. Windows runtime behavior for this workflow remains not locally verified.
 
 Chromium cleanup treats only the known Playwright already-closed and driver-disconnected close
 errors as an idempotent second close, while still removing the temporary profile. Unexpected

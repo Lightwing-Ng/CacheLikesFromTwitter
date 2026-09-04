@@ -1,6 +1,6 @@
-{# Code version: v1.3.1-codex.1 #}
+{# Code version: v1.3.2-codex.1 #}
 
-{% macro render_browser_session_status(empty_message="No signed-in account detected", ready_label="Ready", terminal_execution=none, account_label="", compact=false, hide_ready_message=false) -%}
+{% macro render_browser_session_status(empty_message="No signed-in account detected", ready_label="Ready", terminal_execution=none, account_label="", compact=false, hide_ready_message=false, login_action=false) -%}
 <div
     class="browser-session-status-card{% if compact %} browser-session-status-card-compact{% endif %}"
     data-role="browser-session-status"
@@ -15,6 +15,20 @@
                 <span class="suggestion-loading-spinner browser-session-status-spinner" data-role="browser-session-spinner" aria-hidden="true" hidden></span>
                 <strong class="browser-session-status-account" data-role="browser-session-account">{{ account_label ~ " account" if account_label else empty_message }}</strong>
             </div>
+            {% if login_action %}
+            <button
+                type="button"
+                class="secondary-button browser-session-login-button"
+                data-role="browser-session-login"
+                hidden
+            >Open browser to sign in</button>
+            <p
+                class="browser-session-login-message"
+                data-role="browser-session-login-message"
+                aria-live="polite"
+                hidden
+            ></p>
+            {% endif %}
             {% if not compact %}
             <p class="browser-session-status-message" data-role="browser-session-message" hidden></p>
             {% endif %}

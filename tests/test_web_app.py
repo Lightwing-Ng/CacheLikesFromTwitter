@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.92.7-codex.1
+# Code version: v1.92.8-codex.1
 
 from __future__ import annotations
 
@@ -466,7 +466,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.5-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.6-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -968,7 +968,7 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.1-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.5-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.6-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
         self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.28.14-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
@@ -1624,6 +1624,100 @@ class WebAppTests(unittest.TestCase):
         self.assertEqual(response.get_json(), opened)
         self.assertEqual(remote_response.status_code, 403)
         launch.assert_called_once_with("macos")
+
+    def test_browser_session_login_route_is_local_and_uses_canonical_selection(self) -> None:
+        app = create_app()
+        opened = {
+            "opened": True,
+            "platform": "chatgpt",
+            "browser": "edge",
+            "application": "Microsoft Edge",
+            "url": "https://chatgpt.com/",
+            "background": False,
+        }
+
+        with patch("app.web.app.open_browser_for_login", return_value=opened) as open_login:
+            with app.test_client() as client:
+                response = client.post(
+                    "/api/browser-session/open-login",
+                    json={"platform": "chatgpt", "browser": "edge"},
+                )
+                remote_response = client.post(
+                    "/api/browser-session/open-login",
+                    json={"platform": "chatgpt", "browser": "edge"},
+                    environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
+                )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), opened)
+        self.assertEqual(remote_response.status_code, 403)
+        open_login.assert_called_once_with("chatgpt", "edge")
+
+    def test_browser_session_login_route_rejects_invalid_selection(self) -> None:
+        app = create_app()
+
+        with app.test_client() as client:
+            invalid_platform = client.post(
+                "/api/browser-session/open-login",
+                json={"platform": "unknown", "browser": "edge"},
+            )
+            invalid_browser = client.post(
+                "/api/browser-session/open-login",
+                json={"platform": "chatgpt", "browser": "firefox"},
+            )
+
+        self.assertEqual(invalid_platform.status_code, 400)
+        self.assertIn("Unsupported browser or platform", invalid_platform.get_json()["error"])
+        self.assertEqual(invalid_browser.status_code, 400)
+        self.assertIn("Unsupported browser or platform", invalid_browser.get_json()["error"])
+
+    def test_browser_session_login_route_reports_handoff_failure_and_external_guard(self) -> None:
+        app = create_app()
+        with patch(
+            "app.web.app.open_browser_for_login",
+            side_effect=RuntimeError("Microsoft Edge could not be found on this host."),
+        ) as open_login:
+            with app.test_client() as client:
+                failed = client.post(
+                    "/api/browser-session/open-login",
+                    json={"platform": "chatgpt", "browser": "edge"},
+                )
+
+        self.assertEqual(failed.status_code, 409)
+        self.assertIn("could not be found", failed.get_json()["error"])
+        open_login.assert_called_once_with("chatgpt", "edge")
+
+        isolated_app = create_app(agent_external_operations_enabled=False)
+        with patch("app.web.app.open_browser_for_login") as isolated_open_login:
+            with isolated_app.test_client() as client:
+                disabled = client.post(
+                    "/api/browser-session/open-login",
+                    json={"platform": "chatgpt", "browser": "edge"},
+                )
+
+        self.assertEqual(disabled.status_code, 409)
+        self.assertIn("External Agent operations are disabled", disabled.get_json()["error"])
+        isolated_open_login.assert_not_called()
+
+    def test_agent_browser_session_renders_the_explicit_login_action_contract(self) -> None:
+        app = create_app()
+        with app.test_client() as client:
+            response = client.get("/agent/edge/chatgpt")
+
+        body = response.get_data(as_text=True)
+        script = BROWSER_SESSION_STATUS_SCRIPT_PATH.read_text(encoding="utf-8")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('data-role="browser-session-login"', body)
+        self.assertIn('data-role="browser-session-login-message"', body)
+        for fragment in (
+            "payload.logged_in === false",
+            'fetch("/api/browser-session/open-login"',
+            'body: JSON.stringify({platform: requestPlatform, browser: requestBrowser})',
+            'loginButton.textContent = `Open ${browserLabel} to sign in`',
+            "loginButton.hidden = true",
+        ):
+            with self.subTest(fragment=fragment):
+                self.assertIn(fragment, script)
 
     def test_agent_conversation_route_opens_the_current_target_in_the_selected_browser(self) -> None:
         app = create_app()

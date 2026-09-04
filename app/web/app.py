@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.58.0-codex.1
+# Code version: v1.58.1-codex.1
 
 from __future__ import annotations
 
@@ -43,6 +43,7 @@ from app.core.agent import (
     normalize_agent_source_catalog_payload,
     normalize_agent_project_url,
     open_agent_in_browser,
+    open_browser_for_login,
     probe_and_collect_claude_sources,
     probe_and_collect_grok_sources,
     validate_computer_use_settings,
@@ -2470,6 +2471,30 @@ def create_app(
         except ValueError as exc:
             return browser_session_response({"error": str(exc)}, 400)
         return browser_session_response(payload)
+
+    @app.post("/api/browser-session/open-login")
+    def open_browser_session_login():
+        """Open the selected visible browser at its platform home for sign-in."""
+        require_local_agent_request()
+        payload = request.get_json(silent=True)
+        if not isinstance(payload, dict):
+            payload = {}
+        platform_name = str(payload.get("platform", "")).strip().lower()
+        browser_name = str(payload.get("browser", "")).strip().lower()
+        if (
+            not is_supported_agent_selection(browser_name, platform_name)
+            or browser_name not in available_agent_browser_keys()
+        ):
+            return jsonify({"error": "Unsupported browser or platform selection."}), 400
+        if not external_agent_operations_enabled():
+            return reject_external_agent_operation()
+        try:
+            result = open_browser_for_login(platform_name, browser_name)
+        except ValueError as exc:
+            return jsonify({"error": str(exc)}), 400
+        except RuntimeError as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(result)
 
     return app
 

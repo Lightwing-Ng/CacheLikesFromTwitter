@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.19.6-codex.1
+# Code version: v1.19.7-codex.1
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import logging
 import re
 import shutil
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -109,6 +110,7 @@ TASK_STAGE_CHROMIUM_WINDOW_ARGS = (
 )
 CHROMIUM_TEMP_PROFILE_STALE_AFTER_SECONDS = 24 * 60 * 60
 _ACTIVE_CHROMIUM_PROFILE_ROOTS: set[Path] = set()
+_PLAYWRIGHT_LAUNCH_LOCK = threading.Lock()
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,7 +215,7 @@ def probe_browser_session(
         else:
             result.update(_probe_chromium_grok_session(descriptor, silent=silent))
     except Exception as exc:  # pragma: no cover - depends on local browser state
-        result["message"] = str(exc)
+        result["message"] = f"{type(exc).__name__}: {exc}"
         return result
 
     if not result["message"]:
@@ -237,7 +239,7 @@ def _probe_claude_session(
             "account_name": "",
             "message": f"Claude Agent sessions require Edge or Chrome, not {descriptor.label}.",
         }
-    with sync_playwright_or_error() as playwright:
+    with _serialized_sync_playwright() as playwright:
         with launch_chromium_context(
             playwright,
             descriptor,
@@ -321,7 +323,7 @@ def _probe_gemini_session(
             goto_with_retry(page, GEMINI_HOME_URL, attempts=2, timeout_ms=60_000)
             snapshot = _wait_for_gemini_ready(page)
     elif descriptor.engine == "chromium":
-        with sync_playwright_or_error() as playwright:
+        with _serialized_sync_playwright() as playwright:
             with launch_chromium_context(
                 playwright,
                 descriptor,
@@ -361,7 +363,7 @@ def _probe_gemini_session(
 
 def _probe_chromium_x_session(descriptor: BrowserDescriptor) -> dict[str, Any]:
     """Probe an X session from a Chromium-family browser profile."""
-    with sync_playwright_or_error() as playwright:
+    with _serialized_sync_playwright() as playwright:
         with launch_chromium_context(
             playwright,
             descriptor,
@@ -387,7 +389,7 @@ def _probe_chromium_grok_session(
     silent: bool = False,
 ) -> dict[str, Any]:
     """Probe a Grok session from a Chromium-family browser profile."""
-    with sync_playwright_or_error() as playwright:
+    with _serialized_sync_playwright() as playwright:
         with launch_chromium_context(
             playwright,
             descriptor,
@@ -516,7 +518,7 @@ def _probe_chatgpt_session(
             )
             payload = _parse_chatgpt_auth_response(response.ok, response.text())
     elif descriptor.engine == "chromium":
-        with sync_playwright_or_error() as playwright:
+        with _serialized_sync_playwright() as playwright:
             with launch_chromium_context(
                 playwright,
                 descriptor,
@@ -620,6 +622,14 @@ def sync_playwright_or_error():
             f"Run `{setup_command}` with a supported Python 3.13 or 3.14 interpreter."
         )
     return sync_playwright()
+
+
+@contextlib.contextmanager
+def _serialized_sync_playwright():
+    """Run one complete synchronous Playwright lifecycle at a time."""
+    with _PLAYWRIGHT_LAUNCH_LOCK:
+        with sync_playwright_or_error() as playwright:
+            yield playwright
 
 
 def wait_for_x_page_ready(page, browser_label: str) -> None:
@@ -933,6 +943,8 @@ def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile
             try:
                 local_state_target.write_bytes(local_state.read_bytes())
             except PermissionError:
+                if is_windows_host():
+                    raise
                 LOGGER.warning(
                     "%s denied access to %s; continuing with the readable %s profile directory.",
                     "macOS" if is_macos_host() else "The host",
@@ -948,6 +960,11 @@ def clone_browser_profile(descriptor: BrowserDescriptor) -> tuple[Path, tempfile
                 f"macOS denied access to the {descriptor.label} profile at {denied_path}. "
                 "Open System Settings > Privacy & Security > Full Disk Access and enable "
                 "the Python 3.13 or 3.14 runtime used by agenticContext, then restart the cache service."
+            ) from exc
+        if is_windows_host():
+            raise RuntimeError(
+                f"Windows denied access to the {descriptor.label} profile at {denied_path}. "
+                "Close any running Edge or Chrome windows, then retry the browser session check."
             ) from exc
         raise
     except OSError:

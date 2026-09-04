@@ -1,4 +1,4 @@
-/* Code version: v1.8.5-codex.1 */
+/* Code version: v1.8.6-codex.1 */
 
 (() => {
     const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v6:";
@@ -91,6 +91,8 @@
         const statusMessage = root.querySelector('[data-role="browser-session-message"]');
         const statusSpinner = root.querySelector('[data-role="browser-session-spinner"]');
         const statusCheckmark = root.querySelector('[data-role="browser-session-checkmark"]');
+        const loginButton = root.querySelector('[data-role="browser-session-login"]');
+        const loginMessage = root.querySelector('[data-role="browser-session-login-message"]');
         const hideReadyMessage = statusCard?.dataset.browserSessionHideReadyMessage === "true";
         const startButtonSelector = root.dataset.startButtonSelector || "";
         const requiresDownloadReady = root.dataset.requireDownloadReady === "true";
@@ -101,6 +103,7 @@
         let activeBrowser = "";
         let lastPayload = null;
         let statusRequestRevision = 0;
+        let loginRequestRevision = 0;
 
         if (!platform || !statusCard || !statusAccount || !statusCheckmark) return null;
 
@@ -131,6 +134,98 @@
             statusCheckmark.hidden = false;
         }
 
+        function setLoginMessage(message) {
+            if (!loginMessage) return;
+            loginMessage.textContent = message || "";
+            loginMessage.hidden = !message;
+        }
+
+        function hideLoginAction() {
+            if (!loginButton) return;
+            loginButton.hidden = true;
+            loginButton.disabled = true;
+            loginButton.removeAttribute("aria-busy");
+            setLoginMessage("");
+        }
+
+        function setLoginAction(payload, browserId) {
+            if (!loginButton) return;
+            const shouldShow = Boolean(payload)
+                && payload.logged_in === false
+                && Boolean(browserId)
+                && Boolean(platform);
+            if (!shouldShow) {
+                hideLoginAction();
+                return;
+            }
+            const browserLabels = {edge: "Edge", chrome: "Chrome", safari: "Safari"};
+            const browserLabel = String(
+                payload.browser_label || browserLabels[browserId] || browserId,
+            ).trim();
+            loginButton.textContent = `Open ${browserLabel} to sign in`;
+            loginButton.hidden = false;
+            loginButton.disabled = false;
+            loginButton.removeAttribute("aria-busy");
+            setLoginMessage("");
+        }
+
+        async function openLoginBrowser() {
+            const requestPlatform = platform;
+            const requestBrowser = activeBrowser;
+            if (
+                !loginButton
+                || loginButton.hidden
+                || loginButton.disabled
+                || !requestPlatform
+                || !requestBrowser
+            ) return;
+            const requestRevision = ++loginRequestRevision;
+            loginButton.disabled = true;
+            loginButton.setAttribute("aria-busy", "true");
+            setLoginMessage("");
+            try {
+                const response = await fetch("/api/browser-session/open-login", {
+                    method: "POST",
+                    headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({platform: requestPlatform, browser: requestBrowser}),
+                    credentials: "same-origin",
+                });
+                const payload = await response.json();
+                if (!response.ok) {
+                    throw new Error(payload.error || `Request failed with ${response.status}.`);
+                }
+                if (
+                    requestRevision === loginRequestRevision
+                    && requestPlatform === platform
+                    && requestBrowser === activeBrowser
+                ) {
+                    setLoginMessage(
+                        payload.message
+                        || `Opened ${requestBrowser}. Sign in, then choose Recheck to verify the session.`,
+                    );
+                }
+            } catch (error) {
+                if (
+                    requestRevision === loginRequestRevision
+                    && requestPlatform === platform
+                    && requestBrowser === activeBrowser
+                ) {
+                    setLoginMessage(
+                        error instanceof Error ? error.message : "Could not open the sign-in browser.",
+                    );
+                }
+            } finally {
+                if (
+                    requestRevision === loginRequestRevision
+                    && requestPlatform === platform
+                    && requestBrowser === activeBrowser
+                ) {
+                    loginButton.disabled = false;
+                    loginButton.removeAttribute("aria-busy");
+                }
+            }
+        }
+
         function setStatus(payload, browserId) {
             lastPayload = payload;
             statusCard.hidden = false;
@@ -146,6 +241,7 @@
             if (statusSpinner) statusSpinner.hidden = true;
             showStatusCheckmark(isReady ? "ready" : "error");
             setStartButtonReady(isReady);
+            setLoginAction(payload, browserId);
             notify(payload, browserId, "ready");
         }
 
@@ -161,6 +257,7 @@
             }
             if (statusSpinner) statusSpinner.hidden = false;
             hideStatusCheckmark();
+            hideLoginAction();
             setStartButtonReady(false);
             notify({can_download: false, account_name: "", message: "Checking signed-in account..."}, browserId, "loading");
         }
@@ -171,6 +268,7 @@
             root.classList.add("is-browser-status-refreshing");
             if (statusSpinner) statusSpinner.hidden = false;
             hideStatusCheckmark();
+            hideLoginAction();
             notify(lastPayload || {can_download: false, account_name: "", message: "Refreshing signed-in account status..."}, browserId, "refreshing");
         }
 
@@ -184,6 +282,7 @@
             }
             if (statusSpinner) statusSpinner.hidden = true;
             hideStatusCheckmark();
+            hideLoginAction();
             setStartButtonReady(false);
             notify(null, "", "cleared");
         }
@@ -238,6 +337,10 @@
                 }, browserId);
             }
         }
+
+        loginButton?.addEventListener("click", () => {
+            void openLoginBrowser();
+        });
 
         const controller = {
             setBrowser(browserId) {

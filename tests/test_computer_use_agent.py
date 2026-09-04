@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.54.5-codex.1
+Code version: v3.54.6-codex.1
 """
 
 from __future__ import annotations
@@ -89,6 +89,7 @@ from app.core.computer_use_agent import (
     is_loopback_address,
     launch_terminal_authorization,
     open_agent_in_browser,
+    open_browser_for_login,
     open_chatgpt_in_default_browser,
     open_agent_in_default_browser,
     parse_agent_action,
@@ -104,6 +105,7 @@ from app.core.computer_use_agent import (
     validate_computer_use_settings,
     inspection_command_parts,
     resolve_agent_session_target,
+    resolve_windows_browser_executable,
     validate_inspection_command,
 )
 from app.core.agent.event_chain import AgentEventChain, new_run_id
@@ -3269,6 +3271,203 @@ def test_open_agent_in_browser_accepts_explicit_foreground(
     )
     assert result["background"] is False
     assert launched[0][0] == ["/usr/bin/open", "-a", "Safari", "https://chatgpt.com/c/session-foreground"]
+
+
+def test_open_agent_in_browser_windows_uses_resolved_executable_and_detached_flags(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    resolved_executable = str(tmp_path / "msedge.exe")
+    launched: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "win32")
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: True)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "resolve_windows_browser_executable",
+        lambda browser: resolved_executable if browser == "edge" else None,
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "CREATE_NEW_PROCESS_GROUP",
+        0x200,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "DETACHED_PROCESS",
+        0x8,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **options: launched.append((command, options)),
+    )
+
+    result = open_agent_in_browser("chatgpt", "edge", "https://chatgpt.com/")
+
+    assert result["opened"] is True
+    assert launched == [
+        (
+            [resolved_executable, "https://chatgpt.com/"],
+            {
+                "stdin": computer_use_agent.subprocess.DEVNULL,
+                "stdout": computer_use_agent.subprocess.DEVNULL,
+                "stderr": computer_use_agent.subprocess.DEVNULL,
+                "creationflags": 0x208,
+            },
+        )
+    ]
+    command = launched[0][0]
+    assert command[0] == resolved_executable
+    assert command[0] != "msedge.exe"
+    assert "cmd.exe" not in command
+    assert "/c" not in command
+    assert "start" not in command
+
+
+def test_open_agent_in_browser_windows_fails_without_a_resolved_executable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    launched: list[list[str]] = []
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "win32")
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: True)
+    monkeypatch.setattr(computer_use_agent, "resolve_windows_browser_executable", lambda _browser: None)
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **_options: launched.append(command),
+    )
+
+    with pytest.raises(RuntimeError, match="could not be found"):
+        open_agent_in_browser("chatgpt", "edge", "https://chatgpt.com/")
+
+    assert launched == []
+
+
+def test_resolve_windows_browser_executable_finds_edge_in_program_files_x86(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    expected = tmp_path / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path))
+    monkeypatch.setattr(Path, "is_file", lambda path: path == expected)
+
+    assert resolve_windows_browser_executable("edge") == str(expected)
+
+
+def test_resolve_windows_browser_executable_uses_registry_after_path_misses(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    registry_executable = tmp_path / "Chrome" / "Application" / "chrome.exe"
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "missing-x86"))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "missing"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "missing-local"))
+    monkeypatch.setattr(Path, "is_file", lambda path: path == registry_executable)
+    registry_calls: list[tuple[str, int]] = []
+
+    class RegistryKey:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return False
+
+    class FakeWinreg:
+        HKEY_LOCAL_MACHINE = object()
+        KEY_READ = 0x20019
+        KEY_WOW64_32KEY = 0x200
+        KEY_WOW64_64KEY = 0x100
+
+        def OpenKey(self, _root, key_path, _reserved, access):
+            registry_calls.append((key_path, access))
+            return RegistryKey()
+
+        def QueryValueEx(self, _key, value_name):
+            assert value_name == ""
+            return f'"{registry_executable}"', "REG_SZ"
+
+    monkeypatch.setitem(sys.modules, "winreg", FakeWinreg())
+
+    assert resolve_windows_browser_executable("chrome") == str(registry_executable)
+    assert registry_calls[0][0].endswith(r"App Paths\chrome.exe")
+    assert registry_calls[0][1] == FakeWinreg.KEY_READ | FakeWinreg.KEY_WOW64_32KEY
+
+
+def test_resolve_windows_browser_executable_returns_none_when_all_candidates_miss(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("ProgramFiles(x86)", str(tmp_path / "missing-x86"))
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "missing"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "missing-local"))
+    monkeypatch.setattr(Path, "is_file", lambda _path: False)
+
+    class RegistryKey:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            return False
+
+    class MissingWinreg:
+        HKEY_LOCAL_MACHINE = object()
+        KEY_READ = 0x20019
+        KEY_WOW64_32KEY = 0x200
+        KEY_WOW64_64KEY = 0x100
+
+        def OpenKey(self, *_args):
+            raise FileNotFoundError
+
+    monkeypatch.setitem(sys.modules, "winreg", MissingWinreg())
+
+    assert resolve_windows_browser_executable("edge") is None
+
+
+def test_open_browser_for_login_windows_uses_resolved_executable(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import app.core.computer_use_agent as computer_use_agent
+
+    resolved_executable = str(tmp_path / "chrome.exe")
+    launched: list[tuple[list[str], dict[str, object]]] = []
+    monkeypatch.setattr(computer_use_agent.sys, "platform", "win32")
+    monkeypatch.setattr(computer_use_agent, "is_windows_host", lambda: True)
+    monkeypatch.setattr(
+        computer_use_agent,
+        "resolve_windows_browser_executable",
+        lambda _browser: resolved_executable,
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "CREATE_NEW_PROCESS_GROUP",
+        0x200,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "DETACHED_PROCESS",
+        0x8,
+        raising=False,
+    )
+    monkeypatch.setattr(
+        computer_use_agent.subprocess,
+        "Popen",
+        lambda command, **options: launched.append((command, options)),
+    )
+
+    result = open_browser_for_login("chatgpt", "chrome")
+
+    assert result["opened"] is True
+    assert result["background"] is False
+    assert launched[0][0] == [resolved_executable, "https://chatgpt.com/"]
+    assert launched[0][1]["creationflags"] == 0x208
 
 
 def test_host_operating_system_detection_uses_supported_host_keys(monkeypatch: pytest.MonkeyPatch) -> None:

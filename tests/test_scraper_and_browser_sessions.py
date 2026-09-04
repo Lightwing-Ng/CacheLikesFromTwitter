@@ -1,11 +1,12 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.9-codex.1
+Code version: v1.6.10-codex.1
 """
 
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -195,6 +196,78 @@ def test_browser_session_parsers_do_not_require_live_browser_access() -> None:
         probe_browser_session("x", "firefox", CrawlConfig())
 
 
+def test_browser_probe_preserves_playwright_exception_class_in_status_message(macos_host) -> None:
+    class TargetClosedError(RuntimeError):
+        pass
+
+    with patch(
+        "app.core.browser_sessions._probe_chromium_x_session",
+        side_effect=TargetClosedError("Target page, context or browser has been closed"),
+    ):
+        result = probe_browser_session("x", "edge", CrawlConfig())
+
+    assert result["message"] == (
+        "TargetClosedError: Target page, context or browser has been closed"
+    )
+
+
+def test_sync_playwright_probe_lifecycle_is_serialized(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.core.browser_sessions as browser_sessions
+
+    active = 0
+    maximum_active = 0
+    state_lock = threading.Lock()
+    first_entered = threading.Event()
+    second_attempted = threading.Event()
+    second_entered = threading.Event()
+    release_first = threading.Event()
+
+    class FakePlaywrightLifecycle:
+        def __enter__(self):
+            nonlocal active, maximum_active
+            with state_lock:
+                active += 1
+                maximum_active = max(maximum_active, active)
+            return object()
+
+        def __exit__(self, _exc_type, _exc_value, _traceback):
+            nonlocal active
+            with state_lock:
+                active -= 1
+            return False
+
+    monkeypatch.setattr(
+        browser_sessions,
+        "sync_playwright_or_error",
+        lambda: FakePlaywrightLifecycle(),
+    )
+
+    def first_probe() -> None:
+        with browser_sessions._serialized_sync_playwright():
+            first_entered.set()
+            release_first.wait(timeout=2)
+
+    def second_probe() -> None:
+        second_attempted.set()
+        with browser_sessions._serialized_sync_playwright():
+            second_entered.set()
+
+    first_thread = threading.Thread(target=first_probe)
+    second_thread = threading.Thread(target=second_probe)
+    first_thread.start()
+    assert first_entered.wait(timeout=1)
+    second_thread.start()
+    assert second_attempted.wait(timeout=1)
+    assert not second_entered.wait(timeout=0.05)
+    release_first.set()
+    first_thread.join(timeout=1)
+    second_thread.join(timeout=1)
+
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert maximum_active == 1
+
+
 def test_background_chromium_launch_args_keep_the_window_offscreen() -> None:
     descriptor = BrowserDescriptor(
         browser_id="edge",
@@ -272,7 +345,7 @@ def test_gemini_browser_probe_fails_closed_when_the_current_region_is_unsupporte
     assert result["can_download"] is False
     assert result["account_name"] == ""
     assert result["message"] == (
-        "Gemini Web is not available in the selected browser's current region."
+        "RuntimeError: Gemini Web is not available in the selected browser's current region."
     )
     probe.assert_called_once()
 
@@ -593,6 +666,33 @@ def test_clone_browser_profile_reports_macos_profile_permission_error(
     monkeypatch.setattr("app.core.browser_sessions.is_macos_host", lambda: True)
     with patch("shutil.copytree", side_effect=PermissionError(1, "Operation not permitted", source_profile_dir)):
         with pytest.raises(RuntimeError, match="Full Disk Access"):
+            clone_browser_profile(descriptor)
+
+
+def test_clone_browser_profile_reports_windows_profile_permission_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_user_data_dir = tmp_path / "Edge"
+    source_profile_dir = source_user_data_dir / "Default"
+    source_profile_dir.mkdir(parents=True)
+    descriptor = BrowserDescriptor(
+        browser_id="edge",
+        label="Edge",
+        icon_filename="images/browser.edge.png",
+        engine="chromium",
+        user_data_dir=source_user_data_dir,
+        profile_directory="Default",
+        channel="msedge",
+    )
+
+    monkeypatch.setattr("app.core.browser_sessions.is_macos_host", lambda: False)
+    monkeypatch.setattr("app.core.browser_sessions.is_windows_host", lambda: True)
+    with patch(
+        "app.core.browser_sessions.shutil.copytree",
+        side_effect=PermissionError(1, "Access is denied", str(source_profile_dir)),
+    ):
+        with pytest.raises(RuntimeError, match="Close any running Edge or Chrome windows"):
             clone_browser_profile(descriptor)
 
 

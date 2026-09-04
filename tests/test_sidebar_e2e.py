@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.62-codex.1
+Code version: v1.26.63-codex.1
 """
 
 from __future__ import annotations
@@ -7404,6 +7404,75 @@ def test_agent_browser_status_retries_a_fresh_negative_cache_and_force_refreshes
             }"""
         )
         assert len(browser_status_requests) == 2
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("logged_in", (False, True))
+def test_agent_browser_status_login_action_matches_probe_state(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    logged_in: bool,
+) -> None:
+    browser_status = {
+        "platform": "chatgpt",
+        "browser": "edge",
+        "browser_label": "Edge",
+        "logged_in": logged_in,
+        "can_download": logged_in,
+        "account_name": "ChatGPT account" if logged_in else "",
+        "message": (
+            "Edge is ready for ChatGPT Web."
+            if logged_in
+            else "Edge is not signed in to ChatGPT."
+        ),
+        "agent_sources": _chatgpt_catalog_sessions(),
+    }
+    login_requests: list[dict[str, object]] = []
+
+    def fulfill_browser_session(route) -> None:
+        if route.request.method == "POST":
+            login_requests.append(route.request.post_data_json or {})
+            route.fulfill(
+                json={
+                    "opened": True,
+                    "platform": "chatgpt",
+                    "browser": "edge",
+                    "message": "Edge opened for sign-in.",
+                }
+            )
+            return
+        route.fulfill(json=browser_status)
+
+    context = disposable_browser.new_context(
+        viewport={"width": 1_280, "height": 720},
+        has_touch=False,
+        is_mobile=False,
+        reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route(
+        "**/api/agent/status",
+        lambda route: route.fulfill(json=_finished_chatgpt_agent_payload()),
+    )
+    page.route("**/api/browser-session**", fulfill_browser_session)
+    page.route(
+        "**/api/agent/sources**",
+        lambda route: route.fulfill(json=_chatgpt_catalog_sessions()),
+    )
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/chatgpt", wait_until="domcontentloaded")
+        login_button = page.locator('[data-role="browser-session-login"]')
+        if logged_in:
+            expect(login_button).to_be_hidden()
+        else:
+            expect(login_button).to_be_visible()
+            expect(login_button).to_have_text("Open Edge to sign in")
+            login_button.click()
+            expect(login_button).to_be_enabled()
+            assert login_requests == [{"platform": "chatgpt", "browser": "edge"}]
     finally:
         context.close()
 

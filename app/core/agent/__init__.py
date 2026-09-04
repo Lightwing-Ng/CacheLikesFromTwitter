@@ -1,6 +1,6 @@
 """Computer-use Agent boundary for access, source discovery, and execution."""
 
-# Code version: v1.6.1-codex.1
+# Code version: v1.6.2-codex.1
 
 from typing import TYPE_CHECKING
 
@@ -46,6 +46,7 @@ _COMPUTER_USE_EXPORTS = frozenset(
         "is_loopback_address",
         "launch_terminal_authorization",
         "open_agent_in_browser",
+        "open_browser_for_login",
         "validate_computer_use_settings",
     }
 )
@@ -62,6 +63,7 @@ if TYPE_CHECKING:
         is_loopback_address,
         launch_terminal_authorization,
         open_agent_in_browser,
+        open_browser_for_login,
         validate_computer_use_settings,
     )
 
@@ -106,6 +108,7 @@ __all__ = [
     "normalize_agent_source_catalog_payload",
     "normalize_agent_project_url",
     "open_agent_in_browser",
+    "open_browser_for_login",
     "probe_and_collect_claude_sources",
     "probe_and_collect_grok_sources",
     "validate_agent_access_password",
