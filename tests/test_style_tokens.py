@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.46-codex.1
+Code version: v1.51.47-codex.1
 """
 
 from pathlib import Path
@@ -1906,7 +1906,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.91.38-codex.1 */",
+        "/* Code version: v2.91.39-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -2489,13 +2489,16 @@ def test_agent_runtime_labels_use_the_sidebar_label_type_contract() -> None:
     label_rule = stylesheet[label_start:stylesheet.index("\n}", label_start)]
     assert "font-size: var(--font-ui-lg);" in label_rule
 
-    emphasis_selector = (
-        ".agent-runtime-form > label.field > .field-label,\n"
-        ".agent-runtime-form .agent-connect-fields > .field:nth-child(2) > .field-label {"
-    )
-    emphasis_start = stylesheet.index(emphasis_selector)
-    emphasis_rule = stylesheet[emphasis_start:stylesheet.index("\n}", emphasis_start)]
-    assert "font-weight: var(--font-weight-medium);" in emphasis_rule
+    project_selector = ".agent-runtime-form > label.field > .field-label {"
+    project_start = stylesheet.index(project_selector)
+    project_rule = stylesheet[project_start:stylesheet.index("\n}", project_start)]
+    assert "font-weight: var(--font-weight-medium);" in project_rule
+
+    browser_selector = ".agent-runtime-form .agent-connect-fields > .field:nth-child(2) > .field-label {"
+    browser_start = stylesheet.index(browser_selector)
+    browser_rule = stylesheet[browser_start:stylesheet.index("\n}", browser_start)]
+    assert "font-weight: var(--font-weight-regular);" in browser_rule
+    assert "font-weight: var(--font-weight-medium);" not in browser_rule
 
 
 def test_path_inputs_prefer_trailing_directories_when_narrow() -> None:

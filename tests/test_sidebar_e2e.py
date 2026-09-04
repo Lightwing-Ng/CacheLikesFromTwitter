@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.26.60-codex.1
+Code version: v1.26.61-codex.1
 """
 
 from __future__ import annotations
@@ -2080,7 +2080,7 @@ def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
-    """Verify shared label metrics while keeping the Current project name inline and wrappable."""
+    """Verify Agent sidebar labels preserve their scoped typography and wrapping contracts."""
     page, context = _open_page(
         disposable_browser,
         f"{sidebar_server_url}/agent",
@@ -2148,6 +2148,10 @@ def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
         assert project_name.evaluate(
             "element => element.parentElement.classList.contains('field-label')"
         )
+        browser_label = page.locator(
+            ".agent-runtime-form .agent-connect-fields > .field:nth-child(2) > .field-label"
+        )
+        expect(browser_label).to_have_text("Browser")
         for width, height in ((1_280, 900), (390, 844)):
             page.set_viewport_size({"width": width, "height": height})
             label_layout = project_label.evaluate(
@@ -2164,6 +2168,7 @@ def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
             )
             assert label_layout["whiteSpace"] == "normal"
             assert not label_layout["documentOverflow"]
+            assert browser_label.evaluate("element => getComputedStyle(element).fontWeight") == "400"
         assert project_name.evaluate("element => getComputedStyle(element).fontSize") == "17px"
     finally:
         context.close()
