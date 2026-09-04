@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.93.2-codex.1
+# Code version: v1.93.7-codex.1
 
 from __future__ import annotations
 
@@ -408,12 +408,12 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('class="cache-common-config"', gemini_body)
         self.assertIn('href="/settings#settings-downloads"', index_body)
         self.assertIn(">Open shared cache settings</a>", index_body)
-        for body in (grok_body, chatgpt_body):
+        for body, provider_label in ((grok_body, "Grok"), (chatgpt_body, "ChatGPT")):
             self.assertIn('href="/settings#settings-llm"', body)
-            self.assertIn(">Open LLM settings</a>", body)
+            self.assertIn(f">Open {provider_label} settings</a>", body)
             self.assertNotIn('class="cache-common-config', body)
         self.assertIn('href="/settings#settings-llm"', gemini_body)
-        self.assertIn(">Open LLM settings</a>", gemini_body)
+        self.assertIn(">Open Gemini settings</a>", gemini_body)
         self.assertIn('id="settings_llm_heading">LLM cache settings</h3>', settings_body)
         for field_name in (
             "gemini_max_conversations",
@@ -423,7 +423,7 @@ class WebAppTests(unittest.TestCase):
             with self.subTest(llm_setting=field_name):
                 self.assertIn(f'name="{field_name}"', settings_body)
         self.assertIn('href="/settings#settings-llm"', claude_body)
-        self.assertIn(">Open LLM settings</a>", claude_body)
+        self.assertIn(">Open Claude settings</a>", claude_body)
         self.assertIn("ChatGPT cache overview", chatgpt_body)
         self.assertIn("workspace-header cache-workspace-header", chatgpt_body)
         self.assertIn("cache-overview-title-card", chatgpt_body)
@@ -605,7 +605,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.21.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.92.2-codex.1"
+                expected_style_version = "style-v2.92.6-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -1007,7 +1007,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.1-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.6-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.29.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.29.1-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
         self.assertIn('data-agent-compute-job-stop', local_body)
         self.assertIn('data-agent-effort-field', local_body)
@@ -1052,15 +1052,18 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-error-record-content', local_body)
         self.assertIn('class="agent-error-record-scroll"', local_body)
         self.assertIn('data-agent-llm-settings-link', local_body)
+        self.assertIn('data-agent-provider-settings-label', local_body)
         self.assertIn('class="secondary-button agent-llm-settings-link"', local_body)
         self.assertIn('href="/settings#settings-llm"', local_body)
-        self.assertIn(">Open LLM settings</a>", local_body)
+        self.assertIn(">Open ChatGPT settings</a>", local_body)
+        self.assertNotIn("Open LLM settings", local_body)
 
         self.assertIn('class="agent-response-output"', local_body)
         self.assertIn('class="agent-response-question-header', local_body)
         self.assertIn('data-agent-response-question', local_body)
         self.assertIn('id="agent_response_question_header"', local_body)
         self.assertIn('data-browser-session-message-toggle', local_body)
+        self.assertEqual(local_body.count('class="browser-session-message-toggle agent-response-overflow-toggle"'), 1)
         self.assertIn('class="agent-response-answer browser-media-prompt-markdown', local_body)
         self.assertIn('class="global-quick-action-button agent-response-copy"', local_body)
         self.assertIn('data-agent-response-copy', local_body)
@@ -1891,7 +1894,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.29.0-codex.1',
+            'computer-use-agent-v3.29.1-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'agent-effort-refresh-label">Refresh options</span>',
@@ -2659,6 +2662,8 @@ class WebAppTests(unittest.TestCase):
             'lastBrowserStatus.can_download',
             'requestJson("/api/agent/preferences"',
             'selectedValue(".agent-os-combobox", elements.promptOs?.value || "macos")',
+            'providerSettingsLabel: document.querySelector("[data-agent-provider-settings-label]")',
+            'elements.providerSettingsLabel.textContent = `Open ${selectedPlatformLabel()} settings`;',
             'const sessionSourceChoice = trigger.closest(".agent-session-mode-combobox")',
             'trigger.disabled = !sessionSourceChoice',
             'event.key !== "Enter" || event.shiftKey || event.isComposing',
@@ -3429,7 +3434,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.92.2-codex.1", body)
+            self.assertIn("style-v2.92.6-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

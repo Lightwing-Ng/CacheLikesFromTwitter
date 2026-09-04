@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.27.2-codex.1
+Code version: v1.27.6-codex.1
 """
 
 from __future__ import annotations
@@ -629,6 +629,11 @@ def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
                     themeCenterY: centerY("#global_theme_toggle"),
                     summaryHeight: summaryRect.height,
                     summaryOverflow: summaryStyle.overflow,
+                    summaryBackgroundColor: summaryStyle.backgroundColor,
+                    summaryBorderWidth: summaryStyle.borderWidth,
+                    summaryBorderRadius: summaryStyle.borderRadius,
+                    summaryBoxShadow: summaryStyle.boxShadow,
+                    summaryBackdropFilter: summaryStyle.backdropFilter,
                     chipCount: document.querySelectorAll("#agent_phase_chip").length,
                     readinessCount: document.querySelectorAll(".agent-readiness").length,
                     primaryControlHeights: [
@@ -651,6 +656,11 @@ def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
         assert abs(desktop["headingCenterY"] - desktop["themeCenterY"]) <= 1
         assert desktop["summaryHeight"] < 120
         assert desktop["summaryOverflow"] == "visible"
+        assert desktop["summaryBackgroundColor"] == "rgba(0, 0, 0, 0)"
+        assert desktop["summaryBorderWidth"] == "0px"
+        assert desktop["summaryBorderRadius"] == "0px"
+        assert desktop["summaryBoxShadow"] == "none"
+        assert desktop["summaryBackdropFilter"] == "none"
         assert desktop["chipCount"] == 0
         assert desktop["readinessCount"] == 0
         assert desktop["primaryControlHeights"] == [36, 36]
@@ -667,6 +677,11 @@ def test_agent_title_rail_stays_aligned_with_global_anchors_across_viewports(
         assert abs(narrow["headingCenterY"] - narrow["themeCenterY"]) <= 1
         assert narrow["summaryHeight"] < 120
         assert narrow["summaryOverflow"] == "visible"
+        assert narrow["summaryBackgroundColor"] == "rgba(0, 0, 0, 0)"
+        assert narrow["summaryBorderWidth"] == "0px"
+        assert narrow["summaryBorderRadius"] == "0px"
+        assert narrow["summaryBoxShadow"] == "none"
+        assert narrow["summaryBackdropFilter"] == "none"
         assert narrow["chipCount"] == 0
         assert narrow["readinessCount"] == 0
         assert narrow["primaryControlHeights"] == [36, 36]
@@ -1434,6 +1449,12 @@ def test_cache_sidebars_reuse_the_chatgpt_base_contract(
         touch=False,
     )
     try:
+        cache_provider_labels = {
+            "chatgpt": "ChatGPT",
+            "claude": "Claude",
+            "gemini": "Gemini",
+            "grok": "Grok",
+        }
         for page_source in ("chatgpt", "claude", "gemini", "grok"):
             if page_source != "chatgpt":
                 page.goto(f"{sidebar_server_url}/cache/{page_source}", wait_until="domcontentloaded")
@@ -1447,6 +1468,12 @@ def test_cache_sidebars_reuse_the_chatgpt_base_contract(
             expect(aside.locator("[data-browser-session-panel]")).to_have_count(1)
             expect(aside.locator(".browser-session-panel-label")).to_have_text("Authorized browser")
             expect(aside.locator(".cache-settings-link")).to_have_count(1)
+            expected_settings_label = (
+                f"Open {cache_provider_labels[page_source]} settings"
+                if page_source in cache_provider_labels
+                else "Open shared cache settings"
+            )
+            expect(aside.locator(".cache-settings-link")).to_have_text(expected_settings_label)
             expect(aside.locator("[data-cache-action-row]")).to_have_count(1)
             expect(aside.locator("#start_button")).to_have_count(1)
             expect(aside.locator("#stop_button")).to_have_count(1)
@@ -3360,6 +3387,9 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
             f'.agent-platform-combobox [data-agent-combobox-option="{platform}"]'
         ).click()
         expect(page.get_by_role("button", name=f"Web service: {platform_label}", exact=True)).to_be_visible()
+        expect(page.locator("[data-agent-provider-settings-label]")).to_have_text(
+            f"Open {platform_label} settings"
+        )
 
         page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]").click()
         page.locator(
@@ -7358,11 +7388,8 @@ def test_agent_response_action_rail_survives_a_short_crowded_viewport(
         question_toggle = page.locator(
             ".agent-response-question-header .agent-response-overflow-toggle"
         )
-        answer_toggle = page.locator(
-            ".agent-response-answer-shell > .agent-response-overflow-toggle"
-        )
         expect(question_toggle).to_be_visible()
-        expect(answer_toggle).to_be_visible()
+        expect(page.locator(".agent-response-answer-shell > .agent-response-overflow-toggle")).to_have_count(0)
         expect(page.locator("[data-agent-open-conversation]")).to_be_visible()
         expect(page.locator("[data-agent-response-copy]")).to_be_visible()
 
@@ -7375,7 +7402,6 @@ def test_agent_response_action_rail_survives_a_short_crowded_viewport(
                     safari: '[data-agent-open-conversation]',
                     expand: '.agent-response-question-header .agent-response-overflow-toggle',
                     copy: '[data-agent-response-copy]',
-                    answerExpand: '.agent-response-answer-shell > .agent-response-overflow-toggle',
                     theme: '#global_theme_toggle',
                     };
                 const rect = value => {
@@ -7401,7 +7427,6 @@ def test_agent_response_action_rail_survives_a_short_crowded_viewport(
                     overlaps: {
                         safariExpand: overlap(boxes.safari, boxes.expand),
                         expandCopy: overlap(boxes.expand, boxes.copy),
-                        answerExpandCopy: overlap(boxes.answerExpand, boxes.copy),
                         questionExpand: overlap(boxes.question, boxes.expand),
                     },
                     horizontalOverflow: Math.max(
@@ -7421,7 +7446,7 @@ def test_agent_response_action_rail_survives_a_short_crowded_viewport(
         assert layout["boxes"]["expand"]["right"] == pytest.approx(
             layout["boxes"]["copy"]["right"], abs=1
         )
-        for action in ("safari", "expand", "copy", "answerExpand"):
+        for action in ("safari", "expand", "copy"):
             assert layout["boxes"][action]["right"] == pytest.approx(
                 layout["boxes"]["theme"]["right"], abs=1
             ), layout
@@ -7440,7 +7465,6 @@ def test_agent_response_action_rail_survives_a_short_crowded_viewport(
                     safari: '[data-agent-open-conversation]',
                     expand: '.agent-response-question-header .agent-response-overflow-toggle',
                     copy: '[data-agent-response-copy]',
-                    answerExpand: '.agent-response-answer-shell > .agent-response-overflow-toggle',
                 };
                 const rect = selector => {
                     const element = document.querySelector(selector);
@@ -8398,6 +8422,10 @@ def test_successful_agent_completion_collapses_activity_without_erasing_a_new_dr
         activity_panel.locator("summary").click()
         expect(activity_panel).to_have_js_property("open", True)
         expect(page.locator("#agent_activity_list")).to_be_visible()
+        activity_motion = page.locator("#agent_activity_list").evaluate(
+            "element => ({animationName: getComputedStyle(element).animationName})"
+        )
+        assert activity_motion["animationName"] == "agent-activity-gel-open"
         prompt.fill("A new task draft")
         page.wait_for_function(
             """() => window.performance.getEntriesByType('resource').filter((entry) =>

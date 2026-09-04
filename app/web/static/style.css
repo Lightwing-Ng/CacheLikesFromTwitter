@@ -1,4 +1,4 @@
-/* Code version: v2.92.2-codex.1 */
+/* Code version: v2.92.6-codex.1 */
 /*
  * Standalone faces are extracted from the approved TTC by scripts/build_web_fonts.py.
  * Collection URL fragments are not reliable face selectors in Chromium.
@@ -1161,7 +1161,7 @@ h2 {
 .cache-browser-session-trigger .browser-picker-selected-icon-shell {
     width: 18px;
     height: 18px;
-    border-radius: var(--radius-soft);
+    border-radius: var(--radius-pill);
 }
 
 .cache-source-switcher-trigger .browser-source-filter-mark {
@@ -1187,7 +1187,7 @@ h2 {
 .browser-picker-selected-icon-shell {
     width: 28px;
     height: 28px;
-    border-radius: var(--radius-soft);
+    border-radius: var(--radius-pill);
     background: color-mix(in srgb, var(--theme-color-white-adaptive) 72%, transparent);
     display: inline-flex;
     align-items: center;
@@ -3911,7 +3911,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-os-combobox .browser-picker-selected-icon-shell {
     width: 32px;
     height: 32px;
-    border-radius: var(--radius-soft);
+    border-radius: var(--radius-pill);
 }
 
 .agent-os-combobox .browser-picker-option-icon {
@@ -3996,6 +3996,15 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     padding: var(--workspace-title-rail-pad-block-start)
         var(--workspace-article-pad-inline)
         var(--workspace-article-pad-block-end);
+}
+
+.report-card.agent-summary-card {
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    box-shadow: none;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
 }
 
 .agent-summary-card > .report-heading-row {
@@ -4597,10 +4606,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     scroll-padding-bottom: calc(var(--local-store-pagination-slot-size) + 32px);
 }
 
-.agent-response-output:has(.agent-response-answer-shell.is-expanded) .agent-response-question-scroll {
-    max-height: var(--settings-round-icon-button-size);
-}
-
 .agent-response-answer-content {
     min-width: 0;
     display: flow-root;
@@ -4624,14 +4629,6 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 .agent-response-copy:disabled {
     cursor: not-allowed;
     opacity: 0.48;
-}
-
-.agent-response-answer-shell > .agent-response-overflow-toggle {
-    position: absolute;
-    right: 0;
-    bottom: 8px;
-    margin: 0;
-    z-index: var(--layer-control-affordance);
 }
 
 .browser-pagination.agent-response-pagination {
@@ -4711,6 +4708,12 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
     list-style: none;
     border-top: var(--frosted-glass-border);
     scrollbar-gutter: stable;
+}
+
+.agent-activity-panel[open] > .agent-activity-list {
+    animation: agent-activity-gel-open var(--motion-duration-emphasized) var(--motion-bouncy) both;
+    transform-origin: top center;
+    will-change: transform, opacity;
 }
 
 .agent-activity-item {
@@ -4830,6 +4833,26 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 @keyframes agentActivitySpin {
     to { transform: rotate(360deg); }
+}
+
+@keyframes agent-activity-gel-open {
+    0% {
+        opacity: 0;
+        transform: translate3d(0, -6px, 0) scale3d(0.985, 0.94, 1);
+        filter: saturate(82%);
+    }
+
+    68% {
+        opacity: 1;
+        transform: translate3d(0, 2px, 0) scale3d(1.01, 1.015, 1);
+        filter: saturate(108%);
+    }
+
+    100% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale3d(1, 1, 1);
+        filter: saturate(100%);
+    }
 }
 
 @media (max-width: 1100px) {
@@ -5745,7 +5768,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 .browser-source-filter-trigger .browser-picker-selected-icon-shell {
     width: 18px;
     height: 18px;
-    border-radius: var(--radius-soft);
+    border-radius: var(--radius-pill);
 }
 
 .browser-source-filter-mark {

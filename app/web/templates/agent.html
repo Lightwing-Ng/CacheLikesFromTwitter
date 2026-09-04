@@ -1,4 +1,4 @@
-<!-- Code version: v3.29.2-codex.1 -->
+<!-- Code version: v3.29.7-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.92.2-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.92.6-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -163,7 +163,8 @@
                     class="secondary-button agent-llm-settings-link"
                     href="{{ url_for('settings') }}#settings-llm"
                     data-agent-llm-settings-link
-                >Open LLM settings</a>
+                    data-agent-provider-settings-label
+                >Open {{ selected_platform.label }} settings</a>
 
                 <div class="agent-session-source" data-agent-session-source>
                     <label class="field">
@@ -376,17 +377,6 @@
                                     <span class="icon agent-response-copy-icon" aria-hidden="true"></span>
                                     <span class="agent-response-copy-feedback" data-agent-response-copy-feedback aria-live="polite"></span>
                                 </button>
-                                <button
-                                    type="button"
-                                    class="browser-session-message-toggle agent-response-overflow-toggle"
-                                    data-browser-session-message-toggle
-                                    data-browser-session-message-number="answer"
-                                    aria-controls="agent_response_answer"
-                                    aria-expanded="false"
-                                    aria-label="Expand answer"
-                                    title="Expand answer"
-                                    hidden
-                                ><span class="icon browser-session-message-toggle-icon" aria-hidden="true"></span></button>
                                 <nav class="browser-pagination local-store-pagination agent-response-pagination" id="agent_response_pagination" data-layout-role="pagination" aria-label="Agent conversation pages" aria-controls="agent_response_answer" data-agent-response-pagination hidden></nav>
                             </div>
                         </div>
@@ -526,6 +516,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.8.6-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.29.0-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.29.1-codex.1') }}"></script>
 </body>
 </html>

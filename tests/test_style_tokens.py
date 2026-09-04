@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.52.2-codex.1
+Code version: v1.52.5-codex.1
 """
 
 import hashlib
@@ -1897,6 +1897,22 @@ def test_browser_picker_arrow_matches_the_shared_select_arrow() -> None:
     assert 'content: "\\25BE";' not in stylesheet
 
 
+def test_browser_picker_icon_shells_are_perfect_circles() -> None:
+    """Keep every selected picker icon background circular at each supported size."""
+    stylesheet = _stylesheet()
+    selectors = (
+        ".browser-picker-selected-icon-shell {",
+        ".cache-source-switcher-trigger .browser-picker-selected-icon-shell,\n"
+        ".cache-browser-session-trigger .browser-picker-selected-icon-shell {",
+        ".agent-os-combobox .browser-picker-selected-icon-shell {",
+        ".browser-source-filter-trigger .browser-picker-selected-icon-shell {",
+    )
+    for selector in selectors:
+        selector_start = stylesheet.index(selector)
+        selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
+        assert "border-radius: var(--radius-pill);" in selector_rule
+
+
 def test_browser_content_mode_reuses_the_sibling_optimistic_navigation_skeleton() -> None:
     """Keep content-mode navigation on the sibling's skeleton and motion contract."""
     stylesheet = _stylesheet()
@@ -1920,7 +1936,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.92.2-codex.1 */",
+        "/* Code version: v2.92.6-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -1974,6 +1990,12 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
         ".agent-summary-card {",
         "box-sizing: border-box;",
         "padding: var(--workspace-title-rail-pad-block-start)",
+        ".report-card.agent-summary-card {",
+        "border-radius: 0;",
+        "background: transparent;",
+        "box-shadow: none;",
+        "backdrop-filter: none;",
+        "-webkit-backdrop-filter: none;",
         ".agent-summary-card > .report-heading-row {",
         ".agent-summary-card > .report-heading-row > div {",
         "align-items: center;",
@@ -2626,18 +2648,6 @@ def test_agent_current_project_name_uses_requested_type_size() -> None:
     assert "font-size: 17px;" in name_selector_rule
 
 
-def test_agent_response_answer_expansion_stays_on_the_global_action_rail() -> None:
-    """Keep the answer expansion affordance on the same rail as the theme control."""
-    stylesheet = _stylesheet()
-    answer_toggle_start = stylesheet.index(".agent-response-answer-shell > .agent-response-overflow-toggle {")
-    answer_toggle_rule = stylesheet[
-        answer_toggle_start:stylesheet.index("\n}", answer_toggle_start)
-    ]
-
-    assert "position: absolute;" in answer_toggle_rule
-    assert "right: 0;" in answer_toggle_rule
-
-
 def test_agent_response_question_and_answer_use_requested_type_sizes() -> None:
     """Keep the Agent question heading at 17px and the answer container at 15px."""
     stylesheet = _stylesheet()
@@ -2734,6 +2744,31 @@ def test_agent_error_record_is_collapsible_and_vertically_scrollable() -> None:
     assert "overscroll-behavior: contain;" in scroll_rule
     assert "white-space: pre-wrap;" in content_rule
     assert "overflow-wrap: anywhere;" in content_rule
+
+
+def test_agent_activity_expansion_uses_shared_gel_motion() -> None:
+    """Keep Activity expansion on the shared soft-body motion contract."""
+    stylesheet = _stylesheet()
+    activity_rule_start = stylesheet.index(".agent-activity-panel[open] > .agent-activity-list {")
+    activity_rule = stylesheet[activity_rule_start:stylesheet.index("\n}", activity_rule_start)]
+
+    for token in (
+        "animation: agent-activity-gel-open var(--motion-duration-emphasized) var(--motion-bouncy) both;",
+        "transform-origin: top center;",
+        "will-change: transform, opacity;",
+    ):
+        assert token in activity_rule
+
+    keyframes_start = stylesheet.index("@keyframes agent-activity-gel-open {")
+    keyframes = stylesheet[keyframes_start:stylesheet.index("\n}\n\n@media", keyframes_start)]
+    for token in (
+        "transform: translate3d(0, -6px, 0) scale3d(0.985, 0.94, 1);",
+        "transform: translate3d(0, 2px, 0) scale3d(1.01, 1.015, 1);",
+        "transform: translate3d(0, 0, 0) scale3d(1, 1, 1);",
+        "filter: saturate(82%);",
+        "filter: saturate(108%);",
+    ):
+        assert token in keyframes
 
 
 def test_agent_sidebar_primary_comboboxes_use_the_compact_form_height() -> None:

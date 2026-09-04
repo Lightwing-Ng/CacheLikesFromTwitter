@@ -1,4 +1,4 @@
-/* Code version: v3.29.0-codex.1 */
+/* Code version: v3.29.1-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -41,6 +41,7 @@
         workspacePath: promptForm.querySelector('input[name="workspace_path"]'),
         promptOs: promptForm.querySelector("[data-agent-prompt-os]"),
         promptPlatform: promptForm.querySelector("[data-agent-prompt-platform]"),
+        providerSettingsLabel: document.querySelector("[data-agent-provider-settings-label]"),
         promptBrowser: promptForm.querySelector("[data-agent-prompt-browser]"),
         modelInput: promptForm.querySelector("[data-agent-model-input]"),
         effortField: promptForm.querySelector("[data-agent-effort-field]"),
@@ -654,6 +655,9 @@
     function syncPlatformState(agent = {}) {
         const platform = selectedPlatform();
         if (elements.promptPlatform instanceof HTMLInputElement) elements.promptPlatform.value = platform;
+        if (elements.providerSettingsLabel) {
+            elements.providerSettingsLabel.textContent = `Open ${selectedPlatformLabel()} settings`;
+        }
         if (elements.browserSession) {
             elements.browserSession.dataset.browserSessionPlatform = platform;
             elements.browserSession.dataset.browserSessionAccountLabel = selectedPlatformLabel();
