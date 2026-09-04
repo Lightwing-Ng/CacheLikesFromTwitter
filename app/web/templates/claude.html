@@ -1,4 +1,4 @@
-{# Code version: v1.0.0-codex.1 #}
+{# Code version: v1.0.1-codex.1 #}
 {% extends "_cache_page.html" %}
 {% from "_cache_page_components.html" import render_metric, render_progress_metric %}
 
@@ -12,14 +12,16 @@
 {% endblock %}
 
 {% block source_notice %}
-<div class="metric-card foundation-metric-card metric-card-accent notice-floating notice-floating-banner notice-inline-banner" aria-label="Claude history cache notice">
-    <span class="metric-label">Browser-rendered history</span>
-    <span>
-        Claude chat links and rendered user/assistant messages are read through a background
-        {{ selected_browser_label }} session. Each message is stored as one typed row in
-        <code>local_store/llm/claude/history.parquet</code>; no prompt is sent or edited.
-    </span>
-    <span class="notice-status">Parquet v1</span>
+<div class="metric-card foundation-metric-card metric-card-accent notice-floating notice-floating-banner notice-inline-banner" role="note" aria-label="Claude history cache notice">
+    <div class="notice-floating-copy">
+        <p class="metric-label notice-floating-label">Browser-rendered history</p>
+        <p class="notice-floating-title">
+            Claude chat links and rendered user/assistant messages are read through a background
+            {{ selected_browser_label }} session. Each message is stored as one typed row in
+            <code>local_store/llm/claude/history.parquet</code>; no prompt is sent or edited.
+        </p>
+    </div>
+    <span class="status-chip status-collecting">Parquet v1</span>
 </div>
 {% endblock %}
 

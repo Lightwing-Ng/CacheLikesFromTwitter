@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.27.0-codex.1
+Code version: v1.27.2-codex.1
 """
 
 from __future__ import annotations
@@ -2231,21 +2231,25 @@ def test_browser_session_status_reuses_account_typography_for_terminal_and_cache
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.parametrize("width", (1_018, 390))
+@pytest.mark.parametrize("source", ("claude", "grok"))
 def test_cache_browser_session_failure_message_matches_account_typography_and_hangs_after_status_icon(
     disposable_browser: Browser,
     sidebar_server_url: str,
+    width: int,
+    source: str,
 ) -> None:
-    """Keep Cache failure copy the same size as its label with a status-icon hanging indent."""
+    """Align every failure-copy line with the account text, never under the status icon."""
     browser_status = {
         "can_download": False,
         "account_name": "Security verification required",
-        "message": (
+        "message": "Edge could not verify an available Claude message composer." if source == "claude" else (
             "Grok showed a Cloudflare security verification page in Edge, so the "
             "signed-in account could not be verified."
         ),
     }
     context = disposable_browser.new_context(
-        viewport={"width": 1_017, "height": 1_354},
+        viewport={"width": width, "height": 1_294 if width > 900 else 844},
         has_touch=False,
         is_mobile=False,
         reduced_motion="reduce",
@@ -2253,7 +2257,9 @@ def test_cache_browser_session_failure_message_matches_account_typography_and_ha
     page = context.new_page()
     page.route("**/api/browser-session**", lambda route: route.fulfill(json=browser_status))
     try:
-        page.goto(f"{sidebar_server_url}/cache/grok", wait_until="domcontentloaded")
+        page.goto(f"{sidebar_server_url}/cache/{source}", wait_until="domcontentloaded")
+        if width <= 900:
+            page.locator("#sidebar_toggle").click()
         account = page.locator(".browser-session-status-account")
         message = page.locator(
             '.browser-session-status-message[data-role="browser-session-message"]'
@@ -2284,6 +2290,9 @@ def test_cache_browser_session_failure_message_matches_account_typography_and_ha
                 };
                 const messageStyle = getComputedStyle(message);
                 const itemStyle = getComputedStyle(item);
+                const range = document.createRange();
+                range.selectNodeContents(message);
+                const lines = Array.from(range.getClientRects());
                 return {
                     accountTypography: readTypography(account),
                     messageTypography: readTypography(message),
@@ -2295,13 +2304,16 @@ def test_cache_browser_session_failure_message_matches_account_typography_and_ha
                     itemGap: parseFloat(itemStyle.columnGap || itemStyle.gap),
                     messageRight: message.getBoundingClientRect().right,
                     cardRight: card.getBoundingClientRect().right,
+                    lineLefts: lines.map(line => line.left),
                 };
             }"""
         )
         assert layout["accountTypography"] == layout["messageTypography"]
         assert layout["messageMarginTop"] == "0px"
         assert layout["messagePaddingInlineStart"] == "26px"
-        assert layout["messageTextIndent"] == "-26px"
+        assert layout["messageTextIndent"] == "0px"
+        assert len(layout["lineLefts"]) >= 2
+        assert all(abs(left - layout["accountLeft"]) <= 1 for left in layout["lineLefts"])
         assert abs(layout["accountLeft"] - (layout["iconRight"] + layout["itemGap"])) <= 1
         assert layout["messageRight"] <= layout["cardRight"] + 1
     finally:
@@ -2310,9 +2322,117 @@ def test_cache_browser_session_failure_message_matches_account_typography_and_ha
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.parametrize("width", (1_018, 390))
+@pytest.mark.parametrize("source", ("claude", "gemini", "chatgpt"))
+def test_cache_notice_flows_without_overlap_and_keeps_polling(
+    disposable_browser: Browser, sidebar_server_url: str, width: int, source: str,
+) -> None:
+    """Keep notices readable after retiring the summary, without losing live status updates."""
+    context = disposable_browser.new_context(viewport={"width": width, "height": 1_294}, reduced_motion="reduce")
+    page = context.new_page()
+    polls = []
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+
+    def status_response(route):
+        polls.append(True)
+        route.fulfill(json={"phase": "idle", "running": False, "message": f"Status refresh {len(polls)}"})
+
+    page.route(f"**/api/cache/{source}/status*", status_response)
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json={"can_download": False}))
+    try:
+        page.goto(f"{sidebar_server_url}/cache/{source}", wait_until="domcontentloaded")
+        expect(page.locator("#message")).to_have_text("Status refresh 2", timeout=10_000)
+        expect(page.locator("#overview .summary-list, #output_dir, [data-output-directory-open]")).to_have_count(0)
+        notice = page.locator("#overview .notice-inline-banner")
+        expect(notice).to_be_visible()
+        geometry = notice.evaluate("""element => {
+            const rect = node => {
+                const r = node.getBoundingClientRect();
+                return {left:r.left, right:r.right, top:r.top, bottom:r.bottom};
+            };
+            return {
+                notice: rect(element),
+                label: rect(element.querySelector('.notice-floating-label')),
+                title: rect(element.querySelector('.notice-floating-title')),
+                chip: rect(element.querySelector('.status-chip')),
+                progress: rect(document.querySelector('#overview .progress-metric-grid')),
+                overflow: element.scrollWidth - element.clientWidth,
+                pageOverflow: document.documentElement.scrollWidth - innerWidth,
+            };
+        }""")
+        assert geometry["label"]["bottom"] <= geometry["title"]["top"]
+        assert geometry["title"]["bottom"] <= geometry["notice"]["bottom"]
+        assert geometry["chip"]["bottom"] <= geometry["notice"]["bottom"]
+        assert geometry["notice"]["bottom"] <= geometry["progress"]["top"]
+        if width > 560:
+            assert geometry["title"]["right"] <= geometry["chip"]["left"]
+        else:
+            assert geometry["title"]["bottom"] <= geometry["chip"]["top"]
+        assert geometry["overflow"] <= 1
+        assert geometry["pageOverflow"] <= 1
+        assert not errors
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("width", (1_018, 390))
+def test_shared_dropdown_gel_tracks_and_reduced_motion(
+    disposable_browser: Browser, sidebar_server_url: str, width: int,
+) -> None:
+    """Verify real menu physics, final geometry, transparent tracks, and motion opt-out."""
+    page, context = _open_page(
+        disposable_browser, f"{sidebar_server_url}/agent/edge/chatgpt",
+        width, 1_294 if width > 900 else 844, touch=False,
+        reduced_motion="no-preference",
+    )
+    try:
+        trigger = page.locator(".agent-session-mode-combobox [data-agent-combobox-trigger]")
+        menu = page.get_by_role("listbox", name="Choose a session source", exact=True)
+        if width <= 900:
+            page.locator("#sidebar_toggle").click()
+        trigger.click()
+        expect(menu).to_be_visible()
+        motion = menu.evaluate("""element => {
+            const animation = element.getAnimations()[0];
+            animation.pause();
+            animation.currentTime = 204;
+            const matrix = new DOMMatrix(getComputedStyle(element).transform);
+            const rebound = matrix.a;
+            animation.finish();
+            const settled = new DOMMatrix(getComputedStyle(element).transform);
+            return {name: animation.animationName, rebound,
+                scale: settled.a, shift: settled.e,
+                track: getComputedStyle(element, '::-webkit-scrollbar-track').backgroundColor,
+                thumb: getComputedStyle(element, '::-webkit-scrollbar-thumb').backgroundColor};
+        }""")
+        assert motion["name"] == "browser-pagination-range-gel-in-below"
+        assert motion["rebound"] > 1
+        assert motion["scale"] == 1
+        assert motion["shift"] == 0
+        assert motion["track"] == "rgba(0, 0, 0, 0)"
+        assert motion["thumb"] != "rgba(0, 0, 0, 0)"
+
+        menu.get_by_role("option", name="Recent sessions", exact=True).click()
+        trigger.click()
+        expect(menu).to_be_visible()
+        assert menu.evaluate("e => getComputedStyle(e).animationName") == "browser-pagination-range-gel-in"
+        page.emulate_media(reduced_motion="reduce")
+        assert menu.evaluate("e => getComputedStyle(e).animationName") == "none"
+        trigger.press("Escape")
+        expect(menu).to_be_hidden()
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
 @pytest.mark.parametrize(
     ("source_key", "settings_category"),
-    (("x", "downloads"), ("gemini", "llm")),
+    (("x", "downloads"), ("gemini", "llm"), ("claude", "llm")),
 )
 def test_cache_shared_settings_link_opens_the_expected_category(
     disposable_browser: Browser,
@@ -2338,6 +2458,19 @@ def test_cache_shared_settings_link_opens_the_expected_category(
         )
         expect(page.locator("#start_form section")).to_have_count(0)
         assert settings_link.evaluate("element => !element.closest('form')")
+        for width, height in ((1_018, 1_294), (390, 844)):
+            page.set_viewport_size({"width": width, "height": height})
+            alignment = settings_link.evaluate("""element => {
+                const parent = element.parentElement;
+                const rect = parent.getBoundingClientRect();
+                const style = getComputedStyle(parent);
+                return {
+                    right: element.getBoundingClientRect().right,
+                    contentRight: rect.right - parseFloat(style.paddingRight)
+                        - parseFloat(style.borderRightWidth),
+                };
+            }""")
+            assert abs(alignment["right"] - alignment["contentRight"]) <= 1
         if source_key == "gemini":
             for field_name in (
                 "gemini_max_conversations",

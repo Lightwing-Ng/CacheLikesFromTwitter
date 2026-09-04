@@ -1,4 +1,4 @@
-{# Code version: v1.22.1-codex.1 #}
+{# Code version: v1.23.0-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.92.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.92.2-codex.1') }}">
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -16,7 +16,7 @@
     <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.8.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.9.1-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.9.2-codex.1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -250,61 +250,6 @@
                     <div class="progress-metric-grid foundation-metric-grid" aria-label="Cached {{ cache_source.label }} resource progress">
                         {% block progress_metrics %}{% endblock %}
                     </div>
-                    <dl class="summary-list">
-                        <div class="summary-row">
-                            <dt>Started</dt>
-                            <dd
-                                id="started_at"
-                                data-status-field="started_at"
-                                data-status-format="datetime"
-                                data-status-fallback="-"
-                            >{{ format_datetime_label(snapshot.started_at) if snapshot.started_at else "-" }}</dd>
-                        </div>
-                        <div class="summary-row">
-                            <dt>Finished</dt>
-                            <dd
-                                id="finished_at"
-                                data-status-field="finished_at"
-                                data-status-format="datetime"
-                                data-status-fallback="-"
-                            >{{ format_datetime_label(snapshot.finished_at) if snapshot.finished_at else "-" }}</dd>
-                        </div>
-                        <div class="summary-row">
-                            <dt>Output dir</dt>
-                            <dd>
-                                <span class="shadow-backup-destination-control settings-directory-control settings-directory-control-readonly">
-                                    <input
-                                        class="text-input-control settings-directory-input output-directory-input path-display-input"
-                                        type="text"
-                                        id="output_dir"
-                                        data-status-field="output_dir"
-                                        data-status-fallback="-"
-                                        value="{{ snapshot.output_dir or '-' }}"
-                                        readonly
-                                        aria-readonly="true"
-                                        aria-label="Output directory"
-                                        spellcheck="false"
-                                        autocomplete="off"
-                                    >
-                                    <button
-                                        type="button"
-                                        class="secondary-button settings-directory-choose-button output-directory-open-button"
-                                        data-output-directory-open
-                                        aria-describedby="output_dir_status"
-                                        aria-label="Open output directory in {{ file_manager_label }}"
-                                        title="Open output directory in {{ file_manager_label }}"
-                                    >
-                                        <span class="icon settings-directory-choose-icon" aria-hidden="true"></span>
-                                    </button>
-                                </span>
-                                <span class="settings-directory-status output-directory-status" id="output_dir_status" data-output-directory-status aria-live="polite" hidden></span>
-                            </dd>
-                        </div>
-                        <div class="summary-row">
-                            <dt>Polling</dt>
-                            <dd>Every 3 seconds</dd>
-                        </div>
-                    </dl>
                     </article>
 
                     <section class="workspace-grid workspace-content-card">

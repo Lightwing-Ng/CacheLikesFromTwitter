@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.10-codex.1
+Code version: v1.6.12-codex.1
 """
 
 from __future__ import annotations
@@ -366,6 +366,43 @@ def test_claude_browser_probe_routes_through_the_shared_browser_registry() -> No
     assert result["can_download"] is False
     assert result["account_name"] == "Claude account restricted"
     probe.assert_called_once()
+
+
+@pytest.mark.parametrize("hydrated_count", (1, 2))
+def test_claude_probe_waits_for_hydration_before_requiring_unique_composer(hydrated_count):
+    """A delayed composer must be awaited, while ambiguous composers stay blocked."""
+    from app.core.browser_sessions import _probe_claude_session
+
+    hydrated = False
+    composer = MagicMock()
+
+    def wait_for_composer(**_kwargs):
+        nonlocal hydrated
+        hydrated = True
+
+    composer.first.wait_for.side_effect = wait_for_composer
+    composer.count.side_effect = lambda: hydrated_count if hydrated else 0
+    page = MagicMock()
+    page.locator.side_effect = lambda selector: (
+        SimpleNamespace(inner_text=lambda **_kwargs: "Welcome back")
+        if selector == "body" else composer
+    )
+    context = MagicMock()
+    context.pages = [page]
+    descriptor = SimpleNamespace(engine="chromium", label="Edge")
+    with (
+        patch("app.core.browser_sessions._serialized_sync_playwright"),
+        patch("app.core.browser_sessions.launch_chromium_context") as launch,
+        patch("app.core.browser_sessions.goto_with_retry"),
+    ):
+        launch.return_value.__enter__.return_value = context
+        result = _probe_claude_session(descriptor)
+
+    assert hydrated
+    assert result["can_download"] is (hydrated_count == 1)
+    composer.first.wait_for.assert_called_once_with(state="visible", timeout=20_000)
+    assert launch.call_args.kwargs["headless"] is False
+    assert launch.call_args.kwargs["background_window"] is True
 
 
 def test_chromium_context_defaults_to_an_isolated_background_profile(tmp_path: Path) -> None:

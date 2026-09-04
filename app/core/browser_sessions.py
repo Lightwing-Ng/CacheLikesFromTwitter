@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.19.7-codex.1
+# Code version: v1.19.9-codex.1
 
 from __future__ import annotations
 
@@ -243,7 +243,8 @@ def _probe_claude_session(
         with launch_chromium_context(
             playwright,
             descriptor,
-            headless=True,
+            # Match the headed background context used by Claude history and Agent sources.
+            headless=False,
             clone_profile_first=True,
             background_window=True,
             silent=silent,
@@ -281,14 +282,18 @@ def _probe_claude_session(
                 }
             try:
                 composer = page.locator(visible_claude_composer_selector())
-                count = getattr(composer, "count", None)
-                if callable(count) and count() != 1:
-                    raise RuntimeError("Claude composer count was not unique.")
                 composer.first.wait_for(
                     state="visible",
                     timeout=20_000,
                 )
+                if composer.count() != 1:
+                    raise RuntimeError("Claude composer count was not unique.")
             except Exception:
+                # Hydration can reveal sign-in UI after the initial body snapshot.
+                try:
+                    normalized_body = page.locator("body").inner_text(timeout=5_000).casefold()
+                except Exception:
+                    pass
                 message = (
                     f"{descriptor.label} is not signed in to Claude."
                     if re.search(r"\b(?:sign in|log in|sign up|create account)\b", normalized_body)

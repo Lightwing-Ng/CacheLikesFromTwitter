@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.52.0-codex.1
+Code version: v1.52.2-codex.1
 """
 
 import hashlib
@@ -322,7 +322,7 @@ def test_cache_status_message_hangs_under_the_account_label() -> None:
     assert "var(--browser-session-status-item-gap)" in selector_rule
     assert "margin: 0;" in selector_rule
     assert "padding-inline-start: var(--browser-session-status-indent);" in selector_rule
-    assert "text-indent: calc(-1 * var(--browser-session-status-indent));" in selector_rule
+    assert "text-indent: 0;" in selector_rule
 
     copy_start = stylesheet.index(".browser-session-status-copy {")
     copy_rule = stylesheet[copy_start:stylesheet.index("\n}", copy_start)]
@@ -340,18 +340,6 @@ def test_cache_status_message_hangs_under_the_account_label() -> None:
     checkmark_rule = stylesheet[checkmark_start:stylesheet.index("\n}", checkmark_start)]
     assert "width: var(--browser-session-status-checkmark-size);" in checkmark_rule
     assert "height: var(--browser-session-status-checkmark-size);" in checkmark_rule
-
-
-def test_cache_output_directory_reuses_the_standard_folder_button() -> None:
-    """Keep the Cache output action on the shared circular directory-control contract."""
-    stylesheet = _stylesheet()
-    output_directory_start = stylesheet.index('input[type="text"].output-directory-input {')
-    output_directory_rule = stylesheet[output_directory_start:stylesheet.index("\n}", output_directory_start)]
-
-    assert ".output-directory-status {" in stylesheet
-    assert ".settings-directory-choose-button," in stylesheet
-    assert ".settings-directory-choose-icon {" in stylesheet
-    assert "font-size: var(--font-table-body);" in output_directory_rule
 
 
 def test_cache_sidebar_parameter_grids_use_one_field_per_row() -> None:
@@ -1397,7 +1385,7 @@ def test_browser_pagination_range_menu_uses_glass_and_gel_motion_tokens() -> Non
         "background-clip: padding-box;",
         "backdrop-filter: var(--frosted-glass-blur);",
         "overflow-y: auto;",
-        "scrollbar-width: thin;",
+        "scrollbar-width: none;",
         ".browser-pagination-range-menu.is-scrollable {",
         "overflow-y: auto;",
         "border-radius: var(--radius-soft);",
@@ -1932,7 +1920,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.92.0-codex.1 */",
+        "/* Code version: v2.92.2-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -2422,7 +2410,8 @@ def test_agent_session_source_raises_above_the_inline_recent_session_list_when_o
     assert "z-index: var(--layer-surface-content);" in selector_rule
     assert "z-index: calc(var(--layer-global-popover) + 1);" in open_rule
     upward_start = stylesheet.index(
-        ".agent-session-source:has(> .agent-session-detail-field:not([hidden]))",
+        ".agent-session-source:has(> .agent-session-detail-field:not([hidden]))\n"
+        "    .agent-session-mode-combobox.is-agent-combobox-open",
     )
     upward_rule = stylesheet[upward_start:stylesheet.index("\n}", upward_start)]
     assert "top: auto;" in upward_rule

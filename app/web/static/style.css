@@ -1,4 +1,4 @@
-/* Code version: v2.92.0-codex.1 */
+/* Code version: v2.92.2-codex.1 */
 /*
  * Standalone faces are extracted from the approved TTC by scripts/build_web_fonts.py.
  * Collection URL fragments are not reliable face selectors in Chromium.
@@ -1245,9 +1245,38 @@ h2 {
     overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
-    scrollbar-gutter: stable;
+    scrollbar-gutter: auto;
     scrollbar-width: thin;
-    scrollbar-color: var(--theme-muted-translucent) transparent;
+    scrollbar-color: var(--theme-muted-translucent, var(--muted)) transparent;
+}
+
+/* Native thin scrollbars override WebKit track paint in Chromium. */
+@supports selector(::-webkit-scrollbar) {
+    .trade-strategy-dropdown {
+        scrollbar-width: auto;
+        scrollbar-color: auto;
+    }
+}
+
+/* Reuse pagination's gel physics without its horizontal centering offset. */
+.trade-strategy-dropdown:not([hidden]):not(.agent-session-list-menu-direct) {
+    --shared-popover-translate-x: 0px;
+    transform-origin: top center;
+    animation: browser-pagination-range-gel-in-below 300ms var(--motion-bouncy) both;
+}
+
+.agent-session-list-combobox .trade-strategy-dropdown:not([hidden]):not(.agent-session-list-menu-direct),
+.trade-strategy-dropdown:is(.agent-model-dropdown, .agent-effort-dropdown):not([hidden]),
+.agent-session-source:has(> .agent-session-detail-field:not([hidden]))
+    .agent-session-mode-combobox .trade-strategy-dropdown:not([hidden]) {
+    transform-origin: bottom center;
+    animation-name: browser-pagination-range-gel-in;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .trade-strategy-dropdown:not([hidden]):not(.agent-session-list-menu-direct) {
+        animation: none !important;
+    }
 }
 
 .backtest-shared-select-dropdown.browser-session-dropdown {
@@ -1262,15 +1291,21 @@ h2 {
 
 .trade-strategy-dropdown::-webkit-scrollbar {
     width: 8px;
+    height: 0;
+    background: transparent;
 }
 
-.trade-strategy-dropdown::-webkit-scrollbar-track {
+.trade-strategy-dropdown::-webkit-scrollbar-track,
+.trade-strategy-dropdown::-webkit-scrollbar-track-piece,
+.trade-strategy-dropdown::-webkit-scrollbar-corner {
     background: transparent;
+    border: 0;
+    box-shadow: none;
     margin: 4px 0;
 }
 
 .trade-strategy-dropdown::-webkit-scrollbar-thumb {
-    background: var(--theme-muted-translucent);
+    background: var(--theme-muted-translucent, var(--muted));
     border-radius: var(--radius-pill);
 }
 
@@ -1342,7 +1377,7 @@ h2 {
     );
     margin: 0;
     padding-inline-start: var(--browser-session-status-indent);
-    text-indent: calc(-1 * var(--browser-session-status-indent));
+    text-indent: 0;
 }
 
 .browser-session-status-row {
@@ -2499,10 +2534,6 @@ a.ghost-link[href$="/settings"] {
     flex: 1 1 auto;
 }
 
-input[type="text"].output-directory-input {
-    font-size: var(--font-table-body);
-}
-
 .secondary-button {
     display: inline-flex;
     align-items: center;
@@ -2563,11 +2594,6 @@ input[type="text"].output-directory-input {
     background: var(--settings-round-icon-button-background-hover);
     box-shadow: var(--settings-round-icon-button-shadow-hover);
     color: var(--settings-round-icon-button-color-hover);
-}
-
-.output-directory-status {
-    display: block;
-    margin-top: 4px;
 }
 
 .settings-directory-choose-icon {
@@ -2783,6 +2809,7 @@ input[type="text"].output-directory-input {
 
 .notice-floating-copy {
     min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .notice-floating-banner {
@@ -5805,6 +5832,12 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
     font-size: var(--font-size-3);
 }
 
+.sidebar-section > .cache-settings-link {
+    display: flex;
+    margin-inline-start: auto;
+    justify-self: end;
+}
+
 .browser-refresh-button {
     appearance: none;
     cursor: pointer;
@@ -8561,7 +8594,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     opacity: 0;
     visibility: hidden;
     pointer-events: none;
-    transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 8px, 0) scale(0.955);
+    transform: translate3d(var(--shared-popover-translate-x, calc(-50% + var(--pagination-range-menu-shift-x))), 8px, 0) scale(0.955);
     transform-origin: bottom center;
     transition: opacity var(--motion-duration-fast) var(--motion-standard), visibility var(--motion-duration-fast) var(--motion-standard), transform var(--motion-duration-emphasized) var(--motion-emphasized);
 }
@@ -8657,17 +8690,17 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 @keyframes browser-pagination-range-gel-in {
     0% {
         opacity: 0;
-        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 9px, 0) scale(0.955);
+        transform: translate3d(var(--shared-popover-translate-x, calc(-50% + var(--pagination-range-menu-shift-x))), 9px, 0) scale(0.955);
         filter: saturate(82%);
     }
     68% {
         opacity: 1;
-        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), -1px, 0) scale(1.012);
+        transform: translate3d(var(--shared-popover-translate-x, calc(-50% + var(--pagination-range-menu-shift-x))), -1px, 0) scale(1.012);
         filter: saturate(108%);
     }
     100% {
         opacity: 1;
-        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 0, 0) scale(1);
+        transform: translate3d(var(--shared-popover-translate-x, calc(-50% + var(--pagination-range-menu-shift-x))), 0, 0) scale(1);
         filter: saturate(100%);
     }
 }
@@ -8675,17 +8708,17 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 @keyframes browser-pagination-range-gel-in-below {
     0% {
         opacity: 0;
-        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), -9px, 0) scale(0.955);
+        transform: translate3d(var(--shared-popover-translate-x, calc(-50% + var(--pagination-range-menu-shift-x))), -9px, 0) scale(0.955);
         filter: saturate(82%);
     }
     68% {
         opacity: 1;
-        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 1px, 0) scale(1.012);
+        transform: translate3d(var(--shared-popover-translate-x, calc(-50% + var(--pagination-range-menu-shift-x))), 1px, 0) scale(1.012);
         filter: saturate(108%);
     }
     100% {
         opacity: 1;
-        transform: translate3d(calc(-50% + var(--pagination-range-menu-shift-x)), 0, 0) scale(1);
+        transform: translate3d(var(--shared-popover-translate-x, calc(-50% + var(--pagination-range-menu-shift-x))), 0, 0) scale(1);
         filter: saturate(100%);
     }
 }

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.93.0-codex.1
+# Code version: v1.93.2-codex.1
 
 from __future__ import annotations
 
@@ -383,6 +383,11 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("Claude history cache overview", claude_body)
         self.assertIn('name="claude_browser"', claude_body)
         self.assertIn("Browser-rendered history", claude_body)
+        for body in (index_body, grok_body, chatgpt_body, gemini_body, claude_body):
+            with self.subTest(cache_summary_removed=True, title=body.split("<title>")[1].split("</title>")[0]):
+                self.assertNotIn('class="summary-list"', body)
+                for field in ("started_at", "finished_at", "output_dir"):
+                    self.assertNotIn(f'data-status-field="{field}"', body)
         self.assertIn('action="/cache/claude/start"', claude_body)
         self.assertIn(
             "--cache-source-mark: url('/static/images/Google_Gemini_logo_2025_symbol.svg')",
@@ -456,20 +461,16 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("Media failures this run", chatgpt_body)
         self.assertIn("Task failures", chatgpt_body)
         self.assertIn('data-status-field="task_failures"', chatgpt_body)
-        self.assertIn('id="output_dir"', chatgpt_body)
-        self.assertIn('data-status-field="output_dir"', chatgpt_body)
-        self.assertIn('class="text-input-control settings-directory-input output-directory-input path-display-input"', chatgpt_body)
-        self.assertIn('aria-label="Output directory"', chatgpt_body)
-        self.assertIn('data-output-directory-open', chatgpt_body)
-        self.assertIn('class="icon settings-directory-choose-icon"', chatgpt_body)
-        self.assertIn('output-directory-status', chatgpt_body)
+        self.assertNotIn('class="summary-list"', chatgpt_body)
+        self.assertNotIn('data-status-field="output_dir"', chatgpt_body)
+        self.assertNotIn('data-output-directory-open', chatgpt_body)
         self.assertIn('data-platform="chatgpt"', chatgpt_body)
         self.assertIn('action="/cache/chatgpt/start"', chatgpt_body)
         self.assertNotIn('class="status-copy chatgpt-sidebar-note"', chatgpt_body)
         self.assertIn('id="status_progress_value"', chatgpt_body)
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
-        self.assertIn('cache-page.js?v=cache-page-v1.9.1-codex.1', chatgpt_body)
+        self.assertIn('cache-page.js?v=cache-page-v1.9.2-codex.1', chatgpt_body)
         self.assertIn('segmented-control.js?v=segmented-control-v1.0.2-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
@@ -604,7 +605,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.21.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.92.0-codex.1"
+                expected_style_version = "style-v2.92.2-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -3112,9 +3113,9 @@ class WebAppTests(unittest.TestCase):
 
         self.assertNotIn("window.setInterval(refreshStatus", script)
         self.assertNotIn("\n    refreshStatus();\n", script)
-        self.assertEqual(template.count('data-status-format="datetime"'), 2)
-        self.assertIn("format_datetime_label(snapshot.started_at)", template)
-        self.assertIn("format_datetime_label(snapshot.finished_at)", template)
+        self.assertNotIn('data-status-format="datetime"', template)
+        self.assertNotIn("format_datetime_label(snapshot.started_at)", template)
+        self.assertNotIn("format_datetime_label(snapshot.finished_at)", template)
 
     def test_browser_status_reuses_fresh_cached_status_without_background_revalidation(self) -> None:
         script = BROWSER_SESSION_STATUS_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -3428,7 +3429,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.92.0-codex.1", body)
+            self.assertIn("style-v2.92.2-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)
