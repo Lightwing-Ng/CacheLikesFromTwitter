@@ -1,6 +1,6 @@
 """Service orchestration and Flask contract tests.
 
-Code version: v1.8.2-codex.1
+Code version: v1.8.3-codex.1
 """
 
 from __future__ import annotations
@@ -165,7 +165,11 @@ def test_settings_and_grok_reset_routes_redirect_without_external_work(client, t
 
 @pytest.mark.integration
 def test_grok_start_route_accepts_safari(client, macos_host) -> None:
-    with patch("app.core.grok_service.GrokDownloadService.start") as start:
+    # Keep the simulated macOS selection out of later tests' host settings.
+    with (
+        patch("app.core.grok_service.GrokDownloadService.start") as start,
+        patch("app.web.app.save_config") as save_config,
+    ):
         response = client.post(
             "/grok/start",
             data={
@@ -177,6 +181,7 @@ def test_grok_start_route_accepts_safari(client, macos_host) -> None:
 
     assert response.status_code == 302
     config = start.call_args.args[0]
+    save_config.assert_called_once_with(config)
     assert config.grok_browser == "safari"
     assert config.download_workers == 2
     assert config.max_media_file_size_mib == 75
