@@ -1,11 +1,13 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.51.47-codex.1
+Code version: v1.51.48-codex.1
 """
 
+import hashlib
 from pathlib import Path
 
 
+FONT_PATH = Path(__file__).resolve().parents[1] / "app/web/static/fonts/UniversNextforHSBC.ttc"
 STYLE_PATH = Path(__file__).resolve().parents[1] / "app/web/static/style.css"
 
 
@@ -60,7 +62,7 @@ def test_typography_matches_the_sibling_font_contract() -> None:
     expected_tokens = (
         '@font-face {',
         'font-family: "Univers Next for HSBC";',
-        'src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Regular")',
+        'src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Regular") format("collection");',
         "--font-size-1: 11px;",
         "--font-size-2: 12px;",
         "--font-size-3: 13px;",
@@ -84,6 +86,15 @@ def test_typography_matches_the_sibling_font_contract() -> None:
     )
     for token in expected_tokens:
         assert token in stylesheet
+    assert 'format("truetype-collection")' not in stylesheet
+
+
+def test_hsbc_font_collection_is_present_and_checksum_pinned() -> None:
+    """Keep the self-hosted HSBC font asset available after cross-platform pulls."""
+    assert FONT_PATH.is_file()
+    assert hashlib.sha256(FONT_PATH.read_bytes()).hexdigest() == (
+        "e10a317b9da0016c24a9fce70ccbd33eb39458da15253d5abfe051d8cc33e21a"
+    )
 
 
 def test_routine_labels_use_restrained_font_weights() -> None:
@@ -1906,7 +1917,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.91.39-codex.1 */",
+        "/* Code version: v2.91.40-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',

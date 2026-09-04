@@ -1,10 +1,10 @@
 # Test Suite
 
-Test-suite version: `v1.3.2-codex.1`
+Test-suite version: `v1.3.3-codex.1`
 
 The authoritative test workflow, coverage baseline, isolation contract, and CI behavior are
-documented in [TESTING.md](TESTING.md). Use `./scripts/test.sh` for the normal
-offline suite and `./scripts/check.sh` for the full quality gate.
+documented in [TESTING.md](TESTING.md). Use `./scripts/test.sh` and `./scripts/check.sh` on
+macOS/Linux, or `.\scripts\test.ps1` and `.\scripts\check.ps1` on Windows.
 
 ## Coverage Map
 
@@ -49,4 +49,4 @@ a clean disposable browser context against a local isolated Flask server. Authen
 profiles, yt-dlp, X, Grok, remote network transport, and user-owned local media remain outside the
 test boundary.
 
-Run the full suite with `./scripts/test.sh`.
+Run the full suite with `./scripts/test.sh` on macOS/Linux or `.\scripts\test.ps1` on Windows.

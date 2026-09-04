@@ -1,6 +1,23 @@
 # Known operating constraints and behavior-change history
 
-Documentation version: `v1.19.1-codex.1`
+Documentation version: `v1.19.2-codex.1`
+
+## Windows host operating constraints
+
+- The project does not currently inhibit Windows idle sleep while compute or Agent tasks are
+  running. Configure Windows power settings when a long-running task must not be interrupted by
+  system sleep.
+- The Windows path does not currently apply an OS-level network-denying sandbox equivalent to the
+  macOS `sandbox-exec` profile. Compute workers run with the current user's permissions.
+  Process-tree cleanup uses `taskkill /T /F` where applicable, while the verified allowlist remains
+  an application-level control rather than an OS sandbox boundary.
+- Safari is macOS-only and is normalized away on Windows (`normalize_host_browser` in
+  `app/core/config.py`); Agent sessions on Windows require Edge or Chrome.
+- Windows file permissions use inherited ACLs rather than the explicit POSIX `0700`/`0600` mode
+  bits applied on macOS. Local stores inherit the containing directory's ACL.
+- Prefer the `py -3.13` launcher on Windows; the resolver also accepts a `python` command that
+  resolves to Python 3.13 or 3.14. Do not assume `python3` exists. `AGENTIC_CONTEXT_PYTHON`
+  overrides the resolver on both platforms.
 
 ## Bounded local compute rollout on 1 Sep 2026
 

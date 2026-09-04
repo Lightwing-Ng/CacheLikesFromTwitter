@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.8.4-codex.1`
+Documentation version: `v1.8.5-codex.1`
 
 ## Launch
 
@@ -218,8 +218,7 @@ you intend to discard that cache. Do not use reset operations as a routine troub
 
 - Missing Playwright Chromium: on macOS run `./scripts/setup_python.sh`, or run
   `AGENTIC_CONTEXT_PYTHON=/path/to/python3 -m playwright install chromium` with Python 3.13 or
-  3.14. On Windows run `.`\scripts`\setup_python.ps1` or
-  `py -3.13 -m playwright install chromium`.
+  3.14. On Windows run `.\scripts\setup_python.ps1` or `py -3.13 -m playwright install chromium`.
 - Missing downloader: install the project requirements so `yt-dlp` is available to the selected
   supported interpreter.
 - Browser profile lock: close duplicate normal browser windows, then retry the session probe.

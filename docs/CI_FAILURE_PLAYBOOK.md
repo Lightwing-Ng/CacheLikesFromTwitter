@@ -1,6 +1,6 @@
 # CI Failure Playbook
 
-Documentation version: `v1.0.2-codex.1`
+Documentation version: `v1.0.3-codex.1`
 
 Established: 21 Aug 2026
 
@@ -148,7 +148,8 @@ Before handoff, confirm all items below:
 - [ ] The root cause was classified with source and log evidence.
 - [ ] The focused regression test passes.
 - [ ] The complete related suite passes.
-- [ ] `TZ=UTC AGENTIC_CONTEXT_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh` passes.
+- [ ] The platform quality gate passes: `TZ=UTC AGENTIC_CONTEXT_PYTHON=/usr/local/bin/python3.13 ./scripts/check.sh`
+      on macOS/Linux or `$env:TZ='UTC'; .\scripts\check.ps1` on Windows.
 - [ ] JavaScript syntax and static checks pass.
 - [ ] Cache-busters and durable documentation were updated when browser assets changed.
 - [ ] The change was pushed and the new GitHub Quality gate was read back as successful.

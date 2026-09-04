@@ -1,4 +1,4 @@
-/* Code version: v2.91.39-codex.1 */
+/* Code version: v2.91.40-codex.1 */
 /*
  * Univers Next for HSBC is packaged as one OpenType collection so the local
  * application uses the same family faces as its sibling project.
@@ -8,7 +8,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 100;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-UltraLight") format("truetype-collection");
+    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-UltraLight") format("collection");
 }
 
 @font-face {
@@ -16,7 +16,7 @@
     font-family: "Univers Next for HSBC";
     font-style: italic;
     font-weight: 100;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-UltraLightItalic") format("truetype-collection");
+    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-UltraLightItalic") format("collection");
 }
 
 @font-face {
@@ -24,7 +24,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 200;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Thin") format("truetype-collection");
+    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Thin") format("collection");
 }
 
 @font-face {
@@ -32,7 +32,7 @@
     font-family: "Univers Next for HSBC";
     font-style: italic;
     font-weight: 200;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-ThinItalic") format("truetype-collection");
+    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-ThinItalic") format("collection");
 }
 
 @font-face {
@@ -40,7 +40,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 300;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Light") format("truetype-collection");
+    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Light") format("collection");
 }
 
 @font-face {
@@ -48,7 +48,7 @@
     font-family: "Univers Next for HSBC";
     font-style: italic;
     font-weight: 300;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-LightItalic") format("truetype-collection");
+    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-LightItalic") format("collection");
 }
 
 @font-face {
@@ -56,7 +56,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 400;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Regular") format("truetype-collection");
+    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Regular") format("collection");
 }
 
 @font-face {
@@ -64,7 +64,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 500 600;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Medium") format("truetype-collection");
+    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Medium") format("collection");
 }
 
 @font-face {
@@ -72,7 +72,7 @@
     font-family: "Univers Next for HSBC";
     font-style: normal;
     font-weight: 700 900;
-    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Bold") format("truetype-collection");
+    src: url("/static/fonts/UniversNextforHSBC.ttc#UniversNextforHSBC-Bold") format("collection");
 }
 
 :root {

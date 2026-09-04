@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.7.3-codex.1`
+Documentation version: `v1.7.4-codex.1`
 
 ## Supported commands
 
@@ -233,7 +233,7 @@ downloads, Safari, Parquet commit, and backup stages remain outside GPU accelera
 separate live profile proves otherwise.
 
 When a gate fails on GitHub, reproduce the exact failing node first with `TZ=UTC`, then run the
-complete platform gate: `./scripts/check.sh` on macOS/Linux or ` .\scripts\check.ps1` on Windows.
+complete platform gate: `./scripts/check.sh` on macOS/Linux or `.\scripts\check.ps1` on Windows.
 Do not weaken an assertion, skip a platform branch, lower coverage, or add a retry until the
 failure has been classified as a real product regression or a test environment assumption.
 
@@ -303,5 +303,5 @@ isolation properties and must never navigate to an external service.
 3. Use a temporary filesystem location for every test-owned file.
 4. Use the `client` fixture for route contracts and preserve the injected runtime boundary.
 5. Add a marker only when it accurately describes the test's cost or boundary.
-6. Run the focused test, then `./scripts/check.sh` on macOS/Linux or ` .\scripts\check.ps1` on
+6. Run the focused test, then `./scripts/check.sh` on macOS/Linux or `.\scripts\check.ps1` on
    Windows before handoff.
