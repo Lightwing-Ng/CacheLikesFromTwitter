@@ -1,4 +1,4 @@
-/* Code version: v1.9.2-codex.1 */
+/* Code version: v1.10.0-codex.1 */
 
 (() => {
     "use strict";
@@ -94,6 +94,14 @@
         if (!cacheContentModeControl) return;
         const normalizedMode = mode === "media" ? "media" : "text";
         syncCacheSourceSwitcherContentMode(normalizedMode);
+        const runtimeMode = page.querySelector("[data-cache-runtime-mode]");
+        if (runtimeMode) runtimeMode.value = normalizedMode;
+        page.querySelectorAll("[data-chatgpt-metric-mode]").forEach((element) => {
+            element.hidden = element.dataset.chatgptMetricMode !== normalizedMode;
+        });
+        if (sourceKey === "grok" && startButton) {
+            startButton.textContent = normalizedMode === "text" ? "View text history" : "Start";
+        }
         const options = Array.from(
             cacheContentModeControl.querySelectorAll("[data-cache-content-mode-option]"),
         );
@@ -755,7 +763,9 @@
         if (!statusUrl || statusRefreshInFlight || document.hidden) return;
         statusRefreshInFlight = true;
         try {
-            const response = await fetch(statusUrl, { cache: "no-store" });
+            const requestUrl = new URL(statusUrl, window.location.href);
+            requestUrl.searchParams.set("content_mode", readRememberedContentMode());
+            const response = await fetch(requestUrl, { cache: "no-store" });
             if (!response.ok) throw new Error(`Status request failed with ${response.status}`);
             const data = await response.json();
             renderStatus(data);

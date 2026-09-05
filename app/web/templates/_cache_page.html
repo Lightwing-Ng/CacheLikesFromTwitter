@@ -1,4 +1,4 @@
-{# Code version: v1.24.0-codex.1 #}
+{# Code version: v1.25.0-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -16,7 +16,7 @@
     <script defer src="{{ url_for('static', filename='browser-session-picker.js', v='browser-session-picker-v1.8.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='numeric-input-format.js', v='numeric-input-format-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.9.2-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='cache-page.js', v='cache-page-v1.10.0-codex.1') }}"></script>
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -170,6 +170,7 @@
                         id="{{ cache_source.browser_input_id }}"
                         value="{{ saved_config|attr(cache_source.browser_config_field) }}"
                     >
+                    <input type="hidden" name="cache_content_mode" value="text" data-cache-runtime-mode>
                     {% block source_fields %}{% endblock %}
                 </form>
                 {% if cache_source.show_shared_settings_link %}

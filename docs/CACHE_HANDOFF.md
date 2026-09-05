@@ -1,6 +1,6 @@
 # Cache handoff and operating runbook
 
-Documentation version: `v1.5.3-codex.1`
+Documentation version: `v1.6.0-codex.1`
 
 This is the authoritative handoff document for the second Dock item, `Cache`.
 Read it before changing Cache routes, source switching, Text/Media behavior, local
@@ -45,12 +45,12 @@ the top of the Cache sidebar:
 - The selected segment is remembered in `sessionStorage` under
   `cachelikes:browser-content-mode:v1`.
 - Current Text destinations are source-aware where the page provides a source-specific
-  history: Grok uses `source=grok`, Gemini uses `source=gemini`, Claude uses `source=claude`, and the ChatGPT Cache
-  Text shortcut intentionally uses `source=all` because ChatGPT history discovery is
-  global rather than limited to the configured media project.
+  history: Grok uses `source=grok`, Gemini uses `source=gemini`, and Claude uses
+  `source=claude`. ChatGPT Text stays on `/cache/chatgpt` to run account-wide text
+  synchronization, independently of the selected Media project.
 - The Cache source selector always stays in the Cache dock and opens the selected source's
-  canonical `/cache/<source>` page. The Text segment remains the entrypoint to the
-  read-only Local resources history view.
+  canonical `/cache/<source>` page. On Grok, Gemini, and Claude, the Text segment
+  opens the read-only Local resources history view.
 - The `all` source view is an aggregate view. It must include the ChatGPT, Gemini, and
   Grok and Claude history files.
 
@@ -61,6 +61,16 @@ updating its `Cache-page Text/Media control` row. This repository is currently t
 leading implementation and the sibling remains `Pending`.
 
 ## 3. Runtime split: media versus text
+
+ChatGPT Text writes `local_store/llm/chatgpt/history.parquet`, independent of the
+Media project directory. Schema v2 adds nullable `provider_revision` metadata.
+Discovery captures `update_time`; only an equal non-empty persisted revision with
+complete source timestamps permits skipping. Missing/changed revisions trigger a
+fresh mapping request. Older schema files remain readable and refresh conservatively.
+Text status (`?content_mode=text`) hydrates sessions/messages from this file without
+opening the media catalog. Failed or rate-limited mapping fetches and empty discovery results are reported
+as incomplete instead of a complete successful synchronization. Existing files in the former
+`local_store/media/llm/chatgpt` location are preserved; no automatic migration occurs.
 
 Grok has two independent runtimes. This split is intentional:
 
@@ -211,9 +221,11 @@ authenticated `MaZiqc` history RPC and follows its cursor:
 4. Persist the complete result atomically to
    `local_store/llm/gemini/discovery_checkpoint.json` before processing sessions.
 
-The checkpoint is valid for 24 hours. Resume runs reuse it and skip conversation IDs
-already present in `history.parquet`, so a transient navigation failure does not repeat
-the full discovery pass. A session with no non-empty text nodes is skipped as a
+The checkpoint is valid for 24 hours. The production service performs fresh discovery
+and refreshes every session on each run. The optional low-level
+`skip_cached_conversations=True` mode reuses the checkpoint and skips stored IDs,
+but is not enabled by the service: ID existence does not establish freshness.
+Do not enable this mode for routine synchronization without a revision-aware contract. A session with no non-empty text nodes is skipped as a
 non-text session, not counted as a failed text cache.
 
 On `14 Aug 2026`, the authenticated Edge history exposed `740` sessions through the
@@ -248,7 +260,11 @@ be idle before starting another task. Only one cache task may hold
 ### Legacy Grok Text runtime
 
 The legacy Grok Text runtime remains available through its status and start/stop routes
-for compatibility, but `/cache/grok` no longer renders a separate Text history action.
+for compatibility, but `/cache/grok` no longer renders a separate Text sync action.
+In remembered Text mode, the primary action reads `View text history`. The form
+submits `cache_content_mode=text`, and `/cache/grok/start` redirects to the Grok
+Local resources history without saving configuration or starting the Media worker.
+Media mode retains the existing Start behavior.
 Monitor `GET /api/cache/grok/text/status` until `running` is false. Use the runtime's
 cooperative stop route when needed; do not delete the lock file while the worker process
 is alive.

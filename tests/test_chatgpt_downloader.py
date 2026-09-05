@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.38.0-codex.1
+# Code version: v1.39.0-codex.1
 
 from __future__ import annotations
 
@@ -164,7 +164,7 @@ def test_chatgpt_history_cache_persists_every_user_and_assistant_message(tmp_pat
     ]
 
 
-def test_chatgpt_history_cache_skips_sessions_already_in_the_store(tmp_path: Path) -> None:
+def test_chatgpt_history_cache_skips_only_matching_revisions(tmp_path: Path) -> None:
     conversation_url = "https://chatgpt.com/c/session-already-cached"
     history_store = ChatGPTHistoryStore(tmp_path / "llm" / "chatgpt" / "history.parquet")
     history_store.replace_conversation(
@@ -181,8 +181,10 @@ def test_chatgpt_history_cache_skips_sessions_already_in_the_store(tmp_path: Pat
             }
         },
         "2026-08-12T08:00:00Z",
+        provider_revision="revision-1",
     )
     history_store.save()
+    history_store = ChatGPTHistoryStore(history_store.path)
 
     with patch("app.core.chatgpt_downloader._get_chatgpt_api_json_via_page") as api_get:
         processed, new_messages, unchanged_sessions = cache_chatgpt_conversation_history(
@@ -192,6 +194,7 @@ def test_chatgpt_history_cache_skips_sessions_already_in_the_store(tmp_path: Pat
             {},
             TaskState("test"),
             lambda: False,
+            conversation_revisions_by_id={"session-already-cached": "revision-1"},
             conversation_titles_by_id={"session-already-cached": "Renamed cached session"},
         )
 
@@ -2605,3 +2608,81 @@ def test_chatgpt_project_startup_timeout_is_explicit() -> None:
                 startup_timeout_seconds=1,
                 scan_wait_seconds=0.1,
             )
+
+
+def test_chatgpt_default_runtime_history_root_and_reset(tmp_path: Path) -> None:
+    from app.core.chatgpt_downloader import chatgpt_history_counts
+
+    target = tmp_path / "local_store" / "media" / "chatgpt" / "demo"
+    history = tmp_path / "local_store" / "llm" / "chatgpt" / "history.parquet"
+    store = ChatGPTHistoryStore(history)
+    store.replace_conversation("https://chatgpt.com/c/demo", {
+        "mapping": {"user": {"message": {
+            "author": {"role": "user"}, "content": {"parts": ["Canonical history"]},
+        }}},
+    }, "2026-09-05T00:00:00Z")
+    store.save()
+    with patch("app.core.chatgpt_downloader.chatgpt_target_dir", return_value=target):
+        with patch("app.core.chatgpt_downloader.ChatGPTImageCatalog.build") as build_media:
+            result = sync_chatgpt_images(TaskState("test"), should_stop=lambda: True, content_mode="text")
+            build_media.assert_not_called()
+        assert result.cached_messages == 1
+        assert chatgpt_history_counts(tmp_path / "local_store") == {"cached_sessions": 1, "cached_messages": 1}
+        reset_chatgpt_state()
+    assert not history.exists()
+    assert not (tmp_path / "local_store" / "media" / "llm").exists()
+
+
+@pytest.mark.parametrize("revision", ["", "new-revision"])
+def test_chatgpt_history_refreshes_changed_or_unknown_revision(tmp_path: Path, revision: str) -> None:
+    url = "https://chatgpt.com/c/freshness"
+    payload = {"mapping": {"user": {"message": {
+        "author": {"role": "user"}, "create_time": 1771059600,
+        "content": {"parts": ["Original"]},
+    }}}}
+    store = ChatGPTHistoryStore(tmp_path / "history.parquet")
+    store.replace_conversation(url, payload, "2026-09-05T00:00:00Z", provider_revision="old-revision")
+    store.save()
+    payload["mapping"]["assistant"] = {"message": {
+        "author": {"role": "assistant"}, "create_time": 1771059900,
+        "content": {"parts": ["New reply"]},
+    }}
+    store = ChatGPTHistoryStore(store.path)
+    with patch("app.core.chatgpt_downloader._get_chatgpt_api_json_via_page", return_value=payload) as api_get:
+        result = cache_chatgpt_conversation_history(
+            store, [url], object(), {}, TaskState("test"), lambda: False,
+            conversation_revisions_by_id={"freshness": revision},
+        )
+    api_get.assert_called_once()
+    assert result == (1, 1, 0)
+    assert ChatGPTHistoryStore(store.path).cached_messages == 2
+    assert {row["provider_revision"] for row in read_parquet_rows(store.path)} == {revision}
+
+
+def test_chatgpt_text_service_does_not_report_partial_sync_as_success() -> None:
+    from app.core.chatgpt_downloader import ChatGPTSyncResult
+    from app.core.chatgpt_service import ChatGPTDownloadService
+
+    state = TaskState("test")
+    service = ChatGPTDownloadService(state)
+    service._content_mode = "text"
+    with patch("app.core.chatgpt_service.sync_chatgpt_images", return_value=ChatGPTSyncResult(incomplete=True)):
+        service._run()
+    assert state.snapshot()["phase"] == "failed"
+    assert "incomplete" in state.snapshot()["message"]
+
+
+def test_chatgpt_discovery_records_provider_update_time() -> None:
+    from app.core.chatgpt_downloader import _collect_all_chatgpt_conversation_urls_via_api
+
+    revisions = {}
+    with patch("app.core.chatgpt_downloader._get_chatgpt_api_json", side_effect=[
+        {"items": [{"id": "known", "update_time": 12345}, {"id": "unknown"}]},
+        {"items": []},
+    ]):
+        urls = _collect_all_chatgpt_conversation_urls_via_api(
+            object(), "https://chatgpt.com/", {"Authorization": "fixture"},
+            TaskState("test"), lambda: False, conversation_revisions_by_id=revisions,
+        )
+    assert len(urls) == 2
+    assert revisions == {"known": "12345"}

@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.95.0-codex.2
+# Code version: v1.96.0-codex.1
 
 from __future__ import annotations
 
@@ -507,7 +507,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="status_progress_value"', chatgpt_body)
         self.assertIn('id="progress_processed_label"', chatgpt_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', chatgpt_body)
-        self.assertIn('cache-page.js?v=cache-page-v1.9.2-codex.1', chatgpt_body)
+        self.assertIn('cache-page.js?v=cache-page-v1.10.0-codex.1', chatgpt_body)
         self.assertIn('segmented-control.js?v=segmented-control-v1.0.2-codex.1', chatgpt_body)
         self.assertIn('data-cache-content-mode', chatgpt_body)
         self.assertIn('href="/cache/chatgpt"', chatgpt_body)
@@ -4435,3 +4435,34 @@ class WebAppTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_grok_remembered_text_submission_cannot_start_media(tmp_path: Path) -> None:
+    application = create_app(tmp_path / "local_store")
+    with patch("app.core.grok_service.GrokDownloadService.start") as start:
+        response = application.test_client().post("/cache/grok/start", data={"cache_content_mode": "text"})
+    assert response.status_code == 302
+    assert "/browser?" in response.location and "source=grok" in response.location
+    start.assert_not_called()
+
+
+def test_chatgpt_text_counters_survive_app_recreation(tmp_path: Path) -> None:
+    from app.core.chatgpt_downloader import ChatGPTHistoryStore
+
+    root = tmp_path / "local_store"
+    store = ChatGPTHistoryStore(root / "llm" / "chatgpt" / "history.parquet")
+    store.replace_conversation("https://chatgpt.com/c/durable", {
+        "mapping": {"user": {"message": {
+            "author": {"role": "user"}, "content": {"parts": ["Durable message"]},
+        }}},
+    }, "2026-09-05T00:00:00Z")
+    store.save()
+    for _ in range(2):
+        client = create_app(root).test_client()
+        with patch("app.core.chatgpt_downloader.ChatGPTImageCatalog.build", side_effect=AssertionError("Text opened media")):
+            status = client.get("/api/cache/chatgpt/status?content_mode=text").get_json()
+        assert status["cached_sessions"] == 1
+        assert status["cached_messages"] == 1
+        body = client.get("/cache/chatgpt").get_data(as_text=True)
+        assert 'data-chatgpt-metric-mode="text"' in body
+        assert 'data-status-field="cached_messages"' in body

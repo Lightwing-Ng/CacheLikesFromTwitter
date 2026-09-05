@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.46.0-codex.1
+# Code version: v1.47.0-codex.1
 
 from __future__ import annotations
 
@@ -234,11 +234,30 @@ class ChatGPTSyncResult:
     stopped: bool = False
     skipped_size: int = 0
     cached_messages: int = 0
+    incomplete: bool = False
 
 
 def chatgpt_history_path(local_store_root: Path | str = LOCAL_STORE_ROOT) -> Path:
     """Return the typed Parquet file used for ChatGPT text history."""
     return Path(local_store_root) / CHATGPT_HISTORY_RELATIVE_DIR / CHATGPT_HISTORY_FILENAME
+
+
+def chatgpt_history_path_for_target(target_dir: Path) -> Path:
+    """Resolve history independently of the project below the canonical media tree."""
+    if target_dir.parent.name == "chatgpt" and target_dir.parent.parent.name == "media":
+        return chatgpt_history_path(target_dir.parents[2])
+    return chatgpt_history_path(target_dir.parent.parent)
+
+
+def chatgpt_history_counts(local_store_root: Path | str = LOCAL_STORE_ROOT) -> dict[str, int]:
+    """Read durable text counters without replacing the active media/task snapshot."""
+    rows = read_parquet_rows(chatgpt_history_path(local_store_root))
+    if rows is None:
+        rows = []
+    return {
+        "cached_sessions": len({row["conversation_id"] for row in rows}),
+        "cached_messages": len(rows),
+    }
 
 
 def _chatgpt_message_text(message: object) -> str:
@@ -391,7 +410,22 @@ class ChatGPTHistoryStore:
             for row in rows
         )
 
-    def replace_conversation(self, conversation_url: str, payload: dict[str, object], captured_at: str) -> tuple[int, bool]:
+    def conversation_revision_matches(self, conversation_url: str, revision: str) -> bool:
+        """Skip only sessions with a durable matching provider revision."""
+        conversation_id = chatgpt_conversation_id(conversation_url)
+        rows = [
+            row for row in self._rows_by_key.values()
+            if row.get("conversation_id") == conversation_id
+        ]
+        return bool(revision and rows) and all(row.get("provider_revision") == revision for row in rows)
+
+    def replace_conversation(
+        self,
+        conversation_url: str,
+        payload: dict[str, object],
+        captured_at: str,
+        provider_revision: str = "",
+    ) -> tuple[int, bool]:
         """Replace one cached conversation and report new-message and unchanged counts."""
         conversation_id = chatgpt_conversation_id(conversation_url)
         previous = {
@@ -411,6 +445,7 @@ class ChatGPTHistoryStore:
         for key in previous:
             self._rows_by_key.pop(key, None)
         for key, row in next_rows.items():
+            row["provider_revision"] = provider_revision
             if key in previous and previous[key].get("content_sha256") == row["content_sha256"]:
                 row["first_seen_at"] = previous[key].get("first_seen_at") or captured_at
             self._rows_by_key[key] = row
@@ -446,6 +481,7 @@ def cache_chatgpt_conversation_history(
     should_stop,
     scan_wait_seconds: float = 0.0,
     conversation_titles_by_id: dict[str, str] | None = None,
+    conversation_revisions_by_id: dict[str, str] | None = None,
 ) -> tuple[int, int, int]:
     """Fetch and persist complete text mappings for every discovered session."""
     processed = 0
@@ -459,8 +495,10 @@ def cache_chatgpt_conversation_history(
         api_url = _chatgpt_conversation_api_url(conversation_url)
         if not api_url:
             continue
-        if history_store.has_conversation(conversation_url) and not history_store.conversation_needs_timestamp_refresh(
-            conversation_url
+        revision = (conversation_revisions_by_id or {}).get(chatgpt_conversation_id(conversation_url), "")
+        if (
+            history_store.conversation_revision_matches(conversation_url, revision)
+            and not history_store.conversation_needs_timestamp_refresh(conversation_url)
         ):
             processed += 1
             unchanged_sessions += 1
@@ -474,6 +512,7 @@ def cache_chatgpt_conversation_history(
                 conversation_url,
                 payload,
                 utc_now(),
+                provider_revision=revision,
             )
             history_store.save()
         except ChatGPTRateLimitError:
@@ -1187,6 +1226,24 @@ def build_chatgpt_initial_snapshot(
     return snapshot
 
 
+def build_chatgpt_text_snapshot(version: str, local_store_root: Path | str = LOCAL_STORE_ROOT) -> TaskSnapshot:
+    """Hydrate Text mode without opening or repairing the media catalog."""
+    counts = chatgpt_history_counts(local_store_root)
+    return TaskSnapshot(
+        version=version,
+        account_name="ChatGPT",
+        output_dir=str(chatgpt_history_path(local_store_root).parent),
+        discovered_tweets=counts["cached_sessions"],
+        downloaded_posts=counts["cached_sessions"],
+        downloaded_tweets=counts["cached_messages"],
+        progress_unit="sessions",
+        message=(
+            f"Ready. Found existing ChatGPT text cache: {counts['cached_sessions']:,} sessions, "
+            f"{counts['cached_messages']:,} messages."
+        ),
+    )
+
+
 def reset_chatgpt_state(
     target_dir: Path | None = None,
     project_name: str = DEFAULT_CHATGPT_PROJECT_NAME,
@@ -1213,7 +1270,7 @@ def reset_chatgpt_state(
     for state_path in (
         catalog_path,
         resolved_target_dir / LEGACY_CHATGPT_CATALOG_FILENAME,
-        chatgpt_history_path(resolved_target_dir.parent.parent),
+        chatgpt_history_path_for_target(resolved_target_dir),
     ):
         if state_path.exists() and state_path.is_file():
             state_path.unlink()
@@ -2172,6 +2229,7 @@ def _collect_all_chatgpt_conversation_urls_via_api(
     state: TaskState,
     should_stop,
     conversation_titles_by_id: dict[str, str] | None = None,
+    conversation_revisions_by_id: dict[str, str] | None = None,
 ) -> list[str]:
     """Load every ChatGPT session for text history, independent of the media project."""
     if not request_headers:
@@ -2211,6 +2269,9 @@ def _collect_all_chatgpt_conversation_urls_via_api(
             seen_ids.add(conversation_id)
             new_session_count += 1
             conversation_urls.append(f"https://chatgpt.com/c/{conversation_id}")
+            revision = raw_item.get("update_time")
+            if conversation_revisions_by_id is not None and isinstance(revision, (str, int, float)):
+                conversation_revisions_by_id[conversation_id] = str(revision).strip()
             conversation_title = str(raw_item.get("title") or "").strip()
             if conversation_title and conversation_titles_by_id is not None:
                 conversation_titles_by_id[conversation_id] = conversation_title
@@ -3670,37 +3731,46 @@ def sync_chatgpt_images(
         MAX_CHATGPT_SCAN_WAIT_SECONDS,
     )
     resolved_target_dir = target_dir or chatgpt_target_dir(project_name)
-    history_store = ChatGPTHistoryStore(chatgpt_history_path(resolved_target_dir.parent.parent))
-    catalog = ChatGPTImageCatalog.build(resolved_target_dir)
-    repair_result = catalog.repair_result
-    performance_metrics = PerformanceMetrics()
-    cleanup_result = catalog.deduplicate_visual_duplicates(metrics=performance_metrics)
-    cached_count = catalog.summarize()
-    state.update(
-        account_name=project_name,
-        output_dir=str(resolved_target_dir),
-        downloaded_posts=cached_count,
-        downloaded_tweets=cached_count,
-        discovered_images=cached_count,
-        downloaded_images=cached_count,
-        downloaded_videos=0,
-        queued_tweets=0,
-        processed_tweets=0,
-        discovery_complete=False,
-    )
-    if performance_metrics.has_data:
-        state.update(performance_metrics=performance_metrics.snapshot())
-    state.append_event(f"Prepared ChatGPT cache with {cached_count:,} existing original images.")
-    if repair_result.removed_count:
-        state.append_event(
-            f"Pruned {repair_result.removed_count:,} incomplete ChatGPT catalog records so their "
-            "assets can be downloaded again."
+    history_store = ChatGPTHistoryStore(chatgpt_history_path_for_target(resolved_target_dir))
+    cached_count = 0
+    if normalized_content_mode == "text":
+        state.update(
+            account_name="ChatGPT",
+            output_dir=str(history_store.path.parent),
+            downloaded_tweets=history_store.cached_messages,
+            progress_unit="sessions",
         )
-    if cleanup_result.removed_count:
-        state.append_event(
-            f"Removed {cleanup_result.removed_count:,} lower-quality duplicate ChatGPT images "
-            f"and reclaimed {cleanup_result.reclaimed_bytes:,} bytes."
+    else:
+        catalog = ChatGPTImageCatalog.build(resolved_target_dir)
+        repair_result = catalog.repair_result
+        performance_metrics = PerformanceMetrics()
+        cleanup_result = catalog.deduplicate_visual_duplicates(metrics=performance_metrics)
+        cached_count = catalog.summarize()
+        state.update(
+            account_name=project_name,
+            output_dir=str(resolved_target_dir),
+            downloaded_posts=cached_count,
+            downloaded_tweets=cached_count,
+            discovered_images=cached_count,
+            downloaded_images=cached_count,
+            downloaded_videos=0,
+            queued_tweets=0,
+            processed_tweets=0,
+            discovery_complete=False,
         )
+        if performance_metrics.has_data:
+            state.update(performance_metrics=performance_metrics.snapshot())
+        state.append_event(f"Prepared ChatGPT cache with {cached_count:,} existing original images.")
+        if repair_result.removed_count:
+            state.append_event(
+                f"Pruned {repair_result.removed_count:,} incomplete ChatGPT catalog records so their "
+                "assets can be downloaded again."
+            )
+        if cleanup_result.removed_count:
+            state.append_event(
+                f"Removed {cleanup_result.removed_count:,} lower-quality duplicate ChatGPT images "
+                f"and reclaimed {cleanup_result.reclaimed_bytes:,} bytes."
+            )
     state.append_event(
         f"ChatGPT startup timeout: {startup_timeout_seconds:g} s; "
         f"scan wait: {scan_wait_seconds:g} s."
@@ -3731,6 +3801,7 @@ def sync_chatgpt_images(
                         CHATGPT_HOME_URL,
                     )
                     conversation_titles_by_id: dict[str, str] = {}
+                    conversation_revisions_by_id: dict[str, str] = {}
                     conversation_urls = _collect_all_chatgpt_conversation_urls_via_api(
                         discovery_context,
                         CHATGPT_HOME_URL,
@@ -3738,6 +3809,7 @@ def sync_chatgpt_images(
                         state,
                         should_stop,
                         conversation_titles_by_id,
+                        conversation_revisions_by_id,
                     )
                     history_processed, history_new_messages, history_unchanged_sessions = (
                         cache_chatgpt_conversation_history(
@@ -3749,6 +3821,7 @@ def sync_chatgpt_images(
                             should_stop,
                             scan_wait_seconds=runtime_config.cache_scan_wait("chatgpt", "text"),
                             conversation_titles_by_id=conversation_titles_by_id,
+                            conversation_revisions_by_id=conversation_revisions_by_id,
                         )
                     )
             stopped = should_stop()
@@ -3756,6 +3829,8 @@ def sync_chatgpt_images(
                 discovered_tweets=len(conversation_urls),
                 queued_tweets=len(conversation_urls),
                 processed_tweets=history_processed,
+                failed_tweets=len(conversation_urls) - history_processed,
+                downloaded_tweets=history_store.cached_messages,
                 progress_unit="sessions",
                 discovery_complete=not stopped,
             )
@@ -3768,6 +3843,8 @@ def sync_chatgpt_images(
                 discovered_conversations=len(conversation_urls),
                 cached_count=cached_count,
                 cached_messages=history_store.cached_messages,
+                incomplete=not conversation_urls or history_processed < len(conversation_urls),
+                failed_count=len(conversation_urls) - history_processed,
                 stopped=stopped,
             )
 

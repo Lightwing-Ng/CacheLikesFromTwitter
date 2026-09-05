@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.29.0-codex.2
+Code version: v1.30.0-codex.1
 """
 
 from __future__ import annotations
@@ -9568,5 +9568,40 @@ def test_agent_latest_deduplicates_and_effort_click_recovers_failed_catalog(
         expect(page.get_by_role('button', name='Option: Extra High', exact=True)).to_be_visible()
         assert sum('refresh=1' in url for url in requests) == 1
         assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+    finally:
+        context.close()
+
+
+@pytest.mark.parametrize("width", [1280, 390])
+def test_cache_text_metrics_and_grok_runtime_boundary(
+    disposable_browser: Browser, seeded_chatgpt_browser_server_url: str, width: int,
+) -> None:
+    context = disposable_browser.new_context(viewport={"width": width, "height": 900})
+    context.add_init_script("if (!sessionStorage.getItem('cachelikes:browser-content-mode:v1')) sessionStorage.setItem('cachelikes:browser-content-mode:v1', 'text')")
+    page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    try:
+        page.goto(f"{seeded_chatgpt_browser_server_url}/cache/chatgpt", wait_until="networkidle")
+        expect(page.locator('#cached_sessions')).to_have_text("1")
+        expect(page.locator('#cached_messages')).to_have_text("1")
+        expect(page.locator('#downloaded_images')).not_to_be_visible()
+        assert page.locator('[data-cache-runtime-mode]').input_value() == "text"
+        assert page.evaluate('document.documentElement.scrollWidth <= innerWidth')
+        page.goto(f"{seeded_chatgpt_browser_server_url}/cache/grok", wait_until="networkidle")
+        expect(page.locator('#start_button')).to_have_text("View text history")
+        assert page.locator('[data-cache-runtime-mode]').input_value() == "text"
+        response = page.request.post(
+            f"{seeded_chatgpt_browser_server_url}/cache/grok/start",
+            form={"cache_content_mode": "text"}, max_redirects=0,
+        )
+        assert response.status == 302
+        assert 'source=grok' in response.headers['location']
+        page.evaluate("sessionStorage.setItem('cachelikes:browser-content-mode:v1', 'media')")
+        page.goto(f"{seeded_chatgpt_browser_server_url}/cache/chatgpt", wait_until="networkidle")
+        expect(page.locator('#downloaded_images')).to_be_visible()
+        expect(page.locator('#cached_messages')).not_to_be_visible()
+        assert page.locator('[data-chatgpt-content-mode-input]').input_value() == "media"
+        assert errors == []
     finally:
         context.close()

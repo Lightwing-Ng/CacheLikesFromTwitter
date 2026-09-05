@@ -1,6 +1,6 @@
 """Provider workflows exposed to the application layer."""
 
-# Code version: v1.0.0-codex.1
+# Code version: v1.1.0-codex.1
 
 from ..chatgpt_agent_sources import (
     fetch_chatgpt_conversation_history,
@@ -11,7 +11,9 @@ from ..chatgpt_agent_sources import (
 )
 from ..chatgpt_downloader import (
     build_chatgpt_initial_snapshot,
+    build_chatgpt_text_snapshot,
     chatgpt_conversation_id,
+    chatgpt_history_counts,
     is_chatgpt_conversation_url,
     reset_chatgpt_state,
 )
@@ -34,11 +36,13 @@ __all__ = [
     "GrokDownloadService",
     "GrokHistoryService",
     "build_chatgpt_initial_snapshot",
+    "build_chatgpt_text_snapshot",
     "build_claude_initial_snapshot",
     "build_gemini_initial_snapshot",
     "build_grok_history_snapshot",
     "build_grok_initial_snapshot",
     "chatgpt_conversation_id",
+    "chatgpt_history_counts",
     "fetch_chatgpt_conversation_history",
     "is_chatgpt_conversation_url",
     "list_chatgpt_agent_sources",

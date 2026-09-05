@@ -1,6 +1,6 @@
 """Background service for ChatGPT text and media sync."""
 
-# Code version: v1.3.0-codex.1
+# Code version: v1.4.0-codex.1
 
 from __future__ import annotations
 
@@ -137,6 +137,13 @@ class ChatGPTDownloadService:
                         "downloaded_count": result.downloaded_count,
                         "cached_count": result.cached_count,
                     },
+                )
+                return
+
+            if self._content_mode == "text" and result.incomplete:
+                self._state.finish_error(
+                    "ChatGPT text sync is incomplete. Cached messages were preserved; "
+                    "retry to refresh the remaining sessions. See recent activity for details."
                 )
                 return
 

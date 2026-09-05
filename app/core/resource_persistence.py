@@ -1,6 +1,6 @@
 """Shared Parquet schemas and atomic persistence for cached resource state."""
 
-# Code version: v1.7.0-codex.1
+# Code version: v1.8.0-codex.1
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ GROK_WORK_QUEUE_SCHEMA_VERSION = 2
 DELETED_MEDIA_SCHEMA_VERSION = 2
 X_CACHE_CATALOG_SCHEMA_VERSION = 3
 GEMINI_HISTORY_SCHEMA_VERSION = 1
-CHATGPT_HISTORY_SCHEMA_VERSION = 1
+CHATGPT_HISTORY_SCHEMA_VERSION = 2
 GROK_HISTORY_SCHEMA_VERSION = 1
 CLAUDE_HISTORY_SCHEMA_VERSION = 1
 PROMPT_SCHEMA_VERSION = 2
@@ -228,6 +228,7 @@ GEMINI_HISTORY_SCHEMA = pa.schema(
 CHATGPT_HISTORY_SCHEMA = pa.schema(
     [
         pa.field("schema_version", pa.int16(), nullable=False),
+        pa.field("provider_revision", pa.string(), nullable=True),
         pa.field("platform", pa.string(), nullable=False),
         pa.field("conversation_id", pa.string(), nullable=False),
         pa.field("conversation_url", pa.string(), nullable=False),

@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.62.0-codex.1
+# Code version: v1.63.0-codex.1
 
 from __future__ import annotations
 
@@ -82,6 +82,8 @@ from app.core.providers import (
     GrokDownloadService,
     GrokHistoryService,
     build_chatgpt_initial_snapshot,
+    build_chatgpt_text_snapshot,
+    chatgpt_history_counts,
     build_claude_initial_snapshot,
     build_gemini_initial_snapshot,
     build_grok_history_snapshot,
@@ -777,12 +779,22 @@ def create_app(
             "remarks": list(item.remarks),
         }
 
-    def build_reconciled_cache_snapshot(source_key: str) -> dict[str, Any]:
+    def build_reconciled_cache_snapshot(source_key: str, content_mode: str | None = None) -> dict[str, Any]:
         """Refresh one registered source without discarding live task status."""
         runtime = cache_runtimes.get(source_key)
         if runtime is None:
             raise KeyError(source_key)
-        return reconcile_cached_snapshot(runtime.state.snapshot(), asdict(runtime.hydrate_snapshot()))
+        mode = content_mode or request.args.get("content_mode")
+        if source_key == "chatgpt" and mode == "text":
+            hydrated = asdict(build_chatgpt_text_snapshot(APP_VERSION, media_catalog.local_store_root))
+            snapshot = reconcile_cached_snapshot(runtime.state.snapshot(), hydrated)
+            snapshot["cached_sessions"] = hydrated["downloaded_posts"]
+            snapshot["cached_messages"] = hydrated["downloaded_tweets"]
+            return snapshot
+        snapshot = reconcile_cached_snapshot(runtime.state.snapshot(), asdict(runtime.hydrate_snapshot()))
+        if source_key == "chatgpt":
+            snapshot.update(chatgpt_history_counts(media_catalog.local_store_root))
+        return snapshot
 
     def build_reconciled_grok_snapshot() -> dict[str, Any]:
         """Refresh Grok cache counters from disk without discarding live task status."""
@@ -978,7 +990,7 @@ def create_app(
                 for source in cache_source_views_for_page(source_key)
                 if source.key in cache_runtimes
             ),
-            snapshot=build_reconciled_cache_snapshot(source_key),
+            snapshot=build_reconciled_cache_snapshot(source_key, "text" if source_key == "chatgpt" else None),
             history_snapshot=(
                 build_reconciled_grok_history_snapshot() if source_key == "grok" else None
             ),
@@ -2124,6 +2136,8 @@ def create_app(
         runtime = cache_runtimes.get(source_key)
         if cache_source is None or runtime is None:
             abort(404)
+        if source_key == "grok" and request.form.get("cache_content_mode") == "text":
+            return redirect(url_for("browser", view="text", session_view="1", source="grok", sort="newest"))
         config = parse_form_config(saved_config, preserve_missing_booleans=True)
         saved_config = config
         save_config(saved_config)

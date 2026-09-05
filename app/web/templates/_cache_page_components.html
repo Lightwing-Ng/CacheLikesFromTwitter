@@ -1,4 +1,4 @@
-{# Code version: v1.1.1-codex.1 #}
+{# Code version: v1.2.0-codex.1 #}
 
 {% from "_browser_session_status.html" import render_browser_session_status %}
 
@@ -63,8 +63,8 @@
 {%- endmacro %}
 
 
-{% macro render_metric(label, field, value, element_id=None) -%}
-<div class="metric-card foundation-metric-card metric-card-accent">
+{% macro render_metric(label, field, value, element_id=None, content_mode=None) -%}
+<div {% if content_mode %}data-chatgpt-metric-mode="{{ content_mode }}" {% if content_mode == "media" %}hidden {% endif %}{% endif %}class="metric-card foundation-metric-card metric-card-accent">
     <span class="metric-label">{{ label }}</span>
     <strong
         {% if element_id %}id="{{ element_id }}"{% endif %}
@@ -75,8 +75,8 @@
 {%- endmacro %}
 
 
-{% macro render_progress_metric(label, field, value, element_id=None, dynamic_label=false) -%}
-<div class="metric-card foundation-metric-card metric-card-accent progress-metric-card">
+{% macro render_progress_metric(label, field, value, element_id=None, dynamic_label=false, content_mode=None) -%}
+<div {% if content_mode %}data-chatgpt-metric-mode="{{ content_mode }}" {% if content_mode == "media" %}hidden {% endif %}{% endif %}class="metric-card foundation-metric-card metric-card-accent progress-metric-card">
     <span
         class="progress-metric-label"
         {% if dynamic_label %}id="progress_processed_label" data-progress-unit-label{% endif %}
