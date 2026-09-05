@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.13.0-codex.1`
+Documentation version: `v1.13.1-codex.1`
 
 ## Runtime flow
 
@@ -320,6 +320,16 @@ Controller actions travel in fenced `json` code blocks, and the browser reader p
 code-block text so Markdown rendering cannot consume source-code punctuation before parsing.
 The provider adapter validates each official root session, Project, or Project session before the
 task; the selection is run-scoped and the default remains a new root session.
+Gemini 3.1 Pro and 3.8 Flash use the same controller, permissions, session binding,
+verification, and bodycheck flow as ChatGPT. The shared provider model registry supplies both
+local choices; Pro remains the default and Flash is an explicit selection. Before transferring
+context or a prompt, the Gemini adapter verifies the exact versioned primary label in the
+trigger-owned menu and both the selected class and a visible localized selected marker
+(English, Simplified Chinese, or Traditional Chinese). Missing versions or incomplete proof
+stop the run without substituting another model. The menu is closed after verification.
+These are Gemini Web choices, so access depends on the signed-in browser account; no API key
+or separate API execution path is introduced.
+
 For Gemini, Project-new binds a fresh transfer receipt to the selected Notebook route but does not
 claim an independent provider-side subconversation identity.
 Source discovery is persisted separately from message history through a three-level read-through

@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.30.0-codex.1
+Code version: v1.30.1-codex.1
 """
 
 from __future__ import annotations
@@ -3360,10 +3360,11 @@ def test_sidebar_state_remains_consistent_across_overlay_transitions(
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.parametrize(
-    ("platform", "platform_label", "session_url"),
+    ("platform", "platform_label", "session_url", "selected_model"),
     (
-        ("gemini", "Gemini", "https://gemini.google.com/app/gemini-recent-session"),
-        ("grok", "Grok", "https://grok.com/c/grok-recent-session"),
+        ("gemini", "Gemini", "https://gemini.google.com/app/gemini-recent-session", "gemini-3.1-pro"),
+        ("gemini", "Gemini", "https://gemini.google.com/app/gemini-recent-session", "gemini-3.8-flash"),
+        ("grok", "Grok", "https://grok.com/c/grok-recent-session", "grok-build"),
     ),
 )
 def test_agent_recent_provider_sessions_submit_agentic_task_target(
@@ -3372,6 +3373,7 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
     platform: str,
     platform_label: str,
     session_url: str,
+    selected_model: str,
 ) -> None:
     """Verify Gemini and Grok serialize a selected recent session into Agent execution."""
     captured_ask_payloads: list[dict[str, str]] = []
@@ -3577,10 +3579,17 @@ def test_agent_recent_provider_sessions_submit_agentic_task_target(
         _assert_agent_session_source_menu_is_hit_testable(page)
         expect(page.locator("#agent_ask_button")).to_be_enabled()
 
+        page.locator(".agent-model-combobox [data-agent-combobox-trigger]").click()
+        page.locator(
+            f'.agent-model-combobox [data-agent-combobox-option="{selected_model}"]'
+        ).click()
+        expect(page.locator("[data-agent-model-input]")).to_have_value(selected_model)
+
         page.locator('[data-agent-prompt-input]').fill(f"Inspect the {platform_label} task workspace.")
         with page.expect_request(re.compile(r"/api/agent/ask$")):
             page.locator("#agent_ask_button").click()
         assert len(captured_ask_payloads) == 1
+        assert captured_ask_payloads[0]["model"] == selected_model
         assert captured_ask_payloads[0]["platform"] == platform
         assert captured_ask_payloads[0]["session_mode"] == "recent"
         assert captured_ask_payloads[0]["conversation_url"] == session_url
@@ -4668,6 +4677,45 @@ def test_gemini_session_dom_ignores_a_conversation_sign_in_decoy(
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("width", (1_138, 390))
+def test_gemini_model_picker_keeps_both_versions_selectable(
+    disposable_browser: Browser, sidebar_server_url: str, width: int,
+) -> None:
+    """Exercise the shared model picker with Gemini at desktop and narrow widths."""
+    payload = _finished_chatgpt_agent_payload()
+    payload["agent"].update(
+        running=False, phase="idle", platform="gemini", model="gemini-3.1-pro",
+        history=[], activity=[], response="", response_html="", finished_at="",
+    )
+    context = disposable_browser.new_context(
+        viewport={"width": width, "height": 959}, reduced_motion="reduce",
+    )
+    page = context.new_page()
+    page.route("**/api/agent/status", lambda route: route.fulfill(json=payload))
+    page.route("**/api/browser-session**", lambda route: route.fulfill(json={
+        "can_download": True, "logged_in": True, "browser": "edge", "platform": "gemini",
+    }))
+    page.route("**/api/agent/sources**", lambda route: route.fulfill(json={
+        "platform": "gemini", "recent_sessions": [], "projects": [],
+    }))
+    page.route("**/api/agent/preferences", lambda route: route.fulfill(json=payload))
+    try:
+        page.goto(f"{sidebar_server_url}/agent/edge/gemini")
+        trigger = page.locator(".agent-model-combobox [data-agent-combobox-trigger]")
+        for model, label in (("gemini-3.8-flash", "3.8 Flash"), ("gemini-3.1-pro", "3.1 Pro")):
+            trigger.click()
+            option = page.locator(f'.agent-model-combobox [data-agent-combobox-option="{model}"]')
+            expect(option).to_be_visible()
+            option.click()
+            expect(page.locator("[data-agent-model-input]")).to_have_value(model)
+            expect(trigger).to_contain_text(label)
+            expect(trigger).to_have_attribute("aria-expanded", "false")
+        assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
 @pytest.mark.parametrize(
     (
         "primary_text",
@@ -4709,6 +4757,8 @@ def test_gemini_session_dom_ignores_a_conversation_sign_in_decoy(
         ),
     ),
 )
+@pytest.mark.parametrize("model_label", ("3.1 Pro", "3.8 Flash"))
+@pytest.mark.parametrize("selected_label", ("Selected", "已选中", "已選取"))
 def test_gemini_model_dom_selection_requires_exact_controlled_selected_proof(
     disposable_browser: Browser,
     primary_text: str,
@@ -4719,7 +4769,12 @@ def test_gemini_model_dom_selection_requires_exact_controlled_selected_proof(
     nested_popup: bool,
     expected: bool,
     expected_option_clicks: int,
+    model_label: str,
+    selected_label: str,
 ) -> None:
+    primary_text = primary_text.replace("3.1 Pro", model_label)
+    sublabel_text = sublabel_text.replace("3.1 Pro", model_label)
+    model = "gemini-" + model_label.lower().replace(" ", "-")
     context = disposable_browser.new_context()
     page = context.new_page()
     try:
@@ -4769,7 +4824,7 @@ def test_gemini_model_dom_selection_requires_exact_controlled_selected_proof(
                     }}
                     if ({str(marker_style is not None).lower()}) {{
                         const marker = document.createElement('span');
-                        marker.setAttribute('aria-label', 'Selected');
+                        marker.setAttribute('aria-label', {json.dumps(selected_label)});
                         marker.setAttribute('style', {json.dumps(marker_style or '')});
                         marker.textContent = '✓';
                         option.prepend(marker);
@@ -4780,7 +4835,7 @@ def test_gemini_model_dom_selection_requires_exact_controlled_selected_proof(
         )
 
         assert (
-            _select_web_model(page, "chromium", "gemini", "gemini-3.1-pro")
+            _select_web_model(page, "chromium", "gemini", model)
             is expected
         )
         assert page.evaluate("window.selectionAudit.optionClicks") == expected_option_clicks

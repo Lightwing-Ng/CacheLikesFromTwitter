@@ -1,6 +1,6 @@
 # Testing guide
 
-Documentation version: `v1.7.4-codex.1`
+Documentation version: `v1.7.5-codex.1`
 
 ## Supported commands
 
@@ -305,3 +305,56 @@ isolation properties and must never navigate to an external service.
 5. Add a marker only when it accurately describes the test's cost or boundary.
 6. Run the focused test, then `./scripts/check.sh` on macOS/Linux or `.\scripts\check.ps1` on
    Windows before handoff.
+
+## Gemini Web Agent model verification, 6 Sep 2026
+
+Controller version: `v3.56.0-codex.1`.
+
+- `python3.13 -m pytest tests/test_computer_use_agent.py -q`: 448 passed.
+  Includes 3.8 Flash settings validation, the shared action loop through bodycheck/final,
+  and refusal to transfer project context when model verification fails.
+- `python3.13 -m pytest tests/test_sidebar_e2e.py -q -k gemini_model_dom`:
+  64 passed. Before the fix, the six positive exact-proof cases produced five failures:
+  Flash was unsupported and Chinese selected markers were rejected.
+- `python3.13 -m pytest tests/test_sidebar_e2e.py -q -k agent_recent_provider_sessions_submit_agentic_task_target`:
+  Three passed, including both Gemini versions and the existing Grok path. Requests are
+  intercepted; this verifies local selection and task serialization, not a remote response.
+- `python3.13 -m pytest tests/test_sidebar_e2e.py -q -k gemini_model_picker_keeps_both_versions_selectable`:
+  Two passed at 1,138px and 390px, with both choices selectable and no horizontal overflow.
+- Ruff and `git diff --check` passed.
+
+Live Edge inspection confirmed versioned 3.1 Pro and 3.8 Flash menu entries and successfully
+selected each, reopening the menu to read back the selected marker. The original Flash choice
+was restored and the menu closed. No project context or test prompt was sent to Gemini.
+The existing 8666 listener belongs to this checkout but reports a running Agent task and still
+serves the prior Pro-only catalog. It was not restarted. Normal service restart after that task
+finishes, followed by a real Gemini Agent task, remains the production acceptance step.
+
+Numbered-copy housekeeping retained 12 protected log/provider-state files and three coverage
+copies; no files were removed. Detailed metadata is in the task-local
+`/tmp/agenticcontext-gemini-housekeeping.json` report.
+
+The complete `./scripts/check.sh` run passed Ruff, JavaScript syntax, all nine JavaScript
+unit tests, and the 55% coverage threshold (71.17% observed). Pytest completed with 1,525
+passed, 13 failed, and 560 subtests passed. The two additional narrow/desktop model-picker
+cases were run separately after the full gate had collected its tests.
+
+The unresolved full-gate failures are:
+
+- Four `test_activity_preserves_collapse_and_tracks_current` cases: the test expects
+  `checkmark.circle.fill.svg`, while current CSS uses `checkmark.circle.svg`. The exact
+  `reduce-390` case also failed independently under `TZ=UTC`.
+- `test_cache_sidebars_reuse_the_chatgpt_base_contract`: duplicate matching elements.
+- Two `test_agent_response_pagination_is_immersed_but_keeps_interactive_effects` cases:
+  an effect-clearance assertion observes 10px where at least 23px is expected.
+- Three `test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line` cases:
+  the rendered label is `Latest`, while the test expects `Best available`.
+- `test_cache_action_row_switches_stop_visibility_with_running_state`: `View text history`
+  is rendered where `Start` is expected.
+- `test_successful_agent_completion_collapses_activity_without_erasing_a_new_draft`:
+  the existing prompt-scroll assertion is `128 > 140`.
+- `test_cache_summary_metrics_reuse_the_foundation_metric_contract`: 14 metric-card
+  occurrences versus 10 expected.
+
+These failures were not changed as part of the Gemini model integration. The complete
+local log is `/tmp/agenticcontext-gemini-quality.log`; the full gate is not green.

@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.55.0-codex.2
+Code version: v3.56.0-codex.1
 """
 
 from __future__ import annotations
@@ -306,6 +306,7 @@ def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None
         for platform, model, target_url in (
             ("chatgpt", "gpt-5.6-sol", "https://chatgpt.com/"),
             ("gemini", "gemini-3.1-pro", "https://gemini.google.com/app"),
+            ("gemini", "gemini-3.8-flash", "https://gemini.google.com/app"),
             ("grok", "grok-build", "https://grok.com/"),
             ("claude", "claude-auto", "https://claude.ai/new"),
         ):
@@ -6593,6 +6594,13 @@ def test_action_loop_records_workspace_and_delete_receipt_provenance(
             "https://gemini.google.com/app/model-check",
         ),
         (
+            "gemini",
+            "gemini-3.8-flash",
+            "Gemini",
+            "Gemini 3.8 Flash",
+            "https://gemini.google.com/app/model-check",
+        ),
+        (
             "grok",
             "grok-build",
             "Grok",
@@ -7198,6 +7206,7 @@ def test_verification_gate_resets_after_every_edit(
     ("platform", "target_url", "model"),
     (
         ("gemini", "https://gemini.google.com/app/gemini-session", "gemini-3.1-pro"),
+        ("gemini", "https://gemini.google.com/app/gemini-session", "gemini-3.8-flash"),
         ("grok", "https://grok.com/c/grok-session", "grok-build"),
     ),
 )

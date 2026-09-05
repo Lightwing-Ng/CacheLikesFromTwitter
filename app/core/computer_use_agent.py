@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.55.3-codex.1
+Code version: v3.56.0-codex.1
 """
 
 from __future__ import annotations
@@ -242,6 +242,13 @@ GEMINI_MODEL_OPTIONS = (
         "ui_label": "3.1 Pro",
         "remote_labels": ("Gemini 3.1 Pro", "3.1 Pro"),
         "strength": 100,
+    },
+    {
+        "key": "gemini-3.8-flash",
+        "label": "Gemini 3.8 Flash",
+        "ui_label": "3.8 Flash",
+        "remote_labels": ("Gemini 3.8 Flash", "3.8 Flash"),
+        "strength": 90,
     },
 )
 GROK_MODEL_OPTIONS = (
@@ -12434,7 +12441,9 @@ def _select_web_model(
             const geminiSelectedProof = (element) => {
                 if (!element || !element.classList.contains('selected')) return false;
                 return [...element.querySelectorAll('[aria-label]')].some((marker) => (
-                    normalize(marker.getAttribute('aria-label')) === 'selected' && isVisible(marker)
+                    ['selected', '已选中', '已選取', '已選中'].includes(
+                        normalize(marker.getAttribute('aria-label'))
+                    ) && isVisible(marker)
                 ));
             };
             if (platform === 'gemini') {
