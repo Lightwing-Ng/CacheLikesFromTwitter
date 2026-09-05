@@ -1,4 +1,4 @@
-/* Code version: v3.31.4-codex.1 */
+/* Code version: v3.31.5-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -572,18 +572,24 @@
         }
         const automatic = menu.querySelector('[data-agent-combobox-option="latest_available"]');
         if (automatic) {
-            const label = liveCatalog?.actual_model || "Best available";
+            const label = liveCatalog?.actual_model || "Latest";
             automatic.dataset.agentComboboxLabel = label;
             const text = automatic.querySelector(".trade-strategy-dropdown-text");
             if (text) text.textContent = `ChatGPT · ${label}`;
         }
         const options = Array.from(menu.querySelectorAll("[data-agent-combobox-option]"));
+        const providerLatest = liveCatalog && options.find((option) =>
+            option.dataset.agentModelGenerated === "true"
+            && option.dataset.agentComboboxOption === "live:latest",
+        );
         options.forEach((option) => {
             option.hidden = option.dataset.agentPlatform !== platform
+                || Boolean(providerLatest && option === automatic)
                 || Boolean(liveCatalog && option.dataset.agentComboboxOption === "gpt-5.6-sol");
         });
         const visibleOptions = options.filter((option) => !option.hidden);
-        const desiredModel = liveCatalog && preferredModel.startsWith("live:") ? preferredModel : input.value;
+        let desiredModel = liveCatalog && preferredModel.startsWith("live:") ? preferredModel : input.value;
+        if (providerLatest && desiredModel === "latest_available") desiredModel = "live:latest";
         let selectedOption = visibleOptions.find((option) => option.dataset.agentComboboxOption === desiredModel);
         if (!selectedOption) {
             selectedOption = visibleOptions.reduce((strongest, option) => {
@@ -1385,6 +1391,9 @@
                 if (!isDirectList) closeCombobox(combobox);
             };
             trigger?.addEventListener("click", () => {
+                if (combobox === elements.effortCombobox && !verifiedChatgptEffortCatalog()) {
+                    void browserStatusController?.refresh?.();
+                }
                 if (combobox === elements.recentSessionCombobox || combobox === elements.projectCombobox) {
                     refreshAgentSessionSources();
                 }

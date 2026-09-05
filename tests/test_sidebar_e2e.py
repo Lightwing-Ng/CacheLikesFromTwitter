@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.29.0-codex.1
+Code version: v1.29.0-codex.2
 """
 
 from __future__ import annotations
@@ -9518,5 +9518,55 @@ def test_resource_annotations_search_scope_toolbar_and_remark_bounds(
         assert bounds["radius"] == "10px"
         assert bounds["left"] >= bounds["cellLeft"] and bounds["right"] <= bounds["cellRight"]
         assert page.locator('[data-prompt-tag]').count() == 3
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('width', [1_021, 375])
+def test_agent_latest_deduplicates_and_effort_click_recovers_failed_catalog(
+    disposable_browser: Browser, sidebar_server_url: str, width: int,
+) -> None:
+    from app.core.agent_model_catalog import chatgpt_live_catalog
+
+    status = {
+        'platform': 'chatgpt', 'browser': 'edge', 'can_download': True,
+        'account_name': 'ChatGPT account', 'browser_label': 'Edge',
+        'model_catalog_complete': True, 'actual_model': 'Latest',
+        'model_options': chatgpt_live_catalog(['Latest', 'GPT-5.6 Sol']),
+        'available_efforts': ['Instant'], 'effort_catalog_complete': False,
+        'effort_catalog_error': 'effort-range-changed',
+        'browser_session_freshness': {
+            'kind': 'stale_cache', 'cache_status': 'stale',
+            'cached_at': '2026-09-05T00:00:00Z',
+        },
+    }
+    requests = []
+    context = disposable_browser.new_context(viewport={'width': width, 'height': 863})
+    page = context.new_page()
+    page.route('**/api/agent/status', lambda route: route.fulfill(json=_finished_chatgpt_agent_payload()))
+
+    def bootstrap(route):
+        requests.append(route.request.url)
+        if 'refresh=1' in route.request.url:
+            status.update(available_efforts=['Instant', 'Medium', 'High', 'Extra High'],
+                          effort_catalog_complete=True, model_verified=True)
+            status['browser_session_freshness'].update(kind='live_browser', cache_status='refreshed')
+        route.fulfill(json=status)
+
+    page.route('**/api/browser-session**', bootstrap)
+    try:
+        page.goto(f'{sidebar_server_url}/agent/edge/chatgpt', wait_until='domcontentloaded')
+        page.get_by_role('button', name='Model: Latest', exact=True).click()
+        expect(page.get_by_role('option', name='Latest', exact=True)).to_have_count(1)
+        expect(page.get_by_role('option', name='ChatGPT · Latest', exact=True)).to_have_count(0)
+        page.get_by_role('option', name='Latest', exact=True).click()
+        expect(page.locator('[data-agent-model-input]')).to_have_value('live:latest')
+        page.get_by_role('button', name='Option: Highest available', exact=True).click()
+        page.get_by_role('option', name='Extra High', exact=True).click()
+        expect(page.locator('[data-agent-effort-input]')).to_have_value('Extra High')
+        expect(page.get_by_role('button', name='Option: Extra High', exact=True)).to_be_visible()
+        assert sum('refresh=1' in url for url in requests) == 1
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
     finally:
         context.close()
