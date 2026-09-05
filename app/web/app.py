@@ -1,11 +1,12 @@
 """Flask application for the local web console."""
 
-# Code version: v1.59.0-codex.1
+# Code version: v1.60.0-codex.1
 
 from __future__ import annotations
 
 import atexit
 import json
+import re
 from datetime import UTC, datetime
 import os
 import secrets
@@ -315,17 +316,33 @@ def render_agent_response(value: str) -> Markup:
 
     source = str(value or "").strip()
     candidate = source
-    if candidate.startswith("```json\n") and candidate.endswith("```"):
-        candidate = candidate[8:-3].strip()
     try:
-        payload = json.loads(candidate)
+        # History exports may wrap the entire fenced message in a JSON string.
+        # Decode only complete wrappers; never repair partial controller output.
+        for _ in range(2):
+            if not candidate.startswith('"'):
+                break
+            decoded = json.loads(candidate)
+            if not isinstance(decoded, str):
+                break
+            candidate = decoded.strip()
+        fence = re.fullmatch(
+            r"```(?:json(?:[ \t]+[^\r\n]*)?)?[ \t]*\r?\n(.*?)\r?\n```",
+            candidate,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if fence:
+            candidate = fence.group(1).strip()
+        # Unwrap only a complete envelope, not an example inside ordinary prose.
+        json.loads(candidate)
+        payload = parse_agent_action(candidate)
         if (
             isinstance(payload, dict)
             and payload.get("action") == "final"
             and isinstance(payload.get("summary"), str)
             and payload["summary"].strip()
         ):
-            source = _render_final_action(parse_agent_action(candidate))
+            source = _render_final_action(payload)
     except (ValueError, TypeError):
         pass
     return render_prompt_markdown(source)
@@ -1117,6 +1134,9 @@ def create_app(
         """Route every Agent catalog request through the shared cache policy."""
         requested_refresh = request.args.get("refresh", "").strip().lower() in {"1", "true", "yes"}
         is_browser_session = source_kind == "browser-session"
+        if is_browser_session and platform == "chatgpt":
+            # Re-probe legacy bootstrap rows once after the capability upgrade.
+            project_url = "capabilities-v2"
         is_passive_source_catalog = source_kind == "sources"
         force_refresh = requested_refresh
         payload = agent_source_cache.get_or_collect(

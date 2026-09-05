@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.8.5-codex.1`
+Documentation version: `v1.9.0-codex.1`
 
 ## Launch
 
@@ -49,12 +49,11 @@ to override it. A successful unlock is stored in the signed Flask session for th
 - Chrome, Edge, and Safari support differs by source and automation engine; use the session probe
   in the console before a long sync.
 - Passive Agent checks use a quiet, isolated Chromium context. ChatGPT source checks use a
-  non-headless, backgrounded/offscreen context because the provider's Cloudflare challenge rejects
-  headless clones with HTTP 403; this remains one bounded probe and does not surface a user-facing
-  browser window. On macOS, an executing Edge or Chrome task uses
+  non-headless context because the provider's Cloudflare challenge rejects headless clones with
+  HTTP 403. On macOS, the bounded probe and executing Edge or Chrome tasks each use
   one non-offscreen, task-owned temporary window that is restored to a normal window state; if it
   takes focus, the previous foreground app is restored. macOS decides whether it appears in
-  Stage Manager. It never writes to the user's normal profile. First-run, crash, notification,
+  Stage Manager. Login handoff also avoids activation and reuses an already open exact URL. It never writes to the user's normal profile. First-run, crash, notification,
   and repost prompts are disabled for the task-owned context.
 - Normal task exit closes the isolated context and removes its temporary profile. Each subsequent
   Chromium launch also removes only abandoned `cachelikes-edge-*` or `cachelikes-chrome-*`
@@ -92,7 +91,7 @@ to override it. A successful unlock is stored in the signed Flask session for th
   minutes per provider/browser/Project key. Fresh reads use process memory; the first read after a
   restart hydrates memory from Parquet. Expired passive reads retain the previous catalog and never
   launch a background browser collector. One initial Agent bootstrap cache miss performs a bounded
-  check; later browser checks require the visible `Refresh options` control or task submission. The
+  check; model and effort discovery happen in that check; later checks require `Refresh options` or task submission. Concurrent requests share one flight. The
   response's `cache.status` is `hit`, `miss`, `refreshed`, or `stale`; a stale response means the
   previous verified catalog was retained after an explicit check failed.
 - ChatGPT and Claude on `/agent` use one agent-scoped browser bootstrap through Recent sessions:

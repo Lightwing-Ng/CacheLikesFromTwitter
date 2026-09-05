@@ -1,6 +1,6 @@
 """Read ChatGPT Web sessions, projects, and conversation history for the local Agent.
 
-Code version: v1.5.4-codex.1
+Code version: v1.6.1-codex.1
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ CHATGPT_CONVERSATION_PATH_PATTERN = re.compile(
 
 
 def _discover_chatgpt_agent_efforts(page: Any) -> dict[str, Any]:
-    """Return a bounded live Sol effort catalog without sending a message."""
+    """Return models and their live effort catalog without sending a message."""
     from .computer_use_agent import (
         CHATGPT_EFFORT_POLICY_HIGHEST,
         DEFAULT_CHATGPT_MODEL,
@@ -67,13 +67,19 @@ def _discover_chatgpt_agent_efforts(page: Any) -> dict[str, Any]:
 
     observation: dict[str, Any] = {}
     try:
-        model_verified = _select_chatgpt_model(
-            page,
-            "chromium",
-            DEFAULT_CHATGPT_MODEL,
-            observation,
-            thinking_effort=CHATGPT_EFFORT_POLICY_HIGHEST,
-        )
+        for _attempt in range(2):
+            observation = {}
+            model_verified = _select_chatgpt_model(
+                page,
+                "chromium",
+                DEFAULT_CHATGPT_MODEL,
+                observation,
+                thinking_effort=CHATGPT_EFFORT_POLICY_HIGHEST,
+            )
+            if model_verified or observation.get("reason") != "model-catalog-unavailable":
+                break
+            # A newly hydrated provider menu can miss its first catalog read.
+            # Reopen that closed menu once in this context, never another browser.
     except Exception:  # pragma: no cover - provider DOM failures are runtime-specific
         model_verified = False
         observation = {"reason": "effort-probe-failed"}
@@ -91,6 +97,8 @@ def _discover_chatgpt_agent_efforts(page: Any) -> dict[str, Any]:
         "thinking_effort": str(observation.get("thinking_effort") or "").strip(),
         "available_efforts": available_efforts,
         "effort_catalog_complete": effort_catalog_complete,
+        "model_options": list(observation.get("model_options") or []),
+        "model_catalog_complete": bool(observation.get("model_catalog_complete")),
     }
     if not effort_catalog_complete:
         payload["effort_catalog_error"] = str(
@@ -141,6 +149,7 @@ def probe_and_collect_chatgpt_sources(
                 if not status["can_download"]:
                     return status, None
                 page.wait_for_timeout(1_000)
+                status.update(_discover_chatgpt_agent_efforts(page))
                 sources = {
                     **_collect_sources(context, page, descriptor.label),
                     "platform": "chatgpt",
@@ -155,9 +164,8 @@ def probe_and_collect_chatgpt_sources(
                 playwright,
                 descriptor,
                 # ChatGPT's Cloudflare challenge rejects the headless clone
-                # with HTTP 403. Keep this probe non-headless but backgrounded
-                # and offscreen so it can use the real browser fingerprint
-                # without surfacing a window to the user.
+                # with HTTP 403. Keep this probe non-headless and let the
+                # shared launcher apply the host's background-window policy.
                 headless=False,
                 clone_profile_first=True,
                 background_window=True,
@@ -177,11 +185,15 @@ def probe_and_collect_chatgpt_sources(
                 if not status["can_download"]:
                     return status, None
                 page.wait_for_timeout(1_000)
-                sources = {
-                    **_collect_sources(context, page, descriptor.label),
-                    "platform": "chatgpt",
-                }
                 status.update(_discover_chatgpt_agent_efforts(page))
+                try:
+                    sources = {
+                        **_collect_sources(context, page, descriptor.label),
+                        "platform": "chatgpt",
+                    }
+                except Exception:
+                    # A session-list error must not discard model/effort proof.
+                    sources = None
                 return status, sources
     except Exception as exc:  # pragma: no cover - depends on local browser state
         status["message"] = str(exc)

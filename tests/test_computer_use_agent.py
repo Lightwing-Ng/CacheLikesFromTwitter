@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.54.6-codex.1
+Code version: v3.55.0-codex.1
 """
 
 from __future__ import annotations
@@ -278,8 +278,8 @@ def test_windows_inspection_commands_remove_outer_quotes_from_path_arguments(
 
 def test_settings_validate_all_web_agent_platforms_and_model_contracts() -> None:
     assert [option["key"] for option in AGENT_PLATFORM_OPTIONS] == ["chatgpt", "gemini", "grok", "claude"]
-    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "GPT-5.6 Sol"
-    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["remote_labels"] == (
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][0]["ui_label"] == "Best available"
+    assert AGENT_MODEL_OPTIONS_BY_PLATFORM["chatgpt"][1]["remote_labels"] == (
         "GPT-5.6 Sol",
         "5.6 Sol",
     )
@@ -427,7 +427,7 @@ def test_chatgpt_compatibility_reader_rejects_model_without_live_effort_proof() 
                 "available": ["gpt-5.6 sol"],
             }
 
-    assert _select_chatgpt_model(_Page(), "chromium", DEFAULT_CHATGPT_MODEL) is False
+    assert _select_chatgpt_model(_Page(), "chromium", "gpt-5.6-sol") is False
     assert calls[0]["phase"] == "inspect"
     assert calls[0]["labels"][:2] == ["GPT-5.6 Sol", "5.6 Sol"]
 
@@ -499,7 +499,7 @@ def test_chromium_model_selector_rejects_readback_without_live_effort_proof() ->
 
     page = _Page()
 
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol") is False
     assert page.power.click_count == 2
     assert not page.power.expanded
     assert ("button", "Subscription power", True) in page.role_calls
@@ -596,7 +596,7 @@ def _chromium_model_page(trigger_name: str, current: str = "GPT-5.6 Sol"):
 def test_chromium_reused_session_rejects_gpt_5_6_sol_without_effort_slider() -> None:
     page = _chromium_model_page("GPT-5.6 Sol")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert ("button", "GPT-5.6 Sol", True) in page.role_calls
     assert observation["observed"] == "GPT-5.6 Sol"
     assert page.power.click_count == 2
@@ -605,7 +605,7 @@ def test_chromium_reused_session_rejects_gpt_5_6_sol_without_effort_slider() -> 
 def test_chromium_reused_session_rejects_instant_without_effort_slider() -> None:
     page = _chromium_model_page("Instant")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert ("button", "Instant", True) in page.role_calls
     assert observation["observed"] == "GPT-5.6 Sol"
     assert page.power.click_count == 2
@@ -614,7 +614,7 @@ def test_chromium_reused_session_rejects_instant_without_effort_slider() -> None
 def test_chromium_reused_session_rejects_medium_without_effort_slider() -> None:
     page = _chromium_model_page("Medium", current="Extra High")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert ("button", "Medium", True) in page.role_calls
     assert observation["observed"] == "GPT-5.6 Sol"
     assert page.power.click_count == 2
@@ -627,7 +627,7 @@ def test_chromium_explicit_effort_fails_closed_without_a_live_slider() -> None:
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         observation,
         thinking_effort="Medium",
     ) is False
@@ -881,7 +881,7 @@ def test_chromium_selector_rejects_open_effort_menu_without_slider() -> None:
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         observation,
     ) is False
     assert ("button", "Thinking effort", True) in page.role_calls
@@ -1007,7 +1007,7 @@ def test_chromium_selector_uses_all_subscription_efforts_and_leaves_sol_at_maxim
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         observation,
     ) is True
     assert page.slider.value == 13
@@ -1024,7 +1024,7 @@ def test_chromium_selector_uses_all_subscription_efforts_and_leaves_sol_at_maxim
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         exact_observation,
         thinking_effort="Cruise review",
     ) is True
@@ -1210,7 +1210,7 @@ def test_chromium_selector_rejects_model_choice_without_effort_slider() -> None:
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         observation,
     ) is False
     assert page.choice.click_count == 1
@@ -1317,7 +1317,7 @@ def test_chromium_selector_rejects_legacy_effort_choice_without_slider() -> None
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         observation,
     ) is False
     assert page.extra_high_choice.click_count == 0
@@ -1329,14 +1329,14 @@ def test_chromium_selector_rejects_legacy_effort_choice_without_slider() -> None
 def test_chromium_wrong_model_readback_fails_closed() -> None:
     page = _chromium_model_page("Instant", current="GPT-4o")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert observation.get("reason") == "model-mismatch"
 
 
 def test_chromium_medium_trigger_rejects_missing_effort_slider() -> None:
     page = _chromium_model_page("Medium", current="Medium")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert observation.get("observed") == "GPT-5.6 Sol"
     assert ("button", "Medium", True) in page.role_calls
 
@@ -1768,7 +1768,7 @@ def test_chatgpt_checked_sol_without_slider_fails_closed() -> None:
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         observation,
     ) is False
     assert observation["observed"] == "GPT-5.6 Sol"
@@ -1855,7 +1855,7 @@ def test_chatgpt_project_surface_verifies_sol_without_effort_slider() -> None:
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         observation,
     ) is True
     assert observation["observed"] == "GPT-5.6 Sol"
@@ -1933,7 +1933,7 @@ def test_chatgpt_project_session_type_verifies_sol_without_effort_slider() -> No
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         observation,
         session_type="project",
     ) is True
@@ -1945,7 +1945,7 @@ def test_chatgpt_project_session_type_verifies_sol_without_effort_slider() -> No
         page,
         "chromium",
         "chatgpt",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         obs_web,
         session_type="project",
     ) is True
@@ -2047,7 +2047,7 @@ def test_chatgpt_clicks_sol_but_rejects_missing_effort_slider() -> None:
     assert _select_chatgpt_model(
         page,
         "chromium",
-        DEFAULT_CHATGPT_MODEL,
+        "gpt-5.6-sol",
         observation,
     ) is False
     assert page.choice.click_count == 1
@@ -2123,7 +2123,7 @@ def test_chromium_model_selector_retries_but_rejects_missing_effort_slider() -> 
     page = _Page()
     observation: dict[str, object] = {}
 
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert page.power.click_count == 2
     assert observation["observed"] == "GPT-5.6 Sol"
 
@@ -2208,7 +2208,7 @@ def test_chromium_model_selector_retries_then_rejects_missing_effort_slider() ->
     page = _Page()
     observation: dict[str, object] = {}
 
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert page.power.click_count == 3
     assert page.menu_reads == 11
     assert 500 in page.waits
@@ -2292,7 +2292,7 @@ def test_chromium_unlabeled_composer_pill_requires_live_effort_slider() -> None:
 
     page = _Page()
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert page.power.click_count == 2
     assert observation["observed"] == "GPT-5.6 Sol"
 
@@ -2300,14 +2300,14 @@ def test_chromium_unlabeled_composer_pill_requires_live_effort_slider() -> None:
 def test_chromium_high_without_a_live_effort_slider_fails_closed() -> None:
     page = _chromium_model_page("Medium", current="High")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert observation["observed"] == "GPT-5.6 Sol"
 
 
 def test_chromium_switch_model_control_is_not_a_click_target() -> None:
     page = _chromium_model_page("Switch model")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert observation.get("reason") == "power-control-not-found"
     assert page.power.click_count == 0
     assert ("button", "Switch model", True) not in page.role_calls
@@ -2317,7 +2317,7 @@ def test_chromium_switch_model_control_is_not_a_click_target() -> None:
 def test_chromium_unrelated_pro_button_is_not_a_click_target() -> None:
     page = _chromium_model_page("Pro")
     observation: dict[str, object] = {}
-    assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL, observation) is False
+    assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol", observation) is False
     assert observation.get("reason") == "power-control-not-found"
     assert page.power.click_count == 0
     assert ("button", "Pro", True) not in page.role_calls
@@ -2357,7 +2357,7 @@ def test_chatgpt_composer_wait_stops_when_requested() -> None:
         _select_chatgpt_model(
             _Page(),
             "chromium",
-            DEFAULT_CHATGPT_MODEL,
+            "gpt-5.6-sol",
             observation,
             should_stop=lambda: stopped["value"],
         )
@@ -2382,7 +2382,7 @@ def test_chatgpt_model_selector_stops_after_opening_the_power_menu() -> None:
         _select_chatgpt_model(
             page,
             "chromium",
-            DEFAULT_CHATGPT_MODEL,
+            "gpt-5.6-sol",
             observation,
             should_stop=lambda: stopped["value"],
         )
@@ -3193,6 +3193,16 @@ def test_open_agent_in_browser_opens_chatgpt_quietly_in_edge(
                 "set destinationURL to item 1 of argv",
                 "-e",
                 'tell application "Microsoft Edge"',
+                "-e",
+                "repeat with existingWindow in windows",
+                "-e",
+                "repeat with existingTab in tabs of existingWindow",
+                "-e",
+                "if URL of existingTab is destinationURL then return",
+                "-e",
+                "end repeat",
+                "-e",
+                "end repeat",
                 "-e",
                 "set handoffWindow to make new window",
                 "-e",

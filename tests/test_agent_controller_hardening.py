@@ -1,7 +1,7 @@
 """Focused tests for controller hardening: model verification, action parser,
 directory picker, recent-session catalog, and browser interruption recovery.
 
-Code version: v3.48.8-codex.1
+Code version: v3.49.0-codex.1
 """
 
 from __future__ import annotations
@@ -360,7 +360,7 @@ class TestModelVerificationFreshSession:
             ComputerUseSettings(workspace_path=str(workspace)),
             lambda: False,
         )
-        with pytest.raises(RuntimeError, match="could not verify GPT-5.6 Sol") as exc_info:
+        with pytest.raises(RuntimeError, match="could not verify Best available") as exc_info:
             _run_web_action_loop(
                 page=_FreshSessionPage() if session_mode in {"new", "project_new"} else _ExistingSessionPage(),
                 browser_kind="chromium",
@@ -388,15 +388,15 @@ class TestModelVerificationFreshSession:
 
     def test_reused_session_sol_trigger_verifies(self) -> None:
         page = _ChromiumTriggerPage("GPT-5.6 Sol")
-        assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
+        assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol") is True
 
     def test_reused_session_instant_trigger_verifies(self) -> None:
         page = _ChromiumTriggerPage("Instant")
-        assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
+        assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol") is True
 
     def test_reused_session_medium_trigger_verifies_extra_high(self) -> None:
         page = _ChromiumTriggerPage("Medium", current="Extra High")
-        assert _select_chatgpt_model(page, "chromium", DEFAULT_CHATGPT_MODEL) is True
+        assert _select_chatgpt_model(page, "chromium", "gpt-5.6-sol") is True
 
 
 # ---------------------------------------------------------------------------

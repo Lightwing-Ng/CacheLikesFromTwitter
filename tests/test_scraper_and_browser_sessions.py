@@ -1,6 +1,6 @@
 """Tests for browser-independent X parsing and session helpers.
 
-Code version: v1.6.12-codex.1
+Code version: v1.7.0-codex.1
 """
 
 from __future__ import annotations
@@ -447,7 +447,14 @@ def test_chromium_context_defaults_to_an_isolated_background_profile(tmp_path: P
 
 def test_silent_edge_chromium_context_is_backgrounded_without_stealing_focus(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    from app.core import computer_use_agent
+
+    monkeypatch.setattr("app.core.browser_sessions.is_macos_host", lambda: True)
+    monkeypatch.setattr(computer_use_agent, "_capture_macos_frontmost_application", lambda: "Editor")
+    restored = []
+    monkeypatch.setattr(computer_use_agent, "_restore_macos_frontmost_application_after_task_stage", lambda *args: restored.append(args))
     source_user_data_dir = tmp_path / "Edge"
     source_profile_dir = source_user_data_dir / "Default"
     source_profile_dir.mkdir(parents=True)
@@ -485,8 +492,9 @@ def test_silent_edge_chromium_context_is_backgrounded_without_stealing_focus(
     launch_kwargs = chromium.calls[0]
     assert launch_kwargs["headless"] is False
     assert "--profile-directory=Default" in launch_kwargs["args"]
-    assert "--window-position=-32000,-32000" in launch_kwargs["args"]
-    assert "--start-minimized" in launch_kwargs["args"]
+    assert "--window-position=-32000,-32000" not in launch_kwargs["args"]
+    assert "--start-minimized" not in launch_kwargs["args"]
+    assert restored == [("Editor", "Microsoft Edge")]
 
 
 @pytest.mark.parametrize(
@@ -501,7 +509,10 @@ def test_task_stage_chromium_context_is_not_forced_back_offscreen_by_silent_mode
     browser_id: str,
     channel: str,
     dir_name: str,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr("app.core.computer_use_agent._capture_macos_frontmost_application", lambda: "")
+    monkeypatch.setattr("app.core.computer_use_agent._restore_macos_frontmost_application_after_task_stage", lambda *_: None)
     source_user_data_dir = tmp_path / dir_name
     source_profile_dir = source_user_data_dir / "Default"
     source_profile_dir.mkdir(parents=True)

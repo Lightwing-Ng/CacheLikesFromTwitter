@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.54.7-codex.1`
+Documentation version: `v3.55.0-codex.1`
 
 ## Purpose
 
@@ -32,13 +32,13 @@ and task-completion rendering return the last verified catalog without starting 
 collector. A cache miss performs one bounded bootstrap check; later re-checks require the visible
 `Refresh options` control or a submitted task. The control uses the Agent-scoped
 `/api/browser-session?refresh=1` request, writes the newly collected catalog back to the shared
-cache, and is ordered separately in the browser so an older passive response cannot overwrite the
-fresh result. If an explicit refresh fails and an older entry exists, the API returns that catalog
+cache. Concurrent passive and explicit requests share one browser flight, and response revisions
+prevent an older response from replacing the accepted result. If an explicit refresh fails and an older entry exists, the API returns that catalog
 with `cache.status: "stale"` so the selector remains usable and the condition stays observable.
 
 On `/agent`, ChatGPT, Grok, and Claude use an agent-scoped bootstrap request: the selected browser
 context verifies the actual Web composer and collects Recent sessions and Projects in one launch.
-For Edge or Chrome with ChatGPT, that same launch also discovers the complete live Sol effort
+For Edge or Chrome with ChatGPT, that same launch also discovers the rendered model catalog and the chosen model's complete live effort
 slider before the user submits a task, so the first-run selector is not limited to a hard-coded
 default.
 The selector always starts with the local `Highest available` policy. Every exact provider label is
@@ -108,8 +108,8 @@ older task cannot be submitted accidentally through a different Web session.
    resets a stale previous-provider target URL to the new provider's official home before
    validation.
 4. Before attaching project data or submitting a prompt, every provider must expose a compatible
-   model control and visibly read back the configured model. ChatGPT must prove `GPT-5.6 Sol`
-   or `5.6 Sol` and a trusted live thinking-effort slider; the controller reads its live ARIA
+   model control and visibly read back the configured model. ChatGPT resolves `Best available`
+   from the rendered catalog, then proves that exact model and a trusted live thinking-effort slider; the controller reads its live ARIA
    range and rendered labels instead of assuming a fixed effort vocabulary. Gemini must prove
    `Gemini 3.1 Pro`, Grok must prove `Build`, and Claude must prove
    `Auto`. A missing,
@@ -147,7 +147,7 @@ older task cannot be submitted accidentally through a different Web session.
    only the `Highest available` policy option. An older complete catalog remains visible as the
    latest verified set for that same browser and provider, but execution always repeats the live
    slider discovery and fails closed if the requested label is no longer present.
-   A checked `GPT-5.6 Sol` / `5.6 Sol` model item remains the required model proof, even when a
+   A checked item for the exact resolved model remains the required model proof, even when a
    thinking-effort radio such as `Medium` is also selected in the same menu. `Highest available`
    is a local policy rather than a provider label, but a verified live integer reasoning-effort
    slider is a prerequisite for execution. Missing, ambiguous, unrelated, or incomplete slider
@@ -613,10 +613,10 @@ Edge and ChatGPT run with a verified conversation URL, the service records an av
 does not create a normal `Microsoft Edge` window automatically. Clicking the handoff pill is the
 user's explicit choice to open the same URL in Edge normally.
 
-The model selector is provider-specific: ChatGPT exposes the local option `5.6 Sol`, Gemini exposes `3.1 Pro`, Grok
+The model selector is provider-specific: ChatGPT exposes `Best available` and exact discovered model labels, Gemini exposes `3.1 Pro`, Grok
 exposes `Build Beta`, and Claude exposes `Auto`. Each provider is fail-closed: the controller must select or observe
 and then visibly read back the exact configured model before any attachment or send. ChatGPT proves that local option
-through a checked `GPT-5.6 Sol` / `5.6 Sol` model item after opening the live menu-semantic trigger. For subscriptions that
+through a checked item matching the resolved model after opening the live menu-semantic trigger. For subscriptions that
 expose a thinking-effort slider in the model menu or beside the composer, the controller reads the complete ARIA range at runtime, records every rendered
 position, and selects either `Highest available` or one exact observed label without assuming fixed names. The final
 integer position and visible label must both verify. A localized or changed menu that cannot prove the model and effort
@@ -674,7 +674,7 @@ temporary workspace, exercises controller CRUD and cold verification in the copy
 every original allowlisted digest before returning. The automated test never modifies the original
 Demo project. A live `/agent/edge/chatgpt` task may edit that folder when it is selected as the
 current project; `demo_flight/README.md` documents that token-pool fallback, including
-`Highest available` Sol effort discovery rather than a hard-coded provider label.
+`Highest available` live effort discovery rather than a hard-coded provider label.
 
 On 27 Aug 2026, delayed Gemini hydration, Stop interruption, strict model proof, bounded diagnostic
 privacy, localized region gating, and transient navigation retry coverage passed 307 controller
@@ -732,3 +732,25 @@ controller's isolated Edge probe and a fresh host Edge tab still showed Grok's C
 `Verify you are human` security page. The local Agent kept Ask disabled. No CAPTCHA or security
 barrier was bypassed, and no project context or prompt was sent; the operator must complete that
 verification in Edge before the real project run can begin.
+
+## Capability bootstrap and restored answers
+
+`Best available` prefers the provider-owned `Latest` alias; otherwise it resolves the newest
+full-capability GPT version exposed by the selected browser. `Latest` is displayed verbatim and
+is not relabeled as a concrete model version without provider proof.
+Lightweight variants do not participate in automatic selection. This is an explicit version-based
+policy, not a benchmark ranking; there is no hard-coded next-generation model name. Legacy Sol
+keys remain readable for saved runs. Concrete choices use bounded `live:` labels and must be
+verified again against the provider before a task can attach context or send a prompt.
+
+One bootstrap discovers models, the selected model's complete effort range, and session sources.
+An initially unreadable model catalog receives one bounded retry in the same browser context;
+other verification failures remain fail-closed and no retry opens another browser.
+The highest-effort policy displays the actual final slider label while retaining its policy value.
+Effort options belong to that model and browser; choosing another model clears that proof until
+task-time verification. Source-list failure does not erase capability evidence. Upgrading from
+the old bootstrap cache causes one new probe; reloads reuse the resulting catalog.
+
+Live and restored final envelopes share a safe Markdown renderer, including case-insensitive JSON
+fences with optional export metadata such as `id`, CRLF line endings, and fully JSON-encoded export wrappers. Raw response bytes remain
+available for copying. Ambiguous, malformed, ordinary JSON, and embedded examples stay unchanged.

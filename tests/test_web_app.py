@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.93.12-codex.1
+# Code version: v1.94.0-codex.1
 
 from __future__ import annotations
 
@@ -503,7 +503,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.6-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.9.0-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -1005,9 +1005,9 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.1-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.8.6-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.9.0-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.29.1-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.30.0-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
         self.assertIn('data-agent-compute-job-stop', local_body)
         self.assertIn('data-agent-effort-field', local_body)
@@ -1034,7 +1034,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('data-agent-combobox-option="grok"', local_body)
         self.assertIn('data-agent-remote-label="Gemini 3.1 Pro"', local_body)
         self.assertIn('data-agent-remote-label="Auto"', local_body)
-        self.assertIn('aria-label="Model: GPT-5.6 Sol"', local_body)
+        self.assertIn('aria-label="Model: Best available"', local_body)
         self.assertIn('data-agent-combobox-label="GPT-5.6 Sol"', local_body)
         self.assertIn('ChatGPT · GPT-5.6 Sol', local_body)
         self.assertIn('Gemini · 3.1 Pro', local_body)
@@ -1894,7 +1894,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.29.1-codex.1',
+            'computer-use-agent-v3.30.0-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'agent-effort-refresh-label">Refresh options</span>',
@@ -2353,6 +2353,7 @@ class WebAppTests(unittest.TestCase):
                 platform="chatgpt",
                 browser="edge",
                 source_kind="browser-session",
+                project_url="capabilities-v2",
                 payload=status_payload,
                 now=datetime(2000, 1, 1, tzinfo=timezone.utc),
             )
@@ -3131,12 +3132,12 @@ class WebAppTests(unittest.TestCase):
             'const statusRequests = new Map();',
             'function requestBrowserStatus(platform, browserId, scope, options = {})',
             'const refresh = options.refresh === true;',
-            'const requestKey = `${requestScope}:${platform}:${browserId}:${refresh ? "refresh" : "default"}`;',
+            'const requestKey = `${requestScope}:${platform}:${browserId}`;',
             'if (refresh) query.set("refresh", "1");',
             'async function load(browserId, options = {})',
             'const forceRefresh = options.force === true;',
             'void load(String(browserId || "").trim().toLowerCase());',
-            'void load(activeBrowser, {force: true});',
+            'void load(activeBrowser);',
             'requestBrowserStatus(requestPlatform, activeBrowser, scope, {refresh: forceRefresh})',
             'let statusRequestRevision = 0;',
             'requestRevision !== statusRequestRevision',

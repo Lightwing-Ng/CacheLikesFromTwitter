@@ -1,6 +1,6 @@
 # Architecture guide
 
-Documentation version: `v1.12.4-codex.1`
+Documentation version: `v1.13.0-codex.1`
 
 ## Runtime flow
 
@@ -331,7 +331,7 @@ is an explicit later operation and may serve an expired keyed entry while one co
 runs. The visible Agent refresh control uses `refresh=1` for an explicit synchronous browser
 re-check. A failed refresh falls back to the last known entry and marks the response as stale; no
 remote conversation messages are written by this catalog.
-The ChatGPT `/agent` status route performs the account probe, complete live Sol effort discovery,
+The ChatGPT `/agent` status route performs the account probe, dynamic model and complete live effort discovery,
 and root source collection together in one Chromium browser launch, returns both catalogs to the
 page, and seeds the same source cache through its explicit `store` path. This keeps the status,
 first-run effort selector, and Recent sessions selection on one browser opening; Project-session
@@ -340,10 +340,9 @@ The Agent-scoped browser-session status route uses that same cache. Passive poll
 cached bootstrap, including a bounded negative result; an explicit `refresh=1`, `true`, or `yes`
 requests a synchronous fresh result and coalesces with an in-flight collector for the same key.
 The fresh result is stored and supersedes any older in-flight browser response.
-Passive Agent bootstrap checks use quiet, task-independent Chromium contexts. ChatGPT source
-checks use a non-headless, backgrounded/offscreen context because its Cloudflare challenge rejects
-the headless clone with HTTP 403; this remains one bounded probe and does not surface a user-facing
-browser window. On macOS, an executing
+Agent bootstrap checks use quiet, task-independent Chromium contexts. ChatGPT source checks
+remain non-headless because its Cloudflare challenge rejects headless clones with HTTP 403.
+On macOS, silent probes and executing
 Edge or Chrome task clones the selected profile into one normal, non-offscreen task-owned window so the user can
 choose to inspect it through macOS window management without an automatic full-display takeover.
 The launcher restores the prior foreground app if the browser took focus; macOS controls any Stage Manager

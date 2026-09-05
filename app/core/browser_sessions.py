@@ -1,6 +1,6 @@
 """Browser session probing helpers for supported cache sources."""
 
-# Code version: v1.19.9-codex.1
+# Code version: v1.20.0-codex.1
 
 from __future__ import annotations
 
@@ -808,7 +808,7 @@ def launch_chromium_context(
     clone_profile_first: bool = True,
     background_window: bool = True,
     silent: bool = False,
-    window_mode: str = CHROMIUM_WINDOW_MODE_OFFSCREEN,
+    window_mode: str | None = None,
 ):
     """Launch an isolated Chromium-family browser with an explicit window mode."""
     user_data_dir = descriptor.user_data_dir
@@ -818,6 +818,12 @@ def launch_chromium_context(
         raise RuntimeError(f"{descriptor.label} user data directory was not found: {user_data_dir}")
 
     temp_profile_dir: tempfile.TemporaryDirectory[str] | None = None
+    if window_mode is None:
+        window_mode = (
+            CHROMIUM_WINDOW_MODE_TASK_STAGE
+            if silent and not headless and is_macos_host()
+            else CHROMIUM_WINDOW_MODE_OFFSCREEN
+        )
 
     def do_launch(target_user_data_dir: Path):
         effective_headless = headless
@@ -826,18 +832,32 @@ def launch_chromium_context(
             and descriptor.browser_id in {"edge", "chrome"}
             and window_mode == CHROMIUM_WINDOW_MODE_OFFSCREEN
         )
-        return playwright.chromium.launch_persistent_context(
-            user_data_dir=str(target_user_data_dir),
-            channel=descriptor.channel,
-            headless=effective_headless,
-            args=build_chromium_launch_args(
-                descriptor,
-                background_window=effective_background_window,
-                window_mode=window_mode,
-            ),
-            ignore_default_args=["--use-mock-keychain", "--password-store=basic"],
-            viewport={"width": 1440, "height": 1200},
+        from .computer_use_agent import (
+            _capture_macos_frontmost_application,
+            _restore_macos_frontmost_application_after_task_stage,
         )
+
+        task_stage = is_macos_host() and window_mode == CHROMIUM_WINDOW_MODE_TASK_STAGE
+        previous = _capture_macos_frontmost_application() if task_stage else ""
+        try:
+            return playwright.chromium.launch_persistent_context(
+                user_data_dir=str(target_user_data_dir),
+                channel=descriptor.channel,
+                headless=effective_headless,
+                args=build_chromium_launch_args(
+                    descriptor,
+                    background_window=effective_background_window,
+                    window_mode=window_mode,
+                ),
+                ignore_default_args=["--use-mock-keychain", "--password-store=basic"],
+                viewport={"width": 1440, "height": 1200},
+            )
+        finally:
+            if task_stage:
+                _restore_macos_frontmost_application_after_task_stage(
+                    previous,
+                    "Google Chrome" if descriptor.browser_id == "chrome" else "Microsoft Edge",
+                )
 
     def should_retry_with_cloned_profile(error_text: str) -> bool:
         normalized_error = str(error_text or "")

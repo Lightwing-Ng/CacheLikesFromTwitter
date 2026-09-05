@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.27.12-codex.1
+Code version: v1.28.0-codex.1
 """
 
 from __future__ import annotations
@@ -1992,7 +1992,7 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
         expect(model).to_be_visible()
         expect(refresh).to_be_visible()
         expect(submit).to_be_visible()
-        assert model.locator(".agent-model-trigger-label").text_content().strip() == "GPT-5.6 Sol"
+        assert model.locator(".agent-model-trigger-label").text_content().strip() == "Best available"
         refresh_style = refresh.evaluate(
             """element => {
                 const style = getComputedStyle(element);
@@ -6899,7 +6899,7 @@ def test_client_cached_chatgpt_effort_catalog_exposes_verified_options_until_exp
         reduced_motion="no-preference",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v6:agent:chatgpt:edge"
+    cache_key = "cachelikes:browser-session:v7:agent:chatgpt:edge"
     page.add_init_script(
         f"sessionStorage.setItem({json.dumps(cache_key)}, JSON.stringify({{"
         f"cached_at: Date.now(), payload: {json.dumps(cached_status)}}}));"
@@ -7732,7 +7732,7 @@ def test_agent_browser_status_retries_a_fresh_negative_cache_and_force_refreshes
         reduced_motion="reduce",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v6:agent:gemini:edge"
+    cache_key = "cachelikes:browser-session:v7:agent:gemini:edge"
     page.add_init_script(
         f"sessionStorage.setItem({json.dumps(cache_key)}, JSON.stringify({{"
         f"cached_at: Date.now(), payload: {json.dumps(negative_status)}}}));"
@@ -8012,7 +8012,7 @@ def test_agent_bootstrap_replaces_ready_cache_without_catalog(
         reduced_motion="reduce",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v6:agent:chatgpt:edge"
+    cache_key = "cachelikes:browser-session:v7:agent:chatgpt:edge"
     cached_status = {
         "platform": "chatgpt",
         "browser": "edge",
@@ -8100,7 +8100,7 @@ def test_fresh_grok_bootstrap_supersedes_a_stale_cached_catalog_error(
         reduced_motion="reduce",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v6:agent:grok:edge"
+    cache_key = "cachelikes:browser-session:v7:agent:grok:edge"
     cache_entry = json.dumps(
         {"cached_at": 0, "payload": stale_status},
         ensure_ascii=False,
@@ -9209,7 +9209,7 @@ def test_explicit_agentic_troubleshooting_session_is_the_only_reused_target(
             "Agentic Troubleshooting"
         )
         page.locator("[data-agent-prompt-input]").fill("Continue the existing troubleshooting session.")
-        with page.expect_request(re.compile(r"/api/agent/ask$")):
+        with page.expect_response(re.compile(r"/api/agent/ask$")):
             page.locator("#agent_ask_button").click()
         assert captured_ask_payloads
         payload = captured_ask_payloads[0]
@@ -9217,5 +9217,131 @@ def test_explicit_agentic_troubleshooting_session_is_the_only_reused_target(
         assert payload["conversation_url"] == AGENTIC_TROUBLESHOOTING_URL
         assert payload["session_title"] == "Agentic Troubleshooting"
         assert payload["conversation_url"] != FINISHED_SNAPSHOT_URL
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('width', [1_021, 375])
+def test_agent_bootstrap_discovers_models_efforts_and_restores_markdown_once(
+    disposable_browser: Browser,
+    sidebar_server_url: str,
+    width: int,
+) -> None:
+    from app.core.agent_model_catalog import chatgpt_live_catalog
+    from app.web.app import render_agent_response
+
+    raw = json.dumps({'action': 'final', 'summary': '## Restored result\n\n**Verified**\n\n- One launch'})
+    payload = _finished_chatgpt_agent_payload()
+    payload['agent'].update(response=raw, response_html=str(render_agent_response(raw)), history=[])
+    status = {
+        'platform': 'chatgpt', 'browser': 'edge', 'can_download': True,
+        'account_name': 'ChatGPT account', 'browser_label': 'Edge',
+        'agent_sources': _chatgpt_catalog_sessions(),
+        'model_verified': True, 'model_catalog_complete': True,
+        'actual_model': 'GPT-12 Nebula',
+        'model_options': chatgpt_live_catalog(['GPT-5.6 Sol', 'GPT-12 Nebula']),
+        'available_efforts': ['Measured', 'Exhaustive'],
+        'thinking_effort': 'Exhaustive', 'effort_catalog_complete': True,
+        'browser_session_freshness': {
+            'kind': 'live_browser', 'cache_status': 'miss',
+            'cached_at': '2026-09-05T00:00:00Z', 'age_seconds': 0,
+        },
+    }
+    requests = []
+    context = disposable_browser.new_context(viewport={'width': width, 'height': 863})
+    page = context.new_page()
+    page.route('**/api/agent/status', lambda route: route.fulfill(json=payload))
+
+    def bootstrap(route):
+        requests.append(route.request.url)
+        route.fulfill(json=status)
+
+    page.route('**/api/browser-session**', bootstrap)
+    try:
+        page.goto(f'{sidebar_server_url}/agent/edge/chatgpt', wait_until='domcontentloaded')
+        expect(page.get_by_role('button', name='Model: GPT-12 Nebula', exact=True)).to_be_visible()
+        expect(page.get_by_role('button', name='Option: Exhaustive', exact=True)).to_be_visible()
+        expect(page.locator('#agent_response_answer h2')).to_have_text('Restored result')
+        expect(page.locator('#agent_response_answer strong')).to_have_text('Verified')
+        expect(page.locator('[data-agent-effort-input]')).to_have_value('highest_available')
+        assert len(requests) == 1
+        assert 'refresh=1' not in requests[0]
+        assert page.evaluate('document.documentElement.scrollWidth <= window.innerWidth')
+        page.reload(wait_until='domcontentloaded')
+        expect(page.get_by_role('button', name='Model: GPT-12 Nebula', exact=True)).to_be_visible()
+        assert len(requests) == 1
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+def test_chatgpt_latest_alias_with_combined_model_and_power_menu(disposable_browser: Browser) -> None:
+    """Replay the observed Latest/Select model menu with its hidden ARIA slider."""
+    from app.core.computer_use_agent import _select_chatgpt_model
+
+    context = disposable_browser.new_context()
+    page = context.new_page()
+    try:
+        page.set_content('''
+            <form data-type="unified-composer">
+              <div id="prompt-textarea" contenteditable="true">Ask ChatGPT</div>
+              <button type="button" class="__composer-pill" aria-haspopup="menu"
+                aria-controls="power-menu" aria-expanded="false">Medium</button>
+            </form>
+            <div role="menu" id="power-menu" hidden>
+              <div data-testid="composer-intelligence-picker-content" data-model-selection-view="true">
+                <div role="menuitem" tabindex="0" aria-label="Select model">Medium</div>
+                <div data-testid="composer-model-picker-slider-simple-view">
+                  <div role="menuitem" tabindex="0" aria-label="Power" aria-describedby="announcement">
+                    <div data-model-reasoning-effort-slider>
+                      <span role="slider" tabindex="-1" aria-hidden="true" aria-valuemin="0"
+                        aria-valuemax="3" aria-valuenow="1" style="display:block;width:100px;height:20px"></span>
+                    </div>
+                  </div>
+                  <span id="announcement">Medium, 2 of 4.</span>
+                </div>
+                <div data-testid="composer-model-picker-slider-advanced-view" inert>
+                  <div role="menuitemradio" aria-checked="true">Latest</div>
+                  <div role="menuitemradio" aria-checked="false">GPT-5.6 Sol</div>
+                  <div role="menuitemradio" aria-checked="false" aria-disabled="true">GPT-99 Example</div>
+                </div>
+              </div>
+            </div>
+            <script>
+              const trigger = document.querySelector('button');
+              const menu = document.querySelector('[role=menu]');
+              const simple = document.querySelector('[data-testid$=simple-view]');
+              const advanced = document.querySelector('[data-testid$=advanced-view]');
+              trigger.onclick = () => {
+                menu.hidden = !menu.hidden;
+                trigger.setAttribute('aria-expanded', String(!menu.hidden));
+              };
+              document.querySelector('[aria-label="Select model"]').onclick = () => {
+                advanced.inert = !advanced.inert;
+                simple.inert = !advanced.inert;
+              };
+              document.querySelector('[role=slider]').onkeydown = event => {
+                const slider = event.currentTarget;
+                let value = Number(slider.getAttribute('aria-valuenow'));
+                if (event.key === 'Home') value = 0;
+                else if (event.key === 'End') value = 3;
+                else if (event.key === 'ArrowRight') value = Math.min(3, value + 1);
+                else if (event.key === 'ArrowLeft') value = Math.max(0, value - 1);
+                else return;
+                slider.setAttribute('aria-valuenow', value);
+                const label = ['Light', 'Medium', 'High', 'Maximum'][value];
+                document.querySelector('#announcement').textContent = `${label}, ${value + 1} of 4.`;
+                trigger.textContent = label;
+                event.preventDefault();
+              };
+            </script>
+        ''')
+        observation = {}
+        assert _select_chatgpt_model(page, 'chromium', 'latest_available', observation), observation
+        assert observation['observed'] == 'Latest'
+        assert observation['available_efforts'] == ['Light', 'Medium', 'High', 'Maximum']
+        assert observation['thinking_effort'] == 'Maximum'
+        assert [option['label'] for option in observation['model_options']] == ['Latest', 'GPT-5.6 Sol']
     finally:
         context.close()

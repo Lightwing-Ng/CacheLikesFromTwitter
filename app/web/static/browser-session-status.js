@@ -1,7 +1,7 @@
-/* Code version: v1.8.6-codex.1 */
+/* Code version: v1.9.0-codex.1 */
 
 (() => {
-    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v6:";
+    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v7:";
     const SESSION_CACHE_TTL_MS = 300_000;
     const SESSION_STALE_MAX_AGE_MS = 1_800_000;
     const BOOTSTRAPPED_AGENT_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -61,7 +61,7 @@
     function requestBrowserStatus(platform, browserId, scope, options = {}) {
         const refresh = options.refresh === true;
         const requestScope = scope || "default";
-        const requestKey = `${requestScope}:${platform}:${browserId}:${refresh ? "refresh" : "default"}`;
+        const requestKey = `${requestScope}:${platform}:${browserId}`;
         if (statusRequests.has(requestKey)) return statusRequests.get(requestKey);
         const query = new URLSearchParams({platform, browser: browserId});
         if (scope) query.set("scope", scope);
@@ -353,7 +353,7 @@
                 root.dataset.browserSessionPlatform = nextPlatform;
                 lastPayload = null;
                 clearStatus();
-                void load(activeBrowser, {force: true});
+                void load(activeBrowser);
             },
             refresh() {
                 return load(activeBrowser, {force: true});

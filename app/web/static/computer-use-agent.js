@@ -1,4 +1,4 @@
-/* Code version: v3.29.1-codex.1 */
+/* Code version: v3.30.0-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -87,6 +87,7 @@
 
     let lastPayload = {};
     let lastBrowserStatus = null;
+    let preferredModel = elements.modelInput?.value || "";
     let browserStatusState = "cleared";
     let browserStatusController = null;
     let effortRefreshInFlight = false;
@@ -524,12 +525,37 @@
         const input = elements.modelInput;
         const menu = combobox?.querySelector("[data-agent-combobox-menu]");
         if (!combobox || !(input instanceof HTMLInputElement) || !menu) return;
+        const liveCatalog = platform === "chatgpt"
+            && lastBrowserStatus?.platform === platform
+            && lastBrowserStatus?.browser === selectedBrowser()
+            && lastBrowserStatus?.model_catalog_complete
+            ? lastBrowserStatus : null;
+        menu.querySelectorAll("[data-agent-model-generated]").forEach((option) => option.remove());
+        if (liveCatalog) {
+            (liveCatalog.model_options || []).forEach((model) => {
+                if (!String(model.key || "").startsWith("live:") || !model.label) return;
+                const option = createChatgptEffortOption(model.key, model.label);
+                delete option.dataset.agentEffortGenerated;
+                option.dataset.agentModelGenerated = "true";
+                option.dataset.agentPlatform = "chatgpt";
+                menu.append(option);
+            });
+        }
+        const automatic = menu.querySelector('[data-agent-combobox-option="latest_available"]');
+        if (automatic) {
+            const label = liveCatalog?.actual_model || "Best available";
+            automatic.dataset.agentComboboxLabel = label;
+            const text = automatic.querySelector(".trade-strategy-dropdown-text");
+            if (text) text.textContent = `ChatGPT · ${label}`;
+        }
         const options = Array.from(menu.querySelectorAll("[data-agent-combobox-option]"));
-        const visibleOptions = options.filter((option) => option.dataset.agentPlatform === platform);
         options.forEach((option) => {
-            option.hidden = option.dataset.agentPlatform !== platform;
+            option.hidden = option.dataset.agentPlatform !== platform
+                || Boolean(liveCatalog && option.dataset.agentComboboxOption === "gpt-5.6-sol");
         });
-        let selectedOption = visibleOptions.find((option) => option.dataset.agentComboboxOption === input.value);
+        const visibleOptions = options.filter((option) => !option.hidden);
+        const desiredModel = liveCatalog && preferredModel.startsWith("live:") ? preferredModel : input.value;
+        let selectedOption = visibleOptions.find((option) => option.dataset.agentComboboxOption === desiredModel);
         if (!selectedOption) {
             selectedOption = visibleOptions.reduce((strongest, option) => {
                 if (!strongest) return option;
@@ -608,6 +634,8 @@
             || !status?.effort_catalog_complete
             || !cachedAt
             || !allowedCacheStatuses?.has(cacheStatus)
+            || (selectedModel().startsWith("live:")
+                && selectedModel().slice(5).toLowerCase() !== String(status.actual_model || "").toLowerCase())
         ) return null;
         const labels = normalizedChatgptEffortLabels(status?.available_efforts);
         return labels.length ? {freshnessKind, labels} : null;
@@ -626,6 +654,13 @@
         Array.from(menu.querySelectorAll("[data-agent-effort-generated]"))
             .forEach((option) => option.remove());
         const catalog = verifiedChatgptEffortCatalog();
+        const automatic = menu.querySelector('[data-agent-combobox-option="highest_available"]');
+        if (automatic) {
+            const label = catalog?.labels.at(-1) || "Highest available";
+            automatic.dataset.agentComboboxLabel = label;
+            const text = automatic.querySelector(".trade-strategy-dropdown-text");
+            if (text) text.textContent = catalog ? `${label} (Highest available)` : label;
+        }
         if (catalog) field.dataset.agentEffortCatalogFreshness = catalog.freshnessKind;
         else delete field.dataset.agentEffortCatalogFreshness;
         const current = selectedChatgptEffort();
@@ -1330,6 +1365,7 @@
                 const previousValue = input.value;
                 input.value = option.dataset.agentComboboxOption || "";
                 if (combobox === elements.effortCombobox) effortSelectionTouched = true;
+                if (combobox === elements.modelCombobox) preferredModel = input.value;
                 syncComboboxTriggerFromOption(combobox, option);
                 closeComboboxForSelection();
                 normalizeAgentSelection();
@@ -2788,6 +2824,7 @@
                 && selectedPlatform() === "chatgpt";
             elements.effortRefresh.disabled = running
                 || selectedPlatform() !== "chatgpt"
+                || browserVerificationPending()
                 || effortRefreshInFlight;
             elements.effortRefresh.classList.toggle("is-refreshing", refreshInFlight);
             if (refreshInFlight) elements.effortRefresh.setAttribute("aria-busy", "true");

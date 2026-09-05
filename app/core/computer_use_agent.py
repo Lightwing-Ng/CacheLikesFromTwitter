@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.54.10-codex.1
+Code version: v3.55.0-codex.1
 """
 
 from __future__ import annotations
@@ -37,6 +37,12 @@ if os.name == "posix":
 else:  # pragma: no cover - Windows uses a fail-closed delete path.
     fcntl = None
 
+from .agent_model_catalog import (
+    LATEST_CHATGPT_MODEL,
+    LIVE_MODEL_PREFIX,
+    chatgpt_live_catalog,
+    live_model_option,
+)
 from .agent_session_sources import (
     CLAUDE_HOME_URL,
     CLAUDE_HOSTS,
@@ -212,6 +218,13 @@ DEFAULT_AGENT_PLATFORM = "chatgpt"
 # guesses a plan-specific label.
 CHATGPT_THINKING_EFFORT_LABELS: tuple[str, ...] = ()
 CHATGPT_MODEL_OPTIONS = (
+    {
+        "key": LATEST_CHATGPT_MODEL,
+        "label": "Best available",
+        "ui_label": "Best available",
+        "remote_labels": (),
+        "strength": 200,
+    },
     {
         "key": "gpt-5.6-sol",
         "label": "GPT-5.6 Sol",
@@ -1360,6 +1373,16 @@ def open_agent_in_browser(
                 "-e",
                 f'tell application "{application}"',
                 "-e",
+                "repeat with existingWindow in windows",
+                "-e",
+                "repeat with existingTab in tabs of existingWindow",
+                "-e",
+                "if URL of existingTab is destinationURL then return",
+                "-e",
+                "end repeat",
+                "-e",
+                "end repeat",
+                "-e",
                 "set handoffWindow to make new window",
                 "-e",
                 "set URL of active tab of handoffWindow to destinationURL",
@@ -1438,7 +1461,7 @@ def open_browser_for_login(
         selected_platform,
         selected_browser,
         _platform_home_url(selected_platform),
-        background=False,
+        background=sys.platform == "darwin",
     )
 
 
@@ -1492,7 +1515,12 @@ def validate_computer_use_settings(payload: dict[str, Any]) -> ComputerUseSettin
     model = str(payload.get("model", default_model)).strip().lower()
     model = LEGACY_AGENT_MODEL_KEYS.get((platform, model), model)
     supported_models = frozenset(option["key"] for option in _platform_model_options(platform))
-    if model not in supported_models:
+    is_live_model = (
+        platform == "chatgpt"
+        and model.startswith(LIVE_MODEL_PREFIX)
+        and live_model_option(model[len(LIVE_MODEL_PREFIX):]) is not None
+    )
+    if model not in supported_models and not is_live_model:
         platform_label = AGENT_PLATFORM_BY_KEY[platform]["label"]
         raise ValueError(f"Choose a supported {platform_label} model.")
 
@@ -9639,7 +9667,7 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             };
             const menus = Array.from(document.querySelectorAll('[role="menu"], [role="listbox"]'))
                 .filter(visible);
-            const modelPattern = /^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
+            const modelPattern = /^(?:latest$|gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
             const controlText = (element) => normalize([
                 element?.getAttribute('aria-label'),
                 element?.getAttribute('data-testid'),
@@ -9702,7 +9730,8 @@ def _read_chatgpt_model_menu(page: Any) -> dict[str, Any]:
             );
             const modelChoices = Array.from(menu?.querySelectorAll(
                 '[role="menuitemradio"], [role="option"]'
-            ) || []).filter(visible);
+            ) || []).filter((item) => visible(item) && !item.disabled
+                && item.getAttribute('aria-disabled') !== 'true');
             const modelOptionTexts = modelChoices.map((item) => normalize(
                 item.innerText || item.textContent || ''
             )).filter(Boolean);
@@ -10080,7 +10109,7 @@ def _chatgpt_effort_slider_binding(
                     }
                     return false;
                 };
-                const modelPattern = /^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
+                const modelPattern = /^(?:latest$|gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)/i;
                 const modelTriggerText = (trigger) => normalize([
                     accessibleText(trigger),
                     trigger?.innerText,
@@ -10363,7 +10392,7 @@ def _chatgpt_effort_label(result: dict[str, Any] | None) -> str:
 
 
 _CHATGPT_MODEL_TEXT_PATTERN = re.compile(
-    r"^(?:gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)",
+    r"^(?:latest$|gpt[-\s]?\d|\d(?:\.\d+)?\s+sol)",
     re.IGNORECASE,
 )
 
@@ -10925,7 +10954,7 @@ def _select_chatgpt_model_chromium(
         if str(item).strip()
     ]
     model_view_opened = False
-    if not result.get("ok") or not result_matches_target(result, current):
+    if option["key"] == LATEST_CHATGPT_MODEL or not result.get("ok") or not result_matches_target(result, current):
         model_view_opened = _chatgpt_set_model_view(page, power_button, True)
         if model_view_opened:
             for _attempt in range(10):
@@ -10941,6 +10970,19 @@ def _select_chatgpt_model_chromium(
                 for item in (result.get("available") or [])
                 if str(item).strip()
             ]
+    if option["key"] == LATEST_CHATGPT_MODEL:
+        catalog = chatgpt_live_catalog(list(result.get("model_options", available)))
+        if not catalog:
+            _close_chatgpt_model_menu(page, power_button)
+            _record_model_observation(observation, reason="model-catalog-unavailable")
+            return False
+        # The concrete target is resolved afresh in this browser before upload.
+        option = catalog[0]
+        remote_labels = tuple(option["remote_labels"])
+        model_labels = remote_labels
+        if observation is not None:
+            observation["model_options"] = catalog
+            observation["model_catalog_complete"] = True
     effort_labels: list[str] = []
     effort_selection_complete = False
     if result.get("ok") and result_matches_target(result, current):
@@ -11253,6 +11295,8 @@ def _select_chatgpt_model(
         (candidate for candidate in CHATGPT_MODEL_OPTIONS if candidate["key"] == selected_model),
         None,
     )
+    if option is None and selected_model.startswith(LIVE_MODEL_PREFIX):
+        option = live_model_option(selected_model[len(LIVE_MODEL_PREFIX):])
     if option is None:
         raise ValueError("Choose a supported ChatGPT model.")
 
@@ -11408,11 +11452,15 @@ def _select_chatgpt_model(
                     || className.includes('composer-pill');
             });
             if (!powerButton) return {ok: false, reason: 'power-control-not-found', available: []};
-            if (phase === 'choose') {
+            if (phase === 'choose' || phase === 'catalog') {
                 const submenu = visibleMenus().at(-1);
                 const candidates = Array.from(
-                    submenu?.querySelectorAll('[role="menuitem"], [role="option"]') || []
-                ).filter(isVisible);
+                    submenu?.querySelectorAll('[role="menuitemradio"], [role="menuitem"], [role="option"]') || []
+                ).filter((item) => isVisible(item) && !item.disabled
+                    && item.getAttribute('aria-disabled') !== 'true');
+                if (phase === 'catalog') return {
+                    available: candidates.map((item) => String(item.innerText || item.textContent || '').trim()),
+                };
                 const choice = candidates.find((item) => matches(item.innerText || item.textContent));
                 if (choice) {
                     choice.click();
@@ -11495,6 +11543,16 @@ def _select_chatgpt_model(
         return verify_fallback_effort_catalog(result)
     if isinstance(result, dict) and result.get("reason") == "selection-required":
         wait_for_timeout(350)
+        if selected_model == LATEST_CHATGPT_MODEL:
+            menu = page.evaluate(model_control_script, {"labels": [], "phase": "catalog"})
+            catalog = chatgpt_live_catalog(list(menu.get("available") or [])) if isinstance(menu, dict) else []
+            if not catalog:
+                _record_model_observation(observation, reason="model-catalog-unavailable")
+                return False
+            remote_labels = tuple(catalog[0]["remote_labels"])
+            if observation is not None:
+                observation["model_options"] = catalog
+                observation["model_catalog_complete"] = True
         selection = page.evaluate(
             model_control_script,
             {"labels": list(remote_labels), "phase": "choose"},
