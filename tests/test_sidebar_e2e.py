@@ -9572,6 +9572,53 @@ def test_agent_latest_deduplicates_and_effort_click_recovers_failed_catalog(
         context.close()
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize('width', [1_138, 375])
+@pytest.mark.parametrize('phase', ['finished', 'failed', 'running'])
+def test_agent_activity_completion_icon_contract(disposable_browser, sidebar_server_url, width, phase):
+    payload = _finished_chatgpt_agent_payload()
+    payload['agent'].update(
+        phase=phase, running=phase == 'running',
+        activity=[{'status': 'complete', 'label': 'Read', 'detail': 'AGENTS.md'}],
+    )
+    if phase == 'running':
+        payload['agent']['finished_at'] = ''
+    if phase == 'failed':
+        payload['agent']['error'] = 'Fixture failure'
+    context = disposable_browser.new_context(viewport={'width': width, 'height': 959})
+    page = context.new_page()
+    page.route('**/api/agent/status', lambda route: route.fulfill(json=payload))
+    page.route('**/api/browser-session**', lambda route: route.fulfill(json={
+        'platform': 'chatgpt', 'browser': 'edge', 'can_download': True,
+        'account_name': 'ChatGPT account',
+    }))
+    try:
+        page.goto(f'{sidebar_server_url}/agent/edge/chatgpt', wait_until='domcontentloaded')
+        expect(page.locator('#agent_response_status')).to_have_attribute('data-status', phase)
+        icons = page.evaluate("""() => {
+            const heading = document.querySelector('.agent-activity-live');
+            return {
+                mask: getComputedStyle(heading).maskImage,
+                visible: getComputedStyle(heading).visibility,
+                shadow: getComputedStyle(heading).boxShadow,
+                ring: getComputedStyle(heading, '::before').display,
+                account: getComputedStyle(document.querySelector('.browser-session-status-checkmark')).maskImage,
+                action: getComputedStyle(document.querySelector('.agent-activity-status')).maskImage,
+            };
+        }""")
+        assert 'checkmark.circle.svg' in icons['action']
+        if phase == 'finished':
+            assert icons['mask'] == icons['account']
+            assert 'checkmark.circle.fill.green.svg' in icons['mask']
+            assert icons['visible'] == 'visible'
+            assert icons['shadow'] == 'none'
+            assert icons['ring'] == 'none'
+        else:
+            assert icons['mask'] == 'none'
+    finally:
+        context.close()
+
+
 @pytest.mark.parametrize("width", [1280, 390])
 def test_cache_text_metrics_and_grok_runtime_boundary(
     disposable_browser: Browser, seeded_chatgpt_browser_server_url: str, width: int,
