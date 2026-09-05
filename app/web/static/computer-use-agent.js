@@ -1,4 +1,4 @@
-/* Code version: v3.31.1-codex.1 */
+/* Code version: v3.31.2-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -100,6 +100,62 @@
     let preferenceTimer = null;
     let responseStatusTimer = null;
     let activitySignature = "";
+    let activityWasRunning = false;
+    let activityRunIdentity = "";
+    let activityCloseAnimation = null;
+    const activityCurrent = document.createElement("ol");
+    activityCurrent.className = "agent-activity-list agent-activity-current";
+    activityCurrent.id = "agent_activity_current";
+    activityCurrent.hidden = true;
+    elements.activityPanel?.after(activityCurrent);
+    const activitySummary = elements.activityPanel?.querySelector("summary");
+    activitySummary?.firstElementChild?.classList.add("agent-activity-heading");
+    const activityLive = document.createElement("span");
+    activityLive.className = "cache-phase-live-marker agent-activity-live";
+    activityLive.setAttribute("aria-hidden", "true");
+    activitySummary?.prepend(activityLive);
+
+    function syncActivityCurrent() {
+        const panel = elements.activityPanel;
+        if (!panel) return;
+        activityCurrent.hidden = panel.hidden || panel.open || !activityWasRunning;
+        activitySummary?.setAttribute("aria-expanded", String(panel.open));
+    }
+
+    activitySummary?.addEventListener("click", (event) => {
+        event.preventDefault();
+        const panel = elements.activityPanel;
+        if (activityCloseAnimation) {
+            activityCloseAnimation.cancel();
+            activityCloseAnimation = null;
+            return;
+        }
+        if (!panel.open) {
+            panel.open = true;
+            syncActivityCurrent();
+            elements.activityList.scrollTop = elements.activityList.scrollHeight;
+            return;
+        }
+        const close = () => {
+            panel.open = false;
+            activityCloseAnimation = null;
+            syncActivityCurrent();
+        };
+        if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+            close();
+            return;
+        }
+        const style = getComputedStyle(panel);
+        activityCloseAnimation = elements.activityList.animate([
+            {opacity: 1, transform: "scale3d(1, 1, 1)"},
+            {opacity: 0, transform: "translate3d(0, -6px, 0) scale3d(0.985, 0.94, 1)"},
+        ], {
+            duration: parseFloat(style.getPropertyValue("--motion-duration-emphasized")) || 300,
+            easing: style.getPropertyValue("--motion-bouncy").trim(),
+        });
+        activityCloseAnimation.onfinish = close;
+    });
+    elements.activityPanel?.addEventListener("toggle", syncActivityCurrent);
     let sourceBrowser = "";
     let sourcePlatform = "";
     let sourcesLoaded = false;
@@ -1995,21 +2051,26 @@
         });
     }
 
-    function renderActivity(events, running, finishedTransition = false) {
+    function renderActivity(events, running, finishedTransition = false, runIdentity = "") {
         if (!elements.activityPanel || !elements.activityList || !elements.activityCount) return;
         const safeEvents = Array.isArray(events) ? events : [];
         const signature = JSON.stringify(safeEvents);
         const changed = signature !== activitySignature;
+        const followLatest = elements.activityList.scrollHeight - elements.activityList.scrollTop
+            - elements.activityList.clientHeight < 24;
         if (changed) {
             activitySignature = signature;
             elements.activityList.replaceChildren(...safeEvents.map((event) => {
                 const item = document.createElement("li");
                 item.className = "agent-activity-item";
-                item.dataset.status = event.status || "running";
+                item.dataset.status = event.status === "complete" ? "completed" : (event.status || "running");
 
                 const status = document.createElement("span");
                 status.className = "agent-activity-status";
                 status.setAttribute("aria-hidden", "true");
+                const live = document.createElement("span");
+                live.className = "cache-phase-live-marker";
+                status.append(live);
 
                 const content = document.createElement("span");
                 content.className = "agent-activity-content";
@@ -2030,12 +2091,26 @@
         }
         elements.activityPanel.hidden = safeEvents.length === 0;
         elements.activityCount.textContent = String(safeEvents.length);
-        if (running && safeEvents.length) {
+        if (running && safeEvents.length && (!activityWasRunning || runIdentity !== activityRunIdentity)) {
+            activityCloseAnimation?.cancel();
+            activityCloseAnimation = null;
             elements.activityPanel.open = true;
-            if (changed) elements.activityList.scrollTop = elements.activityList.scrollHeight;
         } else if (finishedTransition) {
+            activityCloseAnimation?.cancel();
+            activityCloseAnimation = null;
             elements.activityPanel.open = false;
         }
+        activityWasRunning = running;
+        activityRunIdentity = runIdentity;
+        elements.activityPanel.dataset.running = String(running);
+        if (changed) {
+            const current = elements.activityList.lastElementChild;
+            activityCurrent.replaceChildren(...(current ? [current.cloneNode(true)] : []));
+            if (elements.activityPanel.open && followLatest) {
+                elements.activityList.scrollTop = elements.activityList.scrollHeight;
+            }
+        }
+        syncActivityCurrent();
     }
 
     function renderErrorRecord(agent) {
@@ -2803,7 +2878,7 @@
         renderResponseStatus(agent, readiness);
         renderTerminalExecution(lastPayload.runtime);
         renderComputeJob(lastPayload.compute_job);
-        renderActivity(agent.activity, running, shouldCollapseActivity);
+        renderActivity(agent.activity, running, shouldCollapseActivity, runIdentity);
         updateSessionChoiceInputs();
         if (
             readiness.ready

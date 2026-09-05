@@ -1,4 +1,4 @@
-/* Code version: v2.93.3-codex.1 */
+/* Code version: v2.93.4-codex.1 */
 /*
  * Standalone faces are extracted from the approved TTC by scripts/build_web_fonts.py.
  * Collection URL fragments are not reliable face selectors in Chromium.
@@ -4642,12 +4642,14 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-activity-panel > summary {
-    display: flex;
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
     align-items: center;
     justify-content: space-between;
     gap: 12px;
     min-height: 40px;
-    padding: 0 12px;
+    padding: 0;
+    column-gap: 8px;
     color: var(--muted);
     font-size: var(--font-table-body);
     cursor: pointer;
@@ -4691,10 +4693,10 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-activity-item {
     display: grid;
-    grid-template-columns: 10px minmax(0, 1fr) auto;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
     align-items: start;
-    gap: 10px;
-    padding: 10px 12px;
+    gap: 8px;
+    padding: 10px 0;
 }
 
 .agent-activity-item + .agent-activity-item {
@@ -4702,27 +4704,54 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-activity-status {
-    width: 8px;
-    height: 8px;
-    margin-top: 5px;
-    border: 2px solid color-mix(in srgb, var(--accent) 24%, transparent);
-    border-top-color: var(--accent);
-    border-radius: 50%;
-    animation: agentActivitySpin 720ms linear infinite;
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    margin-top: calc((1.45em - 16px) / 2);
+    font-size: var(--font-table-body);
 }
 
-.agent-activity-item[data-status="completed"] .agent-activity-status,
-.agent-activity-item[data-status="failed"] .agent-activity-status {
-    border: 0;
-    animation: none;
+.agent-activity-status > .cache-phase-live-marker {
+    --cache-phase-live-marker-color: var(--theme-success-strong);
 }
 
 .agent-activity-item[data-status="completed"] .agent-activity-status {
     background: var(--theme-success-strong);
+    mask: url("/static/images/checkmark.circle.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/checkmark.circle.svg") center/contain no-repeat;
+}
+
+.agent-activity-item:is([data-status="completed"], [data-status="failed"]) .cache-phase-live-marker {
+    display: none;
 }
 
 .agent-activity-item[data-status="failed"] .agent-activity-status {
     background: var(--theme-error);
+    mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/xmark.circle.fill.svg") center/contain no-repeat;
+}
+
+.agent-activity-live {
+    --cache-phase-live-marker-color: var(--theme-success-strong);
+    justify-self: center;
+    visibility: hidden;
+}
+
+.agent-activity-panel[data-running="true"]:not([open]) .agent-activity-live {
+    visibility: visible;
+}
+
+.agent-activity-current {
+    border: 0;
+    max-height: none;
+    overflow: visible;
+}
+
+.agent-activity-panel > summary:focus-visible {
+    outline: 2px solid var(--accent-text);
+    outline-offset: -2px;
+    border-radius: var(--radius-soft);
 }
 
 .agent-activity-content {
@@ -4731,6 +4760,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 }
 
 .agent-activity-label {
+    line-height: 1.45;
     color: var(--text);
     font-size: var(--font-table-body);
     font-weight: 600;

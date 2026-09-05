@@ -1,4 +1,4 @@
-<!-- Code version: v3.31.3-codex.1 -->
+<!-- Code version: v3.31.4-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.93.3-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.93.4-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -332,7 +332,7 @@
                             <ol class="agent-activity-list" id="agent_activity_list">
                                 {% for event in agent_snapshot.activity %}
                                 <li class="agent-activity-item" data-status="{{ event.status }}">
-                                    <span class="agent-activity-status" aria-hidden="true"></span>
+                                    <span class="agent-activity-status" aria-hidden="true"><span class="cache-phase-live-marker"></span></span>
                                     <span class="agent-activity-content">
                                         <span class="agent-activity-label">{{ event.label }}</span>
                                         <span class="agent-activity-detail">{{ event.detail }}</span>
@@ -512,6 +512,6 @@
 <script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.9.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.31.1-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.31.2-codex.1') }}"></script>
 </body>
 </html>

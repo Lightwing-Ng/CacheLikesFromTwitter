@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.55.1-codex.1`
+Documentation version: `v3.55.2-codex.1`
 
 ## Purpose
 
@@ -86,6 +86,28 @@ and composer instead of relabeling an older provider's result. The API keeps the
 snapshot for recovery, but the server-rendered first frame and subsequent client polling both apply
 the same provenance check. Changing the provider or browser also clears the current composer so an
 older task cannot be submitted accidentally through a different Web session.
+
+## Activity history
+
+Activity is a keyboard-operable disclosure. While a run is active, collapsing it
+keeps only the latest event visible and shows the shared green breathing live
+marker beside the heading. Polling updates that current event without reopening
+history; a new run can open history again. Completed runs hide the current-only
+preview, while their history remains available on demand.
+
+Completed events use the local `checkmark.circle.svg` mask with
+`--theme-success-strong`; running events reuse `cache-phase-live-marker` in the
+same green token. The marker slot centers on the first action-label line, and the
+Activity heading shares the Working text rail. Opening retains the shared gel
+animation; closing uses its motion duration and bouncy easing. Reduced-motion
+users bypass closing animation.
+
+Validation on 5 Sep 2026: focused Style/Web checks passed 225 tests and 539
+subtests; `tests/test_agent_activity_e2e.py` passed four desktop/narrow motion
+cases; five existing running/completion/hydration/stale-run browser cases passed.
+Live 8666 verification used a separate tab to preserve the original unsent draft;
+the heading aligned within 0.56px of Working and the completed glyph centered
+within 0.01px of its label. The user-owned service was not restarted.
 
 ## Execution loop
 
