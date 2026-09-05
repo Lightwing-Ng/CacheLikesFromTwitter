@@ -1,4 +1,4 @@
-/* Code version: v3.30.0-codex.1 */
+/* Code version: v3.31.1-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -9,6 +9,14 @@
     const runtimeForm = document.getElementById("agent_runtime_form");
     const promptForm = document.getElementById("agent_prompt_form");
     if (!runtimeForm || !promptForm) return;
+
+    // Reserve the measured composer height while answers scroll behind its glass.
+    const composerSizeObserver = new ResizeObserver(() => {
+        promptForm.parentElement.style.setProperty(
+            "--agent-composer-height", `${promptForm.getBoundingClientRect().height}px`,
+        );
+    });
+    composerSizeObserver.observe(promptForm);
 
     const elements = {
         agentPage: document.querySelector("[data-agent-route-prefix]"),
@@ -47,7 +55,6 @@
         effortField: promptForm.querySelector("[data-agent-effort-field]"),
         effortCombobox: promptForm.querySelector(".agent-effort-combobox"),
         effortInput: promptForm.querySelector("[data-agent-effort-input]"),
-        effortRefresh: promptForm.querySelector("[data-agent-effort-refresh]"),
         promptSessionMode: promptForm.querySelector("[data-agent-prompt-session-mode]"),
         promptConversationUrl: promptForm.querySelector("[data-agent-prompt-conversation-url]"),
         promptProjectUrl: promptForm.querySelector("[data-agent-prompt-project-url]"),
@@ -90,7 +97,6 @@
     let preferredModel = elements.modelInput?.value || "";
     let browserStatusState = "cleared";
     let browserStatusController = null;
-    let effortRefreshInFlight = false;
     let preferenceTimer = null;
     let responseStatusTimer = null;
     let activitySignature = "";
@@ -2818,18 +2824,6 @@
             elements.ask.setAttribute("aria-label", label);
             elements.ask.setAttribute("title", label);
         }
-        if (elements.effortRefresh) {
-            const refreshInFlight = effortRefreshInFlight
-                && !running
-                && selectedPlatform() === "chatgpt";
-            elements.effortRefresh.disabled = running
-                || selectedPlatform() !== "chatgpt"
-                || browserVerificationPending()
-                || effortRefreshInFlight;
-            elements.effortRefresh.classList.toggle("is-refreshing", refreshInFlight);
-            if (refreshInFlight) elements.effortRefresh.setAttribute("aria-busy", "true");
-            else elements.effortRefresh.removeAttribute("aria-busy");
-        }
         if (elements.projectChoose) elements.projectChoose.disabled = running;
         elements.comboboxTriggers.forEach((trigger) => {
             const isLockedComposerChoice = trigger.closest(
@@ -3006,23 +3000,6 @@
     elements.promptOverflowToggle?.addEventListener("click", () => {
         setPromptExpanded(!isPromptExpanded());
         elements.promptInput?.focus();
-    });
-    elements.effortRefresh?.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        if (selectedPlatform() !== "chatgpt" || !browserStatusController) return;
-        effortRefreshInFlight = true;
-        elements.effortRefresh.disabled = true;
-        elements.effortRefresh.classList.add("is-refreshing");
-        elements.effortRefresh.setAttribute("aria-busy", "true");
-        Promise.resolve(browserStatusController.refresh())
-            .catch((error) => {
-                setResponseStatusFallback(error.message || "Could not refresh live ChatGPT efforts.");
-            })
-            .finally(() => {
-                effortRefreshInFlight = false;
-                render(lastPayload);
-            });
     });
     elements.responseCopy?.addEventListener("click", async () => {
         const value = responseCopyValue;

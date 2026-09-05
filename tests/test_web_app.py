@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.94.0-codex.1
+# Code version: v1.94.3-codex.1
 
 from __future__ import annotations
 
@@ -503,7 +503,7 @@ class WebAppTests(unittest.TestCase):
                 stop_form_end = body.index(">", stop_form_start)
                 self.assertIn("hidden", body[stop_form_start:stop_form_end])
                 self.assertIn(">Start</button>", body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.9.0-codex.1', chatgpt_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.9.1-codex.1', chatgpt_body)
         self.assertIn('browser-session-picker.js?v=browser-session-picker-v1.8.0-codex.1', chatgpt_body)
         chatgpt_form_identifier = chatgpt_body.index('id="start_form_chatgpt"')
         chatgpt_form_start = chatgpt_body.rfind("<form", 0, chatgpt_form_identifier)
@@ -605,7 +605,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.21.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.92.10-codex.1"
+                expected_style_version = "style-v2.93.3-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -1005,13 +1005,13 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Task</p>', local_body)
         self.assertNotIn('<p class="workspace-kicker">Live result</p>', local_body)
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.1-codex.1', local_body)
-        self.assertIn('browser-session-status.js?v=browser-session-status-v1.9.0-codex.1', local_body)
+        self.assertIn('browser-session-status.js?v=browser-session-status-v1.9.1-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.30.0-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.31.1-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
         self.assertIn('data-agent-compute-job-stop', local_body)
         self.assertIn('data-agent-effort-field', local_body)
-        self.assertIn('class="secondary-button agent-effort-refresh"', local_body)
+        self.assertNotIn('data-agent-effort-refresh', local_body)
         self.assertIn('name="chatgpt_effort"', local_body)
         self.assertIn('data-agent-browser-session', local_body)
         self.assertIn('data-browser-session-platform="chatgpt"', local_body)
@@ -1894,10 +1894,9 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.30.0-codex.1',
+            'computer-use-agent-v3.31.1-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
-            'agent-effort-refresh-label">Refresh options</span>',
             'data-agent-direct-list="true"',
             'data-agent-session-list-state',
             'data-agent-combobox-icon="/static/images/plus.circle.svg"',
@@ -2353,7 +2352,7 @@ class WebAppTests(unittest.TestCase):
                 platform="chatgpt",
                 browser="edge",
                 source_kind="browser-session",
-                project_url="capabilities-v2",
+                project_url="capabilities-v3",
                 payload=status_payload,
                 now=datetime(2000, 1, 1, tzinfo=timezone.utc),
             )
@@ -2669,9 +2668,7 @@ class WebAppTests(unittest.TestCase):
             'trigger.disabled = !sessionSourceChoice',
             'event.key !== "Enter" || event.shiftKey || event.isComposing',
             "promptForm.requestSubmit()",
-            "elements.effortRefresh?.addEventListener(\"click\", (event) => {",
             "event.preventDefault();",
-            "event.stopPropagation();",
             "renderActivity(agent.activity, running, shouldCollapseActivity)",
             "function clearCompletedPromptIfUnchanged(agent, shouldClear)",
             'const completedPrompt = String(agent?.prompt || "");',
@@ -3155,7 +3152,7 @@ class WebAppTests(unittest.TestCase):
             'if (statusSpinner) statusSpinner.hidden = false;',
             'activeBrowser !== browserId\n                    || platform !== requestPlatform\n                    || requestRevision !== statusRequestRevision',
             'const hideReadyMessage = statusCard?.dataset.browserSessionHideReadyMessage === "true";',
-            'statusMessage.hidden = (hideReadyMessage && isReady) || !payload.message;',
+            'statusMessage.hidden = ((hideReadyMessage || statusCard.classList.contains("browser-session-status-card-compact")) && isReady) || !payload.message;',
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, script)
@@ -3435,7 +3432,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.92.10-codex.1", body)
+            self.assertIn("style-v2.93.3-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

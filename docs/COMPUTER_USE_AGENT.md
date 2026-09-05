@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.55.0-codex.1`
+Documentation version: `v3.55.1-codex.1`
 
 ## Purpose
 
@@ -29,12 +29,13 @@ under `local_store/agent/agent_source_catalog.parquet`. The cache key isolates p
 catalog kind, and Project URL. Fresh entries are reused from process memory for 15 minutes; the
 first process read hydrates that memory from Parquet. After expiry, passive page loads, polling,
 and task-completion rendering return the last verified catalog without starting another browser
-collector. A cache miss performs one bounded bootstrap check; later re-checks require the visible
-`Refresh options` control or a submitted task. The control uses the Agent-scoped
-`/api/browser-session?refresh=1` request, writes the newly collected catalog back to the shared
-cache. Concurrent passive and explicit requests share one browser flight, and response revisions
-prevent an older response from replacing the accepted result. If an explicit refresh fails and an older entry exists, the API returns that catalog
-with `cache.status: "stale"` so the selector remains usable and the condition stays observable.
+collector. A cache miss performs one bounded bootstrap check that collects account readiness,
+models, efforts, and sources together. There is no separate effort-refresh button. Subsequent task
+submission verifies its requested model and effort in the task's own browser context. Concurrent
+requests share one browser flight, and response revisions prevent an older response from replacing
+the accepted result. The API retains a prior verified catalog with `cache.status: "stale"` when a
+new check fails.
+
 
 On `/agent`, ChatGPT, Grok, and Claude use an agent-scoped bootstrap request: the selected browser
 context verifies the actual Web composer and collects Recent sessions and Projects in one launch.
@@ -45,9 +46,8 @@ The selector always starts with the local `Highest available` policy. Every exac
 read dynamically from the live ChatGPT slider, never from a plan-specific list. A complete,
 matching catalog remains selectable while it retains verifiable browser-session provenance,
 including its server, stale, or session cache record; the UI identifies it as the latest verified
-result rather than implying that a passive render is a new probe. The adjacent `Refresh options`
-control makes one explicit `refresh=1` probe when the user wants the current subscription labels.
-It does not submit a prompt or start an Agent task.
+result rather than implying that a passive render is a new probe. Initial authorization discovers
+these controls automatically without asking the user to launch a separate refresh.
 The server-rendered first frame also writes `highest_available` into the hidden effort field until a
 matching complete catalog is verified. A persisted provider label is retained as data-only
 preference state and restored only when that verified catalog still exposes the label.

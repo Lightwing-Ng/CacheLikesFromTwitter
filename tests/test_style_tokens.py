@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.52.9-codex.1
+Code version: v1.53.2-codex.1
 """
 
 import hashlib
@@ -1059,7 +1059,8 @@ def test_style_token_secondary_button_preview_stays_intrinsic_and_reserves_svg_i
         assert token in preview_rule
         assert token in button_rule
         assert token in secondary_rule
-    assert "justify-self: start;" in secondary_rule
+    assert "justify-self: end;" in secondary_rule
+    assert "margin-inline-start: auto;" in secondary_rule
     assert "\n    width: auto;" not in secondary_rule
     assert "\n    width: 100%;" not in secondary_rule
 
@@ -1108,7 +1109,7 @@ def test_prompt_tag_specimen_reuses_the_saved_prompt_tag_contract() -> None:
         "text-decoration: none;",
         "width: fit-content;",
         "max-width: 100%;",
-        "justify-self: start;",
+        "justify-self: end;",
     ):
         assert token in secondary_rule
 
@@ -1953,7 +1954,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.92.10-codex.1 */",
+        "/* Code version: v2.93.3-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -2122,49 +2123,8 @@ def test_agent_effort_trigger_uses_fifteen_pixel_type_token_without_wrapping() -
     assert "white-space: nowrap;" in selector_rule
 
 
-def test_agent_effort_refresh_is_a_visible_labeled_action() -> None:
-    """Keep the explicit effort refresh action discoverable without overflowing mobile."""
-    stylesheet = _stylesheet()
-    selector = ".agent-effort-refresh {"
-    selector_start = stylesheet.index(selector)
-    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
-    label_selector = ".agent-effort-refresh-label {"
-    label_start = stylesheet.index(label_selector)
-    label_rule = stylesheet[label_start:stylesheet.index("\n}", label_start)]
-    icon_selector = ".agent-effort-refresh-icon {"
-    icon_start = stylesheet.index(icon_selector)
-    icon_rule = stylesheet[icon_start:stylesheet.index("\n}", icon_start)]
-
-    for token in (
-        "display: inline-flex;",
-        "gap: 6px;",
-        "padding: 8px 12px;",
-    ):
-        assert token in selector_rule
-    assert 'mask: url("/static/images/arrow.trianglehead.2.clockwise.svg") center/contain no-repeat;' in icon_rule
-    for token in (
-        "font-size: var(--font-size-4);",
-        "white-space: nowrap;",
-    ):
-        assert token in label_rule
-    assert "flex-wrap: wrap;" in stylesheet
 
 
-def test_agent_effort_refresh_rotates_its_icon_while_refreshing() -> None:
-    """Keep live effort refresh feedback visible without changing the button label."""
-    stylesheet = _stylesheet()
-    selector = ".agent-effort-refresh.is-refreshing .agent-effort-refresh-icon {"
-    selector_start = stylesheet.index(selector)
-    selector_rule = stylesheet[selector_start:stylesheet.index("\n}", selector_start)]
-    assert "animation: agent-effort-refresh-spin 800ms linear infinite;" in selector_rule
-    keyframes_start = stylesheet.index("@keyframes agent-effort-refresh-spin {")
-    keyframes_rule = stylesheet[keyframes_start:stylesheet.index("\n}", keyframes_start)]
-    assert "transform: rotate(360deg);" in keyframes_rule
-    reduced_start = stylesheet.index(
-        ".agent-effort-refresh.is-refreshing .agent-effort-refresh-icon {",
-        keyframes_start,
-    )
-    assert "animation: none;" in stylesheet[reduced_start:stylesheet.index("\n}", reduced_start)]
 
 
 def test_visible_chatgpt_effort_uses_a_two_row_compact_composer_footer() -> None:
@@ -2723,7 +2683,7 @@ def test_agent_response_header_and_answer_pin_the_composer() -> None:
     composer_start = stylesheet.rfind(".agent-task-card > .agent-prompt-form {")
     composer_rule = stylesheet[composer_start:stylesheet.index("\n}", composer_start)]
 
-    scroll_start = stylesheet.index(".agent-response-question-scroll {")
+    scroll_start = stylesheet.index(".agent-response-question {")
     scroll_rule = stylesheet[scroll_start:stylesheet.index("\n}", scroll_start)]
     for rule in (scroll_rule, answer_rule):
         assert "overflow-y: auto;" in rule or "overflow: auto;" in rule
@@ -2739,9 +2699,9 @@ def test_agent_response_header_and_answer_pin_the_composer() -> None:
     assert "min-height: var(--settings-round-icon-button-size);" in toolbar_rule
     assert "min-height: calc(var(--settings-round-icon-button-size) + 12px);" in header_rule
     assert "overflow-anchor: none;" in answer_rule
-    assert "position: sticky;" in composer_rule
-    assert "bottom: 0;" in composer_rule
-    assert "flex: 0 0 auto;" in composer_rule
+    assert "position: relative;" in composer_rule
+    assert "align-self: end;" in composer_rule
+    assert "grid-area: 2 / 1;" in composer_rule
 
 
 def test_agent_error_record_is_collapsible_and_vertically_scrollable() -> None:

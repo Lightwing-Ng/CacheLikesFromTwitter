@@ -1,6 +1,6 @@
 """Read the local CSS foundation token registry for the Style tokens page.
 
-Code version: v0.4.2-codex.1
+Code version: v0.5.1-codex.1
 """
 
 from __future__ import annotations
@@ -320,8 +320,7 @@ def build_style_token_component_rows() -> list[dict[str, object]]:
             "sample_kind": "secondary-button",
             "sample_title": "Refresh cache",
             "use_icon": False,
-            "icon_class": "agent-effort-refresh-icon",
-            "token_names": ("--glass-chip-background-strong", "--glass-chip-background-hover", "--glass-chip-border", "--glass-chip-shadow", "--glass-chip-shadow-hover", "--radius-pill", "--font-tooltip", "--font-weight-semibold"),
+            "token_names": ("--glass-chip-background-strong", "--glass-chip-background-hover", "--glass-chip-border", "--glass-chip-shadow", "--glass-chip-shadow-hover", "--radius-pill", "--font-size-3", "--font-weight-semibold"),
         },
         {
             "id": "segmented-control",
@@ -366,7 +365,7 @@ def build_style_token_component_rows() -> list[dict[str, object]]:
             "name": "Shared select filter",
             "sample_kind": "shared-select-filter",
             "sample_title": "Sort cached text",
-            "token_names": ("--shared-select-trigger-material", "--shared-select-dropdown-padding", "--shared-select-dropdown-radius", "--shared-select-dropdown-max-height", "--shared-select-option-padding", "--shared-select-option-radius", "--shared-select-option-gap", "--control-liquid-background", "--control-liquid-background-hover", "--control-liquid-border"),
+            "token_names": ("--shared-select-control-height", "--shared-select-trigger-material", "--shared-select-dropdown-padding", "--shared-select-dropdown-radius", "--shared-select-dropdown-max-height", "--shared-select-option-padding", "--shared-select-option-radius", "--shared-select-option-gap", "--control-liquid-background", "--control-liquid-background-hover", "--control-liquid-border"),
             "material_names": ("--shared-select-trigger-material", "--shared-select-dropdown-material"),
         },
         {
@@ -391,15 +390,6 @@ def build_style_token_component_rows() -> list[dict[str, object]]:
             "sample_title": "28/08/2026 10:08:00 (CST)",
             "token_names": ("--tooltip-background", "--tooltip-border", "--tooltip-shadow", "--tooltip-blur", "--chart-tooltip-min-width", "--chart-tooltip-max-width", "--chart-tooltip-padding", "--chart-tooltip-radius", "--chart-tooltip-row-gap", "--chart-tooltip-item-gap"),
             "material_names": ("--tooltip-background", "--tooltip-border", "--tooltip-shadow", "--tooltip-blur"),
-        },
-        {
-            "id": "workspace-article",
-            "name": "Workspace article",
-            "sample_kind": "workspace-article",
-            "sample_title": "General",
-            "sample_copy": "The desktop article baseline becomes a lighter heading surface at narrow widths.",
-            "sample_value": "Desktop baseline",
-            "token_names": ("--workspace-article-radius", "--workspace-article-pad-block-start", "--workspace-article-pad-inline", "--workspace-article-pad-block-end", "--workspace-article-background", "--workspace-article-shadow", "--workspace-article-blur", "--workspace-article-heading-min-height", "--workspace-article-heading-gap", "--workspace-article-heading-background", "--workspace-article-heading-border", "--workspace-article-heading-shadow", "--workspace-article-mobile-shadow"),
         },
         {
             "id": "workspace-metric-value",

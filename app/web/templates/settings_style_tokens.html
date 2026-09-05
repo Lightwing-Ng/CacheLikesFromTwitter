@@ -1,4 +1,4 @@
-<!-- Code version: v1.5.29-codex.1 -->
+<!-- Code version: v1.6.1-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.92.10-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.93.3-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.4-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='resizer.js', v='resizer-v1.0.0-codex.1') }}"></script>
@@ -170,11 +170,6 @@
                                     <dl class="chart-tooltip-list"><div><dt>Source</dt><dd>ChatGPT</dd></div><div><dt>Messages</dt><dd>12,486</dd></div><div><dt>Media</dt><dd>842</dd></div></dl>
                                 </section>
                             </div>
-                            {% elif row.sample_kind == "workspace-article" %}
-                            <article class="workspace-article-card style-token-workspace-article-demo">
-                                <div class="report-heading-row"><p class="report-heading">{{ row.sample_title }}</p><span>{{ row.sample_value }}</span></div>
-                                <p class="style-token-demo-note">{{ row.sample_copy }}</p>
-                            </article>
                             {% elif row.sample_kind == "metric-value" %}
                             <div class="style-token-metric-demo-shell">
                                 <article class="metric-card foundation-metric-card metric-card-accent style-token-metric-card-demo"><span class="metric-label">{{ row.sample_title }}</span><strong>{{ row.sample_value }}</strong></article>

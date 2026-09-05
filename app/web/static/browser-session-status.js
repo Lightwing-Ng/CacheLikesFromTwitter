@@ -1,7 +1,7 @@
-/* Code version: v1.9.0-codex.1 */
+/* Code version: v1.9.1-codex.1 */
 
 (() => {
-    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v7:";
+    const SESSION_CACHE_PREFIX = "cachelikes:browser-session:v8:";
     const SESSION_CACHE_TTL_MS = 300_000;
     const SESSION_STALE_MAX_AGE_MS = 1_800_000;
     const BOOTSTRAPPED_AGENT_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -92,6 +92,7 @@
         const statusSpinner = root.querySelector('[data-role="browser-session-spinner"]');
         const statusCheckmark = root.querySelector('[data-role="browser-session-checkmark"]');
         const loginButton = root.querySelector('[data-role="browser-session-login"]');
+        const recheckButton = root.querySelector('[data-role="browser-session-recheck"]');
         const loginMessage = root.querySelector('[data-role="browser-session-login-message"]');
         const hideReadyMessage = statusCard?.dataset.browserSessionHideReadyMessage === "true";
         const startButtonSelector = root.dataset.startButtonSelector || "";
@@ -130,6 +131,7 @@
         }
 
         function showStatusCheckmark(state) {
+            statusCheckmark.setAttribute("aria-label", state === "ready" ? "Account verified" : "Account verification failed");
             statusCheckmark.dataset.statusState = state;
             statusCheckmark.hidden = false;
         }
@@ -141,6 +143,7 @@
         }
 
         function hideLoginAction() {
+            if (recheckButton) recheckButton.hidden = true;
             if (!loginButton) return;
             loginButton.hidden = true;
             loginButton.disabled = true;
@@ -236,12 +239,13 @@
             statusAccount.textContent = accountLabel(payload);
             if (statusMessage) {
                 statusMessage.textContent = payload.message || "";
-                statusMessage.hidden = (hideReadyMessage && isReady) || !payload.message;
+                statusMessage.hidden = ((hideReadyMessage || statusCard.classList.contains("browser-session-status-card-compact")) && isReady) || !payload.message;
             }
             if (statusSpinner) statusSpinner.hidden = true;
             showStatusCheckmark(isReady ? "ready" : "error");
             setStartButtonReady(isReady);
             setLoginAction(payload, browserId);
+            if (recheckButton) recheckButton.hidden = isReady;
             notify(payload, browserId, "ready");
         }
 
@@ -337,6 +341,10 @@
                 }, browserId);
             }
         }
+
+        recheckButton?.addEventListener("click", () => {
+            void load(activeBrowser, {force: true});
+        });
 
         loginButton?.addEventListener("click", () => {
             void openLoginBrowser();

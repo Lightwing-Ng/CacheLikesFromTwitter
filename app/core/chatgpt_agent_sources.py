@@ -1,6 +1,6 @@
 """Read ChatGPT Web sessions, projects, and conversation history for the local Agent.
 
-Code version: v1.6.1-codex.1
+Code version: v1.6.2-codex.1
 """
 
 from __future__ import annotations
@@ -128,7 +128,7 @@ def probe_and_collect_chatgpt_sources(
         "browser": descriptor.browser_id,
         "browser_label": descriptor.label,
         "icon_filename": descriptor.icon_filename,
-        "logged_in": False,
+        "logged_in": None,
         "can_download": False,
         "account_name": "ChatGPT account",
         "message": "",
@@ -196,7 +196,8 @@ def probe_and_collect_chatgpt_sources(
                     sources = None
                 return status, sources
     except Exception as exc:  # pragma: no cover - depends on local browser state
-        status["message"] = str(exc)
+        status["probe_error"] = True
+        status["message"] = f"Could not verify the ChatGPT account in {descriptor.label}. {exc}"
         return status, None
 
 

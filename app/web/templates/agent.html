@@ -1,4 +1,4 @@
-<!-- Code version: v3.30.0-codex.1 -->
+<!-- Code version: v3.31.3-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.92.10-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.93.3-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
 </head>
@@ -347,15 +347,15 @@
                         {% set initial_finished_answer = not agent_snapshot.running and agent_snapshot.phase == 'finished' and (initial_history_item or agent_snapshot.response) %}
                         <div class="agent-response-output" id="agent_response_output" lang="zh-CN"{% if not initial_history_item and not agent_snapshot.response %} hidden{% endif %}>
                             <header class="agent-response-question-header browser-session-table-message-shell" id="agent_response_question_header">
-                                <div class="agent-response-question-scroll" id="agent_response_question_scroll" data-layout-role="scrollport" tabindex="0" aria-label="Question text">
-                                    <h3 class="agent-response-question" id="agent_response_question" data-agent-response-question>{{ initial_history_item.prompt if initial_history_item else agent_snapshot.prompt }}</h3>
+                                <div class="agent-response-question-scroll" id="agent_response_question_scroll">
+                                    <h3 class="agent-response-question" id="agent_response_question" data-layout-role="scrollport" tabindex="0" aria-label="Question text" data-agent-response-question>{{ initial_history_item.prompt if initial_history_item else agent_snapshot.prompt }}</h3>
                                 </div>
                                 <button
                                     type="button"
                                     class="browser-session-message-toggle agent-response-overflow-toggle"
                                     data-browser-session-message-toggle
                                     data-browser-session-message-number="question"
-                                    aria-controls="agent_response_question_scroll"
+                                    aria-controls="agent_response_question"
                                     aria-expanded="false"
                                     aria-label="Expand question"
                                     title="Expand question"
@@ -485,10 +485,6 @@
                                                 </button>
                                             </span>
                                         </span>
-                                        <button type="button" class="secondary-button agent-effort-refresh" data-agent-effort-refresh aria-label="Refresh ChatGPT thinking-effort options" title="Refresh ChatGPT thinking-effort options"{% if agent_snapshot.running %} disabled{% endif %}>
-                                            <span class="icon agent-effort-refresh-icon" aria-hidden="true"></span>
-                                            <span class="agent-effort-refresh-label">Refresh options</span>
-                                        </button>
                                     </span>
                                     <span class="agent-composer-actions">
                                         <button type="button" class="agent-composer-submit is-resume" id="agent_resume_button" data-agent-resume hidden aria-label="Resume Agent task" title="Resume Agent task">
@@ -513,9 +509,9 @@
 {% include "_waiting_modal.html" %}
 <script src="{{ url_for('static', filename='sidebar.js', v='sidebar-v1.21.0-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='settings-directory-picker.js', v='settings-directory-picker-v1.3.1-codex.1') }}"></script>
-<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.9.0-codex.1') }}"></script>
+<script src="{{ url_for('static', filename='browser-session-status.js', v='browser-session-status-v1.9.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
 <script src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
-    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.30.0-codex.1') }}"></script>
+    <script src="{{ url_for('static', filename='computer-use-agent.js', v='computer-use-agent-v3.31.1-codex.1') }}"></script>
 </body>
 </html>

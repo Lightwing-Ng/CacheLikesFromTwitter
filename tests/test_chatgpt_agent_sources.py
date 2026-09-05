@@ -1,6 +1,6 @@
 """Focused tests for the Agent's ChatGPT Web source catalog.
 
-Code version: v1.2.4-codex.1
+Code version: v1.2.5-codex.1
 """
 
 from __future__ import annotations
@@ -426,3 +426,16 @@ def test_fetch_conversation_history_reads_authenticated_mapping_without_persiste
             "finished_at": "2026-08-14T01:02:00Z",
         }
     ]
+
+
+def test_bootstrap_network_failure_does_not_claim_signed_out() -> None:
+    with patch(
+        "app.core.chatgpt_agent_sources.sync_playwright_or_error",
+        side_effect=RuntimeError("net::ERR_CONNECTION_CLOSED"),
+    ):
+        status, sources = probe_and_collect_chatgpt_sources("edge", CrawlConfig())
+    assert status["logged_in"] is None
+    assert status["can_download"] is False
+    assert status["probe_error"] is True
+    assert "ERR_CONNECTION_CLOSED" in status["message"]
+    assert sources is None

@@ -1,4 +1,4 @@
-{# Code version: v1.3.2-codex.1 #}
+{# Code version: v1.3.3-codex.1 #}
 
 {% macro render_browser_session_status(empty_message="No signed-in account detected", ready_label="Ready", terminal_execution=none, account_label="", compact=false, hide_ready_message=false, login_action=false) -%}
 <div
@@ -29,8 +29,9 @@
                 hidden
             ></p>
             {% endif %}
-            {% if not compact %}
-            <p class="browser-session-status-message" data-role="browser-session-message" hidden></p>
+            <p class="browser-session-status-message" data-role="browser-session-message" aria-live="polite" hidden></p>
+            {% if login_action %}
+            <button type="button" class="secondary-button" data-role="browser-session-recheck" hidden>Recheck</button>
             {% endif %}
             {% if terminal_execution %}
             <p

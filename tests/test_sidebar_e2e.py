@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.28.0-codex.1
+Code version: v1.28.2-codex.1
 """
 
 from __future__ import annotations
@@ -1131,7 +1131,7 @@ def test_style_tokens_component_catalog_is_interactive_and_responsive(
     )
     try:
         cards = page.locator("[data-style-token-card]")
-        expect(cards).to_have_count(21)
+        expect(cards).to_have_count(20)
         assert page.evaluate(
             "document.documentElement.scrollWidth === document.documentElement.clientWidth"
         )
@@ -1990,26 +1990,9 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
         submit = page.locator("#agent_ask_button")
         expect(effort).to_be_visible()
         expect(model).to_be_visible()
-        expect(refresh).to_be_visible()
+        expect(refresh).to_have_count(0)
         expect(submit).to_be_visible()
         assert model.locator(".agent-model-trigger-label").text_content().strip() == "Best available"
-        refresh_style = refresh.evaluate(
-            """element => {
-                const style = getComputedStyle(element);
-                const icon = element.querySelector('.agent-effort-refresh-icon');
-                const iconStyle = icon && getComputedStyle(icon);
-                return {
-                    background: style.backgroundColor,
-                    color: style.color,
-                    padding: style.padding,
-                    maskImage: iconStyle?.maskImage,
-                };
-            }"""
-        )
-        assert refresh_style["background"] == "rgba(255, 255, 255, 0.82)"
-        assert refresh_style["color"] == "rgb(0, 85, 204)"
-        assert refresh_style["padding"] == "8px 12px"
-        assert "arrow.trianglehead.2.clockwise.svg" in refresh_style["maskImage"]
         geometry = page.evaluate(
             """() => {
                 const rect = selector => {
@@ -2044,7 +2027,6 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
                     footer: rect('.agent-composer-footer'),
                     effort: rect('.agent-effort-trigger'),
                     model: rect('.agent-model-trigger'),
-                    refresh: rect('[data-agent-effort-refresh]'),
                     effortProtectedZone: protectedZone('.agent-effort-trigger'),
                     modelProtectedZone: protectedZone('.agent-model-trigger'),
                     submit: rect('#agent_ask_button'),
@@ -2078,7 +2060,7 @@ def test_chatgpt_effort_footer_keeps_the_fifteen_pixel_label_on_one_line(
                 geometry["submit"]["right"] - geometry["footer"]["right"]
             ) <= 1
             assert geometry["model"]["left"] > geometry["footer"]["left"]
-            for selector in ("model", "effort", "refresh", "submit"):
+            for selector in ("model", "effort", "submit"):
                 assert abs(
                     geometry[selector]["top"] - geometry["footer"]["top"]
                 ) <= 1
@@ -6751,8 +6733,7 @@ def test_incomplete_chatgpt_effort_catalog_hides_stale_snapshot_options(
             "highest_available"
         )
         refresh_options = page.locator("[data-agent-effort-refresh]")
-        expect(refresh_options).to_be_visible()
-        expect(refresh_options).to_have_text("Refresh options")
+        expect(refresh_options).to_have_count(0)
         assert [text.strip() for text in effort_options.all_text_contents()] == [
             "Highest available"
         ]
@@ -6855,11 +6836,11 @@ def test_complete_chatgpt_effort_catalog_accepts_verified_browser_session_proven
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_client_cached_chatgpt_effort_catalog_exposes_verified_options_until_explicit_refresh(
+def test_client_cached_chatgpt_effort_catalog_reuses_options_without_a_refresh_button(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
-    """A verified client cache is visible, while explicit refresh remains live-only."""
+    """A verified client cache survives reload without another browser probe."""
     browser_status_requests: list[str] = []
     cached_status = {
         "platform": "chatgpt",
@@ -6880,18 +6861,6 @@ def test_client_cached_chatgpt_effort_catalog_exposes_verified_options_until_exp
             "age_seconds": 0,
         },
     }
-    refreshed_status = {
-        **cached_status,
-        "message": "Fresh ChatGPT effort catalog.",
-        "available_efforts": ["Fresh first", "Fresh maximum"],
-        "thinking_effort": "Fresh maximum",
-        "browser_session_freshness": {
-            "kind": "live_browser",
-            "cache_status": "refreshed",
-            "cached_at": "2026-08-31T00:00:01Z",
-            "age_seconds": 0,
-        },
-    }
     context = disposable_browser.new_context(
         viewport={"width": 1_280, "height": 720},
         has_touch=False,
@@ -6899,38 +6868,15 @@ def test_client_cached_chatgpt_effort_catalog_exposes_verified_options_until_exp
         reduced_motion="no-preference",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v7:agent:chatgpt:edge"
+    cache_key = "cachelikes:browser-session:v8:agent:chatgpt:edge"
     page.add_init_script(
         f"sessionStorage.setItem({json.dumps(cache_key)}, JSON.stringify({{"
         f"cached_at: Date.now(), payload: {json.dumps(cached_status)}}}));"
     )
-    page.add_init_script(
-        """(() => {
-            const originalFetch = window.fetch.bind(window);
-            let releaseRefresh;
-            const refreshGate = new Promise(resolve => { releaseRefresh = resolve; });
-            window.__releaseAgentEffortRefresh = releaseRefresh;
-            window.fetch = (input, init) => {
-                const requestUrl = typeof input === "string" ? input : input?.url;
-                if (
-                    requestUrl
-                    && requestUrl.includes("/api/browser-session")
-                    && requestUrl.includes("refresh=1")
-                ) {
-                    return originalFetch(input, init).then(async response => {
-                        await refreshGate;
-                        return response;
-                    });
-                }
-                return originalFetch(input, init);
-            };
-        })();"""
-    )
     page.route("**/api/agent/status", lambda route: route.fulfill(json=_finished_chatgpt_agent_payload()))
     def fulfill_browser_status(route) -> None:
         browser_status_requests.append(route.request.url)
-        assert "refresh=1" in route.request.url
-        route.fulfill(json=refreshed_status)
+        route.fulfill(json=cached_status)
 
     page.route("**/api/browser-session**", fulfill_browser_status)
     try:
@@ -6948,31 +6894,17 @@ def test_client_cached_chatgpt_effort_catalog_exposes_verified_options_until_exp
         )
         assert browser_status_requests == []
 
-        refresh = page.locator("[data-agent-effort-refresh]")
-        with page.expect_request(
-            lambda request: "/api/browser-session" in request.url
-            and "refresh=1" in request.url,
-        ):
-            refresh.click()
-        expect(refresh).to_have_attribute("aria-busy", "true")
-        expect(refresh).to_have_class(re.compile(r"\bis-refreshing\b"))
-        assert refresh.locator(".agent-effort-refresh-icon").evaluate(
-            "element => getComputedStyle(element).animationName"
-        ) == "agent-effort-refresh-spin"
-        page.evaluate("() => window.__releaseAgentEffortRefresh()")
-        expect(effort_options).to_have_count(3)
-        assert effort_options.evaluate_all(
-            "options => options.map((option) => option.dataset.agentComboboxOption)"
-        ) == ["highest_available", "Fresh first", "Fresh maximum"]
-        assert len(browser_status_requests) == 1
-        assert "refresh=1" in browser_status_requests[0]
+        expect(page.locator("[data-agent-effort-refresh]")).to_have_count(0)
+        page.reload(wait_until="domcontentloaded")
+        expect(effort_options).to_have_count(2)
+        assert browser_status_requests == []
     finally:
         context.close()
 
 
 @pytest.mark.integration
 @pytest.mark.slow
-def test_running_chatgpt_agent_locks_model_effort_and_refresh_controls(
+def test_running_chatgpt_agent_locks_model_and_effort_controls(
     disposable_browser: Browser,
     sidebar_server_url: str,
 ) -> None:
@@ -7024,7 +6956,7 @@ def test_running_chatgpt_agent_locks_model_effort_and_refresh_controls(
         refresh = page.locator("[data-agent-effort-refresh]")
         expect(model).to_be_disabled()
         expect(effort).to_be_disabled()
-        expect(refresh).to_be_disabled()
+        expect(refresh).to_have_count(0)
         expect(model).to_have_attribute("aria-expanded", "false")
         expect(effort).to_have_attribute("aria-expanded", "false")
         expect(page.locator(".agent-model-dropdown")).to_be_hidden()
@@ -7243,7 +7175,7 @@ def test_foreign_running_agent_poll_keeps_only_neutral_stop_state(
 
 @pytest.mark.integration
 @pytest.mark.slow
-@pytest.mark.parametrize(("width", "height"), ((1_018, 1_433), (390, 844)))
+@pytest.mark.parametrize(("width", "height"), ((1_024, 863), (390, 844)))
 def test_agent_response_scrollports_keep_actions_and_last_line_inside(
     disposable_browser: Browser,
     sidebar_server_url: str,
@@ -7291,7 +7223,8 @@ def test_agent_response_scrollports_keep_actions_and_last_line_inside(
                 theme: '#global_theme_toggle', questionToggle: '.agent-response-question-header button',
                 copy: '[data-agent-response-copy]', answer: '#agent_response_answer',
                 output: '#agent_response_output', pagination: '#agent_response_pagination',
-                question: '#agent_response_question_scroll', code: '.agent-response-answer-content pre code',
+                composer: '.agent-composer-shell', questionBox: '#agent_response_question_scroll',
+                question: '#agent_response_question', code: '.agent-response-answer-content pre code',
                 pre: '.agent-response-answer-content pre', content: '.agent-response-answer-content',
                 settings: '.agent-llm-settings-link', form: '#agent_runtime_form',
             };
@@ -7307,7 +7240,21 @@ def test_agent_response_scrollports_keep_actions_and_last_line_inside(
         assert before["settings"]["right"] == pytest.approx(before["form"]["right"], abs=1)
         assert before["answer"]["bottom"] == pytest.approx(before["output"]["bottom"], abs=1)
         assert before["answer"]["height"] > 100
-        page.locator("#agent_response_question_scroll").hover()
+        assert before["answer"]["bottom"] >= before["composer"]["bottom"] - 1
+        assert before["question"]["bottom"] <= before["questionBox"]["bottom"] + 1
+        assert before["pagination"]["bottom"] < before["composer"]["top"]
+        material = page.evaluate("""() => {
+            const shell = getComputedStyle(document.querySelector('.agent-composer-shell'));
+            const pager = getComputedStyle(document.querySelector('.agent-response-pagination'));
+            return {padding: shell.padding, background: shell.background, pager: pager.background,
+                blur: shell.backdropFilter, pagerBlur: pager.backdropFilter,
+                parent: getComputedStyle(document.querySelector('.agent-task-card')).backgroundColor};
+        }""")
+        assert material["padding"] == "8px"
+        assert material["background"] == material["pager"]
+        assert material["blur"] == material["pagerBlur"]
+        assert material["parent"] == "rgba(0, 0, 0, 0)"
+        page.locator("#agent_response_question").hover()
         page.mouse.wheel(0, 600)
         page.locator("#agent_response_answer").focus()
         page.keyboard.press("End")
@@ -7732,7 +7679,7 @@ def test_agent_browser_status_retries_a_fresh_negative_cache_and_force_refreshes
         reduced_motion="reduce",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v7:agent:gemini:edge"
+    cache_key = "cachelikes:browser-session:v8:agent:gemini:edge"
     page.add_init_script(
         f"sessionStorage.setItem({json.dumps(cache_key)}, JSON.stringify({{"
         f"cached_at: Date.now(), payload: {json.dumps(negative_status)}}}));"
@@ -8012,7 +7959,7 @@ def test_agent_bootstrap_replaces_ready_cache_without_catalog(
         reduced_motion="reduce",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v7:agent:chatgpt:edge"
+    cache_key = "cachelikes:browser-session:v8:agent:chatgpt:edge"
     cached_status = {
         "platform": "chatgpt",
         "browser": "edge",
@@ -8100,7 +8047,7 @@ def test_fresh_grok_bootstrap_supersedes_a_stale_cached_catalog_error(
         reduced_motion="reduce",
     )
     page = context.new_page()
-    cache_key = "cachelikes:browser-session:v7:agent:grok:edge"
+    cache_key = "cachelikes:browser-session:v8:agent:grok:edge"
     cache_entry = json.dumps(
         {"cached_at": 0, "payload": stale_status},
         ensure_ascii=False,
@@ -9343,5 +9290,36 @@ def test_chatgpt_latest_alias_with_combined_model_and_power_menu(disposable_brow
         assert observation['available_efforts'] == ['Light', 'Medium', 'High', 'Maximum']
         assert observation['thinking_effort'] == 'Maximum'
         assert [option['label'] for option in observation['model_options']] == ['Latest', 'GPT-5.6 Sol']
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("width", [1_024, 390])
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_modal_reuses_the_unmodified_frosted_material(disposable_browser, sidebar_server_url, width, scheme):
+    context = disposable_browser.new_context(viewport={"width": width, "height": 863}, color_scheme=scheme)
+    page = context.new_page()
+    try:
+        page.goto(f"{sidebar_server_url}/settings/style-tokens", wait_until="domcontentloaded")
+        material = page.locator(".workspace-modal-dialog.style-token-modal-demo").evaluate(
+            """node => {
+                const probe = document.createElement('div');
+                probe.style.cssText = 'background:var(--frosted-glass-background);backdrop-filter:var(--frosted-glass-blur)';
+                node.append(probe);
+                const result = {
+                    background: getComputedStyle(node).background,
+                    expected: getComputedStyle(probe).background,
+                    blur: getComputedStyle(node).backdropFilter,
+                    expectedBlur: getComputedStyle(probe).backdropFilter,
+                    extraLayer: getComputedStyle(node, '::after').content,
+                };
+                probe.remove();
+                return result;
+            }"""
+        )
+        assert material["background"] == material["expected"]
+        assert material["blur"] == material["expectedBlur"]
+        assert material["extraLayer"] == "none"
     finally:
         context.close()

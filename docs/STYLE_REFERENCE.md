@@ -1,10 +1,10 @@
 # Visual Style Reference
 
-Documentation version: `v1.3.1-codex.1`
+Documentation version: `v1.4.1-codex.1`
 
 ## Authority
 
-`../../antigravity/app` is the sibling project and the visual source
+`../../worthward/app` is the sibling project and the visual source
 of truth for agenticContext. When a UI decision is not explicitly constrained by
 this project, follow the current implementation in that sibling project.
 
@@ -20,7 +20,7 @@ routes, assets, or JavaScript into this downloader.
 
 ## Color Token Source
 
-The canonical palette is `../../antigravity/config.toml`, under
+The canonical palette is `../../worthward/config.toml`, under
 `[ui.theme.light]` and `[ui.theme.dark]`. `app/web/static/style.css` mirrors those
 values through its `--theme-*`, status-color, glass, focus, and scrollbar tokens.
 
@@ -31,7 +31,7 @@ hex values or derive a separate palette in this project.
 ## Required Workflow for UI Changes
 
 1. Inspect the relevant reference files first. Start with
-   `../../antigravity/app/web/static/assets/css/app.css`, then follow
+   `../../worthward/app/web/static/assets/css/app.css`, then follow
    its imports in `foundation/`, `layout/`, `components/`, and `views/`.
 2. Reuse the reference project's token names, font stack, spacing, corner radii, surface
    treatment, motion curves, and accessibility states where they apply to existing
@@ -105,3 +105,13 @@ card shadows, blur, translated controls, or focus rings must escape. Effect host
 uses the 48px effect bleed where needed. The browser content card and cache overview
 content are explicit data scrollports; local tables, answer panes, dropdowns, and
 media viewers may retain clipping only as their documented viewport.
+
+## Component catalog alignment, 5 Sep 2026
+
+The shared layout contract v1.1.0 removes the obsolete Workspace article specimen.
+Secondary button is the canonical intrinsic-width glass-chip action, including its
+13px catalog typography. Align it to the right edge of its owning container with
+end grid alignment and an automatic inline-start margin; retain its intrinsic width. Shared dropdown/filter triggers are 30px, while the Agent
+session rail stays 36px. Modal and floating-notice close actions are error red and
+hover-revealed on fine pointers, with keyboard-focus and touch visibility retained.
+See tests/test_style_alignment_e2e.py for isolated responsive acceptance checks.

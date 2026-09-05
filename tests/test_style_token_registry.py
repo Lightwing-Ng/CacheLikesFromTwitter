@@ -1,6 +1,6 @@
 """Regression tests for the Settings → Style tokens registry.
 
-Code version: v1.2.5-codex.1
+Code version: v1.3.0-codex.1
 """
 
 import re
@@ -73,10 +73,10 @@ def test_style_token_component_rows_form_a_complete_sorted_component_catalog() -
         "switch",
         "text-input-control",
         "tooltip",
-        "workspace-article",
         "workspace-metric-value",
     }
-    assert len(rows) == 21
+    assert len(rows) == 20
+    assert all(row["id"] != "workspace-article" for row in rows)
     assert {row["id"] for row in rows} == expected_ids
     assert len({row["id"] for row in rows}) == len(rows)
     assert [row["name"] for row in rows] == sorted(
@@ -106,7 +106,7 @@ def test_style_token_component_rows_form_a_complete_sorted_component_catalog() -
     ):
         assert rows_by_id[row_id]["sample_copy"] == ""
     assert rows_by_id["secondary-button"]["use_icon"] is False
-    assert rows_by_id["secondary-button"]["icon_class"] == "agent-effort-refresh-icon"
+    assert "icon_class" not in rows_by_id["secondary-button"]
     assert "--scrollable-data-table-min-width" in {
         token["name"] for token in rows_by_id["scrollable-data-table"]["tokens"]
     }
@@ -188,7 +188,7 @@ def test_style_tokens_route_renders_live_demos_and_settings_navigation(client) -
     assert 'data-style-token-card="segmented-control"' in html
     assert 'data-style-token-copy="Segmented control"' in html
     assert 'data-style-token-inventory-demo' not in html
-    assert html.count('data-style-token-card=') == 21
+    assert html.count('data-style-token-card=') == 20
     assert 'href="#frosted-glass"' in html
     assert 'data-style-token-control' in html
     assert 'href="/settings/style-tokens"' in html
@@ -263,7 +263,6 @@ def test_style_tokens_route_renders_requested_browser_components_and_table(clien
         "settings-action-package",
         "settings-execution-option",
         "tooltip",
-        "workspace-article",
         "workspace-metric-value",
         "frosted-glass",
     ):

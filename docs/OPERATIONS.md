@@ -1,6 +1,6 @@
 # Operations guide
 
-Documentation version: `v1.9.0-codex.1`
+Documentation version: `v1.9.1-codex.1`
 
 ## Launch
 
@@ -91,7 +91,7 @@ to override it. A successful unlock is stored in the signed Flask session for th
   minutes per provider/browser/Project key. Fresh reads use process memory; the first read after a
   restart hydrates memory from Parquet. Expired passive reads retain the previous catalog and never
   launch a background browser collector. One initial Agent bootstrap cache miss performs a bounded
-  check; model and effort discovery happen in that check; later checks require `Refresh options` or task submission. Concurrent requests share one flight. The
+  check; model and effort discovery happen in that check; later task submissions verify their requested settings without a separate refresh button. Concurrent requests share one flight. The
   response's `cache.status` is `hit`, `miss`, `refreshed`, or `stale`; a stale response means the
   previous verified catalog was retained after an explicit check failed.
 - ChatGPT and Claude on `/agent` use one agent-scoped browser bootstrap through Recent sessions:

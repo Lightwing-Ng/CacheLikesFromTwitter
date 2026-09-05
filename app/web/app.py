@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.60.0-codex.1
+# Code version: v1.60.1-codex.1
 
 from __future__ import annotations
 
@@ -1136,7 +1136,7 @@ def create_app(
         is_browser_session = source_kind == "browser-session"
         if is_browser_session and platform == "chatgpt":
             # Re-probe legacy bootstrap rows once after the capability upgrade.
-            project_url = "capabilities-v2"
+            project_url = "capabilities-v3"
         is_passive_source_catalog = source_kind == "sources"
         force_refresh = requested_refresh
         payload = agent_source_cache.get_or_collect(
