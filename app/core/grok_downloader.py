@@ -1,6 +1,6 @@
 """Grok media sync helpers."""
 
-# Code version: v1.17.1-codex.1
+# Code version: v1.18.0-codex.1
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from urllib.parse import urlsplit
 
+from .cache_timing import wait_for_cache_scan
 from .browser_sessions import browser_descriptors, launch_chromium_context
 from .config import MEDIA_STORE_ROOT, CrawlConfig, default_edge_user_data_dir, is_windows_host
 from .local_media_browser import BrowserDeletionCatalog
@@ -2449,7 +2450,9 @@ def resolve_candidate_for_download(context, candidate: GrokMediaCandidate, detai
     return resolved_candidate
 
 
-def scroll_media_page(page) -> None:
+def scroll_media_page(
+    page, scan_wait_seconds: float = SCROLL_WAIT_SECONDS, should_stop=lambda: False,
+) -> None:
     """Advance the Grok media page enough to reveal more file cards."""
     page.evaluate(
         """() => {
@@ -2462,7 +2465,7 @@ def scroll_media_page(page) -> None:
             });
         }"""
     )
-    time.sleep(SCROLL_WAIT_SECONDS)
+    wait_for_cache_scan(scan_wait_seconds, should_stop)
 
 
 def collect_candidates(
@@ -2474,6 +2477,7 @@ def collect_candidates(
     should_stop,
     on_pipeline_tick=None,
     max_library_pages: int = GROK_LIBRARY_PAGE_POOL_SIZE,
+    scan_wait_seconds: float = SCROLL_WAIT_SECONDS,
 ) -> tuple[list[GrokMediaCandidate], list[object]]:
     """Incrementally collect Grok assets while keeping the local queue populated."""
     ordered_candidates: list[GrokMediaCandidate] = []
@@ -2560,7 +2564,7 @@ def collect_candidates(
             )
             break
 
-        scroll_media_page(active_page)
+        scroll_media_page(active_page, scan_wait_seconds, should_stop)
         if callable(on_pipeline_tick):
             on_pipeline_tick()
 
@@ -3420,6 +3424,7 @@ def sync_grok_media(
                     should_stop,
                     on_pipeline_tick=schedule_queue_pipeline,
                     max_library_pages=max_library_pages,
+                    scan_wait_seconds=runtime_config.cache_scan_wait("grok", "media"),
                 )
                 library_pages_to_close = [candidate for candidate in library_pages if candidate is not page]
                 state.update(

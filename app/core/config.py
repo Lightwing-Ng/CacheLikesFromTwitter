@@ -1,13 +1,14 @@
 """Configuration helpers."""
 
-# Code version: v1.16.0-codex.1
+# Code version: v1.17.0-codex.1
 
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 
@@ -195,6 +196,8 @@ class CrawlConfig:
     chatgpt_project_name: str = DEFAULT_CHATGPT_PROJECT_NAME
     chatgpt_startup_timeout_seconds: float = DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS
     chatgpt_scan_wait_seconds: float = DEFAULT_CHATGPT_SCAN_WAIT_SECONDS
+    cache_scan_waits: dict[str, float] = field(default_factory=dict)
+    chatgpt_text_startup_timeout_seconds: float = DEFAULT_CHATGPT_STARTUP_TIMEOUT_SECONDS
     chrome_user_data_dir: Path = DEFAULT_CHROME_USER_DATA_DIR
     chrome_profile_directory: str = DEFAULT_CHROME_PROFILE_DIRECTORY
     account_name_override: str = ""
@@ -207,6 +210,13 @@ class CrawlConfig:
     def __post_init__(self) -> None:
         """Normalize concurrency even when a caller constructs config directly."""
         self.download_workers = normalize_download_workers(self.download_workers)
+
+    def cache_scan_wait(self, provider: str, mode: str) -> float:
+        """Read an independent scan interval without changing legacy defaults."""
+        defaults = {"chatgpt_text": 0.0, "claude_text": 0.0, "grok_text": 0.0, "grok_media": 0.8}
+        key = f"{provider}_{mode}"
+        fallback = defaults.get(key, 0.0)
+        return _clamp_float_setting(self.cache_scan_waits.get(key, fallback), fallback, 0.0, 60.0)
 
     @property
     def max_media_file_size_bytes(self) -> int:
@@ -302,6 +312,17 @@ def load_saved_config(settings_path: Path | None = None) -> CrawlConfig:
             MIN_CHATGPT_SCAN_WAIT_SECONDS,
             MAX_CHATGPT_SCAN_WAIT_SECONDS,
         ),
+        cache_scan_waits={
+            key: _clamp_float_setting(value, 0.0, 0.0, 60.0)
+            for key, value in (payload.get("cache_scan_waits", {}) or {}).items()
+            if key in {"chatgpt_text", "claude_text", "grok_text", "grok_media"}
+        } if isinstance(payload.get("cache_scan_waits", {}), dict) else {},
+        chatgpt_text_startup_timeout_seconds=_clamp_float_setting(
+            payload.get("chatgpt_text_startup_timeout_seconds",
+                        payload.get("chatgpt_startup_timeout_seconds", defaults.chatgpt_startup_timeout_seconds)),
+            defaults.chatgpt_startup_timeout_seconds, MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+            MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+        ),
         chrome_user_data_dir=Path(payload.get("chrome_user_data_dir", str(defaults.chrome_user_data_dir))).expanduser(),
         chrome_profile_directory=str(
             payload.get("chrome_profile_directory", defaults.chrome_profile_directory)
@@ -325,6 +346,8 @@ def _clamp_float_setting(value: object, fallback: float, minimum: float, maximum
     try:
         parsed = float(value)
     except (TypeError, ValueError):
+        parsed = fallback
+    if not math.isfinite(parsed):
         parsed = fallback
     return min(max(parsed, minimum), maximum)
 

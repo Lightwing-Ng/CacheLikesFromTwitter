@@ -1,6 +1,6 @@
 """Focused tests for ChatGPT project image caching."""
 
-# Code version: v1.37.1-codex.1
+# Code version: v1.38.0-codex.1
 
 from __future__ import annotations
 
@@ -2050,7 +2050,8 @@ def test_chatgpt_text_sync_uses_safari_home_and_skips_media_pipeline(
     ) as collect_media:
         result = sync_chatgpt_images(
             state,
-            config=CrawlConfig(chatgpt_browser="safari"),
+            config=CrawlConfig(chatgpt_browser="safari", chatgpt_text_startup_timeout_seconds=32.0,
+                               cache_scan_waits={"chatgpt_text": 1.3}),
             target_dir=tmp_path / "media" / "chatgpt" / DEFAULT_CHATGPT_PROJECT_NAME,
             content_mode="text",
         )
@@ -2061,6 +2062,8 @@ def test_chatgpt_text_sync_uses_safari_home_and_skips_media_pipeline(
     open_page.assert_called_once()
     collect_all.assert_called_once()
     cache_history.assert_called_once()
+    assert cache_history.call_args.kwargs["scan_wait_seconds"] == 1.3
+    assert open_page.call_args.kwargs["startup_timeout_seconds"] == 32.0
     collect_project.assert_not_called()
     collect_media.assert_not_called()
     snapshot = state.snapshot()

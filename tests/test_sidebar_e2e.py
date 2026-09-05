@@ -1,6 +1,6 @@
 """Disposable-browser E2E coverage for the responsive sidebar and language boundaries.
 
-Code version: v1.28.2-codex.1
+Code version: v1.29.0-codex.1
 """
 
 from __future__ import annotations
@@ -2184,10 +2184,15 @@ def test_agent_model_and_sidebar_service_triggers_follow_typography_contract(
         assert main_typography["fontFamily"] == sidebar_typography["fontFamily"]
         assert main_typography["fontSize"] == "15px"
         assert main_typography["lineHeight"] == "21.75px"
-        assert sidebar_typography["fontSize"] == "13px"
-        assert sidebar_typography["lineHeight"] == "18.85px"
+        assert sidebar_typography["fontSize"] == "15px"
+        assert sidebar_typography["lineHeight"] == "21.75px"
         assert main_typography["fontWeight"] == "400"
         assert sidebar_typography["fontWeight"] == "400"
+        sidebar_trigger_sizes = page.locator(
+            "#agent_runtime_form .agent-combobox-trigger [data-agent-combobox-selected-label]"
+        ).evaluate_all("elements => elements.map(element => getComputedStyle(element).fontSize)")
+        assert sidebar_trigger_sizes
+        assert set(sidebar_trigger_sizes) == {"15px"}
         project_label = page.locator(".agent-runtime-form > label.field > .field-label")
         project_name = page.locator("[data-agent-project-name]")
         expect(project_label).to_have_count(1)
@@ -2397,6 +2402,11 @@ def test_cache_notice_flows_without_overlap_and_keeps_polling(
         expect(page.locator("#message")).to_have_text("Status refresh 2", timeout=10_000)
         expect(page.locator("#overview .summary-list, #output_dir, [data-output-directory-open]")).to_have_count(0)
         notice = page.locator("#overview .notice-inline-banner")
+        if source == "chatgpt":
+            expect(notice).to_have_count(0)
+            expect(page.locator("#overview .progress-metric-grid")).to_be_visible()
+            assert not errors
+            return
         expect(notice).to_be_visible()
         geometry = notice.evaluate("""element => {
             const rect = node => {
@@ -4373,6 +4383,8 @@ def test_chatgpt_media_uses_agent_recent_project_picker(
             {
                 "id": "demo-project",
                 "title": "Demo project",
+                "icon": "currency-dollar",
+                "icon_color": "#53B559",
                 "url": project_url,
                 "updated_at": "2026-09-02T00:00:00Z",
             },
@@ -4386,10 +4398,11 @@ def test_chatgpt_media_uses_agent_recent_project_picker(
         reduced_motion="reduce",
     )
     page = context.new_page()
-    page.route(
-        "**/api/agent/chatgpt-sources**",
-        lambda route: route.fulfill(json=catalog_payload),
-    )
+    catalog_requests = []
+    def catalog_route(route):
+        catalog_requests.append(route.request.url)
+        route.fulfill(json=catalog_payload)
+    page.route("**/api/agent/chatgpt-sources**", catalog_route)
     try:
         page.goto(f"{sidebar_server_url}/cache/chatgpt", wait_until="domcontentloaded")
         expect(page.locator('input[name="chatgpt_project_url"][type="url"]')).to_have_count(0)
@@ -4412,6 +4425,19 @@ def test_chatgpt_media_uses_agent_recent_project_picker(
         expect(page.locator('[name="chatgpt_project_name"]')).to_have_value("Demo project")
         expect(trigger).to_have_text("Demo project")
         expect(project_option).to_have_attribute("aria-selected", "true")
+        icon = trigger.locator("[data-chatgpt-project-selected-icon]")
+        expect(icon).to_be_visible()
+        assert "%2353B559" in icon.get_attribute("src")
+        assert icon.get_attribute("src") == project_option.locator("img").get_attribute("src")
+        trigger.click()
+        trigger.click()
+        assert len(catalog_requests) == 1
+        assert "refresh=1" not in catalog_requests[0]
+        expect(page.locator("#chatgpt_project_url_help")).to_have_count(0)
+        expect(page.locator('[name="chatgpt_scan_wait_seconds"]')).to_have_count(0)
+        expect(page.locator('#overview > .workspace-kicker')).to_have_count(0)
+        expect(page.locator('#activity h2')).to_have_text("Recent activity")
+        expect(page.locator('[aria-label="ChatGPT sync notice"]')).to_have_count(0)
     finally:
         context.close()
 
@@ -9321,5 +9347,92 @@ def test_modal_reuses_the_unmodified_frosted_material(disposable_browser, sideba
         assert material["background"] == material["expected"]
         assert material["blur"] == material["expectedBlur"]
         assert material["extraLayer"] == "none"
+    finally:
+        context.close()
+
+
+@pytest.mark.integration
+@pytest.mark.slow
+@pytest.mark.parametrize("width", (1138, 390))
+def test_cache_annotations_keep_motion_icons_and_remaining_space(
+    disposable_browser: Browser, sidebar_server_url: str, width: int,
+) -> None:
+    """Measure the annotated marks, loading gap, and responsive event scrollport."""
+    context = disposable_browser.new_context(
+        viewport={"width": width, "height": 959}, reduced_motion="no-preference",
+    )
+    page = context.new_page()
+    try:
+        page.goto(f"{sidebar_server_url}/cache/chatgpt", wait_until="domcontentloaded")
+        if width <= 900:
+            page.locator("#sidebar_toggle").click()
+        marker = page.locator("#phase_chip")
+        rings = marker.evaluate("""element => {
+            const core = getComputedStyle(element);
+            const outer = getComputedStyle(element, '::before');
+            const inner = getComputedStyle(element, '::after');
+            return {core: core.width, outer: outer.width, inner: inner.width,
+                duration: outer.animationDuration, delay: inner.animationDelay,
+                start: outer.transform, shadow: core.boxShadow};
+        }""")
+        assert (rings["core"], rings["outer"], rings["inner"]) == ("6px", "20px", "14px")
+        assert rings["duration"] == "1.8s"
+        assert rings["delay"] == "0.9s"
+        assert rings["shadow"] != "none"
+        page.wait_for_timeout(250)
+        assert marker.evaluate("el => getComputedStyle(el, '::before').transform") != rings["start"]
+        assert page.locator(".cache-settings-link").evaluate(
+            "el => getComputedStyle(el).marginBottom"
+        ) == "8px"
+        # Reveal only the loading fixture; it must not dispatch a remote catalog request.
+        page.evaluate("""() => {
+            document.querySelector('[data-chatgpt-media-config]').hidden = false;
+            document.querySelector('[data-chatgpt-project-spinner]').hidden = false;
+        }""")
+        gap = page.evaluate("""() => {
+            const label = document.querySelector('[data-chatgpt-project-selected-label]').getBoundingClientRect();
+            const spinner = document.querySelector('[data-chatgpt-project-spinner]').getBoundingClientRect();
+            return spinner.left - label.right;
+        }""")
+        assert 8 <= gap <= 16
+        if width <= 900:
+            page.locator("#sidebar_toggle").click()
+        page.locator("#activity").scroll_into_view_if_needed()
+        geometry = page.evaluate("""() => {
+            const activity = document.querySelector('#activity').getBoundingClientRect();
+            const scroll = document.querySelector('.events-table-scroll');
+            const port = document.querySelector('.cache-workspace-content').getBoundingClientRect();
+            return {height: activity.height, bottom: activity.bottom, portBottom: port.bottom,
+                eventHeight: scroll.clientHeight, overflow: document.documentElement.scrollWidth - innerWidth};
+        }""")
+        assert geometry["height"] >= 238
+        assert geometry["eventHeight"] > 100
+        assert geometry["bottom"] <= geometry["portBottom"] + 1
+        assert geometry["overflow"] <= 1
+        page.goto(f"{sidebar_server_url}/agent", wait_until="domcontentloaded")
+        if width <= 900:
+            page.locator("#sidebar_toggle").click()
+        page.locator('.agent-session-mode-combobox [data-agent-combobox-trigger]').click()
+        option = page.locator('.agent-session-mode-combobox [data-agent-combobox-option="new"]')
+        expect(option).to_be_visible()
+        delta = option.evaluate("""el => {
+            const a = el.querySelector('img').getBoundingClientRect();
+            const b = el.querySelector('.trade-strategy-dropdown-check').getBoundingClientRect();
+            return Math.abs(a.y + a.height / 2 - b.y - b.height / 2);
+        }""")
+        assert delta <= 1
+        status = page.locator('#agent_response_status')
+        status.evaluate("el => el.dataset.status = 'finished'")
+        assert status.locator('.agent-response-status-dot').evaluate(
+            "el => getComputedStyle(el).maskImage"
+        ).endswith('checkmark.circle.fill.svg")')
+        assert status.locator('.agent-response-status-dot').evaluate("""el => {
+            const reference = document.createElement('span');
+            reference.style.color = 'var(--theme-success-strong)';
+            el.append(reference);
+            const matches = getComputedStyle(el).backgroundColor === getComputedStyle(reference).color;
+            reference.remove();
+            return matches;
+        }""")
     finally:
         context.close()

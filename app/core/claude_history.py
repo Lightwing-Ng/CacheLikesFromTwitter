@@ -1,6 +1,6 @@
 """Browser-rendered Claude history collection and local persistence.
 
-Code version: v1.0.0-codex.1
+Code version: v1.1.0-codex.1
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
 
+from .cache_timing import wait_for_cache_scan
 from .agent_session_sources import normalize_claude_conversation_url
 from .browser_sessions import (
     CLAUDE_HOME_URL,
@@ -541,6 +542,11 @@ def sync_claude_history(
                 if should_stop():
                     stopped = True
                     break
+                scan_wait = config.cache_scan_wait("claude", "text")
+                if index > 1 and scan_wait > 0:
+                    if wait_for_cache_scan(scan_wait, should_stop):
+                        stopped = True
+                        break
                 last_error: Exception | None = None
                 for attempt_index in range(CLAUDE_CONVERSATION_RETRY_LIMIT):
                     try:

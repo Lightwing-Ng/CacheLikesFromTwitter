@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.44.1-codex.1
+# Code version: v1.45.0-codex.1
 
 from __future__ import annotations
 
@@ -23,6 +23,7 @@ from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from PIL import Image, UnidentifiedImageError
 
+from .cache_timing import wait_for_cache_scan
 from .browser_sessions import browser_descriptors, launch_chromium_context
 from .compute_backend import analyze_image_paths, analyze_image_payload
 from .compute_metrics import PerformanceMetrics
@@ -432,6 +433,7 @@ def cache_chatgpt_conversation_history(
     request_headers: dict[str, str],
     state: TaskState,
     should_stop,
+    scan_wait_seconds: float = 0.0,
 ) -> tuple[int, int, int]:
     """Fetch and persist complete text mappings for every discovered session."""
     processed = 0
@@ -450,6 +452,9 @@ def cache_chatgpt_conversation_history(
             processed += 1
             unchanged_sessions += 1
             continue
+        if scan_wait_seconds > 0 and processed:
+            if wait_for_cache_scan(scan_wait_seconds, should_stop):
+                break
         try:
             payload = _get_chatgpt_api_json_via_page(page, api_url, request_headers)
             added_count, unchanged = history_store.replace_conversation(
@@ -3638,7 +3643,11 @@ def sync_chatgpt_images(
     direct_session_refresh = is_chatgpt_conversation_url(project_url)
     startup_timeout_seconds = min(
         max(
-            float(runtime_config.chatgpt_startup_timeout_seconds),
+            float(
+                runtime_config.chatgpt_text_startup_timeout_seconds
+                if normalized_content_mode == "text"
+                else runtime_config.chatgpt_startup_timeout_seconds
+            ),
             MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
         ),
         MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
@@ -3725,6 +3734,7 @@ def sync_chatgpt_images(
                             request_headers,
                             state,
                             should_stop,
+                            scan_wait_seconds=runtime_config.cache_scan_wait("chatgpt", "text"),
                         )
                     )
             stopped = should_stop()

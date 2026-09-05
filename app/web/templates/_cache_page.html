@@ -1,4 +1,4 @@
-{# Code version: v1.23.11-codex.1 #}
+{# Code version: v1.24.0-codex.1 #}
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -8,7 +8,7 @@
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='images/favicon.svg', v=version ~ '-favicon-v1.0.1-codex.1') }}">
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.93.7-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.94.0-codex.1') }}">
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
@@ -212,9 +212,6 @@
                 </header>
                 <div class="cache-workspace-content" data-layout-role="content-scrollport">
                     <article class="report-card workspace-summary-card workspace-article-card cache-overview-content-card anchor-section" id="overview" data-layout-role="result-container">
-                        {% if cache_source.key != "grok" %}
-                        <p class="workspace-kicker">Live snapshot</p>
-                        {% endif %}
                     <div class="metric-grid foundation-metric-grid">
                         {% block primary_metrics %}{% endblock %}
                         <div class="metric-card foundation-metric-card metric-card-accent">
@@ -225,7 +222,6 @@
 
                     <div class="report-heading-row">
                         <div>
-                            <p class="workspace-kicker">Status</p>
                             <h2>Current progress</h2>
                         </div>
                         <div
@@ -256,8 +252,7 @@
                         <div class="report-card workspace-article-card log-card anchor-section" id="activity">
                             <div class="report-heading-row">
                                 <div>
-                                    <p class="workspace-kicker">Events</p>
-                                    <h2>Recent log stream</h2>
+                                    <h2>Recent activity</h2>
                                 </div>
                             </div>
                             <div class="events-table-shell">

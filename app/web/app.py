@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.60.2-codex.1
+# Code version: v1.61.0-codex.1
 
 from __future__ import annotations
 
@@ -909,6 +909,18 @@ def create_app(
                 source.chatgpt_scan_wait_seconds,
                 minimum=MIN_CHATGPT_SCAN_WAIT_SECONDS,
                 maximum=MAX_CHATGPT_SCAN_WAIT_SECONDS,
+            ),
+            cache_scan_waits={
+                key: parse_float_field(
+                    f"cache_scan_wait_{key}", source.cache_scan_wait(*key.split("_")),
+                    minimum=0.0, maximum=60.0,
+                )
+                for key in ("chatgpt_text", "claude_text", "grok_text", "grok_media")
+            },
+            chatgpt_text_startup_timeout_seconds=parse_float_field(
+                "chatgpt_text_startup_timeout_seconds", source.chatgpt_text_startup_timeout_seconds,
+                minimum=MIN_CHATGPT_STARTUP_TIMEOUT_SECONDS,
+                maximum=MAX_CHATGPT_STARTUP_TIMEOUT_SECONDS,
             ),
             chrome_user_data_dir=Path(
                 request.form.get("chrome_user_data_dir", str(source.chrome_user_data_dir)).strip()

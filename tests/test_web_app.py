@@ -1,6 +1,6 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.94.7-codex.1
+# Code version: v1.95.0-codex.1
 
 from __future__ import annotations
 
@@ -323,7 +323,35 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('href="/agent/edge/gemini"', body)
         self.assertEqual(invalid.status_code, 404)
 
-    def test_chatgpt_notice_names_the_selected_background_browser(self) -> None:
+    def test_cache_timing_settings_survive_partial_start_forms(self) -> None:
+        with TemporaryDirectory() as folder, patch("app.web.app.load_saved_config", return_value=CrawlConfig()), patch("app.web.app.save_config") as save:
+            app = create_app(Path(folder) / "store")
+            with app.test_client() as client:
+                response = client.post("/settings", data={
+                    "cache_scan_wait_chatgpt_text": "0.7",
+                    "cache_scan_wait_claude_text": "1.2",
+                    "cache_scan_wait_grok_text": "0.4",
+                    "cache_scan_wait_grok_media": "2.4",
+                    "chatgpt_scan_wait_seconds": "3",
+                    "chatgpt_text_startup_timeout_seconds": "35",
+                })
+                self.assertEqual(response.status_code, 302)
+                body = client.get("/settings").get_data(as_text=True)
+                for label in ("ChatGPT · Text", "ChatGPT · Media", "Claude · Text", "Gemini · Text", "Grok · Text", "Grok · Media"):
+                    self.assertIn(label, body)
+                with patch.object(app.extensions["chatgpt_service"], "start") as start:
+                    response = client.post("/cache/chatgpt/start", data={"chatgpt_content_mode": "text"})
+                self.assertEqual(response.status_code, 302)
+                config = start.call_args.args[0]
+                self.assertEqual(config.cache_scan_wait("chatgpt", "text"), 0.7)
+                self.assertEqual(config.cache_scan_wait("claude", "text"), 1.2)
+                self.assertEqual(config.cache_scan_wait("grok", "text"), 0.4)
+                self.assertEqual(config.cache_scan_wait("grok", "media"), 2.4)
+                self.assertEqual(config.chatgpt_scan_wait_seconds, 3)
+                self.assertEqual(config.chatgpt_text_startup_timeout_seconds, 35)
+                self.assertEqual(save.call_count, 2)
+
+    def test_chatgpt_removes_obsolete_notice_with_selected_safari(self) -> None:
         with patch(
             "app.web.app.load_saved_config",
             return_value=CrawlConfig(chatgpt_browser="safari"),
@@ -334,11 +362,11 @@ class WebAppTests(unittest.TestCase):
 
         body = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn("offscreen Safari session", body)
-        self.assertIn(">Safari session</span>", body)
+        self.assertNotIn('aria-label="ChatGPT sync notice"', body)
+        self.assertIn('name="chatgpt_browser"', body)
         self.assertNotIn("offscreen Edge session", body)
 
-    def test_chatgpt_notice_preserves_a_saved_safari_label_when_registry_is_host_limited(self) -> None:
+    def test_chatgpt_removes_obsolete_notice_when_registry_is_host_limited(self) -> None:
         with patch(
             "app.web.app.load_saved_config",
             return_value=CrawlConfig(chatgpt_browser="safari"),
@@ -350,7 +378,7 @@ class WebAppTests(unittest.TestCase):
 
         body = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)
-        self.assertIn("offscreen Safari session", body)
+        self.assertNotIn('aria-label="ChatGPT sync notice"', body)
 
     def test_pages_share_the_direct_cache_dock_link(self) -> None:
         with TemporaryDirectory() as raw_root:
@@ -383,8 +411,8 @@ class WebAppTests(unittest.TestCase):
         self.assertNotIn('<p class="workspace-kicker">Live snapshot</p>', grok_body)
         self.assertNotIn('class="notice-floating notice-floating-banner notice-inline-banner grok-warning-banner"', grok_body)
         self.assertNotIn("Forced workaround", grok_body)
-        self.assertIn('<p class="workspace-kicker">Live snapshot</p>', index_body)
-        self.assertIn('<p class="workspace-kicker">Live snapshot</p>', chatgpt_body)
+        self.assertNotIn('<p class="workspace-kicker">Live snapshot</p>', index_body)
+        self.assertNotIn('<p class="workspace-kicker">Live snapshot</p>', chatgpt_body)
         self.assertIn('data-section-link="settings"', grok_body)
         self.assertIn('data-cache-source-switcher-path="/cache/chatgpt"', grok_body)
         self.assertIn('data-section-link="local-resources"', browser_body)
@@ -444,7 +472,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("Sessions discovered", chatgpt_body)
         self.assertGreaterEqual(chatgpt_body.count('href="/cache/chatgpt"'), 2)
         self.assertIn(
-            'chatgpt-page.js?v=chatgpt-page-v1.3.0-codex.1',
+            'chatgpt-page.js?v=chatgpt-page-v1.4.0-codex.1',
             chatgpt_body,
         )
         self.assertIn('data-browser-session-account-label="ChatGPT"', chatgpt_body)
@@ -463,8 +491,8 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('name="chatgpt_project_url"', chatgpt_body)
         self.assertIn('name="chatgpt_project_name"', chatgpt_body)
         self.assertNotIn('type="url"', chatgpt_body)
-        self.assertIn('name="chatgpt_startup_timeout_seconds"', chatgpt_body)
-        self.assertIn('name="chatgpt_scan_wait_seconds"', chatgpt_body)
+        self.assertNotIn('name="chatgpt_startup_timeout_seconds"', chatgpt_body)
+        self.assertNotIn('name="chatgpt_scan_wait_seconds"', chatgpt_body)
         self.assertNotIn("Project or chat URL", chatgpt_body)
         self.assertIn("Known images skipped this run", chatgpt_body)
         self.assertIn("Media failures this run", chatgpt_body)
@@ -519,14 +547,9 @@ class WebAppTests(unittest.TestCase):
         chatgpt_form_end = chatgpt_body.index("</form>", chatgpt_form_start)
         chatgpt_form = chatgpt_body[chatgpt_form_start:chatgpt_form_end]
         self.assertIn('class="field chatgpt-project-field"', chatgpt_form)
-        self.assertEqual(chatgpt_form.count('class="field"'), 2)
-        self.assertEqual(chatgpt_form.count("text-input-control"), 2)
-        self.assertEqual(chatgpt_form.count('data-cache-number-field'), 2)
-        self.assertEqual(chatgpt_form.count('data-cache-number-stepper="increment"'), 2)
-        self.assertEqual(chatgpt_form.count('data-cache-number-stepper="decrement"'), 2)
-        self.assertIn('data-number-min="1"', chatgpt_form)
-        self.assertIn('data-number-max="600"', chatgpt_form)
-        self.assertIn('data-number-step="0.1"', chatgpt_form)
+        self.assertNotIn('data-cache-number-field', chatgpt_form)
+        self.assertNotIn('id="chatgpt_project_url_help"', chatgpt_form)
+        self.assertIn('data-chatgpt-project-selected-icon', chatgpt_form)
         cache_page_script = CACHE_PAGE_SCRIPT_PATH.read_text(encoding="utf-8")
         chatgpt_page_script = CHATGPT_PAGE_SCRIPT_PATH.read_text(encoding="utf-8")
         numeric_input_script = NUMERIC_INPUT_FORMAT_SCRIPT_PATH.read_text(encoding="utf-8")
@@ -614,7 +637,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.21.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.93.7-codex.1"
+                expected_style_version = "style-v2.94.0-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -1016,7 +1039,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.1-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.9.1-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.31.3-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.31.4-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
         self.assertIn('data-agent-compute-job-stop', local_body)
         self.assertIn('data-agent-effort-field', local_body)
@@ -1903,7 +1926,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.31.3-codex.1',
+            'computer-use-agent-v3.31.4-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'data-agent-direct-list="true"',
@@ -3441,7 +3464,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.93.7-codex.1", body)
+            self.assertIn("style-v2.94.0-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)

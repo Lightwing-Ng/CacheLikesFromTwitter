@@ -1,4 +1,4 @@
-"""Activity disclosure and status glyph regressions. Code version: v1.0.3-codex.1."""
+"""Activity disclosure and status glyph regressions. Code version: v1.0.4-codex.1."""
 
 import pytest
 from playwright.sync_api import expect
@@ -32,7 +32,7 @@ def test_activity_preserves_collapse_and_tracks_current(disposable_browser, side
         summary = panel.locator("summary")
         expect(panel).to_have_js_property("open", True)
         done = panel.locator('[data-status="completed"] .agent-activity-status')
-        expect(done).to_have_css("mask-image", f'url("{sidebar_server_url}/static/images/checkmark.circle.svg")')
+        expect(done).to_have_css("mask-image", f'url("{sidebar_server_url}/static/images/checkmark.circle.fill.svg")')
         panel.locator("#agent_activity_list").evaluate("async e => { await Promise.all(e.getAnimations().map(a => a.finished)); }")
         geometry = done.evaluate("""e => {
             const label = e.parentElement.querySelector('.agent-activity-label').getBoundingClientRect();
@@ -96,7 +96,7 @@ def test_activity_preserves_collapse_and_tracks_current(disposable_browser, side
         payload["agent"].update(running=False, phase="finished")
         expect(current).to_be_hidden()
         expect(page.locator('[data-agent-response-status-dot]')).to_have_css(
-            'mask-image', f'url("{sidebar_server_url}/static/images/checkmark.circle.svg")'
+            'mask-image', f'url("{sidebar_server_url}/static/images/checkmark.circle.fill.svg")'
         )
         prompt = page.locator('#agent_prompt_input')
         assert prompt.evaluate("""e => {

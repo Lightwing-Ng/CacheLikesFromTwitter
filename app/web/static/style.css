@@ -1,4 +1,4 @@
-/* Code version: v2.93.7-codex.1 */
+/* Code version: v2.94.0-codex.1 */
 /*
  * Standalone faces are extracted from the approved TTC by scripts/build_web_fonts.py.
  * Collection URL fragments are not reliable face selectors in Chromium.
@@ -292,7 +292,7 @@
     --settings-form-shell-max-width: var(--layout-content-width);
     --settings-form-control-min-width: 220px;
     --settings-form-control-max-width: var(--layout-control-width);
-    --cache-phase-live-marker-size: 8px;
+    --cache-phase-live-marker-size: 6px;
     --cache-phase-live-marker-color: var(--theme-accent-positive);
     --cache-phase-live-marker-duration: 1.8s;
     --workspace-title-rail-control-height: var(--settings-round-icon-button-size);
@@ -994,7 +994,9 @@ h2 {
     height: var(--cache-phase-live-marker-size);
     border-radius: 50%;
     background: var(--cache-phase-live-marker-color);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--cache-phase-live-marker-color) 18%, transparent);
+    box-shadow:
+        0 0 0 4px color-mix(in srgb, var(--cache-phase-live-marker-color) 18%, transparent),
+        0 0 10px color-mix(in srgb, var(--cache-phase-live-marker-color) 42%, transparent);
 }
 
 .cache-phase-live-marker::before,
@@ -1002,8 +1004,8 @@ h2 {
     position: absolute;
     top: 50%;
     left: 50%;
-    width: 16px;
-    height: 16px;
+    width: 20px;
+    height: 20px;
     border: 1.6px solid color-mix(in srgb, var(--cache-phase-live-marker-color) 72%, transparent);
     border-radius: 50%;
     content: "";
@@ -1013,8 +1015,9 @@ h2 {
 }
 
 .cache-phase-live-marker::after {
-    width: 12px;
-    height: 12px;
+    width: 14px;
+    height: 14px;
+    animation-name: agentActivityLiveBreathInner;
     opacity: 0.28;
     animation-delay: 0.9s;
 }
@@ -2156,11 +2159,10 @@ html.sidebar-memory-collapsed .app-shell .cache-overview-title-card {
     height: 100%;
 }
 
-@media (min-width: 901px) {
-    main[data-cache-page] #workspace_panel > .workspace-header > .cache-workspace-content > .workspace-grid {
-        flex: 0 0 auto;
-        height: auto;
-    }
+main[data-cache-page] #workspace_panel > .workspace-header > .cache-workspace-content > .workspace-grid {
+    flex: 1 0 240px;
+    height: auto;
+    min-height: 240px;
 }
 
 #workspace_panel .log-card {
@@ -4191,7 +4193,7 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-combobox-trigger .trade-strategy-trigger-label {
     font-family: inherit;
-    font-size: var(--font-table-body);
+    font-size: var(--font-ui-lg);
     font-weight: var(--font-weight-regular);
     line-height: 1.45;
 }
@@ -4721,8 +4723,8 @@ html.sidebar-memory-collapsed .app-shell ~ .sidebar-dock {
 
 .agent-activity-item[data-status="completed"] .agent-activity-status {
     background: var(--theme-success-strong);
-    mask: url("/static/images/checkmark.circle.svg") center/contain no-repeat;
-    -webkit-mask: url("/static/images/checkmark.circle.svg") center/contain no-repeat;
+    mask: url("/static/images/checkmark.circle.fill.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/checkmark.circle.fill.svg") center/contain no-repeat;
 }
 
 .agent-activity-item:is([data-status="completed"], [data-status="failed"]) .cache-phase-live-marker {
@@ -5854,6 +5856,7 @@ html.sidebar-memory-collapsed .app-shell .sidebar {
 }
 
 .sidebar-section > .cache-settings-link {
+    margin-bottom: 8px;
     display: flex;
     margin-inline-start: auto;
     justify-self: end;
@@ -11559,8 +11562,8 @@ html.sidebar-memory-collapsed .style-token-page #workspace_panel .settings-shell
     border-radius: 0;
     background: var(--theme-success-strong);
     box-shadow: none;
-    mask: url("/static/images/checkmark.circle.svg") center/contain no-repeat;
-    -webkit-mask: url("/static/images/checkmark.circle.svg") center/contain no-repeat;
+    mask: url("/static/images/checkmark.circle.fill.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/checkmark.circle.fill.svg") center/contain no-repeat;
 }
 
 .agent-session-mode-combobox .browser-picker-selected-icon-shell:has(> img[src$="/folder.fill.svg"]) {
@@ -11579,4 +11582,21 @@ html.sidebar-memory-collapsed .style-token-page #workspace_panel .settings-shell
     background-color: var(--settings-round-icon-button-color);
     mask: url("/static/images/folder.fill.svg") center/contain no-repeat;
     -webkit-mask: url("/static/images/folder.fill.svg") center/contain no-repeat;
+}
+
+/* Keep shared option marks on one centerline and loading feedback beside its label. */
+.agent-combobox-option > .browser-picker-option-icon,
+.agent-combobox-option > .trade-strategy-dropdown-check {
+    align-self: center;
+    margin-block: 0;
+}
+
+.chatgpt-project-combobox .browser-session-trigger-leading {
+    flex: 0 1 auto;
+    max-width: calc(100% - 24px);
+}
+
+.chatgpt-project-combobox .agent-combobox-loading-spinner {
+    flex-shrink: 0;
+    margin-inline: 4px;
 }

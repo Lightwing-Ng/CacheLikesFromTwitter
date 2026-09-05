@@ -1,4 +1,4 @@
-/* Code version: v1.3.0-codex.1 */
+/* Code version: v1.4.0-codex.1 */
 
 (() => {
     "use strict";
@@ -36,7 +36,7 @@
         return String(browserInput?.value || "").trim().toLowerCase();
     }
 
-    function projectOptionButton(url, name, selected = false) {
+    function projectOptionButton(url, name, selected = false, project = {}) {
         const option = document.createElement("button");
         option.type = "button";
         option.className = `trade-strategy-dropdown-option agent-combobox-option${selected ? " is-selected is-active" : ""}`;
@@ -53,7 +53,20 @@
         const text = document.createElement("span");
         text.className = "trade-strategy-dropdown-text";
         text.textContent = name || "All generated media";
-        option.append(check, text);
+        const fallbackIcon = url ? "/static/images/chatgpt-project-terminal.svg" : "";
+        const iconUrl = window.CACHELIKES_CHATGPT_PROJECT_ICONS?.projectIcon(project, fallbackIcon) || fallbackIcon;
+        option.dataset.chatgptProjectIcon = iconUrl;
+        if (iconUrl) {
+            const icon = document.createElement("img");
+            icon.className = "browser-picker-option-icon";
+            icon.alt = "";
+            icon.src = iconUrl;
+            icon.setAttribute("aria-hidden", "true");
+            option.append(check, icon, text);
+        } else {
+            option.append(check, text);
+            option.style.gridTemplateColumns = "16px minmax(0, 1fr)";
+        }
         return option;
     }
 
@@ -76,6 +89,12 @@
             candidate.setAttribute("aria-selected", String(selected));
         });
         setProjectTriggerLabel(name);
+        const icon = projectPicker.querySelector("[data-chatgpt-project-selected-icon]");
+        const shell = projectPicker.querySelector("[data-chatgpt-project-icon-shell]");
+        const iconUrl = option.dataset.chatgptProjectIcon || "";
+        if (shell) shell.hidden = !iconUrl;
+        if (icon && iconUrl) icon.src = iconUrl;
+        else icon?.removeAttribute("src");
     }
 
     function closeProjectMenu() {
@@ -118,7 +137,7 @@
             const name = String(project?.title || "").trim() || "Untitled project";
             if (!url || seenUrls.has(url)) return;
             seenUrls.add(url);
-            const option = projectOptionButton(url, name, url === selectedUrl);
+            const option = projectOptionButton(url, name, url === selectedUrl, project);
             if (url === selectedUrl) selectedOption = option;
             options.push(option);
         });
@@ -145,7 +164,7 @@
             renderProjectOptions([], "Select an authorized browser first.");
             return;
         }
-        if (!forceRefresh && projectCatalogLoaded && projectCatalogBrowser === browser) return;
+        if (!forceRefresh && projectCatalogBrowser === browser && (projectCatalogLoaded || projectRequestController)) return;
         projectRequestController?.abort();
         const controller = new AbortController();
         projectRequestController = controller;
@@ -181,7 +200,10 @@
             renderProjectOptions([], message);
         } finally {
             window.clearTimeout(timeoutId);
-            if (requestId === projectRequestId) setProjectLoading(false);
+            if (requestId === projectRequestId) {
+                projectRequestController = null;
+                setProjectLoading(false);
+            }
         }
     }
 
@@ -191,7 +213,7 @@
         projectTrigger.addEventListener("click", () => {
             if (projectMenu.hidden) openProjectMenu();
             else closeProjectMenu();
-            void loadProjects({forceRefresh: true});
+            void loadProjects();
         });
         projectMenu.addEventListener("click", (event) => {
             const option = event.target.closest("[data-chatgpt-project-option]");
@@ -232,7 +254,7 @@
         document.addEventListener("click", (event) => {
             if (!projectPicker.contains(event.target)) closeProjectMenu();
             const browserOption = event.target.closest("[data-browser-option]");
-            if (browserOption) window.setTimeout(() => loadProjects({forceRefresh: true}), 0);
+            if (browserOption) window.setTimeout(() => loadProjects(), 0);
         });
         document.addEventListener("keydown", (event) => {
             if (event.key === "Escape") closeProjectMenu();
@@ -265,7 +287,7 @@
             window.sessionStorage.setItem(contentModeStorageKey, normalizedMode);
         } catch (_error) {
         }
-        if (normalizedMode === "media") void loadProjects({forceRefresh: true});
+        if (normalizedMode === "media") void loadProjects();
         else closeProjectMenu();
     }
 

@@ -1,6 +1,6 @@
 """Regression tests for synchronized sibling-project color tokens.
 
-Code version: v1.53.6-codex.1
+Code version: v1.54.0-codex.1
 """
 
 import hashlib
@@ -628,14 +628,14 @@ def test_cache_source_heading_uses_the_shared_picker_and_live_marker() -> None:
     stylesheet = _stylesheet()
 
     expected_tokens = (
-        "--cache-phase-live-marker-size: 8px;",
+        "--cache-phase-live-marker-size: 6px;",
         "--cache-phase-live-marker-color: var(--theme-accent-positive);",
         "--cache-phase-live-marker-duration: 1.8s;",
         ".section-heading > .cache-source-switcher-combobox {",
         "flex: 1 1 auto;",
         ".cache-source-switcher-combobox.is-cache-source-menu-open .cache-source-switcher-dropdown {",
         ".cache-phase-live-marker {",
-        "box-shadow: 0 0 0 2px color-mix(in srgb, var(--cache-phase-live-marker-color) 18%, transparent);",
+        "0 0 0 4px color-mix(in srgb, var(--cache-phase-live-marker-color) 18%, transparent),",
         ".cache-phase-live-marker::before,",
         "animation: cachePhaseLiveBreath var(--cache-phase-live-marker-duration) var(--motion-emphasized) infinite;",
         "animation-delay: 0.9s;",
@@ -1617,9 +1617,8 @@ def test_cache_workspace_reuses_the_shared_title_rail_and_scroll_layer() -> None
         "padding-inline-end: 68px;",
         ".cache-overview-title-card .report-heading {",
         "text-wrap: balance;",
-        "@media (min-width: 901px)",
         "main[data-cache-page] #workspace_panel > .workspace-header > .cache-workspace-content > .workspace-grid {",
-        "flex: 0 0 auto;",
+        "flex: 1 0 240px;",
         "height: auto;",
     ):
         assert token in stylesheet
@@ -1954,7 +1953,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.93.7-codex.1 */",
+        "/* Code version: v2.94.0-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',
@@ -2057,7 +2056,7 @@ def test_agent_composer_right_aligns_all_footer_controls_with_action_gap() -> No
 
 
 def test_agent_combobox_trigger_labels_share_typography_contract() -> None:
-    """Keep Agent model and sidebar trigger labels on one font contract."""
+    """Keep every Agent trigger label on the 15px UI typography contract."""
     stylesheet = _stylesheet()
     selector = ".agent-combobox-trigger .trade-strategy-trigger-label {"
     selector_start = stylesheet.index(selector)
@@ -2065,7 +2064,7 @@ def test_agent_combobox_trigger_labels_share_typography_contract() -> None:
 
     for token in (
         "font-family: inherit;",
-        "font-size: var(--font-table-body);",
+        "font-size: var(--font-ui-lg);",
         "font-weight: var(--font-weight-regular);",
         "line-height: 1.45;",
     ):

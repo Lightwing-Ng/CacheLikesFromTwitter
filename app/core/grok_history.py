@@ -1,6 +1,6 @@
 """Grok text history collection and local persistence.
 
-Code version: v1.1.0-codex.1
+Code version: v1.2.0-codex.1
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlencode
 
+from .cache_timing import wait_for_cache_scan
 from .browser_sessions import (
     browser_descriptors,
     goto_with_retry,
@@ -540,10 +541,15 @@ def sync_grok_history(
             )
             state.append_event(f"Found {len(conversations):,} Grok sessions across all API pages.")
 
-            for conversation in conversations:
+            for index, conversation in enumerate(conversations):
                 if should_stop():
                     stopped = True
                     break
+                scan_wait = config.cache_scan_wait("grok", "text")
+                if index and scan_wait > 0:
+                    if wait_for_cache_scan(scan_wait, should_stop):
+                        stopped = True
+                        break
                 try:
                     nodes = _response_nodes(page, conversation.conversation_id)
                     response_ids = [

@@ -1,6 +1,6 @@
 """Focused regression tests for persisted crawler settings.
 
-Code version: v1.4.0-codex.1
+Code version: v1.5.0-codex.1
 """
 
 from __future__ import annotations
@@ -18,6 +18,24 @@ class ConfigPersistenceTests(unittest.TestCase):
     def test_new_configuration_uses_non_disruptive_gemini_default(self) -> None:
         self.assertEqual(CrawlConfig().gemini_browser, "edge")
         self.assertEqual(CrawlConfig().claude_browser, "edge")
+
+    def test_cache_scan_intervals_are_independent_and_persisted(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "settings.json"
+            config = CrawlConfig(
+                cache_scan_waits={"chatgpt_text": 0.3, "claude_text": 1.4, "grok_text": 0.2, "grok_media": 2.5},
+                chatgpt_scan_wait_seconds=3.0,
+                chatgpt_text_startup_timeout_seconds=45.0,
+            )
+            save_config(config, path)
+            loaded = load_saved_config(path)
+        self.assertEqual(loaded.cache_scan_wait("chatgpt", "text"), 0.3)
+        self.assertEqual(loaded.cache_scan_wait("claude", "text"), 1.4)
+        self.assertEqual(loaded.cache_scan_wait("grok", "text"), 0.2)
+        self.assertEqual(loaded.cache_scan_wait("grok", "media"), 2.5)
+        self.assertEqual(loaded.chatgpt_scan_wait_seconds, 3.0)
+        self.assertEqual(loaded.chatgpt_text_startup_timeout_seconds, 45.0)
+        self.assertEqual(CrawlConfig().cache_scan_wait("grok", "media"), 0.8)
 
     def test_explicit_blank_chatgpt_project_url_survives_restart(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -78,3 +96,15 @@ class ConfigPersistenceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_cache_scan_wait_honors_interval_and_cooperative_stop():
+    from app.core.cache_timing import wait_for_cache_scan
+
+    intervals = []
+    assert not wait_for_cache_scan(0.7, lambda: False, intervals.append)
+    assert abs(sum(intervals) - 0.7) < 0.000001
+    assert max(intervals) <= 0.25
+    intervals.clear()
+    assert wait_for_cache_scan(60.0, lambda: bool(intervals), intervals.append)
+    assert intervals == [0.25]
