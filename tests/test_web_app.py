@@ -637,7 +637,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.21.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.94.0-codex.1"
+                expected_style_version = "style-v2.95.0-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -3243,9 +3243,9 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('id="browser_filter_form"', body)
         self.assertIn('form="browser_filter_form"', body)
         self.assertGreater(body.index("data-browser-search"), body.index("</aside>"))
-        self.assertIn("browser-search.css?v=browser-search-v1.3.5-codex.1", body)
+        self.assertIn("browser-search.css?v=browser-search-v1.4.0-codex.1", body)
         self.assertIn('type="module"', body)
-        self.assertIn("browser-search.js?v=browser-search-v2.0.2-codex.1", body)
+        self.assertIn("browser-search.js?v=browser-search-v2.1.1-codex.1", body)
         self.assertIn("browser-session-messages.js?v=browser-session-messages-v1.0.1-codex.1", body)
         self.assertIn("browser-filter-select.js?v=browser-filter-select-v1.0.0-codex.1", body)
         self.assertIn("data-browser-local-resources-header-actions", body)
@@ -3270,8 +3270,10 @@ class WebAppTests(unittest.TestCase):
             "function parseServerCandidates",
             "function findLiteralMatches",
             "const literalMatches = findLiteralMatches(candidates, queryText);",
-            'input.dataset.browserSearchGlobalScope === "true"',
-            'sessionField.disabled = true;',
+            'input.dataset.browserSearchGlobalScope !== "true"',
+            "function applySearchScope",
+            'for (const name of ["session", "session_page"])',
+            'field.disabled = true;',
         ):
             with self.subTest(search_script_fragment=fragment):
                 self.assertIn(fragment, search_script)
@@ -3407,7 +3409,7 @@ class WebAppTests(unittest.TestCase):
                 GEMINI_HISTORY_SCHEMA,
             )
             app = create_app(root)
-            session_id = query_chat_history(root, source="gemini", session_view=True).sessions[0].stable_id
+            session_id = next(item.stable_id for item in query_chat_history(root, source="gemini", session_view=True).sessions if item.conversation_id == "selected")
             with app.test_client() as client:
                 response = client.get(
                     f"/browser?view=text&source=gemini&sort=newest&session_view=1&session={session_id}&q=亚朵"
@@ -3470,7 +3472,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.94.0-codex.1", body)
+            self.assertIn("style-v2.95.0-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)
@@ -3633,12 +3635,12 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("<strong>Rich</strong> cached text message", detail_body)
         self.assertEqual(filtered_detail_response.status_code, 200)
         self.assertIn("Demo conversation", filtered_detail_body)
-        self.assertIn("browser-session-index-table", filtered_detail_body)
-        self.assertNotIn("browser-session-detail-actions--session", filtered_detail_body)
-        self.assertNotIn("<strong>Rich</strong> cached text message", filtered_detail_body)
-        self.assertEqual(filtered_detail_body.count('data-chat-message-id='), 0)
+        self.assertIn("browser-session-detail-table", filtered_detail_body)
+        self.assertIn("browser-session-detail-actions--session", filtered_detail_body)
+        self.assertIn("<strong>Rich</strong> cached text message", filtered_detail_body)
+        self.assertEqual(filtered_detail_body.count('data-chat-message-id='), 1)
         self.assertEqual(empty_detail_response.status_code, 200)
-        self.assertIn("No text messages match these filters.", empty_detail_body)
+        self.assertIn("No matching messages found.", empty_detail_body)
         self.assertNotIn("<strong>Rich</strong> cached text message", empty_detail_body)
         self.assertIn("browser-session-message-toggle", detail_body)
         self.assertIn("browser-session-actions", detail_body)
@@ -3654,7 +3656,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn("browser-session-drawer-refresh-icon", detail_body)
         self.assertIn("data-browser-session-refresh-url", detail_body)
         self.assertIn("scope=page", detail_body)
-        self.assertIn("browser-session-actions.js?v=browser-session-actions-v1.1.0-codex.1", detail_body)
+        self.assertIn("browser-session-actions.js?v=browser-session-actions-v1.1.1-codex.1", detail_body)
         self.assertEqual(export_response.status_code, 200)
         self.assertEqual(export_response.mimetype, "text/markdown")
         self.assertIn('attachment; filename="Demo_conversation.md"', export_response.headers["Content-Disposition"])

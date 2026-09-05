@@ -781,7 +781,7 @@ def test_text_browser_omits_redundant_per_page_metric(
             page.goto(route, wait_until="domcontentloaded")
             labels = page.locator(".browser-text-metric-grid .metric-label")
             expect(labels).to_have_count(2)
-            assert labels.all_text_contents() == ["Messages", "Sessions"]
+            assert labels.all_text_contents() == ["Sessions", "Messages"]
             body_text = page.locator("body").inner_text()
             assert "Sessions shown" not in body_text
             assert "Messages shown" not in body_text
@@ -9434,5 +9434,89 @@ def test_cache_annotations_keep_motion_icons_and_remaining_space(
             reference.remove();
             return matches;
         }""")
+    finally:
+        context.close()
+
+
+@pytest.fixture()
+def annotated_resources_server_url(tmp_path: Path) -> Iterator[str]:
+    from app.core.prompt_store import PromptStore
+    from app.core.resource_persistence import GEMINI_HISTORY_SCHEMA
+    from app.web.app import create_app
+
+    root = tmp_path / "local-store"
+    rows = []
+    for index in range(205):
+        rows.append({
+            "schema_version": 1, "platform": "chatgpt", "conversation_id": "long-session",
+            "conversation_url": "https://chatgpt.com/c/long-session", "conversation_title": "Long session",
+            "message_key": f"long-session:{index}", "turn_index": index, "message_index": index,
+            "role": "user", "author_label": "You", "content_text": "crosspage needle" if index == 204 else f"Message {index}",
+            "content_html": "", "content_sha256": str(index), "source_links": [], "model_label": "",
+            "first_seen_at": "2026-08-12T06:00:00Z", "last_seen_at": "2026-08-12T05:00:00Z",
+        })
+    write_parquet_rows_atomic(root / "llm/chatgpt/history.parquet", rows, CHATGPT_HISTORY_SCHEMA)
+    other = dict(rows[-1], platform="gemini", conversation_id="other", conversation_title="Other session",
+                 conversation_url="https://gemini.google.com/app/other", message_key="other:0")
+    write_parquet_rows_atomic(root / "llm/gemini/history.parquet", [other], GEMINI_HISTORY_SCHEMA)
+    store = PromptStore(root)
+    prompt, _ = store.add_pointer(source="chatgpt", conversation_id="long-session", message_key="long-session:204")
+    for remark in ("Research", "A longer standard tag", "Follow up"):
+        store.add_remark(prompt.stable_id, remark)
+    app = create_app(root, agent_external_operations_enabled=False,
+                     computer_use_settings_path=tmp_path / "settings.json",
+                     computer_use_runtime_root=tmp_path / "runtime")
+    server = make_server("127.0.0.1", 0, app, threaded=True)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_port}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@pytest.mark.parametrize("width", [1138, 1024, 390])
+def test_resource_annotations_search_scope_toolbar_and_remark_bounds(
+    disposable_browser: Browser, annotated_resources_server_url: str, width: int,
+) -> None:
+    context = disposable_browser.new_context(viewport={"width": width, "height": 959})
+    page = context.new_page()
+    try:
+        page.goto(annotated_resources_server_url + "/browser?view=text&source=chatgpt&session=chatgpt:long-session&page=2")
+        expect(page.locator('[data-browser-session-tag]')).to_have_text("This session ×")
+        assert page.locator('[aria-label="Cached text totals"] .metric-label').all_text_contents() == ["Sessions", "Messages"]
+        geometry = page.evaluate("""() => {
+            const box = selector => {const r = document.querySelector(selector).getBoundingClientRect(); return {x:r.x, y:r.y, right:r.right, width:r.width};};
+            return {rail: box('.browser-content-toolbar'), back: box('.browser-session-back-link'),
+                    search: box('.browser-search-field'), next: box('.browser-session-neighbor-nav'),
+                    share: box('.browser-session-page-export-button')};
+        }""")
+        assert abs(geometry["rail"]["x"] - geometry["back"]["x"]) <= 1
+        assert geometry["share"]["x"] >= geometry["next"]["right"]
+        assert geometry["search"]["right"] <= geometry["rail"]["right"] + 1
+        assert geometry["search"]["width"] >= 180
+        page.locator('[data-browser-search-focus]').click()
+        expect(page.locator('#browser_search_input')).to_be_focused()
+        page.locator('#browser_search_input').fill("crosspage needle")
+        page.locator('#browser_search_input').press("Enter")
+        expect(page.locator('[data-chat-message-id]')).to_have_count(1)
+        expect(page.locator('[data-browser-session-tag]')).to_be_visible()
+        expect(page.locator('.browser-session-detail-table')).to_contain_text("crosspage needle")
+        assert "page=2" not in page.url
+        page.locator('[data-browser-session-scope-remove]').click()
+        expect(page.locator('[data-browser-session-tag]')).to_have_count(0)
+        expect(page.locator('[data-chat-message-id]')).to_have_count(2)
+        assert "source=all" in page.url and "session=" not in page.url
+        page.goto(annotated_resources_server_url + "/browser?view=prompts")
+        assert page.locator('[aria-label="Saved prompt totals"] .metric-label').all_text_contents() == ["Saved prompts", "Sources"]
+        bounds = page.locator('[data-prompt-remark-input]').evaluate("""input => {
+            const r = input.getBoundingClientRect(); const c = input.closest('td').getBoundingClientRect();
+            return {radius: getComputedStyle(input).borderRadius, left:r.left, right:r.right, cellLeft:c.left, cellRight:c.right};
+        }""")
+        assert bounds["radius"] == "10px"
+        assert bounds["left"] >= bounds["cellLeft"] and bounds["right"] <= bounds["cellRight"]
+        assert page.locator('[data-prompt-tag]').count() == 3
     finally:
         context.close()

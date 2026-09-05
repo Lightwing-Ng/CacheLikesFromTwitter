@@ -1723,7 +1723,7 @@ def test_browser_prompt_remarks_use_pill_tags_and_stored_controls() -> None:
     assert "min-height: 32px;" in input_rule
     assert "height: 32px;" in input_rule
     assert "border: 0;" in input_rule
-    assert "border-radius: var(--radius-pill);" in input_rule
+    assert "border-radius: var(--radius-panel);" in input_rule
     assert "font-size: var(--font-size-3);" in input_rule
 
 
@@ -1953,7 +1953,7 @@ def test_agent_workspace_reuses_shared_glass_and_responsive_tokens() -> None:
     stylesheet = _stylesheet()
 
     for token in (
-        "/* Code version: v2.94.0-codex.1 */",
+        "/* Code version: v2.95.0-codex.1 */",
         "transform var(--sidebar-motion-duration) var(--motion-emphasized);",
         ".dock-icon-agent",
         'mask: url("/static/images/arrow.uturn.up.circle.svg")',

@@ -1,4 +1,4 @@
-/* Code version: v2.1.0-codex.1 */
+/* Code version: v2.1.1-codex.1 */
 
 import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
 
@@ -231,7 +231,7 @@ import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
         input.dataset.browserSearchGlobalScope = "true";
         input.dataset.browserSearchSubmitCopy = "Press Enter to search all cached text.";
         input.focus();
-        if (input.value.trim()) submitSearch();
+        submitSearch();
     });
 
     function submitSearch() {
