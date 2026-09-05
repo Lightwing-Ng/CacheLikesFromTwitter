@@ -3358,7 +3358,7 @@ class WebAppTests(unittest.TestCase):
             with self.subTest(session_message_script_fragment=fragment):
                 self.assertIn(fragment, session_message_script)
 
-    def test_browser_text_search_leaves_session_scope_and_lists_global_cjk_match(self) -> None:
+    def test_browser_text_search_keeps_session_scope_until_filter_is_removed(self) -> None:
         with TemporaryDirectory() as raw_root:
             root = Path(raw_root) / "local_store"
             history_path = root / "llm" / "gemini" / "history.parquet"
@@ -3412,6 +3412,12 @@ class WebAppTests(unittest.TestCase):
                 response = client.get(
                     f"/browser?view=text&source=gemini&sort=newest&session_view=1&session={session_id}&q=亚朵"
                 )
+
+                scoped_body = response.get_data(as_text=True)
+                self.assertIn('data-browser-session-tag', scoped_body)
+                self.assertIn('browser-session-detail-actions--session', scoped_body)
+                self.assertNotIn('data-chat-message-id=', scoped_body)
+                response = client.get("/browser?view=text&source=all&session_view=1&q=亚朵")
 
         body = response.get_data(as_text=True)
         self.assertEqual(response.status_code, 200)

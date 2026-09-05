@@ -1,14 +1,17 @@
 """Read cached text sessions for the local browser."""
 
-# Code version: v1.12.0-codex.1
+# Code version: v1.13.0-codex.1
 
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import urlsplit, urlunsplit
+
+from .agent_source_cache import agent_source_cache_path
 
 from .local_media_browser import (
     LocalMediaItem,
@@ -247,11 +250,57 @@ def load_chat_history_messages(
             ("grok", chat_history_path(local_store_root, "grok")),
         )
     )
-    return tuple(
+    messages = tuple(
         item
         for row_source, path in source_paths
         for row in (read_parquet_rows(path) or [])
         if (item := _message_from_row(row, row_source)) is not None
+    )
+    return _refresh_session_metadata(local_store_root, messages)
+
+
+def _refresh_session_metadata(
+    local_store_root: Path | str, messages: tuple[ChatHistoryMessage, ...],
+) -> tuple[ChatHistoryMessage, ...]:
+    """Overlay newer discovery metadata without fetching or duplicating message bodies."""
+    history_path = chat_history_path(local_store_root, "chatgpt")
+    if not history_path.is_file() or not any(item.source == "chatgpt" for item in messages):
+        return messages
+    history_updated = history_path.stat().st_mtime
+    metadata: dict[str, tuple[float, str, str]] = {}
+    for row in read_parquet_rows(agent_source_cache_path(local_store_root)) or []:
+        observed = _timestamp_value(str(row.get("cached_at") or ""))
+        if row.get("platform") != "chatgpt" or observed < history_updated:
+            continue
+        try:
+            payload = json.loads(str(row.get("payload_json") or "{}"))
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(payload, dict):
+            continue
+        candidates = payload.get("sessions", payload.get("recent_sessions", []))
+        if row.get("source_kind") == "session-history":
+            candidates = [{"url": payload.get("conversation_url"), "title": payload.get("title")}]
+        if not isinstance(candidates, list):
+            continue
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            url = _safe_external_url(candidate.get("url"))
+            parsed = urlsplit(url)
+            if parsed.hostname != "chatgpt.com" or "/c/" not in parsed.path:
+                continue
+            conversation_id = parsed.path.rsplit("/c/", 1)[-1].strip("/")
+            title = str(candidate.get("title") or "").strip()
+            if not title or not conversation_id:
+                continue
+            if observed >= metadata.get(conversation_id, (0, "", ""))[0]:
+                metadata[conversation_id] = (observed, title, url)
+    return tuple(
+        replace(item, conversation_title=metadata[item.conversation_id][1],
+                conversation_url=metadata[item.conversation_id][2])
+        if item.source == "chatgpt" and item.conversation_id in metadata else item
+        for item in messages
     )
 
 
@@ -405,7 +454,7 @@ def query_chat_history(
     requested_session = str(session or "").strip()[:160]
     all_sessions = _sort_chat_history_sessions(_build_chat_history_sessions(all_messages), sort)
     selected_session = None
-    if not query_terms:
+    if requested_session:
         selected_session = next(
             (
                 item

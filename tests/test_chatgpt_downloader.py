@@ -192,10 +192,13 @@ def test_chatgpt_history_cache_skips_sessions_already_in_the_store(tmp_path: Pat
             {},
             TaskState("test"),
             lambda: False,
+            conversation_titles_by_id={"session-already-cached": "Renamed cached session"},
         )
 
     assert (processed, new_messages, unchanged_sessions) == (1, 0, 1)
     api_get.assert_not_called()
+
+    assert read_parquet_rows(history_store.path)[0]["conversation_title"] == "Renamed cached session"
 
 
 def test_chatgpt_history_cache_refreshes_legacy_capture_times(tmp_path: Path) -> None:

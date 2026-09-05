@@ -1,4 +1,4 @@
-<!-- Code version: v1.61.32-codex.1 -->
+<!-- Code version: v1.62.0-codex.1 -->
 <!doctype html>
 <html lang="en-US">
 <head>
@@ -9,18 +9,18 @@
     <script src="{{ url_for('static', filename='language-rendering.js', v='language-rendering-v1.0.0-codex.1') }}"></script>
     <script src="{{ url_for('static', filename='theme-mode.js', v='theme-mode-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='segmented-control.js', v='segmented-control-v1.0.2-codex.1') }}"></script>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.94.0-codex.1') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.3.5-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v=version ~ '-style-v2.95.0-codex.1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='browser-search.css', v='browser-search-v1.4.0-codex.1') }}">
     <script src="{{ url_for('static', filename='responsive.js', v='responsive-v1.0.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='waiting-modal.js', v='waiting-modal-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='notice-banner.js', v='notice-banner-v0.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='pagination-motion.js', v='pagination-motion-v1.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='local-media-browser.js', v='local-media-browser-v1.31.1-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-session-messages.js', v='browser-session-messages-v1.0.1-codex.1') }}"></script>
-    <script type="module" src="{{ url_for('static', filename='browser-search.js', v='browser-search-v2.0.2-codex.1') }}"></script>
+    <script type="module" src="{{ url_for('static', filename='browser-search.js', v='browser-search-v2.1.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-source-filter.js', v='browser-source-filter-v1.2.0-codex.1') }}"></script>
     <script defer src="{{ url_for('static', filename='browser-filter-select.js', v='browser-filter-select-v1.0.0-codex.1') }}"></script>
-    <script defer src="{{ url_for('static', filename='browser-session-actions.js', v='browser-session-actions-v1.1.0-codex.1') }}"></script>
+    <script defer src="{{ url_for('static', filename='browser-session-actions.js', v='browser-session-actions-v1.1.1-codex.1') }}"></script>
 </head>
 <body>
 {% include "_sidebar_bootstrap.html" %}
@@ -294,15 +294,7 @@
                             >
                                 <span class="icon browser-session-export-icon" aria-hidden="true"></span>
                             </button>
-                            <button
-                                type="button"
-                                class="browser-session-action-button browser-session-page-export-button"
-                                data-browser-session-download-url="{{ url_for('browser_session_export', session_id=text_page.current_session.stable_id, source=filters.source, sort=filters.sort, page=filters.page, scope='page') }}"
-                                aria-label="Export current page results"
-                                title="Export current page results"
-                            >
-                                <span class="icon browser-session-page-export-icon" aria-hidden="true"></span>
-                            </button>
+
                             </div>
                             {% endif %}
                         </div>
@@ -335,10 +327,26 @@
                                 <button type="button" class="browser-session-control-button browser-session-neighbor-button" disabled aria-label="No next session" title="No next session"><span class="icon browser-session-neighbor-next-icon" aria-hidden="true"></span></button>
                                 {% endif %}
                             </nav>
+                            <button
+                                type="button"
+                                class="browser-session-control-button browser-session-page-export-button"
+                                data-browser-session-download-url="{{ url_for('browser_session_export', session_id=text_page.current_session.stable_id, source=filters.source, sort=filters.sort, page=filters.page, scope='page') }}"
+                                aria-label="Export current page results"
+                                title="Export current page results"
+                            >
+                                <span class="icon browser-session-page-export-icon" aria-hidden="true"></span>
+                            </button>
+                            <button type="button" class="browser-session-control-button browser-session-search-button" data-browser-search-focus aria-label="Search cached text" title="Search cached text"><span class="icon browser-search-icon" aria-hidden="true"></span></button>
                             {% endif %}
-                            <label class="field browser-filter-field browser-search-field" data-browser-search for="browser_search_input">
+                            <div class="field browser-filter-field browser-search-field" data-browser-search>
                                 <div class="browser-search-control">
                                     <span class="icon browser-search-icon" aria-hidden="true"></span>
+                                    {% if filters.view == "text" and text_page.session_detail %}
+                                    <span class="browser-prompt-tag browser-search-session-tag" data-browser-session-tag>
+                                        <span>This session</span>
+                                        <button type="button" class="browser-prompt-tag-remove" data-browser-session-scope-remove aria-label="Search all cached text" title="Remove session filter">×</button>
+                                    </span>
+                                    {% endif %}
                                     <input
                                         id="browser_search_input"
                                         type="search"
@@ -357,8 +365,8 @@
                                         aria-label="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
                                         placeholder="{{ 'Search cached media' if filters.view == 'media' else 'Search cached text' }}"
                                         data-browser-search-input
-                                        data-browser-search-global-scope="{{ 'true' if filters.view == 'text' else 'false' }}"
-                                        data-browser-search-submit-copy="{{ 'Press Enter to search all cached text.' if filters.view == 'text' else 'Press Enter to search this cache.' }}"
+                                        data-browser-search-global-scope="{{ 'true' if filters.view == 'text' and not text_page.session_detail else 'false' }}"
+                                        data-browser-search-submit-copy="{{ 'Press Enter to search this session.' if filters.view == 'text' and text_page.session_detail else ('Press Enter to search all cached text.' if filters.view == 'text' else 'Press Enter to search this cache.') }}"
                                     >
                                     <div
                                         class="browser-search-suggestions"
@@ -369,7 +377,7 @@
                                         hidden
                                     ></div>
                                 </div>
-                            </label>
+                            </div>
                         </div>
                     </div>
                     {% if filters.view == "media" %}
@@ -415,20 +423,16 @@
                             <span class="metric-label">Sources</span>
                             <strong>{{ "{:,}".format(prompt_page.items|map(attribute="source")|unique|list|length) }}</strong>
                         </div>
-                        <div class="metric-card foundation-metric-card metric-card-accent">
-                            <span class="metric-label">Page</span>
-                            <strong>{{ "{:,}".format(prompt_page.current_page) }} / {{ "{:,}".format(prompt_page.total_pages) }}</strong>
-                        </div>
                     </div>
                     {% else %}
                     <div class="metric-grid browser-metric-grid browser-text-metric-grid" aria-label="Cached text totals">
                         <div class="metric-card foundation-metric-card metric-card-accent">
-                            <span class="metric-label">Messages</span>
-                            <strong>{{ "{:,}".format(text_page.current_session.message_count if text_page.session_detail else text_page.total_count) }}</strong>
-                        </div>
-                        <div class="metric-card foundation-metric-card metric-card-accent">
                             <span class="metric-label">Sessions</span>
                             <strong>{{ "{:,}".format(1 if text_page.session_detail else text_page.conversation_count) }}</strong>
+                        </div>
+                        <div class="metric-card foundation-metric-card metric-card-accent">
+                            <span class="metric-label">Messages</span>
+                            <strong>{{ "{:,}".format(text_page.current_session.message_count if text_page.session_detail else text_page.total_count) }}</strong>
                         </div>
                     </div>
                     {% endif %}

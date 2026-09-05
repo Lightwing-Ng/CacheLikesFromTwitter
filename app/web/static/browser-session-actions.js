@@ -1,4 +1,4 @@
-/* Code version: v1.1.0-codex.1 */
+/* Code version: v1.1.1-codex.1 */
 
 (function initializeBrowserSessionActions() {
     "use strict";
@@ -22,7 +22,7 @@
         });
     });
 
-    root.querySelectorAll("[data-browser-session-download-url]").forEach((button) => {
+    document.querySelectorAll("[data-browser-session-download-url]").forEach((button) => {
         if (!(button instanceof HTMLButtonElement)) return;
         button.addEventListener("click", () => {
             const downloadUrl = button.dataset.browserSessionDownloadUrl;

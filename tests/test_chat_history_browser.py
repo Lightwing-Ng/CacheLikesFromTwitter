@@ -1,6 +1,6 @@
 """Focused tests for the local text-history browser."""
 
-# Code version: v1.4.2-codex.1
+# Code version: v1.5.0-codex.1
 
 from datetime import datetime
 from pathlib import Path
@@ -258,12 +258,23 @@ def test_query_chat_history_opens_one_session_and_searches_all_sessions(tmp_path
     assert [message.message_index for message in detail_page.items] == [0, 1]
     assert detail_page.pagination_unit == "message"
 
+    scoped_page = query_chat_history(
+        tmp_path, source="gemini", query="亚朵", session=session_id, page=6,
+    )
+    assert scoped_page.session_detail
+    assert scoped_page.total_count == 0
+    assert scoped_page.current_page == 1
+    across_pages = query_chat_history(
+        tmp_path, source="gemini", session=session_id, query="2", page_size=2,
+    )
+    assert across_pages.total_count == 1
+    assert across_pages.items[0].message_index == 2
+
     global_search_page = query_chat_history(
         tmp_path,
         source="gemini",
         query="亚朵",
         session_view=True,
-        session=session_id,
     )
     assert not global_search_page.session_detail
     assert global_search_page.current_session is None
@@ -401,3 +412,28 @@ def test_chat_history_points_to_existing_media_without_copying_payload(tmp_path:
     assert page.items[0].media_refs[0].media_url == "/browser/media/chatgpt/demo/image.png"
     assert page.items[0].media_refs[0].media_kind == "image"
     assert not hasattr(page.items[0], "media_payload")
+
+
+def test_session_metadata_uses_newer_catalog_and_preserves_identity(tmp_path: Path) -> None:
+    from datetime import UTC, timedelta
+    from app.core.agent_source_cache import AgentSourceCache
+    from app.core.resource_persistence import CHATGPT_HISTORY_SCHEMA
+
+    row = _history_row("move-demo", "move-demo:0", "Original message")
+    row.update(platform="chatgpt", conversation_url="https://chatgpt.com/c/move-demo")
+    path = tmp_path / "llm/chatgpt/history.parquet"
+    write_parquet_rows_atomic(path, [row], CHATGPT_HISTORY_SCHEMA)
+    original_bytes = path.read_bytes()
+    before = query_chat_history(tmp_path, source="chatgpt", session_view=True).sessions[0]
+    cache = AgentSourceCache(tmp_path)
+    payload = {"sessions": [{"title": "Renamed session", "url": "https://chatgpt.com/g/project/c/move-demo"}]}
+    cache.store(platform="chatgpt", browser="edge", source_kind="project-sessions", payload=payload,
+                now=datetime.now(UTC) - timedelta(days=1))
+    assert query_chat_history(tmp_path).items[0].conversation_title == "Demo conversation"
+    cache.store(platform="chatgpt", browser="edge", source_kind="project-sessions", payload=payload,
+                now=datetime.now(UTC) + timedelta(seconds=1))
+    after = query_chat_history(tmp_path, source="chatgpt", session_view=True).sessions[0]
+    assert after.stable_id == before.stable_id
+    assert after.conversation_title == "Renamed session"
+    assert after.conversation_url == payload["sessions"][0]["url"]
+    assert path.read_bytes() == original_bytes

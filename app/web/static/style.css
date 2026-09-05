@@ -1,4 +1,4 @@
-/* Code version: v2.94.0-codex.1 */
+/* Code version: v2.95.0-codex.1 */
 /*
  * Standalone faces are extracted from the approved TTC by scripts/build_web_fonts.py.
  * Collection URL fragments are not reliable face selectors in Chromium.
@@ -6130,7 +6130,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 
 .browser-session-actions:hover,
 .browser-session-actions:focus-within {
-    width: calc((var(--settings-round-icon-button-size) * 4) + (var(--browser-session-action-gap) * 3));
+    width: calc((var(--settings-round-icon-button-size) * 3) + (var(--browser-session-action-gap) * 2));
 }
 
 .browser-session-action-button {
@@ -6175,7 +6175,7 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     box-shadow: var(--settings-round-icon-button-shadow-active);
 }
 
-.browser-session-actions > .browser-session-action-button:not(.browser-session-page-export-button) {
+.browser-session-actions > .browser-session-action-button:not(.browser-session-full-export-button) {
     opacity: 0;
     pointer-events: none;
     transform: translate3d(var(--browser-session-action-hidden-offset, 0), 0, 0) scale(0.72);
@@ -6183,32 +6183,31 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .browser-session-actions > .browser-session-open-original-button {
-    right: calc(var(--browser-session-action-step) * 3);
-    --browser-session-action-hidden-offset: calc(var(--browser-session-action-step) * 3);
+    right: calc(var(--browser-session-action-step) * 2);
+    --browser-session-action-hidden-offset: calc(var(--browser-session-action-step) * 2);
     transition-delay: 56ms;
 }
 
 .browser-session-actions > .browser-session-refresh-button {
-    right: calc(var(--browser-session-action-step) * 2);
-    --browser-session-action-hidden-offset: calc(var(--browser-session-action-step) * 2);
+    right: var(--browser-session-action-step);
+    --browser-session-action-hidden-offset: var(--browser-session-action-step);
     transition-delay: 28ms;
 }
 
 .browser-session-actions > .browser-session-full-export-button {
-    right: var(--browser-session-action-step);
-    --browser-session-action-hidden-offset: var(--browser-session-action-step);
+    right: 0;
     transition-delay: 0ms;
 }
 
-.browser-session-actions:hover > .browser-session-action-button:not(.browser-session-page-export-button),
-.browser-session-actions:focus-within > .browser-session-action-button:not(.browser-session-page-export-button),
-.browser-session-actions > .browser-session-action-button:not(.browser-session-page-export-button):focus-visible {
+.browser-session-actions:hover > .browser-session-action-button:not(.browser-session-full-export-button),
+.browser-session-actions:focus-within > .browser-session-action-button:not(.browser-session-full-export-button),
+.browser-session-actions > .browser-session-action-button:not(.browser-session-full-export-button):focus-visible {
     opacity: 1;
     pointer-events: auto;
     transform: translate3d(0, 0, 0) scale(1);
 }
 
-.browser-session-actions:not(:hover):not(:focus-within) > .browser-session-action-button:not(.browser-session-page-export-button) {
+.browser-session-actions:not(:hover):not(:focus-within) > .browser-session-action-button:not(.browser-session-full-export-button) {
     transition-timing-function: cubic-bezier(0.55, 0.08, 0.68, 0.53), cubic-bezier(0.55, 0.08, 0.68, 0.53), var(--motion-standard), var(--motion-standard), var(--motion-standard);
 }
 
@@ -6397,8 +6396,9 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
 }
 
 .browser-session-back-link {
-    align-self: flex-start;
-    margin-top: 2px;
+    align-self: center;
+    margin: 0;
+    flex-shrink: 0;
 }
 
 .browser-session-detail-actions {
@@ -7006,7 +7006,9 @@ html.sidebar-memory-collapsed .app-shell .workspace > .workspace-header:first-ch
     height: 32px;
     padding: 4px 10px;
     border: 0;
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-panel);
+    box-sizing: border-box;
+    max-width: 100%;
     background: var(--frosted-glass-background);
     color: var(--theme-text);
     font-size: var(--font-size-3);

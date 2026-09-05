@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.61.0-codex.1
+# Code version: v1.62.0-codex.1
 
 from __future__ import annotations
 
@@ -1830,9 +1830,6 @@ def create_app(
             media_id=request.args.get("media_id"),
             session_page=request.args.get("session_page"),
         )
-        if filters["view"] == "text" and filters["q"]:
-            filters["session"] = ""
-            filters["session_page"] = 1
         force_refresh = request.args.get("refresh") == "1"
         prompt_page = None
         saved_prompt_keys = prompt_store.saved_pointer_keys()

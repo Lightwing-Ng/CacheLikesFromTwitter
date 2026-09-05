@@ -1,6 +1,6 @@
 """Local media discovery, deletion tombstones, and pagination."""
 
-# Code version: v1.22.0-codex.1
+# Code version: v1.23.0-codex.1
 
 from __future__ import annotations
 
@@ -1131,8 +1131,22 @@ class LocalMediaCatalog:
     ) -> LocalMediaPage:
         """Return a safe filtered, sorted, and paginated view of the snapshot."""
         filters = normalize_browser_filters(source, media_kind, query, sort, page, view="media")
+        items = self.snapshot(force_refresh=force_refresh)
+        # Keep covers addressable, but show the matching video in ordinary gallery results.
+        video_stems = {
+            str(Path(item.relative_path).with_suffix(""))
+            for item in items if item.source == "x" and item.media_kind == "video" and not item.is_deleted
+        }
+        if not media_id:
+            items = tuple(
+                item for item in items
+                if not (
+                    item.source == "x" and item.media_kind == "image"
+                    and str(Path(item.relative_path).with_suffix("")) in video_stems
+                )
+            )
         filtered = filter_media_items(
-            self.snapshot(force_refresh=force_refresh),
+            items,
             source=filters["source"],
             media_kind=filters["kind"],
             query=filters["q"],

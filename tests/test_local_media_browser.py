@@ -977,3 +977,24 @@ def test_parent_path_traversal_is_rejected(tmp_path: Path) -> None:
     assert resolve_local_media_path(root, "../x/safe.jpg") is None
     assert resolve_local_media_path(root, "%2e%2e/x/safe.jpg") is None
     assert resolve_local_media_path(root, "%252e%252e/x/safe.jpg") is None
+
+
+def test_x_gallery_hides_only_same_directory_video_covers(tmp_path: Path) -> None:
+    video = tmp_path / "x/creator/123/123.mp4"
+    cover = video.with_suffix(".jpg")
+    standalone = video.with_name("123-photo.jpg")
+    other_directory = tmp_path / "x/another/123.jpg"
+    for path in (video, cover, standalone, other_directory):
+        _write_media(path)
+    catalog = LocalMediaCatalog(tmp_path)
+    assert len(catalog.snapshot()) == 4
+    page = catalog.query(source="x")
+    assert page.total_count == 3
+    assert page.video_count == 1
+    assert page.image_count == 2
+    assert {item.relative_path for item in page.items} == {
+        str(path.relative_to(tmp_path)) for path in (video, standalone, other_directory)
+    }
+    cover_item = next(item for item in catalog.snapshot() if item.relative_path == str(cover.relative_to(tmp_path)))
+    assert catalog.query(media_id=cover_item.stable_id).items == (cover_item,)
+    assert cover.read_bytes() == b"media"

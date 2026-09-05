@@ -1,4 +1,4 @@
-/* Code version: v2.0.2-codex.1 */
+/* Code version: v2.1.0-codex.1 */
 
 import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
 
@@ -213,11 +213,29 @@ import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
         }
     }
 
-    function submitSearch() {
-        if (input.dataset.browserSearchGlobalScope === "true") {
-            const sessionField = form.querySelector('input[name="session"]');
-            if (sessionField) sessionField.disabled = true;
+    function applySearchScope() {
+        if (input.dataset.browserSearchGlobalScope !== "true") return;
+        for (const name of ["session", "session_page"]) {
+            const field = form.querySelector(`input[name="${name}"]`);
+            if (field) field.disabled = true;
         }
+        const sourceField = form.querySelector('[name="source"]');
+        if (sourceField) sourceField.value = "all";
+        const viewField = form.querySelector('[name="session_view"]');
+        if (viewField) viewField.value = "0";
+    }
+
+    document.querySelector("[data-browser-search-focus]")?.addEventListener("click", () => input.focus());
+    searchRoot.querySelector("[data-browser-session-scope-remove]")?.addEventListener("click", () => {
+        searchRoot.querySelector("[data-browser-session-tag]")?.remove();
+        input.dataset.browserSearchGlobalScope = "true";
+        input.dataset.browserSearchSubmitCopy = "Press Enter to search all cached text.";
+        input.focus();
+        if (input.value.trim()) submitSearch();
+    });
+
+    function submitSearch() {
+        applySearchScope();
         rememberSearch(input.value);
         setMenuOpen(false);
         form.requestSubmit();
@@ -300,6 +318,7 @@ import Fuse from "./vendor/fuse.min.mjs?v=fuse-js-v7.3.0";
     });
 
     form.addEventListener("submit", () => {
+        applySearchScope();
         rememberSearch(input.value);
         setMenuOpen(false);
     });

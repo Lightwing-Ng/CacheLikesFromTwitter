@@ -1,6 +1,6 @@
 """ChatGPT project image cache helpers."""
 
-# Code version: v1.45.0-codex.1
+# Code version: v1.46.0-codex.1
 
 from __future__ import annotations
 
@@ -425,6 +425,17 @@ class ChatGPTHistoryStore:
             CHATGPT_HISTORY_SCHEMA,
         )
 
+    def refresh_titles(self, titles: dict[str, str]) -> None:
+        """Apply the discovery index even when cached message bodies can be skipped."""
+        changed = False
+        for row in self._rows_by_key.values():
+            title = str(titles.get(str(row.get("conversation_id"))) or "").strip()
+            if title and title != row.get("conversation_title"):
+                row["conversation_title"] = title
+                changed = True
+        if changed:
+            self.save()
+
 
 def cache_chatgpt_conversation_history(
     history_store: ChatGPTHistoryStore,
@@ -434,12 +445,14 @@ def cache_chatgpt_conversation_history(
     state: TaskState,
     should_stop,
     scan_wait_seconds: float = 0.0,
+    conversation_titles_by_id: dict[str, str] | None = None,
 ) -> tuple[int, int, int]:
     """Fetch and persist complete text mappings for every discovered session."""
     processed = 0
     new_messages = 0
     unchanged_sessions = 0
     urls = tuple(conversation_urls)
+    history_store.refresh_titles(conversation_titles_by_id or {})
     for index, conversation_url in enumerate(urls, start=1):
         if should_stop():
             break
@@ -3735,6 +3748,7 @@ def sync_chatgpt_images(
                             state,
                             should_stop,
                             scan_wait_seconds=runtime_config.cache_scan_wait("chatgpt", "text"),
+                            conversation_titles_by_id=conversation_titles_by_id,
                         )
                     )
             stopped = should_stop()
