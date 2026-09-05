@@ -1,9 +1,10 @@
 """Regression coverage for history rendering and provider-owned capabilities.
 
-Code version: v1.0.1-codex.1
+Code version: v1.0.2-codex.1
 """
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -52,12 +53,20 @@ def test_catalog_discovers_unreleased_names_without_a_version_allowlist():
 
 
 @pytest.mark.parametrize("target", ["latest_available", "live:gpt-12 nebula"])
-def test_new_model_is_resolved_and_verified_on_the_same_page(target):
+@pytest.mark.parametrize("view_restored", [True, False])
+def test_new_model_is_resolved_and_verified_on_the_same_page(target, view_restored):
     from types import SimpleNamespace
     from app.core import computer_use_agent as agent
 
     current = ["GPT-5.6 Sol"]
     clicks = []
+    advanced_view = [False]
+
+    def set_model_view(_page, _power, expanded):
+        if not expanded and not view_restored:
+            return False
+        advanced_view[0] = expanded
+        return True
 
     class Choice:
         def __init__(self, label):
@@ -87,6 +96,7 @@ def test_new_model_is_resolved_and_verified_on_the_same_page(target):
         }
 
     def efforts(_page, result, *_args, **_kwargs):
+        assert not advanced_view[0], "The effort slider is inert in the model list."
         result["thinking_effort"] = {"label": "Exhaustive"}
         return result, ["Measured", "Exhaustive"], True
 
@@ -97,18 +107,111 @@ def test_new_model_is_resolved_and_verified_on_the_same_page(target):
         patch.object(agent, "_chatgpt_find_power_control", return_value=power),
         patch.object(agent, "_chatgpt_power_button_state", return_value=(power, True)),
         patch.object(agent, "_read_chatgpt_model_menu", side_effect=menu),
-        patch.object(agent, "_chatgpt_set_model_view", return_value=True),
+        patch.object(agent, "_chatgpt_set_model_view", side_effect=set_model_view),
         patch.object(agent, "_chatgpt_select_subscription_effort", side_effect=efforts),
         patch.object(agent, "_chatgpt_model_menu_scope_for_control", return_value="model-menu"),
         patch.object(agent, "_close_chatgpt_model_menu"),
     ):
-        assert _select_chatgpt_model(page, "chromium", target, observed)
+        assert _select_chatgpt_model(page, "chromium", target, observed) is view_restored
     assert clicks == ["GPT-12 Nebula"]
+    if not view_restored:
+        assert observed["effort_catalog_complete"] is False
+        assert observed["reason"] == "model-view-close-failed"
+        return
     assert observed["observed"] == "GPT-12 Nebula"
     assert observed["effort_catalog_complete"] is True
     assert observed["available_efforts"] == ["Measured", "Exhaustive"]
     if target == "latest_available":
         assert observed["model_options"][0]["label"] == "GPT-12 Nebula"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("effort", ["highest_available", "Extra High"])
+def test_latest_selection_restores_inert_effort_view_in_browser(capability_page, effort):
+    """Replay the combined provider menu without contacting a signed-in service."""
+    page = capability_page
+    page.set_content("""
+      <form data-type="unified-composer">
+        <button id="power" type="button" class="__composer-pill"
+          aria-haspopup="menu" aria-expanded="false" aria-controls="picker">Extra High</button>
+        <textarea id="prompt-textarea"></textarea>
+      </form>
+      <div id="picker" role="menu" style="display:none">
+        <div data-testid="composer-intelligence-picker-content">
+          <div data-testid="composer-model-picker-slider-simple-view">
+            <div role="menuitem" aria-label="Select model" tabindex="0">Extra High</div>
+            <div data-model-reasoning-effort-slider>
+              <span role="slider" tabindex="-1" aria-hidden="true"
+                aria-valuemin="0" aria-valuemax="3" aria-valuenow="3"
+                aria-valuetext="Extra High" style="display:block;width:28px;height:28px"></span>
+            </div>
+          </div>
+          <div data-testid="composer-model-picker-slider-advanced-view" inert>
+            <div role="menuitemradio" aria-checked="false">Latest</div>
+            <div role="menuitemradio" aria-checked="true">GPT-5.6 Sol</div>
+          </div>
+        </div>
+      </div>
+      <script>
+        const trigger = document.querySelector('#power');
+        const menu = document.querySelector('#picker');
+        const simple = menu.querySelector('[data-testid$="simple-view"]');
+        const advanced = menu.querySelector('[data-testid$="advanced-view"]');
+        const slider = menu.querySelector('[role="slider"]');
+        const labels = ['Instant', 'Medium', 'High', 'Extra High'];
+        const setView = expanded => {
+          simple.toggleAttribute('inert', expanded);
+          advanced.toggleAttribute('inert', !expanded);
+        };
+        trigger.onclick = () => {
+          const open = trigger.getAttribute('aria-expanded') !== 'true';
+          trigger.setAttribute('aria-expanded', String(open));
+          menu.style.display = open ? 'block' : 'none';
+          if (open) setView(false);
+        };
+        simple.querySelector('[role="menuitem"]').onclick = () => setView(true);
+        menu.querySelectorAll('[role="menuitemradio"]').forEach(choice => {
+          choice.onclick = () => {
+            menu.querySelectorAll('[role="menuitemradio"]').forEach(item => {
+              item.setAttribute('aria-checked', String(item === choice));
+            });
+          };
+        });
+        slider.onkeydown = event => {
+          let position = Number(slider.getAttribute('aria-valuenow'));
+          if (event.key === 'Home') position = 0;
+          if (event.key === 'End') position = 3;
+          if (event.key === 'ArrowRight') position = Math.min(3, position + 1);
+          if (event.key === 'ArrowLeft') position = Math.max(0, position - 1);
+          slider.setAttribute('aria-valuenow', String(position));
+          slider.setAttribute('aria-valuetext', labels[position]);
+          event.preventDefault();
+        };
+      </script>
+    """)
+    observed = {}
+    assert _select_chatgpt_model(
+        page, "chromium", "latest_available", observed, thinking_effort=effort,
+    )
+    assert observed["observed"] == "Latest"
+    assert observed["available_efforts"] == ["Instant", "Medium", "High", "Extra High"]
+    assert observed["thinking_effort"] == "Extra High"
+    assert observed["effort_catalog_complete"] is True
+    assert page.locator('#power').get_attribute('aria-expanded') == 'false'
+
+
+@pytest.fixture
+def capability_page():
+    playwright_sync = pytest.importorskip("playwright.sync_api")
+    with playwright_sync.sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=True,
+            **({} if Path(playwright.chromium.executable_path).is_file() else {"channel": "chrome"}),
+        )
+        try:
+            yield browser.new_page()
+        finally:
+            browser.close()
 
 
 @pytest.mark.parametrize("reason,recover,attempts", [

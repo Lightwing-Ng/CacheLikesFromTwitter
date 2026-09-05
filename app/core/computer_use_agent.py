@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.55.0-codex.1
+Code version: v3.55.1-codex.1
 """
 
 from __future__ import annotations
@@ -10888,6 +10888,13 @@ def _select_chatgpt_model_chromium(
             project_result["effort_catalog_complete"] = True
             project_result.pop("effort_selection_error", None)
             return project_result, [], True
+        # Selecting another model can leave its list open and the slider inert.
+        # Restore the effort view for every selection path before binding it.
+        if model_view_opened and not _chatgpt_set_model_view(page, power_button, False):
+            failed_result = dict(result_payload)
+            failed_result["effort_selection_error"] = "model-view-close-failed"
+            failed_result["effort_catalog_complete"] = False
+            return failed_result, [], False
         return _chatgpt_select_subscription_effort(
             page,
             result_payload,
