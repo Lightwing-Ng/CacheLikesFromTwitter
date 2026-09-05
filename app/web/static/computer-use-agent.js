@@ -1,4 +1,4 @@
-/* Code version: v3.31.2-codex.1 */
+/* Code version: v3.31.3-codex.1 */
 
 (() => {
     const BOOTSTRAPPED_SOURCE_PLATFORMS = new Set(["chatgpt", "grok", "claude"]);
@@ -122,38 +122,42 @@
         activitySummary?.setAttribute("aria-expanded", String(panel.open));
     }
 
+    let activityTargetOpen = null;
     activitySummary?.addEventListener("click", (event) => {
         event.preventDefault();
         const panel = elements.activityPanel;
-        if (activityCloseAnimation) {
-            activityCloseAnimation.cancel();
+        const startHeight = panel.getBoundingClientRect().height;
+        const open = !(activityTargetOpen ?? panel.open);
+        activityCloseAnimation?.cancel();
+        activityCloseAnimation = null;
+        activityTargetOpen = open;
+        const finish = () => {
+            panel.open = open;
+            panel.style.overflow = "";
             activityCloseAnimation = null;
-            return;
-        }
-        if (!panel.open) {
-            panel.open = true;
-            syncActivityCurrent();
-            elements.activityList.scrollTop = elements.activityList.scrollHeight;
-            return;
-        }
-        const close = () => {
-            panel.open = false;
-            activityCloseAnimation = null;
+            activityTargetOpen = null;
             syncActivityCurrent();
         };
+        panel.open = open;
+        syncActivityCurrent();
+        if (open) elements.activityList.scrollTop = elements.activityList.scrollHeight;
+        const endHeight = panel.getBoundingClientRect().height;
         if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-            close();
+            finish();
             return;
         }
+        // Keep the disclosure rendered while its height moves following content.
+        panel.open = true;
+        panel.style.overflow = "hidden";
         const style = getComputedStyle(panel);
-        activityCloseAnimation = elements.activityList.animate([
-            {opacity: 1, transform: "scale3d(1, 1, 1)"},
-            {opacity: 0, transform: "translate3d(0, -6px, 0) scale3d(0.985, 0.94, 1)"},
+        activityCloseAnimation = panel.animate([
+            {height: `${startHeight}px`},
+            {height: `${endHeight}px`},
         ], {
-            duration: parseFloat(style.getPropertyValue("--motion-duration-emphasized")) || 300,
-            easing: style.getPropertyValue("--motion-bouncy").trim(),
+            duration: parseFloat(style.getPropertyValue("--motion-duration-emphasized")) || 420,
+            easing: style.getPropertyValue("--motion-emphasized").trim(),
         });
-        activityCloseAnimation.onfinish = close;
+        activityCloseAnimation.onfinish = finish;
     });
     elements.activityPanel?.addEventListener("toggle", syncActivityCurrent);
     let sourceBrowser = "";
@@ -1572,8 +1576,7 @@
         const browserName = selectedBrowser();
         if (
             remoteHistoryMatchesSelection()
-            && !remoteSessionHistoryLoading
-            && !remoteSessionHistoryError
+            && (remoteSessionHistoryLoading || !remoteSessionHistoryError)
         ) {
             return;
         }
@@ -1996,7 +1999,11 @@
         elements.statusMessage.title = presentation.copy;
         renderResponseStatusCopy(presentation);
         if (elements.statusDot) elements.statusDot.hidden = presentation.loading;
-        if (elements.statusSpinner) elements.statusSpinner.hidden = !presentation.loading;
+        if (elements.statusSpinner) {
+            elements.statusSpinner.hidden = !presentation.loading;
+            elements.statusSpinner.classList.toggle("cache-phase-live-marker", presentation.status === "running");
+            elements.statusSpinner.classList.toggle("suggestion-loading-spinner", presentation.status !== "running");
+        }
         syncResponseStatusTimer(agent, presentation.status);
     }
 

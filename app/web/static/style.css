@@ -1,4 +1,4 @@
-/* Code version: v2.93.5-codex.1 */
+/* Code version: v2.93.7-codex.1 */
 /*
  * Standalone faces are extracted from the approved TTC by scripts/build_web_fonts.py.
  * Collection URL fragments are not reliable face selectors in Chromium.
@@ -11468,4 +11468,115 @@ html.sidebar-memory-collapsed .style-token-page #workspace_panel .settings-shell
 .workspace-article-card.agent-task-card {
     background: transparent;
     box-shadow: none;
+}
+
+/* Agent-only sidebar icon rail; the Dock is outside this form. */
+#agent_runtime_form {
+    --agent-sidebar-icon-slot: 28px;
+    --agent-sidebar-control-inset: 10px;
+}
+
+#agent_runtime_form .browser-picker-selected-icon-shell {
+    width: var(--agent-sidebar-icon-slot);
+    flex: 0 0 var(--agent-sidebar-icon-slot);
+}
+
+#agent_runtime_form .browser-session-status-card {
+    padding-inline: var(--agent-sidebar-control-inset);
+    border-inline: var(--control-liquid-border);
+}
+
+#agent_runtime_form .browser-session-status-copy {
+    --browser-session-status-checkmark-size: var(--agent-sidebar-icon-slot);
+    --browser-session-status-item-gap: 10px;
+}
+
+#agent_runtime_form .browser-session-status-spinner {
+    --loading-spinner-size: 18px;
+    margin-inline: 5px;
+}
+
+#agent_runtime_form .browser-session-status-checkmark {
+    width: var(--agent-sidebar-icon-slot);
+    flex: 0 0 var(--agent-sidebar-icon-slot);
+    mask-size: 18px 18px;
+    -webkit-mask-size: 18px 18px;
+}
+
+#agent_runtime_form .browser-session-status-item,
+#agent_runtime_form .agent-terminal-execution-status {
+    gap: 10px;
+}
+
+/* Match Worthward's Investment live-marker core and two staggered rings. */
+.agent-response-card .cache-phase-live-marker {
+    --cache-phase-live-marker-color: var(--theme-accent-positive);
+    width: 6px;
+    height: 6px;
+    flex-basis: 6px;
+    box-shadow:
+        0 0 0 4px color-mix(in srgb, var(--theme-accent-positive) 18%, transparent),
+        0 0 10px color-mix(in srgb, var(--theme-accent-positive) 42%, transparent);
+}
+
+.agent-response-card .cache-phase-live-marker::before {
+    width: 20px;
+    height: 20px;
+}
+
+.agent-response-card .cache-phase-live-marker::after {
+    width: 14px;
+    height: 14px;
+    animation-name: agentActivityLiveBreathInner;
+}
+
+.agent-activity-panel {
+    overflow: visible;
+}
+
+@keyframes agentActivityLiveBreathInner {
+    0% {
+        opacity: 0.26;
+        transform: translate(-50%, -50%) scale(0.48);
+    }
+    100% {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+/* Agent composer and lifecycle use their owning text and status tokens. */
+.agent-composer-shell .agent-prompt-input::placeholder {
+    font: inherit;
+    letter-spacing: inherit;
+    color: color-mix(in srgb, var(--theme-text) 68%, transparent);
+    opacity: 1;
+}
+
+.agent-response-status[data-status="finished"] .agent-response-status-dot {
+    width: var(--agent-status-icon-size);
+    height: var(--agent-status-icon-size);
+    border-radius: 0;
+    background: var(--theme-success-strong);
+    box-shadow: none;
+    mask: url("/static/images/checkmark.circle.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/checkmark.circle.svg") center/contain no-repeat;
+}
+
+.agent-session-mode-combobox .browser-picker-selected-icon-shell:has(> img[src$="/folder.fill.svg"]) {
+    position: relative;
+}
+
+.agent-session-mode-combobox .browser-picker-selected-icon-shell > img[src$="/folder.fill.svg"] {
+    visibility: hidden;
+}
+
+.agent-session-mode-combobox .browser-picker-selected-icon-shell:has(> img[src$="/folder.fill.svg"])::after {
+    content: "";
+    position: absolute;
+    width: var(--settings-round-icon-button-icon-size);
+    height: var(--settings-round-icon-button-icon-size);
+    background-color: var(--settings-round-icon-button-color);
+    mask: url("/static/images/folder.fill.svg") center/contain no-repeat;
+    -webkit-mask: url("/static/images/folder.fill.svg") center/contain no-repeat;
 }

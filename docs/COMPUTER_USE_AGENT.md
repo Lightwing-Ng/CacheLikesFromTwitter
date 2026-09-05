@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.55.3-codex.1`
+Documentation version: `v3.55.5-codex.1`
 
 ## Purpose
 
@@ -557,8 +557,10 @@ actions.
 
 The question-and-answer pages are bounded to the latest 100 completed Agent exchanges per Web
 conversation and live only for the current local service process. Selected ChatGPT history is
-also bounded to the latest 100 paired exchanges for the page view; remote history is never
-persisted by this feature.
+also bounded to the latest 100 paired exchanges and persisted in the shared Agent Parquet
+catalog. Revisiting a saved history, including after restart or TTL expiry, does not launch
+a background browser refresh. A cache miss collects once; `refresh=1` explicitly refreshes it.
+The cache retains its age metadata so a saved view is never presented as a fresh provider read.
 
 ## Settings
 
@@ -786,3 +788,24 @@ subtests; four responsive motion cases verify icon centers and hanging text
 within 0.1px. Live desktop and narrow DOM readbacks measured zero horizontal
 difference between Working and the last three activity icons and detail lines,
 with no narrow-page horizontal overflow. Stylesheet version: v2.93.5-codex.1.
+
+## Sidebar icon rail and Investment live marker
+
+On 5 Sep 2026, stylesheet v2.93.6-codex.1 scopes the sidebar icon rail to
+`#agent_runtime_form`. Provider, browser, source-folder, project, plus, account,
+and Terminal icons share the provider's 28px slot and control inset. The status
+card reuses the control border token; its 18px glyph stays centered in that slot.
+The Dock is outside this form and has no changed selector or markup. Live
+before/after DOM checks confirmed identical Dock position and size.
+
+Activity live indicators now match Worthward Investment's 6px glowing core,
+20px outer ring, 14px inner ring, 1.8-second period, and 0.9-second inner delay.
+The inner ring starts at scale 0.48 and the outer at 0.36; both expand and fade.
+The Activity panel allows the halo to escape. Reduced-motion behavior is retained.
+The shared Cache marker outside the Agent response card remains unchanged.
+
+Validation: 225 Style/Web tests and 539 subtests passed; four Activity motion
+cases and two sidebar/project-icon cases passed at desktop and narrow widths.
+Motion tests sample transforms over time, and sidebar tests wait for sidebar
+animation to settle before comparing Dock geometry. No live prompts were sent;
+original tabs and their drafts were preserved.

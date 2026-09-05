@@ -1,6 +1,6 @@
 """Flask application for the local web console."""
 
-# Code version: v1.60.1-codex.1
+# Code version: v1.60.2-codex.1
 
 from __future__ import annotations
 
@@ -1150,6 +1150,7 @@ def create_app(
                 is_browser_session
                 or is_passive_source_catalog
                 or source_kind == "project-sessions"
+                or source_kind == "session-history"
                 or requested_refresh
             ),
             collect_on_miss=not is_passive_source_catalog or requested_refresh,

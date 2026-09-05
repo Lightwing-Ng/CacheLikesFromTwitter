@@ -1,11 +1,11 @@
 """Focused regression tests for the local web console."""
 
-# Code version: v1.94.5-codex.1
+# Code version: v1.94.7-codex.1
 
 from __future__ import annotations
 
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import re
@@ -110,12 +110,21 @@ class WebAppTests(unittest.TestCase):
             with patch("app.web.app.fetch_chatgpt_conversation_history", return_value=collected) as fetch:
                 first = app.test_client().get(url).get_json()
                 second = app.test_client().get(url).get_json()
-                restarted = create_app(Path(root) / "store").test_client().get(url).get_json()
+                with (
+                    patch("app.core.agent_source_cache._utc_now", return_value=datetime.now(timezone.utc) + timedelta(days=7)),
+                    patch("app.core.agent_source_cache.AgentSourceCache._start_background_refresh_locked") as refresh,
+                ):
+                    restarted = create_app(Path(root) / "store").test_client().get(url).get_json()
+                    refresh.assert_not_called()
             fetch.assert_called_once()
+            with patch("app.web.app.fetch_chatgpt_conversation_history", return_value=collected) as fetch:
+                app.test_client().get(url + "&refresh=1")
+                fetch.assert_called_once()
             self.assertTrue((Path(root) / "store/agent/agent_source_catalog.parquet").is_file())
         self.assertEqual(first["cache"]["status"], "miss")
         self.assertEqual(second["cache"]["layer"], "memory")
         self.assertEqual(restarted["cache"]["layer"], "parquet")
+        self.assertEqual(restarted["cache"]["status"], "stale")
         self.assertEqual(restarted["history"][0]["response"], source)
         self.assertIn("<strong>Restored</strong>", restarted["history"][0]["response_html"])
 
@@ -605,7 +614,7 @@ class WebAppTests(unittest.TestCase):
                 self.assertNotIn('class="browser-picker-option-icon"', dock_markup)
                 self.assertIn('src="/static/sidebar.js?v=sidebar-v1.21.0-codex.1"', body)
                 self.assertIn('src="/static/responsive.js?v=responsive-v1.0.0-codex.1"', body)
-                expected_style_version = "style-v2.93.5-codex.1"
+                expected_style_version = "style-v2.93.7-codex.1"
                 self.assertIn(expected_style_version, body)
                 self.assertIn('src="/static/theme-mode.js?v=theme-mode-v1.0.0-codex.1"', body)
                 self.assertIn('id="global_theme_toggle"', body)
@@ -1007,7 +1016,7 @@ class WebAppTests(unittest.TestCase):
         self.assertIn('settings-directory-picker.js?v=settings-directory-picker-v1.3.1-codex.1', local_body)
         self.assertIn('browser-session-status.js?v=browser-session-status-v1.9.1-codex.1', local_body)
         self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', local_body)
-        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.31.2-codex.1', local_body)
+        self.assertIn('computer-use-agent.js?v=computer-use-agent-v3.31.3-codex.1', local_body)
         self.assertIn('data-agent-compute-job', local_body)
         self.assertIn('data-agent-compute-job-stop', local_body)
         self.assertIn('data-agent-effort-field', local_body)
@@ -1894,7 +1903,7 @@ class WebAppTests(unittest.TestCase):
             'name="conversation_url" value=""',
             'name="project_url" value=""',
             'name="session_title" value=""',
-            'computer-use-agent-v3.31.2-codex.1',
+            'computer-use-agent-v3.31.3-codex.1',
             'data-agent-effort-field',
             'data-agent-effort-input',
             'data-agent-direct-list="true"',
@@ -3432,7 +3441,7 @@ class WebAppTests(unittest.TestCase):
             self.assertNotIn(str(root), body)
             self.assertIn("/browser/media/grok/clip.mp4", body)
             self.assertNotIn("/browser/media/media/", body)
-            self.assertIn("style-v2.93.5-codex.1", body)
+            self.assertIn("style-v2.93.7-codex.1", body)
             self.assertIn("/static/images/photo.stack.svg", body)
             self.assertIn('pagination-motion.js?v=pagination-motion-v1.1.0-codex.1', body)
             self.assertIn('local-media-browser.js?v=local-media-browser-v1.31.1-codex.1', body)
