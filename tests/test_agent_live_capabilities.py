@@ -1,6 +1,6 @@
 """Regression coverage for history rendering and provider-owned capabilities.
 
-Code version: v1.0.2-codex.1
+Code version: v1.0.3-codex.1
 """
 
 import json
@@ -127,7 +127,14 @@ def test_new_model_is_resolved_and_verified_on_the_same_page(target, view_restor
 
 @pytest.mark.integration
 @pytest.mark.parametrize("effort", ["highest_available", "Extra High"])
-def test_latest_selection_restores_inert_effort_view_in_browser(capability_page, effort):
+@pytest.mark.parametrize("selection_closes_view", [False, True])
+@pytest.mark.parametrize("target,label,session_type", [
+    ("latest_available", "Latest", ""),
+    ("live:gpt-5.6 sol", "GPT-5.6 Sol", "project"),
+])
+def test_latest_selection_restores_inert_effort_view_in_browser(
+    capability_page, effort, selection_closes_view, target, label, session_type,
+):
     """Replay the combined provider menu without contacting a signed-in service."""
     page = capability_page
     page.set_content("""
@@ -175,6 +182,7 @@ def test_latest_selection_restores_inert_effort_view_in_browser(capability_page,
             menu.querySelectorAll('[role="menuitemradio"]').forEach(item => {
               item.setAttribute('aria-checked', String(item === choice));
             });
+            if (menu.dataset.selectionClosesView === 'true') setView(false);
           };
         });
         slider.onkeydown = event => {
@@ -189,11 +197,17 @@ def test_latest_selection_restores_inert_effort_view_in_browser(capability_page,
         };
       </script>
     """)
+    page.evaluate("""({label, closes}) => {
+      document.querySelector('#picker').dataset.selectionClosesView = String(closes);
+      document.querySelectorAll('[role="menuitemradio"]').forEach(item => {
+        item.setAttribute('aria-checked', String(item.textContent !== label));
+      });
+    }""", {"label": label, "closes": selection_closes_view})
     observed = {}
     assert _select_chatgpt_model(
-        page, "chromium", "latest_available", observed, thinking_effort=effort,
+        page, "chromium", target, observed, thinking_effort=effort, session_type=session_type,
     )
-    assert observed["observed"] == "Latest"
+    assert observed["observed"] == label
     assert observed["available_efforts"] == ["Instant", "Medium", "High", "Extra High"]
     assert observed["thinking_effort"] == "Extra High"
     assert observed["effort_catalog_complete"] is True

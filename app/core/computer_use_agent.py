@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.55.1-codex.1
+Code version: v3.55.2-codex.1
 """
 
 from __future__ import annotations
@@ -10821,8 +10821,8 @@ def _select_chatgpt_model_chromium(
     is_project = _chatgpt_is_project_surface(page, session_type)
 
     def effort_selection_failed(catalog_complete: bool) -> bool:
-        """Require a complete live catalog for every ChatGPT execution request except Project surfaces."""
-        if is_project:
+        """Require live effort proof on combined pickers, including Project pages."""
+        if is_project and not model_view_opened:
             return False
         return not catalog_complete
 
@@ -10883,7 +10883,7 @@ def _select_chatgpt_model_chromium(
 
     def select_effort_catalog(result_payload: dict[str, Any]) -> tuple[dict[str, Any], list[str], bool]:
         """Restrict menu sliders to the exact model trigger selected for this run."""
-        if is_project:
+        if is_project and not model_view_opened:
             project_result = dict(result_payload)
             project_result["effort_catalog_complete"] = True
             project_result.pop("effort_selection_error", None)
@@ -11127,6 +11127,16 @@ def _select_chatgpt_model_chromium(
         if not expanded and not _click_chatgpt_control(power_button):
             return control_recycled()
         if stop_requested():
+            return False
+        # New combined pickers return to the effort view after a model click.
+        # Reopen the model list to read its visible checked item before effort proof.
+        if model_view_opened and not _chatgpt_set_model_view(page, power_button, True):
+            _close_chatgpt_model_menu(page, power_button)
+            _record_model_observation(
+                observation,
+                reason="model-view-open-failed",
+                attempted_labels=remote_labels,
+            )
             return False
         for _attempt in range(10):
             if stop_requested():
