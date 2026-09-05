@@ -1,6 +1,6 @@
 # Web Computer Use Agent
 
-Documentation version: `v3.55.2-codex.1`
+Documentation version: `v3.55.3-codex.1`
 
 ## Purpose
 
@@ -98,7 +98,11 @@ preview, while their history remains available on demand.
 Completed events use the local `checkmark.circle.svg` mask with
 `--theme-success-strong`; running events reuse `cache-phase-live-marker` in the
 same green token. The marker slot centers on the first action-label line, and the
-Activity heading shares the Working text rail. Opening retains the shared gel
+Activity heading shares the Working text rail. The response card owns the shared
+`--agent-status-icon-size` and `--agent-status-copy-gap` variables; the Working
+indicator center is the horizontal anchor for every activity signal, including the
+collapsed heading and current-event preview. Wrapped detail lines start at the
+same text rail. Activity has no inline border offset. Opening retains the shared gel
 animation; closing uses its motion duration and bouncy easing. Reduced-motion
 users bypass closing animation.
 
@@ -776,3 +780,9 @@ the old bootstrap cache causes one new probe; reloads reuse the resulting catalo
 Live and restored final envelopes share a safe Markdown renderer, including case-insensitive JSON
 fences with optional export metadata such as `id`, CRLF line endings, and fully JSON-encoded export wrappers. Raw response bytes remain
 available for copying. Ambiguous, malformed, ordinary JSON, and embedded examples stay unchanged.
+
+Axis verification on 5 Sep 2026: Style/Web checks passed 225 tests and 539
+subtests; four responsive motion cases verify icon centers and hanging text
+within 0.1px. Live desktop and narrow DOM readbacks measured zero horizontal
+difference between Working and the last three activity icons and detail lines,
+with no narrow-page horizontal overflow. Stylesheet version: v2.93.5-codex.1.
