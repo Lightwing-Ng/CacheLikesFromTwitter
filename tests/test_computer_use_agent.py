@@ -1,6 +1,6 @@
 """Focused tests for the Web Computer Use controller.
 
-Code version: v3.55.0-codex.1
+Code version: v3.55.0-codex.2
 """
 
 from __future__ import annotations
@@ -1071,7 +1071,7 @@ def test_chatgpt_effort_discovery_rejects_subscription_range_drift() -> None:
             if key == "Home":
                 self.value = self.minimum
                 self.page.range_drifted = True
-                self.maximum = 14
+                self.maximum += 1
 
     class _Page:
         def __init__(self) -> None:

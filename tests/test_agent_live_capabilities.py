@@ -1,6 +1,6 @@
 """Regression coverage for history rendering and provider-owned capabilities.
 
-Code version: v1.0.3-codex.1
+Code version: v1.0.4-codex.1
 """
 
 import json
@@ -126,6 +126,7 @@ def test_new_model_is_resolved_and_verified_on_the_same_page(target, view_restor
 
 
 @pytest.mark.integration
+@pytest.mark.parametrize("range_hydrates", [False, True])
 @pytest.mark.parametrize("effort", ["highest_available", "Extra High"])
 @pytest.mark.parametrize("selection_closes_view", [False, True])
 @pytest.mark.parametrize("target,label,session_type", [
@@ -133,7 +134,7 @@ def test_new_model_is_resolved_and_verified_on_the_same_page(target, view_restor
     ("live:gpt-5.6 sol", "GPT-5.6 Sol", "project"),
 ])
 def test_latest_selection_restores_inert_effort_view_in_browser(
-    capability_page, effort, selection_closes_view, target, label, session_type,
+    capability_page, effort, selection_closes_view, target, label, session_type, range_hydrates,
 ):
     """Replay the combined provider menu without contacting a signed-in service."""
     page = capability_page
@@ -186,6 +187,9 @@ def test_latest_selection_restores_inert_effort_view_in_browser(
           };
         });
         slider.onkeydown = event => {
+          if (event.key === 'ArrowRight' && slider.getAttribute('aria-valuemax') === '2') {
+            slider.setAttribute('aria-valuemax', '3');
+          }
           let position = Number(slider.getAttribute('aria-valuenow'));
           if (event.key === 'Home') position = 0;
           if (event.key === 'End') position = 3;
@@ -197,12 +201,16 @@ def test_latest_selection_restores_inert_effort_view_in_browser(
         };
       </script>
     """)
-    page.evaluate("""({label, closes}) => {
+    page.evaluate("""({label, closes, hydrates}) => {
+      if (hydrates) {
+        document.querySelector('[role="slider"]').setAttribute('aria-valuemax', '2');
+        document.querySelector('[role="slider"]').setAttribute('aria-valuenow', '1');
+      }
       document.querySelector('#picker').dataset.selectionClosesView = String(closes);
       document.querySelectorAll('[role="menuitemradio"]').forEach(item => {
         item.setAttribute('aria-checked', String(item.textContent !== label));
       });
-    }""", {"label": label, "closes": selection_closes_view})
+    }""", {"label": label, "closes": selection_closes_view, "hydrates": range_hydrates})
     observed = {}
     assert _select_chatgpt_model(
         page, "chromium", target, observed, thinking_effort=effort, session_type=session_type,

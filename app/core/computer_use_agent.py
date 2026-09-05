@@ -1,6 +1,6 @@
 """Browser-mediated Computer Use agent for signed-in Web AI sessions.
 
-Code version: v3.55.2-codex.1
+Code version: v3.55.3-codex.1
 """
 
 from __future__ import annotations
@@ -10497,6 +10497,35 @@ def _chatgpt_select_subscription_effort(
     *,
     trusted_model_menu_scope: str | None = None,
 ) -> tuple[dict[str, Any], list[str], bool]:
+    """Restart one changing provider range, discarding its partial catalog."""
+    wait_budget = [CHATGPT_EFFORT_SLIDER_BIND_WAIT_ATTEMPTS - 1]
+    for attempt in range(2):
+        result, labels, complete = _chatgpt_discover_subscription_effort(
+            page,
+            result,
+            wait_for_timeout,
+            requested_effort,
+            trusted_model_menu_scope=trusted_model_menu_scope,
+            slider_bind_wait_budget=wait_budget,
+        )
+        if complete or result.get("effort_selection_error") != "effort-range-changed":
+            return result, labels, complete
+        if attempt == 0:
+            # Latest can hydrate a different range after the first keypress.
+            # Rewalk every position; never combine catalogs across ranges.
+            wait_for_timeout(160)
+    return result, labels, complete
+
+
+def _chatgpt_discover_subscription_effort(
+    page: Any,
+    result: dict[str, Any],
+    wait_for_timeout: Callable[[int], Any],
+    requested_effort: str = CHATGPT_EFFORT_POLICY_HIGHEST,
+    *,
+    trusted_model_menu_scope: str | None = None,
+    slider_bind_wait_budget: list[int],
+) -> tuple[dict[str, Any], list[str], bool]:
     """Discover every live effort position and prove the selected final state.
 
     The provider owns both labels and range. We never infer a plan from names:
@@ -10510,9 +10539,6 @@ def _chatgpt_select_subscription_effort(
     # Share one short wait across every binding in this discovery transaction.
     # A React redraw can therefore settle after any keypress, but a repeated
     # disappearance cannot add the same delay once per subscription tier.
-    slider_bind_wait_budget = [
-        CHATGPT_EFFORT_SLIDER_BIND_WAIT_ATTEMPTS - 1,
-    ]
 
     def finish(*, complete: bool, error: str = "") -> tuple[dict[str, Any], list[str], bool]:
         result["requested_thinking_effort"] = requested
